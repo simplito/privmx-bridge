@@ -1,0 +1,47 @@
+[
+  {
+    "_id": "66715bd6ef3efd9ecfe7a1cc",
+    "contextId": "662115304034ea5684acac8b",
+    "creator": "janek",
+    "createDate": 1718705110336,
+    "lastModifier": "janek",
+    "lastModificationDate": 1718705110457,
+    "keyId": "my-key",
+    "users": [
+      "janek"
+    ],
+    "managers": [
+      "janek"
+    ],
+    "keys": [
+      {
+        "user": "janek",
+        "keys": [
+          {
+            "keyId": "my-key",
+            "data": "aaaa"
+          }
+        ]
+      }
+    ],
+    "history": [
+      {
+        "created": 1718705110336,
+        "author": "janek",
+        "keyId": "my-key",
+        "data": "aaaa",
+        "users": [
+          "janek"
+        ],
+        "managers": [
+          "janek"
+        ]
+      }
+    ],
+    "allTimeUsers": [
+      "janek"
+    ],
+    "lastMsgDate": 1718705110457,
+    "messages": 4
+  }
+]

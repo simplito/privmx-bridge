@@ -1,0 +1,89 @@
+stages:
+  - build
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+
+build:
+  stage: build
+  image: docker:20.10.17
+  services:
+    - name: docker:20.10.17-dind
+      command: ["--tls=false"]
+    - name: dev.privmx.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
+      alias: mongodb
+  script:
+    - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - ./scripts/build-base-images.sh
+    - docker build --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" .
+  except:
+    - tags
+    - master
+    - /^hotfix-.*$/
+
+build_and_publish_docker_base_image:
+  stage: build
+  image: docker:20.10.17
+  services:
+    - name: docker:20.10.17-dind
+      command: ["--tls=false"]
+    - name: dev.privmx.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
+      alias: mongodb
+  script:
+    - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
+    - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - export IMAGE_ID_AMD64=$IMAGE_ID-amd64
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - ./scripts/build-base-images.sh
+    - docker build --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" -t $IMAGE_ID_AMD64 .
+    - docker push $IMAGE_ID_AMD64
+  except:
+    - tags
+  only:
+    - master
+    - /^hotfix-.*$/
+
+# These two stages could be merged, but the second `docker build` does not consider the --platform argument of the FROM directive, so they have to be separated.
+build_multi_arch_docker_image:
+  stage: build
+  needs:
+    - build_and_publish_docker_base_image
+  image: docker:20.10.17
+  services:
+    - name: docker:20.10.17-dind
+      command: ["--tls=false"]
+  script:
+    - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - export IMAGE_ID_AMD64=$IMAGE_ID-amd64
+    - export IMAGE_ID_ARM64=$IMAGE_ID-arm64-v8
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker pull $IMAGE_ID_AMD64
+    - ./scripts/build-docker-for-platform.sh $IMAGE_ID_AMD64 arm64/v8 $IMAGE_ID_ARM64
+    - docker push $IMAGE_ID_ARM64
+    - docker manifest create $IMAGE_ID $IMAGE_ID_AMD64 $IMAGE_ID_ARM64
+    - docker manifest annotate --arch amd64 $IMAGE_ID $IMAGE_ID_AMD64
+    - docker manifest annotate --arch arm64 --variant v8 $IMAGE_ID $IMAGE_ID_ARM64
+    - docker manifest push $IMAGE_ID
+  except:
+    - tags
+  only:
+    - master
+    - /^hotfix-.*$/
+
+tag_docker_image:
+  stage: build
+  image: docker:20.10.17
+  services:
+    - name: docker:20.10.17-dind
+      command: ["--tls=false"]
+  script:
+    - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - export IMAGE_TAG_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker manifest inspect $IMAGE_ID
+    - docker buildx imagetools create -t $IMAGE_TAG_ID $IMAGE_ID
+  except:
+    - branches
+  only:
+    - tags

@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd /work/privmx-bridge
+exec node out/index.js /etc/privmx-bridge/config.json

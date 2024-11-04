@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Api tester</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body, html {
+            font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #333;
+        }
+        label {
+            display: block;
+            margin: 10px 0 0 0;
+            font-weight: bold;
+        }
+        input[type=text] {
+            width: 100%;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 13px;
+        }
+        input:focus, textarea:focus {
+            border-color: #66afe9;
+            outline: 0;
+            -webkit-box-shadow: inset 0 1px 1px rgba(0,0,0,.075), 0 0 8px rgba(102,175,233,.6);
+            box-shadow: inset 0 1px 1px rgba(0,0,0,.075), 0 0 8px rgba(102,175,233,.6);
+        }
+        #params {
+            height: calc(100vh - 550px);
+        }
+        #result {
+            height: calc(100vh - 60px);
+        }
+        #curl {
+            height: 120px;
+        }
+        h1 {
+            margin: 0 0 10px 0;
+        }
+        .input-div {
+            width: 50%;
+            float: left;
+        }
+        .result-div {
+            width: 50%;
+            float: left;
+            padding-left: 20px;
+        }
+        select {
+            vertical-align: top;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+        table {
+            margin: 20px;
+        }
+        button {
+            appearance: button;
+            background-color: #0d6efd;
+            border: 1px solid #0d6efd;
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+            display: inline-block;
+            font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+            font-size: 14px;
+            font-weight: 400;
+            line-height: 24px;
+            margin: 4px 2px;
+            padding: 6px 12px;
+            text-align: center;
+            transition-delay: 0s, 0s, 0s, 0s;
+            transition-duration: 0.15s, 0.15s, 0.15s, 0.15s;
+            transition-property: color, background-color, border-color, box-shadow;
+            transition-timing-function: ease-in-out, ease-in-out, ease-in-out, ease-in-out;
+            user-select: none;
+            vertical-align: middle;
+        }
+        button::-moz-focus-inner {
+            padding: 0;
+            border-style: none;
+        }
+        button:hover {
+            background-color: #0a58ca;
+            border-color: #0a58ca;
+        }
+        #show-errors {
+            padding: 0px 6px;
+            font-size: 12px;
+            margin: 0 0 0 10px;
+        }
+        #method {
+            width: auto;
+            flex-grow: 1;
+            height: 26px;
+        }
+        #backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #000;
+            opacity: 0.2;
+        }
+        #modal {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            margin-left: -300px;
+            width: 700px;
+            background-color: #fff;
+            border-radius: 5px;
+            padding: 15px;
+            height: 600px;
+            overflow-y: auto;
+
+        }
+        #modal table {
+            border-collapse: collapse;
+        }
+        #modal table th, #modal table td {
+            border: 1px solid #ddd;
+            padding: 3px 10px;
+            text-align: left;
+        }
+        #modal .close {
+            float: right;
+            left:600px;
+            top:0;
+            position: sticky;
+        }
+    </style>
+</head>
+<body>
+    <div id="modal-container"></div>
+    <div class="container">
+    <div class="input-div">
+    <h1 id="header"></h1>
+    <div>
+        <label>Preset</label>
+        <select id="select"></select>
+        <img id="captcha" />
+    </div>
+    <div>
+        <label>Method</label>
+        <div style="display: flex;">
+            <input id="method" type="text" value=""/>
+            <button id="show-errors">Show method details</button>
+        </div>
+    </div>
+    <div>
+        <label>Params</label>
+        <textarea id="params"></textarea>
+    </div>
+    <div style="display: none;">
+        <label>File</label>
+        <div style="margin: 0 0 10px 0; border: 1px solid #aaa; padding: 10px;">
+            <label style="display: inline;">Json Field Name</label>
+            <input id="jsonfieldname" type="text" value="" style="width: 200px;"/>
+            <input id="file" type="file" value=""/>
+        </div>
+    </div>
+    <div id="token-container-member">
+        <label>API Key (format ApiKeyId:ApiKeySecret</label>
+        <input id="developer-token" type="text" value=""/>
+    </div>
+    <div id="token-container-mgm">
+        <label>Managment Token</label>
+        <input id="management-token" type="text" value=""/>
+    </div>
+    <div>
+        <label>Curl</label>
+        <textarea id="curl" readonly="readonly"></textarea>
+    </div>
+    <div style="margin-top: 10px;">
+        <button id="send">Send</button>
+        <button id="generate-totp-code" style="display: none;">Generate TOTP code</button>
+        <button id="refreshCaptcha" style="display: none;">Refresh captcha</button>
+    </div>
+    </div>
+    <div class="result-div">
+    <div>
+        <label>Result</label>
+        <textarea id="result"></textarea>
+    </div>
+    </div>
+    </div>
+    <script type="text/javascript" src="/assets/qrcode-1.5.1.js"></script>
+<script type="text/javascript">
+    var presetsVars = {};
+    var presetsRaw = {{presets}};
+    var commonErrors = {{commonErrors}};
+    var errors = {{errors}};
+    window.sessionId = null;
+    var presets = Array.prototype.concat.apply([], presetsRaw.map(x => x.methods));
+    class Utils {
+        static fromBase64(base64Str) {
+            let binaryString = atob(base64Str);
+            let res = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                res[i] = binaryString.charCodeAt(i);
+            }
+            return res;
+        }
+        static toBase64(data) {
+            let binaryString = "";
+            for (let i = 0; i < data.length; i++) {
+                binaryString += String.fromCharCode(data[i]);
+            }
+            return btoa(binaryString);
+        }
+    }
+    class JsonRpcClient {
+        constructor(url, token, tokenHeader) {
+            this.url = url;
+            this.token = token;
+            this.tokenHeader = tokenHeader;
+    }
+        encodeJsonRpc(obj) {
+            let files = [];
+            return {
+                files: files,
+                obj: this.encodeJsonRpcCore(obj, "", files)
+            };
+        }
+        encodeJsonRpcCore(obj, path, files) {
+            if (typeof (obj) == "object") {
+                if (obj == null) {
+                    return obj;
+                }
+                if (Array.isArray(obj)) {
+                    let res = [];
+                    for (let [i, x] of obj.entries()) {
+                        res.push(this.encodeJsonRpcCore(x, (path ? path + "." : path) + i, files));
+                    }
+                    return res;
+                }
+                if (obj instanceof Uint8Array) {
+                    return {
+                        __type: "Buffer",
+                        base64: Utils.toBase64(obj)
+                    };
+                }
+                if (obj instanceof Blob) {
+                    files.push({ path: path, data: obj });
+                    return null;
+                }
+                let res = {};
+                for (let name in obj) {
+                    res[name] = this.encodeJsonRpcCore(obj[name], (path ? path + "." : path) + name, files);
+                }
+                return res;
+            }
+            return obj;
+        }
+        decodeJsonRpc(obj) {
+            if (typeof (obj) == "object") {
+                if (obj == null) {
+                    return obj;
+                }
+                if (Array.isArray(obj)) {
+                    let res = [];
+                    for (let x of obj) {
+                        res.push(this.decodeJsonRpc(x));
+                    }
+                    return res;
+                }
+                if (obj.__type == "Buffer" && ("base64" in obj)) {
+                    return Utils.fromBase64(obj.base64);
+                }
+                let res = {};
+                for (let name in obj) {
+                    res[name] = this.decodeJsonRpc(obj[name]);
+                }
+                return res;
+            }
+            return obj;
+        }
+        request(method, params) {
+            return new Promise((resolve, reject) => {
+                let jsonRpcRequest = {
+                    jsonrpc: "2.0",
+                    id: 0,
+                    method: method,
+                    params: params
+                };
+                let info = this.encodeJsonRpc(jsonRpcRequest);
+                let xhr = new XMLHttpRequest();
+                xhr.open("POST", this.url, true);
+                if (this.token) {
+                    xhr.setRequestHeader(this.tokenHeader || "X-Auth-Token", this.token);
+                }
+                if (sessionId) {
+                    xhr.setRequestHeader("X-Auth-Session", sessionId);
+                }
+                xhr.onload = (event) => {
+                    if (xhr.status === 200) {
+                        let res;
+                        try {
+                            res = JSON.parse(xhr.responseText);
+                            res = this.decodeJsonRpc(res);
+                        }
+                        catch (e) {
+                            reject({
+                                type: "jsonrpcerror",
+                                message: "JSON parse error",
+                                jsonRpcRequest: info,
+                                xhr: xhr,
+                                event: event
+                            });
+                            return;
+                        }
+                        if (!res || typeof (res) !== "object" || res.jsonrpc !== "2.0" || res.id == null || (!("result" in res) && res.error === null)) {
+                            reject({
+                                type: "jsonrpcerror",
+                                message: "Invalid jsonrpc error",
+                                jsonRpcRequest: info,
+                                xhr: xhr,
+                                event: event
+                            });
+                        }
+                        else {
+                            if (res.error) {
+                                reject(res.error);
+                            }
+                            else {
+                                resolve(res.result);
+                            }
+                        }
+                    }
+                    else {
+                        reject({
+                            type: "jsonrpcerror",
+                            message: "Invalid status code",
+                            text: xhr.responseText,
+                            code: xhr.status,
+                            jsonRpcRequest: info,
+                            xhr: xhr,
+                            event: event
+                        });
+                    }
+                };
+                xhr.onerror = (event) => {
+                    reject({
+                        type: "jsonrpcerror",
+                        message: "Unexpected error",
+                        jsonRpcRequest: info,
+                        xhr: xhr,
+                        event: event
+                    });
+                };
+                if (info.files.length == 0) {
+                    xhr.setRequestHeader("Content-Type", "application/json");
+                    xhr.send(JSON.stringify(info.obj));
+                }
+                else {
+                    let fd = new FormData();
+                    fd.append("jsonRpc", JSON.stringify(info.obj));
+                    for (let file of info.files) {
+                        fd.append("jsonRpc.file." + file.path, file.data);
+                    }
+                    xhr.send(fd);
+                }
+            });
+        }
+    }
+    class ApiClient {
+        static request(endpoint, method, params, token, tokenHeader) {
+            return new JsonRpcClient(endpoint, token, tokenHeader).request(method, params);
+        }
+    }
+    function setVars(obj) {
+        if (typeof(obj) == "object") {
+            if (obj == null) {
+                return null;
+            }
+            if (Array.isArray(obj)) {
+                let res = [];
+                for (let x of obj) {
+                    res.push(setVars(x));
+                }
+                return res;
+            }
+            let res = {};
+            for (let key in obj) {
+                res[key] = setVars(obj[key]);
+            }
+            return res;
+        }
+        if (typeof(obj) == "string" && obj in presetsVars) {
+            return presetsVars[obj];
+        }
+        return obj;
+    }
+    function calculateSimpleCaptcha(url) {
+        let sum = 0;
+        for (let i = 0; i < url.length; i++) {
+            sum += url.charCodeAt(i);
+        }
+        let str = (sum * url.length).toString();
+        return str.substr(Math.max(0, str.length - 4)).padStart(4, "0");
+    }
+    function refreshSelect() {
+        let select = document.getElementById("select");
+        while (select.children.length) {
+            select.removeChild(select.children[0]);
+        }
+        select.value = "";
+        let option = document.createElement("option");
+        option.setAttribute("value", "");
+        option.setAttribute("style", "display: none;");
+        option.appendChild(document.createTextNode("Choose"));
+        select.appendChild(option);
+        
+        for (let group of presetsRaw) {
+            let methods = group.methods.filter(x => x.api == apiType);
+            if (methods.length == 0) {
+                continue;
+            }
+            let optGroup = document.createElement("optgroup");
+            optGroup.setAttribute("label", group.name);
+            select.appendChild(optGroup);
+            for (let entry of methods) {
+                let option = document.createElement("option");
+                option.setAttribute("value", entry.id);
+                option.appendChild(document.createTextNode(entry.label));
+                optGroup.appendChild(option);
+            }
+        }
+    }
+
+    let apiType = "client";
+
+    let apis = {
+        client: /\/d\/[a-zA-Z0-9]+\/api\/tester/.test(document.location.pathname) ? document.location.pathname.substring(0, document.location.pathname.indexOf("/api/tester") + 4) : "/api",
+        mgm: "/mgm"
+    };
+
+    document.getElementById("header").appendChild(document.createTextNode("PrivMX Bridge Api tester"));
+    if (apiType == "mgm") {
+        document.getElementById("token-container-member").style.display = 'none';
+    }
+    else if (apiType == "client") {
+        document.getElementById("token-container-mgm").style.display = 'none';
+    }
+    // if (apiType == "main") {
+    //     document.getElementById("token-container").style.display = "block";
+    // }
+    function onSelectChange() {
+        let select = document.getElementById("select");
+        let id = select.value;
+        let entry = presets.find(x => x.id == id);
+        if (entry == null) {
+            return;
+        }
+        document.getElementById("method").value = entry.method;
+        let params = setVars(entry.params);
+        document.getElementById("params").value = JSON.stringify(params, null, 2);
+        refreshCurl();
+    }
+    document.getElementById("select").addEventListener("click", e => {
+        if (e.originalTarget && e.originalTarget.tagName == "SELECT") {
+            return;
+        }
+        onSelectChange();
+    });
+    function refreshCaptcha() {
+        let data = JSON.parse(document.getElementById("params").value);
+        if (!data.captcha) {
+            return;
+        }
+        ApiClient.request(apis[apiType], "createCaptcha", {}).then(res => {
+            data.captcha.id = res.id;
+            if (res.url.startsWith("simple://")) {
+                data.captcha.text = calculateSimpleCaptcha(res.url);
+            }
+            document.getElementById("params").value = JSON.stringify(data, null, 2);
+            document.getElementById("captcha").setAttribute("src", res.url);
+        }, e => {
+            console.log("Error during createCaptcha", e);
+            alert("Error during createCaptcha");
+        });
+    }
+    async function getCallInfo() {
+        let endpoint = apis[apiType];
+        let method = document.getElementById("method").value;
+        let token = apiType === "mgm" ?
+            {headerName: "X-Auth-Token", value: document.getElementById("management-token").value} :
+            {headerName: "Authorization", value: "Basic " + btoa(document.getElementById("developer-token").value)};
+        let params, paramsError;
+        try {
+            params = JSON.parse(document.getElementById("params").value);
+        }
+        catch (e) {
+            paramsError = e;
+        }
+        let fileFieldName = document.getElementById("jsonfieldname").value;
+        if (params && fileFieldName) {
+            let fileEle = document.getElementById("file");
+            if (fileEle.multiple) {
+                let list = [];
+                for (let f of fileEle.files) {
+                    list.push(f);
+                }
+                params[fileFieldName] = list;
+            }
+            else {
+                let file = fileEle.files[0];
+                if (file) {
+                    params[fileFieldName] = file;
+                }
+            }
+        }
+        const payload = paramsError ? "" : JSON.stringify({jsonrpc: "2.0", id: 0, method: method, params: params});
+        if (!paramsError && token.headerName === "X-Developer-Token" && token.value.startsWith("accessKey:")) {
+            const [, accessPubKey, accessKeySecret] = token.value.split(":");
+            const timestamp = Date.now();
+            const nonce = bufToBase64(randomBytes(10));
+            const dataToHash = `${accessPubKey};1;${timestamp};${nonce};${accessKeySecret};${payload}`;
+            const signature = await sha256Str(dataToHash);
+            token.headerName = "X-Access-Sig";
+            token.value = `${accessPubKey};1;${timestamp};${nonce};${bufToBase64(signature.subarray(0, 20))}`;
+        }
+        if (method.startsWith("public/")) {
+            token.headerName = "";
+            token.value = "";
+        }
+        return {endpoint, method, params, paramsError, tokenValue: token.value || "--empty--", tokenHeader: token.headerName, payload};
+    }
+    function randomBytes(size) {
+        const array = new Uint8Array(size);
+        crypto.getRandomValues(array);
+        return array;
+    }
+    function bufToBase64(buf) {
+        return btoa(String.fromCharCode.apply(null, buf));
+    }
+    async function sha256Str(message) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(message);
+        const hash = await crypto.subtle.digest("SHA-256", data);
+        return new Uint8Array(hash);
+    }
+    async function refreshCurl() {
+        const callInfo = await getCallInfo();
+        const jsonRpcRequest = callInfo.paramsError ? "--params-parse-error--" : callInfo.payload;
+        const command = `curl -X POST -H "Content-Type: application/json"${callInfo.tokenHeader ? ` -H "${callInfo.tokenHeader}: ${callInfo.tokenValue}"`: ''} --data-binary '${jsonRpcRequest}' ${document.location.origin}${callInfo.endpoint}`;
+        const curlEle = document.getElementById("curl");
+        curlEle.value = command;
+    }
+    document.getElementById("refreshCaptcha").addEventListener("click", refreshCaptcha);
+    document.getElementById("send").addEventListener("click", async () => {
+        await refreshCurl();
+        const {endpoint, method, params, paramsError, tokenValue, tokenHeader} = await getCallInfo();
+        if (paramsError) {
+            document.getElementById("result").value = "ERROR during parsing params field: " +  paramsError.toString();
+            return;
+        }
+        go();
+        function go() {
+            document.getElementById("result").value = "";
+            ApiClient.request(endpoint, method, params, tokenValue, tokenHeader).then(res => {
+                console.log("Success", res);
+                document.getElementById("result").value = JSON.stringify(res, null, 2);
+                this.refreshCaptcha();
+            })
+            .catch(e => {
+                console.error("Error", e);
+                if (e && e.type == "jsonrpcerror") {
+                    document.getElementById("result").value = JSON.stringify({
+                        type: e.type,
+                        message: e.message,
+                        text: e.text,
+                        code: e.code
+                    }, null, 2);
+                }
+                else {
+                    document.getElementById("result").value = JSON.stringify(e, null, 2);
+                    this.refreshCaptcha();
+                }
+            });
+        }
+    });
+    for (let x of document.querySelectorAll("input[type=radio]")) {
+        x.addEventListener("change", refreshSelect);
+    }
+    document.getElementById("method").addEventListener("input", refreshCurl);
+    document.getElementById("management-token").addEventListener("input", refreshCurl);
+    document.getElementById("developer-token").addEventListener("input", refreshCurl);
+    document.getElementById("params").addEventListener("input", refreshCurl);
+    document.getElementById("show-errors").addEventListener("click", () => {
+        const renderObjectParametersTable = (list) => `<table class="parametersTable"><thead><tr><th>Parameter</th><th>Type</th><th>Enum</th><th>Description</th></tr></thead><tbody>${list.map(x => `<tr><td>${x.parameter}</td><td>${x.type}</td><td>${x.enum}</td><td>${x.description}</td></tr>${x.addition}`).join("\n")}</tbody></table>`;
+        const renderObjectParametersTableWithParent = (parent, list) => `<table class="parametersTable"><thead><tr><th>Parameter</th><th>Type</th><th>Enum</th><th>Description</th></tr></thead><tbody><tr><td>${parent}</td><td></td><td></td><td></td></tr>${list.map(x => `<tr><td>${x.parameter}</td><td>${x.type}</td><td>${x.enum}</td><td>${x.description}</td></tr>${x.addition}`).join("\n")}</tbody></table>`;
+        const renderPrimitiveParametersTable = (parameter, type) => `<table><thead><tr><th>Parameter</th><th>Type</th></tr></thead><tbody><tr><td>${parameter}</td><td>${type}</td></tr></tbody></table>`;
+        const renderLiteralParamateresTable = (parameter, value, type) => `<table><thead><tr><th>Parameter</th><th>Value</th><th>Type</th></tr></thead><tbody><tr><td>${parameter}</td><td>${value}</td><td>${type}</td></tr></tbody></table>`;
+        const renderNestedObject = (list) => `${list.map(x => `<tr><td>${x.parameter}</td><td>${x.type}</td><td>${x.enum}</td><td>${x.description}</td></tr>${x.addition}`).join("\n")}`;
+        const renderErrors = (list) => `<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>${list.map(x => `<tr><td>${x.code}</td><td>${x.message}</td></tr>`).join("\n")}</tbody></table>`;
+        const method = document.getElementById("method").value;
+        if (!method) {
+            return;
+        }
+
+        const info = presetsRaw.map(x => x.methods).flat().find(y => y.method === method).info;
+
+        if (!info) {
+            alert(`Method '${method}' not found`);
+            return;
+        }
+        const errList = [];
+        const infoErrors = info.options.errorCodes || [];
+        for (const error_name of Object.keys(errors)) {
+            if (infoErrors.includes(error_name)) {
+                errList.push(errors[error_name])
+            }
+        }
+        const prepareProperty = (ident, prop) => {
+            if (prop.type.kind === "union") {
+                prop.type.types.map(element => element.parent = prop.name);
+            }
+            const {type, enumStr, addition, description, validationInfo} = produceTypeInfo(ident, prop.type);
+            return {
+                parameter: "> ".repeat(ident)+prop.name,
+                type: type,
+                enum: enumStr ? enumStr : "",
+                description: (prop.description || description || "").concat((validationInfo) ? validationInfo : ""),
+                addition: addition ? addition : ""
+            }
+        }
+
+        const prepareProperties = (ident, object) => {
+            if(!object) {
+                return "<p>No parameters</p>";
+            }
+            const mainObjectProperties = []
+            const unionTypeProperties = []
+            if (object.kind === "object") {
+                const table = []
+                for(const propertyName in object.properties) {
+                    const property = object.properties[propertyName];
+                    const preparedProperty = prepareProperty(ident, property);
+                    table.push(preparedProperty);
+                }
+                mainObjectProperties.push(((ident === 0) ? renderObjectParametersTable(table) : renderNestedObject(table)));
+            }
+            else if(object.kind === "union") {
+                for(const element of object.types) {
+                    if (element.kind === "object") {
+                        const table = []
+                        for(const propertyName in element.properties){
+                            const preparedProperty = prepareProperty(1, element.properties[propertyName]);
+                            table.push(preparedProperty);
+                        }
+                        unionTypeProperties.push(renderObjectParametersTableWithParent((element.parent) ? element.parent : element.name, table));
+                    }
+                    else if (element.kind === "primitive") {
+                        const {type} = produceTypeInfo(ident, element);
+                        unionTypeProperties.push(renderPrimitiveParametersTable(element.parent, type));
+
+                    }
+                    else if (element.kind === "literal") {
+                        const {type, enumStr} = produceTypeInfo(ident, element);
+                        unionTypeProperties.push(renderLiteralParamateresTable(element.parent, enumStr, type));
+                    }
+                }
+            }
+            return mainObjectProperties.join("\n").concat(unionTypeProperties.join("\n"));
+        }
+        
+        const generateValidatorInfoString = (validator) => {
+            if (validator.type === "int" || validator.type === "float" || validator.type === "strint") {
+                return ` (in range: [${(validator.min || validator.min === 0) ? validator.min : "-∞" },${(validator.max || validator.max === 0) ? validator.max : "∞"}])`;
+            }
+            else if (validator.type === "string" || validator.type === "email" || validator.type === "buffer" || validator.type === "list") {
+                return ` (length in [${(validator.minLength) ? validator.minLength : "0"},${(validator.maxLength) ? validator.maxLength : "∞"}])`;
+            }
+            return "";
+        }
+
+        const produceTypeInfo = (ident, type) => {
+            if (type.kind === "primitive") {
+                return {type: type.type, validationInfo: (type.validator) ? generateValidatorInfoString(type.validator) : ""};
+            }
+            if (type.kind === "literal") {
+                return {type: type.type, enumStr: type.value};
+            }
+            if (type.kind === "enum") {
+                return {type: type.type, enumStr: type.values.map(x => x.toString()).join("<br>")};
+            }
+            if (type.kind === "nullable") {
+                return produceTypeInfo(ident, type.type);
+            }
+            if (type.kind === "array") {
+                const sub = type.type.kind === "nullable" ? type.type.type : type.type;
+                if (sub.kind === "primitive") {
+                    return {type: `array of ${sub.type}`, validationInfo: (type.validator) ? generateValidatorInfoString(type.validator) : ""};
+                }
+                if (sub.kind === "literal") {
+                    return {type: `array of ${sub.type}`, validationInfo: (type.validator) ? generateValidatorInfoString(type.validator) : ""};
+                }
+                if (sub.kind === "enum") {
+                    return {type: "array of enum", enumStr: sub.values.map(x => x.toString()).join("<br>"), validationInfo: (type.validator) ? generateValidatorInfoString(type.validator) : ""};
+                }
+                if (sub.kind === "object") {
+                    return {type: "array of object", description: sub.description, addition: prepareProperties(ident + 1, sub), validationInfo: (type.validator) ? generateValidatorInfoString(type.validator) : ""};
+                }
+                throw new Error(`Unsupported array element type ${sub.kind}`);
+            }
+            if (type.kind === "object") {
+                return {type: "object", description: type.description, addition: prepareProperties(ident + 1, type)};
+            }
+            if (type.kind === "union") {
+                return {type: "union", description: "Lookup possible type descriptions", addition: prepareProperties(ident, type)};
+            }
+            throw new Error(`Unsupported type ${type.kind}`);
+        }
+
+        const prepareResponseParameters = (info) => {
+            return {
+                kind: "object",
+                name: "",
+                description: "",
+                properties: [
+                    {name: "id", description: "The id that was sent in the request", optional: false, type: {kind: "primitive", type: "number"}},
+                    {name: "jsonrpc", description: "The JSON-RPC version", optional: false, type: {kind: "literal", type: "string", value: "2.0"}},
+                    {name: "result", description: info.returns.description, optional: false, type: info.returns.type},
+                ]
+            };
+        }
+        
+        const prepareRequestParameters = (info) => {
+            const parameters = Object.keys(info.parameters).map(x => info.parameters[x]);
+            if (parameters.length === 0) {
+                return null;
+            }
+            if (parameters.length === 1 ) {
+                const param = parameters[0];
+                if (param.type.kind === "object" || param.type.kind === "union") {
+                    return param.type;
+                }
+            }
+            throw new Error(`Invalid method parameters for ${info.name}`);
+        };
+
+        const methodRequestModel = prepareProperties(0, prepareRequestParameters(info));
+        const methodResponseModel = prepareProperties(0, prepareResponseParameters(info));
+        const modalHtml = `
+        <div id="backdrop"></div>
+        <div id="modal">
+            <button class="close">X</button>
+            <h2>${method}</h2>
+            <h3>Description:</h3>
+            <p>${info.description}</p>
+            <h3>Request parameters:</h3>
+            ${methodRequestModel}
+            <h3>Response parameters:</h3>
+            ${methodResponseModel}
+            <h3>Method specific errors</h3>
+            ${errList.length === 0 ? '<p>No errors</p>' : renderErrors(errList)}
+            <h3>Common errors</h3>
+            ${renderErrors(commonErrors)}
+            <table>
+        </div>
+        `;
+        const modalContainer = document.getElementById("modal-container");
+        modalContainer.innerHTML = modalHtml;
+        modalContainer.querySelector(".close").addEventListener("click", () => modalContainer.innerHTML = "");
+    });
+    document.getElementById("generate-totp-code").addEventListener("click", () => {
+        const secretRaw = prompt("Type TOTP secret");
+        const secret = secretRaw ? secretRaw.trim() : null;
+        if (!secret) {
+            return;
+        }
+        const userRaw = prompt("Type TOTP username", "admin");
+        const user = userRaw ? userRaw.trim() : null;
+        if (!user) {
+            return;
+        }
+        const hostRaw = prompt("Type TOTP host", document.location.hostname);
+        const host = hostRaw ? hostRaw.trim() : null;
+        if (!host) {
+            return;
+        }
+        const div = document.createElement("div");
+        div.innerHTML = `
+            <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000; opacity: 0.5;"></div>
+            <div style="position: absolute; top: 100px; left: 50%; margin-left: -200px; width: 400px; padding: 15px; background-color: #fff; text-align: center;">
+                <h1>TOTP Code</h1>
+                <div>
+                    <canvas></canvas>
+                </div>
+                <button class="close">Close</button>
+            </div>
+        `;
+        document.body.append(div);
+        const uri = "otpauth://totp/" + host + ":" + user + "?secret=" + secret + "&issuer=" + host + "&algorithm=SHA1&digits=6&period=30";
+        QRCode.toCanvas(div.querySelector("canvas"), uri, {margin: 0, scale: 6}, err => {
+            if (err) {
+                console.log("Error during generating QR code", err);
+            }
+        });
+        div.querySelector(".close").addEventListener("click", () => {
+            document.body.removeChild(div);
+        });
+    });
+    refreshSelect();
+</script>
+</body>
+</html>

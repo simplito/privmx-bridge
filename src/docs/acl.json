@@ -1,0 +1,416 @@
+{
+  "groups": {
+    "thread/READ": {
+      "thread/threadGet": [
+        "threadId"
+      ],
+      "thread/threadList": [],
+      "thread/threadMessageGet": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessagesGet": [
+        "threadId"
+      ]
+    },
+    "thread/WRITE": {
+      "thread/threadCreate": [],
+      "thread/threadUpdate": [
+        "threadId"
+      ],
+      "thread/threadDelete": [
+        "threadId"
+      ],
+      "thread/threadDeleteMany": [],
+      "thread/threadMessageSend": [
+        "threadId"
+      ],
+      "thread/threadMessageDelete": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessageDeleteMany": [
+        "threadId"
+      ],
+      "thread/threadMessageDeleteOlderThan": [
+        "threadId"
+      ]
+    },
+    "thread/ALL": {
+      "thread/threadGet": [
+        "threadId"
+      ],
+      "thread/threadList": [],
+      "thread/threadMessageGet": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessagesGet": [
+        "threadId"
+      ],
+      "thread/threadCreate": [],
+      "thread/threadUpdate": [
+        "threadId"
+      ],
+      "thread/threadDelete": [
+        "threadId"
+      ],
+      "thread/threadDeleteMany": [],
+      "thread/threadMessageSend": [
+        "threadId"
+      ],
+      "thread/threadMessageDelete": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessageDeleteMany": [
+        "threadId"
+      ],
+      "thread/threadMessageDeleteOlderThan": [
+        "threadId"
+      ]
+    },
+    "store/READ": {
+      "store/storeGet": [
+        "storeId"
+      ],
+      "store/storeList": [],
+      "store/storeFileGet": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileList": [
+        "storeId"
+      ],
+      "store/storeFileRead": [
+        "storeId",
+        "fileId"
+      ]
+    },
+    "store/WRITE": {
+      "store/storeCreate": [],
+      "store/storeUpdate": [
+        "storeId"
+      ],
+      "store/storeDelete": [
+        "storeId"
+      ],
+      "store/storeDeleteMany": [],
+      "store/storeFileCreate": [
+        "storeId"
+      ],
+      "store/storeFileWrite": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileUpdate": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDelete": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDeleteMany": [
+        "storeId"
+      ],
+      "store/storeFileDeleteOlderThan": [
+        "storeId"
+      ]
+    },
+    "store/ALL": {
+      "store/storeGet": [
+        "storeId"
+      ],
+      "store/storeList": [],
+      "store/storeFileGet": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileList": [
+        "storeId"
+      ],
+      "store/storeFileRead": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeCreate": [],
+      "store/storeUpdate": [
+        "storeId"
+      ],
+      "store/storeDelete": [
+        "storeId"
+      ],
+      "store/storeDeleteMany": [],
+      "store/storeFileCreate": [
+        "storeId"
+      ],
+      "store/storeFileWrite": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileUpdate": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDelete": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDeleteMany": [
+        "storeId"
+      ],
+      "store/storeFileDeleteOlderThan": [
+        "storeId"
+      ]
+    },
+    "inbox/READ": {
+      "inbox/inboxGet": [
+        "inboxId"
+      ],
+      "inbox/inboxList": []
+    },
+    "inbox/WRITE": {
+      "inbox/inboxCreate": [],
+      "inbox/inboxUpdate": [
+        "inboxId"
+      ],
+      "inbox/inboxDelete": [
+        "inboxId"
+      ],
+      "inbox/inboxDeleteMany": []
+    },
+    "inbox/ALL": {
+      "inbox/inboxGet": [
+        "inboxId"
+      ],
+      "inbox/inboxList": [],
+      "inbox/inboxCreate": [],
+      "inbox/inboxUpdate": [
+        "inboxId"
+      ],
+      "inbox/inboxDelete": [
+        "inboxId"
+      ],
+      "inbox/inboxDeleteMany": []
+    },
+    "stream/READ": {
+      "stream/streamRoomGet": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomList": []
+    },
+    "stream/WRITE": {
+      "stream/streamRoomCreate": [],
+      "stream/streamRoomUpdate": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDelete": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDeleteMany": []
+    },
+    "stream/ALL": {
+      "stream/streamRoomGet": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomList": [],
+      "stream/streamRoomCreate": [],
+      "stream/streamRoomUpdate": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDelete": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDeleteMany": []
+    },
+    "READ": {
+      "store/storeGet": [
+        "storeId"
+      ],
+      "store/storeList": [],
+      "store/storeFileGet": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileList": [
+        "storeId"
+      ],
+      "store/storeFileRead": [
+        "storeId",
+        "fileId"
+      ],
+      "thread/threadGet": [
+        "threadId"
+      ],
+      "thread/threadList": [],
+      "thread/threadMessageGet": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessagesGet": [
+        "threadId"
+      ],
+      "inbox/inboxGet": [
+        "inboxId"
+      ],
+      "inbox/inboxList": [],
+      "stream/streamRoomGet": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomList": []
+    },
+    "WRITE": {
+      "store/storeCreate": [],
+      "store/storeUpdate": [
+        "storeId"
+      ],
+      "store/storeDelete": [
+        "storeId"
+      ],
+      "store/storeDeleteMany": [],
+      "store/storeFileCreate": [
+        "storeId"
+      ],
+      "store/storeFileWrite": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileUpdate": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDelete": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDeleteMany": [
+        "storeId"
+      ],
+      "store/storeFileDeleteOlderThan": [
+        "storeId"
+      ],
+      "thread/threadGet": [
+        "threadId"
+      ],
+      "thread/threadList": [],
+      "thread/threadMessageGet": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessagesGet": [
+        "threadId"
+      ],
+      "inbox/inboxGet": [
+        "inboxId"
+      ],
+      "inbox/inboxList": [],
+      "stream/streamRoomGet": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomList": []
+    },
+    "ALL": {
+      "store/storeGet": [
+        "storeId"
+      ],
+      "store/storeList": [],
+      "store/storeFileGet": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileList": [
+        "storeId"
+      ],
+      "store/storeFileRead": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeCreate": [],
+      "store/storeUpdate": [
+        "storeId"
+      ],
+      "store/storeDelete": [
+        "storeId"
+      ],
+      "store/storeDeleteMany": [],
+      "store/storeFileCreate": [
+        "storeId"
+      ],
+      "store/storeFileWrite": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileUpdate": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDelete": [
+        "storeId",
+        "fileId"
+      ],
+      "store/storeFileDeleteMany": [
+        "storeId"
+      ],
+      "store/storeFileDeleteOlderThan": [
+        "storeId"
+      ],
+      "thread/threadGet": [
+        "threadId"
+      ],
+      "thread/threadList": [],
+      "thread/threadMessageGet": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessagesGet": [
+        "threadId"
+      ],
+      "thread/threadCreate": [],
+      "thread/threadUpdate": [
+        "threadId"
+      ],
+      "thread/threadDelete": [
+        "threadId"
+      ],
+      "thread/threadDeleteMany": [],
+      "thread/threadMessageSend": [
+        "threadId"
+      ],
+      "thread/threadMessageDelete": [
+        "threadId",
+        "messageId"
+      ],
+      "thread/threadMessageDeleteMany": [
+        "threadId"
+      ],
+      "thread/threadMessageDeleteOlderThan": [
+        "threadId"
+      ],
+      "inbox/inboxGet": [
+        "inboxId"
+      ],
+      "inbox/inboxList": [],
+      "inbox/inboxCreate": [],
+      "inbox/inboxUpdate": [
+        "inboxId"
+      ],
+      "inbox/inboxDelete": [
+        "inboxId"
+      ],
+      "inbox/inboxDeleteMany": [],
+      "stream/streamRoomGet": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomList": [],
+      "stream/streamRoomCreate": [],
+      "stream/streamRoomUpdate": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDelete": [
+        "streamRoomId"
+      ],
+      "stream/streamRoomDeleteMany": []
+    }
+  }
+}

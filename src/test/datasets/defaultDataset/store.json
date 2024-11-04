@@ -1,0 +1,47 @@
+[{
+    "_id": "6718ca61234548e1928939bf",
+    "contextId": "662115304034ea5684acac8b",
+    "type": null,
+    "creator": "janek",
+    "createDate": 1729677921959,
+    "lastModifier": "janek",
+    "lastModificationDate": 1729677921959,
+    "keyId": "my-key",
+    "users": [
+      "janek"
+    ],
+    "managers": [
+      "janek"
+    ],
+    "keys": [
+      {
+        "user": "janek",
+        "keys": [
+          {
+            "keyId": "my-key",
+            "data": "eeee"
+          }
+        ]
+      }
+    ],
+    "history": [
+      {
+        "created": 1729677921959,
+        "author": "janek",
+        "keyId": "my-key",
+        "data": "aaaa",
+        "users": [
+          "janek"
+        ],
+        "managers": [
+          "janek"
+        ]
+      }
+    ],
+    "allTimeUsers": [
+      "janek"
+    ],
+    "lastFileDate": 1729677921959,
+    "files": 0,
+    "policy": {}
+}]

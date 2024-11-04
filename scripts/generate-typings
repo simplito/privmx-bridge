@@ -1,0 +1,63 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+MAIN_DIR="$(dirname $SCRIPT_DIR)"
+
+if [ -n "$1" ]; then
+    VERSION=$1
+else
+    VERSION=1.0.$(date '+%Y%m%d%H%M')
+fi
+
+WORK_DIR=`mktemp -d`
+
+mkdir -p $WORK_DIR/src/api/plain/types
+cp -R $MAIN_DIR/src/types $WORK_DIR/src/types
+cp -R $MAIN_DIR/src/api/plain/context/ContextApiTypes.ts $WORK_DIR/src/api/plain/types/Context.d.ts
+cp -R $MAIN_DIR/src/api/plain/inbox/ManagementInboxApiTypes.ts $WORK_DIR/src/api/plain/types/Inbox.d.ts
+cp -R $MAIN_DIR/src/api/plain/init/InitApiTypes.ts $WORK_DIR/src/api/plain/types/Init.d.ts
+cp -R $MAIN_DIR/src/api/plain/manager/ManagerApiTypes.ts $WORK_DIR/src/api/plain/types/Manager.d.ts
+cp -R $MAIN_DIR/src/api/plain/solution/SolutionApiTypes.ts $WORK_DIR/src/api/plain/types/Solution.d.ts
+cp -R $MAIN_DIR/src/api/plain/store/ManagementStoreApiTypes.ts $WORK_DIR/src/api/plain/types/Store.d.ts
+cp -R $MAIN_DIR/src/api/plain/stream/ManagementStreamApiTypes.ts $WORK_DIR/src/api/plain/types/Stream.d.ts
+cp -R $MAIN_DIR/src/api/plain/thread/ManagementThreadApiTypes.ts $WORK_DIR/src/api/plain/types/Thread.d.ts
+
+tee $WORK_DIR/src/api/plain/types/index.d.ts > /dev/null << END
+export * as context from "./Context.d.ts";
+export * as inbox from "./Inbox.d.ts";
+export * as init from "./Init.d.ts";
+export * as manager from "./Manager.d.ts";
+export * as solution from "./Solution.d.ts";
+export * as store from "./Store.d.ts";
+export * as stream from "./Stream.d.ts";
+export * as thread from "./Thread.d.ts";
+END
+
+tee $WORK_DIR/typings.d.ts > /dev/null << END
+export * as types from "./src/types";
+export * as api from "./src/api/plain/types";
+END
+
+tee $WORK_DIR/package.json > /dev/null << END
+{
+    "name": "@types/privmx-bridge-api",
+    "version": "$VERSION",
+    "description": "API types for PrivMX Bridge",
+    "license": "PrivMX",
+    "typings": "./typings.d.ts",
+    "dependencies": {
+        "@types/privmx-pki2": "^1.1.2",
+        "@types/bytebuffer": "^5.0.40"
+    }
+}
+END
+
+cd $WORK_DIR
+echo $WORK_DIR
+npm publish --registry=https://npmregistry.privmx.com/
+cd /
+rm -rf $WORK_DIR
+
+node -e 'var path = "'$MAIN_DIR'/package.json"; var fs = require("fs"); let content = JSON.parse(fs.readFileSync(path, "utf8")); content.typingsVersion = "'$VERSION'"; fs.writeFileSync(path, JSON.stringify(content, null, 2) + "\n", "utf8");';

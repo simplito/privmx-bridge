@@ -1,0 +1,23 @@
+{
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "cSpell.words": [
+        "bowser",
+        "bytebuffer",
+        "dids",
+        "Dpub",
+        "godaddy",
+        "Jitsi",
+        "kvdbentry",
+        "lukas",
+        "mkdrip",
+        "noone",
+        "pson",
+        "ripemd",
+        "secp",
+        "ssid",
+        "unarmor",
+        "uncompress",
+        "usergroup",
+        "webmail"
+    ]
+}

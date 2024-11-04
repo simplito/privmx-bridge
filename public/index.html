@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>PrivMX Bridge</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="16x16" />
+    <link rel="preload" href="/assets/fonts/privmx-medium-webfont.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/privmx-regular-webfont.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/privmx-semibold-webfont.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/privmx-ultralight-webfont.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/assets/fonts/privmx-bold-webfont.woff2" as="font" type="font/woff2" crossorigin>
+    <style>
+        @font-face {
+            font-family: "privmx";
+            src: url(/assets/fonts/privmx-bold-webfont.woff2) format("woff2"), url(/fonts/privmx-bold-webfont.woff) format("woff");
+            font-weight: 700;
+            font-style: normal;
+            font-display: swap;
+        }
+        @font-face {
+            font-family: "privmx";
+            src: url(/assets/fonts/privmx-medium-webfont.woff2) format("woff2"), url(/fonts/privmx-medium-webfont.woff) format("woff");
+            font-weight: 500;
+            font-style: normal;
+            font-display: swap;
+        }
+        @font-face {
+            font-family: "privmx";
+            src: url(/assets/fonts/privmx-regular-webfont.woff2) format("woff2"), url(/fonts/privmx-regular-webfont.woff) format("woff");
+            font-weight: 400;
+            font-style: normal;
+            font-display: swap;
+        }
+        @font-face {
+            font-family: "privmx";
+            src: url(/assets/fonts/privmx-semibold-webfont.woff2) format("woff2"), url(/fonts/privmx-semibold-webfont.woff) format("woff");
+            font-weight: 600;
+            font-style: normal;
+            font-display: swap;
+        }
+        @font-face {
+            font-family: "privmx";
+            src: url(/assets/fonts/privmx-ultralight-webfont.woff2) format("woff2"), url(/fonts/privmx-ultralight-webfont.woff) format("woff");
+            font-weight: 100;
+            font-style: normal;
+            font-display: swap;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        html, body {
+            background: #00182d;
+            color: #fafafa;
+            font-family: "privmx", sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            min-height: 100dvh;
+        }
+        #root {
+            max-width: 1280px;
+            margin: 0 auto;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            justify-content:space-between;
+            position: relative;
+        }
+        @media screen and (max-width: 1280px) {
+            #root {
+                padding: 0 20px;
+            }
+        }
+        #logo {
+            padding: 19px 0;
+            border-bottom: 1px solid rgb(0 143 124);
+            margin-bottom: 80px;
+            color: #008F7C;
+            height: 76px;
+        }
+        h1 {
+            font-size: 72px;
+            margin: 0 0 0 -7px;
+            font-weight: 600;
+        }
+        p {
+            font-size: 24px;
+            margin-top: 10px;
+            margin-bottom: 30px;
+        }
+        a {
+            color: #fafafa;
+            text-decoration: none;
+            padding: 15px 0px;
+            border-bottom: 2px solid rgb(36 255 94);
+            font-weight: 600;
+            width: 400px;
+            
+        }
+        @media screen and (max-width: 400px) {
+            a {
+                width: 100%;
+            }
+        }
+        a:hover {
+            text-decoration: none;
+            background-color: rgb(36 255 94);
+            color: rgb(0 24 46);
+            padding: 15px 15px;
+            transition-duration: .3s;
+        }
+        .contentWrap {
+            position: relative;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            height:100%;
+            padding: 10% 0 20%;
+        }
+        .content{
+            z-index: 1;
+            width: 100%;
+        }
+        .ill{
+            position:relative;
+            overflow: visible;
+            width: 100%;
+            display: flex;
+            flex-flow: column;
+            justify-content: center;
+            justify-items: start;
+            place-items: start;
+        }
+        .ill img{
+            position: absolute;
+            width: max-content;
+            height: max-content;
+            object-fit: contain;
+        }
+        .footer{
+            height: 100%;
+            display: flex;
+            justify-items: end;
+            place-items: end;
+            border-top: 1px solid rgb(0 143 124);
+            flex-direction: row;
+            gap: 20px;
+            justify-content: space-between;
+            z-index: 1;
+        }
+        .footer p{
+            font-size: 11px;
+        }
+        .footer a {
+            border: none;
+        }
+        .footer a:hover{
+            background-color: transparent;
+            color:rgb(36 255 94);
+            cursor: pointer;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <main id="root">
+        <div id="logo">
+            <svg width="164" height="38" viewBox="0 0 164 38" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#clip0_2186_747)"><path d="M80.9449 14.4779V17.1843C80.9449 20.771 78.2307 23.2278 73.0868 23.2278H69.9931V30.4983C68.2881 30.6559 66.5858 30.6559 64.9125 30.4983V8.46867H73.0868C78.2307 8.46867 80.9449 10.9228 80.9449 14.4806V14.4779ZM75.8643 15.2662C75.8643 13.4085 74.855 12.5283 72.8338 12.4967H69.9931V17.6258C69.9931 18.0987 69.9615 18.5691 69.835 19.042L69.9931 19.1997H72.8338C74.855 19.1682 75.8643 18.2879 75.8643 16.3987V15.2662Z" fill="currentColor"></path><path d="M87.4459 16.6825C88.392 14.8563 90.1918 13.8499 92.9693 14.1968C92.9693 15.9284 92.6847 17.25 92.0865 18.6348C90.1602 18.3825 88.803 18.8239 87.5724 20.0195V30.4983C86.2785 30.6559 84.0703 30.6559 82.7737 30.4983V15.077C84.036 14.386 85.9939 14.0076 87.5724 14.0076C87.5724 14.7643 87.4775 15.8022 87.2878 16.5248L87.4459 16.6825Z" fill="currentColor"></path><path d="M94.5767 9.7273C94.5767 8.09032 95.3646 7.21008 97.1012 7.21008C98.8378 7.21008 99.5941 8.09032 99.5941 9.7273C99.5941 11.3643 98.7746 12.213 97.1012 12.213C95.4279 12.213 94.5767 11.3958 94.5767 9.7273ZM94.5767 15.077C95.839 14.386 97.7969 14.0076 99.3754 14.0076V30.4983C98.0815 30.6559 95.8732 30.6559 94.5767 30.4983V15.077Z" fill="currentColor"></path><path d="M112.883 14.2572C114.557 14.0996 116.135 14.0996 117.774 14.2572L112.314 30.4956C110.641 30.6533 108.654 30.6533 106.981 30.4956L101.014 14.2572C102.751 14.0996 104.485 14.0996 106.222 14.2572L109.22 23.099C109.379 23.6035 109.568 24.3892 109.632 25.3955H109.79C109.853 24.3892 110.043 23.6009 110.201 23.099L112.883 14.2572Z" fill="currentColor"></path><path d="M137.027 8.46868C138.289 8.31103 140.497 8.31103 141.791 8.46868V30.4983C140.466 30.6559 138.005 30.6559 136.711 30.4983V19.515C136.711 19.042 136.742 18.5402 136.869 18.0672L136.711 17.9411L132.07 25.2747C131.817 25.3377 131.029 25.3692 130.776 25.3692C130.523 25.3692 129.735 25.3377 129.482 25.2747L124.842 17.9411L124.684 18.0672C124.81 18.5402 124.842 19.042 124.842 19.515V30.4983C123.548 30.6559 121.055 30.6559 119.761 30.4983V8.46868C121.055 8.31103 123.232 8.31103 124.526 8.46868L129.764 16.9978C130.081 17.5653 130.615 18.4141 130.679 19.1366H130.868C130.932 18.4141 131.438 17.5627 131.783 16.9978L137.022 8.46868H137.027Z" fill="currentColor"></path><path d="M158.517 20.7421L163.692 30.4983C161.829 30.6559 159.811 30.6559 157.948 30.4983L153.845 22.2529L149.552 30.4983C147.689 30.6559 145.892 30.6559 144.029 30.4983L149.204 20.7421C149.647 19.9249 149.929 19.4519 150.561 19.2628V19.0736C149.865 18.8529 149.362 18.2564 149.014 17.5943L144.029 8.46868C145.828 8.31103 147.973 8.31103 149.773 8.46868L153.908 16.4933L158.295 8.46868C160.095 8.31103 161.892 8.31103 163.692 8.46868L158.738 17.5943C158.359 18.2564 157.887 18.8529 157.191 19.0736V19.2628C157.792 19.4519 158.106 19.9249 158.517 20.7421Z" fill="currentColor"></path><path d="M13.8663 3.15309L10.517 0H36.9084L33.6118 3.1347C32.534 4.15945 31.1004 4.73226 29.6116 4.73226H17.8481C16.3671 4.73226 14.9441 4.16734 13.869 3.15572L13.8663 3.15309Z" fill="currentColor"></path><path d="M45.4279 0.328458L23.7167 20.9576L2.00537 0.328458C1.24908 -0.38887 0 0.144528 0 1.18505V38L3.04627 34.9625C4.1346 33.8773 4.74333 32.4085 4.74333 30.874V9.46717L19.6295 23.6114C19.8719 23.8453 20.1512 24.0292 20.4727 24.1317V24.3209C20.1512 24.4233 19.8719 24.6073 19.6295 24.8411L7.92663 35.961C7.15189 36.6967 7.67365 38 8.74617 38H38.6871C39.757 38 40.2814 36.6967 39.5067 35.961L27.8091 24.8464C27.564 24.6125 27.2821 24.426 26.9579 24.3235V24.1343C27.2821 24.0318 27.564 23.8453 27.8091 23.6088L42.69 9.46979V30.8767C42.69 32.4085 43.3013 33.88 44.387 34.9652L47.4333 38.0026V1.18505C47.4333 0.144528 46.1842 -0.38887 45.4279 0.328458ZM29.7934 33.2677H17.6373L23.714 27.4923L29.7907 33.2677H29.7934Z" fill="currentColor"></path></g><defs><clipPath id="clip0_2186_747"><rect width="163.692" height="38" fill="currentColor"></rect></clipPath></defs></svg>
+        </div>
+        <div class="contentWrap">
+            <div class="content">
+                <h1>
+                    PrivMX Bridge
+                </h1>
+                <p>
+                    Zero-knowledge server for secure storage and transfer of E2E encrypted data.
+                </p>
+                <div>
+                    <a href="/docs" style="display: flex;">
+                        <span style="flex-grow: 1;">API Documentation</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M13.1717 12.0007L8.22192 7.05093L9.63614 5.63672L16.0001 12.0007L9.63614 18.3646L8.22192 16.9504L13.1717 12.0007Z"></path></svg>
+                    </a>
+                </div>
+            </div>
+            <div class="ill">
+                <img src="/assets/ill.svg" alt="Illustration">
+            </div>
+        </div>
+        <div class="footer">
+            <p>
+                Copyright © 2024 All rights reserved. Simplito. sp. z o.o.
+            </p>
+            <p>
+                <a href="https://privmx.dev/" target="_blank" nofollow >privmx.dev</a>
+            </p>
+    </main>
+</body>
+</html>
