@@ -34,7 +34,7 @@ export class AesEncryptor implements Encoder {
         if (value == null) {
             return value;
         }
-        let binaryValue: string;
+        let binaryValue: string|null = null;
         let iv: Buffer;
         if (this.useCache) {
             binaryValue = value.toString("binary");
@@ -47,7 +47,7 @@ export class AesEncryptor implements Encoder {
             iv = Crypto.randomBytes(16);
         }
         const cipher = Buffer.concat([iv, Crypto.aes256CbcPkcs7Encrypt(value, this.key, iv)]);
-        if (this.useCache) {
+        if (binaryValue !== null) {
             this.cache[binaryValue] = cipher;
         }
         return cipher;

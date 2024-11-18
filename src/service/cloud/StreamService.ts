@@ -106,7 +106,7 @@ export class StreamService {
                 return {context: null, toNotify: []};
             }
             const contextId = streamRooms[0].contextId;
-            let additionalAccessCheck: ((streamRoom: db.stream.StreamRoom) => boolean)|null = null;
+            let additionalAccessCheck: ((streamRoom: db.stream.StreamRoom) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomDeleteMany", []);
                 additionalAccessCheck = streamRoom => this.policy.canDeleteContainer(user, context, streamRoom);
@@ -117,7 +117,7 @@ export class StreamService {
                 if(streamRoom.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(streamRoom)) {
+                if (!additionalAccessCheck(streamRoom)) {
                     resultMap.set(streamRoom.id, "ACCESS_DENIED");
                 }
                 else {
@@ -129,8 +129,10 @@ export class StreamService {
             await streamRoomRepository.deleteManyStreamRooms(toDelete);
             return {context: usedContext, toNotify};
         });
-        for (const deletedInbox of result.toNotify) {
-            this.streamNotificationService.sendStreamRoomDeleted(deletedInbox, result.context.solution);
+        if (result.context) {
+            for (const deletedInbox of result.toNotify) {
+                this.streamNotificationService.sendStreamRoomDeleted(deletedInbox, result.context.solution);
+            }
         }
         
         const resultArray: types.stream.StreamRoomDeleteStatus[] = [];
@@ -138,7 +140,7 @@ export class StreamService {
             resultArray.push({id, status});
         }
         
-        return {contextId: result.context.id, results: resultArray};
+        return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
     
     async deleteStreamRoomsByContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {

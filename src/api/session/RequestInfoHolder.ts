@@ -14,16 +14,20 @@ import { SessionData, ServerSessionService } from "./ServerSessionService";
 
 export class RequestInfoHolder {
     
-    ip: types.core.IPAddress;
-    serverSession: SessionData;
+    private ipProp?: types.core.IPAddress;
+    serverSession?: SessionData;
     
     constructor(
         private serverSessionService: ServerSessionService
     ) {
     }
     
+    get ip() {
+        return this.ipProp || "unknown" as types.core.IPAddress;
+    }
+    
     setIP(ip: types.core.IPAddress): void {
-        this.ip = ip;
+        this.ipProp = ip;
     }
     
     setServerSession(auth: types.core.ServerSessionId): void {

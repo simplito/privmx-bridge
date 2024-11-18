@@ -59,39 +59,39 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     @ApiMethod({errorCodes: ["API_KEYS_LIMIT_EXCEEDED"]})
     async createApiKey(model: managerApi.CreateApiKeyModel): Promise<managerApi.CreateApiKeyResult> {
         this.validateScope("apiKey");
-        const apiKey = await this.apiKeyService.createApiKey(this.authorizationHolder.getAuth().user.id, model.name, model.scope, model.publicKey);
+        const apiKey = await this.apiKeyService.createApiKey(this.getAuth().user.id, model.name, model.scope, model.publicKey);
         return {id: apiKey.id, secret: apiKey.secret};
     }
     
     @ApiMethod({errorCodes: ["API_KEY_DOES_NOT_EXIST"]})
     async updateApiKey(model: managerApi.UpdateApiKeyModel): Promise<types.core.OK> {
         this.validateScope("apiKey");
-        await this.apiKeyService.updateApiKey(this.authorizationHolder.getAuth().user.id, model);
+        await this.apiKeyService.updateApiKey(this.getAuth().user.id, model);
         return "OK";
     }
     
     @ApiMethod({errorCodes: ["API_KEY_DOES_NOT_EXIST"]})
     async getApiKey(model: managerApi.GetApiKeyModel): Promise<managerApi.GetApiKeyResult> {
         this.validateScope("apiKey");
-        const apiKey = await this.apiKeyService.getApiKey(this.authorizationHolder.getAuth().user.id, model.id);
+        const apiKey = await this.apiKeyService.getApiKey(this.getAuth().user.id, model.id);
         return {apiKey: this.convertApiKey(apiKey)};
     }
     
     @ApiMethod({})
     async listApiKeys(): Promise<managerApi.ListApiKeysResult> {
         this.validateScope("apiKey");
-        const list = await this.apiKeyService.listApiKeys(this.authorizationHolder.getAuth().user.id);
+        const list = await this.apiKeyService.listApiKeys(this.getAuth().user.id);
         return {list: list.map(x => this.convertApiKey(x))};
     }
     
     @ApiMethod({errorCodes: ["API_KEY_DOES_NOT_EXIST"]})
     async deleteApiKey(model: managerApi.DeleteApiKeyModel): Promise<types.core.OK> {
         this.validateScope("apiKey");
-        const auth = this.authorizationHolder.getAuth();
+        const auth = this.getAuth();
         if (auth.apiKey.id === model.id) {
             throw new AppException("ACCESS_DENIED", "Cannot remove api key which you aready use");
         }
-        await this.apiKeyService.deleteApiKey(this.authorizationHolder.getAuth().user.id, model.id);
+        await this.apiKeyService.deleteApiKey(auth.user.id, model.id);
         return "OK";
     }
     
@@ -103,7 +103,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
 
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async subscribeToChannel(model: managerApi.SubscribeToChannelModel): Promise<types.core.OK> {
-        if (!this.webSocketEx) {
+        if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         for (const channel of model.channels) {
@@ -124,7 +124,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
 
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async unsubscribeFromChannel(model: managerApi.UnsubscribeFromChannelModel): Promise<types.core.OK> {
-        if (!this.webSocketEx) {
+        if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         for (const channel of model.channels) {
@@ -180,5 +180,13 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
             publicKey: apiKey.publicKey,
         };
         return result;
+    }
+    
+    private getAuth() {
+        const auth = this.authorizationHolder.getAuth();
+        if (!auth) {
+            throw new Error("Authorization required");
+        }
+        return auth;
     }
 }

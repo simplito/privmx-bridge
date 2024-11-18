@@ -16,7 +16,6 @@ import { NonceService } from "../misc/NonceService";
 import { DbManager, BinaryRepositoryFactoryFunc } from "../../db/DbManager";
 import { ConfigService } from "../config/ConfigService";
 import { UserLoginService } from "../login/UserLoginService";
-import { MongoKVRepositoryFactoryEx } from "../../db/mongo/MongoKVRepositoryFactoryEx";
 import { SrpLogic } from "../../utils/crypto/SrpLogic";
 import { TicketsDb } from "../../api/tls/TicketsDb";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
@@ -115,95 +114,94 @@ export class IOC {
     
     takeMongoClientFromWorker = true;
     
-    protected configService: ConfigService;
-    protected configLoader: ConfigLoader;
-    protected dbManager: DbManager;
-    protected nonceService: NonceService;
-    protected settingsService: SettingsService;
-    protected pkiFactory: PkiFactory;
-    protected nodeHelper: NodeHelper;
-    protected callbacks: Callbacks;
-    protected requestService: RequestService;
-    protected fileSystemService: FileSystemService;
-    protected storageService: IStorageService;
-    protected fileSystemStorageService: FileSystemStorageService;
-    protected userLoginService: UserLoginService;
-    protected sessionCleaner: SessionCleaner;
-    protected mongoKVRepositoryFactoryEx: MongoKVRepositoryFactoryEx;
-    protected mainApiRsolver: MainApiResolver;
-    protected srpConfigService: SrpConfigService;
-    protected sessionStorage: SessionStorage;
-    protected ticketsDb: TicketsDb;
-    protected importer: Importer;
-    protected mongoDbManager: MongoDbManager;
-    protected serverSessionService: ServerSessionService;
-    protected serverStatsService: ServerStatsService;
-    protected initApiValidator: InitApiValidator;
-    protected managerApiValidator: ManagerApiValidator;
-    protected contextApiValidator: ContextApiValidator;
-    protected plainApiResolver: RequestApiResolver;
-    protected loginLogService: LoginLogService;
-    protected jobManager: JobManager;
-    protected webSocketConnectionManager: WebSocketConnectionManager;
-    protected simpleWebSocketConnectionManager: SimpleWebSocketConnectionManager;
-    protected webSocketSender: WebSocketSender;
-    protected webSocketPlainSender: WebSocketPlainSender;
-    protected jobService: JobService;
+    protected configService?: ConfigService;
+    protected configLoader?: ConfigLoader;
+    protected dbManager?: DbManager;
+    protected nonceService?: NonceService;
+    protected settingsService?: SettingsService;
+    protected pkiFactory?: PkiFactory;
+    protected nodeHelper?: NodeHelper;
+    protected callbacks?: Callbacks;
+    protected requestService?: RequestService;
+    protected fileSystemService?: FileSystemService;
+    protected storageService?: IStorageService;
+    protected fileSystemStorageService?: FileSystemStorageService;
+    protected userLoginService?: UserLoginService;
+    protected sessionCleaner?: SessionCleaner;
+    protected mainApiRsolver?: MainApiResolver;
+    protected srpConfigService?: SrpConfigService;
+    protected sessionStorage?: SessionStorage;
+    protected ticketsDb?: TicketsDb;
+    protected importer?: Importer;
+    protected mongoDbManager?: MongoDbManager;
+    protected serverSessionService?: ServerSessionService;
+    protected serverStatsService?: ServerStatsService;
+    protected initApiValidator?: InitApiValidator;
+    protected managerApiValidator?: ManagerApiValidator;
+    protected contextApiValidator?: ContextApiValidator;
+    protected plainApiResolver?: RequestApiResolver;
+    protected loginLogService?: LoginLogService;
+    protected jobManager?: JobManager;
+    protected webSocketConnectionManager?: WebSocketConnectionManager;
+    protected simpleWebSocketConnectionManager?: SimpleWebSocketConnectionManager;
+    protected webSocketSender?: WebSocketSender;
+    protected webSocketPlainSender?: WebSocketPlainSender;
+    protected jobService?: JobService;
     protected binaryRepositoryFactoriesMap: {[name: string]: BinaryRepositoryFactoryFunc};
     protected storageProvidersMap: {[name: string]: () => IStorageService};
-    protected pluginsManager: PluginsManager;
-    protected app: App;
-    protected privmxExpressApp: PrivmxExpressApp;
-    protected configLoaderFunc: ConfigLoaderFunc;
-    protected maintenanceService: MaintenanceService;
-    protected requestContextFactory: RequestContextFactory;
-    protected serverAgent: ServerAgent;
-    protected clientIpService: ClientIpService;
-    protected hostHttpHandler: HostHttpHandler;
+    protected pluginsManager?: PluginsManager;
+    protected app?: App;
+    protected privmxExpressApp?: PrivmxExpressApp;
+    protected configLoaderFunc?: ConfigLoaderFunc;
+    protected maintenanceService?: MaintenanceService;
+    protected requestContextFactory?: RequestContextFactory;
+    protected serverAgent?: ServerAgent;
+    protected clientIpService?: ClientIpService;
+    protected hostHttpHandler?: HostHttpHandler;
     public workerRegistry: WorkerRegistry;
-    protected repositoryFactory: RepositoryFactory;
-    protected packetValidator: PacketValidator;
-    protected requestApiValidator: RequestApiValidator;
-    protected userApiValidator: UserApiValidator;
-    protected ticketKeyHolder: TicketKeyHolder;
+    protected repositoryFactory?: RepositoryFactory;
+    protected packetValidator?: PacketValidator;
+    protected requestApiValidator?: RequestApiValidator;
+    protected userApiValidator?: UserApiValidator;
+    protected ticketKeyHolder?: TicketKeyHolder;
     protected loggerFactory: LoggerFactory;
-    protected metricService: MetricService;
-    protected contextService: ContextService;
-    protected solutionService: SolutionService;
-    protected threadService: ThreadService;
-    protected managementContextApiValidator: ManagementContextApiValidator;
-    protected managementSolutionApiValidator: ManagementSolutionApiValidator;
-    protected managementThreadApiValidator: ManagementThreadApiValidator;
-    protected managementStoreApiValidator: ManagementStoreApiValidator;
-    protected managementStreamApiValidator: ManagementStreamApiValidator;
-    protected managementInboxApiValidator: ManagementInboxApiValidator;
-    protected threadApiValidator: ThreadApiValidator;
-    protected threadConverter: ThreadConverter;
-    protected cloudKeyService: CloudKeyService;
-    protected threadNotificationService: ThreadNotificationService;
-    protected storeService: StoreService;
-    protected storeConverter: StoreConverter;
-    protected storeNotificationService: StoreNotificationService;
-    protected storeApiValidator: StoreApiValidator;
-    protected inboxApiValidator: InboxApiValidator;
-    protected inboxService: InboxService;
-    protected inboxNotificationService: InboxNotificationService;
-    protected inboxConverter: InboxConverter;
+    protected metricService?: MetricService;
+    protected contextService?: ContextService;
+    protected solutionService?: SolutionService;
+    protected threadService?: ThreadService;
+    protected managementContextApiValidator?: ManagementContextApiValidator;
+    protected managementSolutionApiValidator?: ManagementSolutionApiValidator;
+    protected managementThreadApiValidator?: ManagementThreadApiValidator;
+    protected managementStoreApiValidator?: ManagementStoreApiValidator;
+    protected managementStreamApiValidator?: ManagementStreamApiValidator;
+    protected managementInboxApiValidator?: ManagementInboxApiValidator;
+    protected threadApiValidator?: ThreadApiValidator;
+    protected threadConverter?: ThreadConverter;
+    protected cloudKeyService?: CloudKeyService;
+    protected threadNotificationService?: ThreadNotificationService;
+    protected storeService?: StoreService;
+    protected storeConverter?: StoreConverter;
+    protected storeNotificationService?: StoreNotificationService;
+    protected storeApiValidator?: StoreApiValidator;
+    protected inboxApiValidator?: InboxApiValidator;
+    protected inboxService?: InboxService;
+    protected inboxNotificationService?: InboxNotificationService;
+    protected inboxConverter?: InboxConverter;
     protected instanceHost: types.core.Host;
-    protected streamApiValidator: StreamApiValidator;
-    protected streamService: StreamService;
-    protected streamConverter: StreamConverter;
-    protected streamNotificationService: StreamNotificationService;
-    protected tokenEncryptionService: TokenEncryptionService;
-    protected tokenEncryptionKeyProvider: TokenEncryptionKeyProvider;
-    protected apiKeyService: ApiKeyService;
-    protected signatureVerificationService: SignatureVerificationService;
-    protected policyService: PolicyService;
-    protected cloudAccessValidator: CloudAccessValidator;
-    protected managementThreadConverter: ManagementThreadConverter;
-    protected managementStreamConverter: ManagementStreamConverter;
-    protected managementStoreConverter: ManagementStoreConverter;
-    protected managementInboxConverter: ManagementInboxConverter;
+    protected streamApiValidator?: StreamApiValidator;
+    protected streamService?: StreamService;
+    protected streamConverter?: StreamConverter;
+    protected streamNotificationService?: StreamNotificationService;
+    protected tokenEncryptionService?: TokenEncryptionService;
+    protected tokenEncryptionKeyProvider?: TokenEncryptionKeyProvider;
+    protected apiKeyService?: ApiKeyService;
+    protected signatureVerificationService?: SignatureVerificationService;
+    protected policyService?: PolicyService;
+    protected cloudAccessValidator?: CloudAccessValidator;
+    protected managementThreadConverter?: ManagementThreadConverter;
+    protected managementStreamConverter?: ManagementStreamConverter;
+    protected managementStoreConverter?: ManagementStoreConverter;
+    protected managementInboxConverter?: ManagementInboxConverter;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry, loggerFactory: LoggerFactory) {
         this.instanceHost = instanceHost;
@@ -428,7 +426,7 @@ export class IOC {
     
     getStorageService() {
         if (this.storageService == null) {
-            const storageProviderName = this.configService.values.db.storageProviderName;
+            const storageProviderName = this.getConfigService().values.db.storageProviderName;
             this.storageService = this.resolveStorageProviderFactory(storageProviderName)();
         }
         return this.storageService;
@@ -498,15 +496,6 @@ export class IOC {
         return this.sessionCleaner;
     }
     
-    getMongoKVRepositoryFactoryEx() {
-        if (this.mongoKVRepositoryFactoryEx == null) {
-            this.mongoKVRepositoryFactoryEx = new MongoKVRepositoryFactoryEx(
-                this.getMongoDbManager(),
-            );
-        }
-        return this.mongoKVRepositoryFactoryEx;
-    }
-    
     getCallbacks() {
         if (this.callbacks == null) {
             this.callbacks = new Callbacks(
@@ -544,7 +533,7 @@ export class IOC {
             this.mainApiRsolver.registerApiWithPrefix("inbox.", InboxApi, ({ioc: e, sessionService: s}) => new InboxApi(e.ioc.getInboxApiValidator(), s, e.ioc.getInboxService(), e.ioc.getInboxConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger()));
             
-            this.pluginsManager.registerEndpoint(this.mainApiRsolver);
+            this.getPluginsManager().registerEndpoint(this.mainApiRsolver);
         }
         return this.mainApiRsolver;
     }

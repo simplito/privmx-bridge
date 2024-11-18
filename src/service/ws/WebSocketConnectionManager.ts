@@ -30,7 +30,7 @@ export interface WebSocketConnectionManager {
     disconnectWebSocketsBySubidentity(pub: types.core.EccPubKey): void;
     disconnectWebSocketsByDeviceId(deviceId: types.core.DeviceId): void;
     disconnectWebSocketsBySubidentityGroup(groupId: types.user.UsersGroupId): void;
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[], event: T): void;
+    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T): void;
 }
 
 export class SimpleWebSocketConnectionManager implements WebSocketConnectionManager {
@@ -60,7 +60,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         }
         const wsChannelId = this.generateWsChannelId(wsEx.ex.sessions);
         this.webSocketInnerManager.addSession(wsEx, {
-            id: session.getId(),
+            id: session.id,
             host: this.configService.values.domain as types.core.Host,
             wsId: wsId,
             wsChannelId: wsChannelId,
@@ -123,7 +123,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         }, "disconnectWebSocketsBySubidentityGroup");
     }
     
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[], event: T) {
+    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T) {
         this.jobService.addJob(async () => {
             await this.workerService.sendWebsocketNotification({channel: channel, host: this.getHost(), clients, event});
         }, "Error during sending websocket notification");

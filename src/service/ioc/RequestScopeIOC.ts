@@ -31,19 +31,19 @@ import { MetricsContainer } from "../../cluster/master/ipcServices/MetricsContai
 
 export class RequestScopeIOC {
     
-    protected engine: Engine;
-    protected apiEndpoint: ApiEndpoint;
-    protected serverEndpoint: ServerEndpoint;
-    protected sessionHolder: SessionHolder;
-    protected keyLoginService: KeyLoginService;
-    protected srpLoginService: SrpLoginService;
-    protected requestInfoHolder: RequestInfoHolder;
-    protected ecdheLoginService: EcdheLoginService;
-    protected sessionLoginService: SessionLoginService;
-    protected authorizationDetector: AuthorizationDetector;
-    protected authorizationHolder: AuthorizationHolder;
-    protected authService: AuthService;
-    protected metricsContainer: MetricsContainer;
+    protected engine?: Engine;
+    protected apiEndpoint?: ApiEndpoint;
+    protected serverEndpoint?: ServerEndpoint;
+    protected sessionHolder?: SessionHolder;
+    protected keyLoginService?: KeyLoginService;
+    protected srpLoginService?: SrpLoginService;
+    protected requestInfoHolder?: RequestInfoHolder;
+    protected ecdheLoginService?: EcdheLoginService;
+    protected sessionLoginService?: SessionLoginService;
+    protected authorizationDetector?: AuthorizationDetector;
+    protected authorizationHolder?: AuthorizationHolder;
+    protected authService?: AuthService;
+    protected metricsContainer?: MetricsContainer;
     
     constructor(
         public ioc: IOC,
@@ -68,11 +68,12 @@ export class RequestScopeIOC {
     }
     
     createPlainJsonRpcServer(methodInfo: MethodInfo) {
+        const engine = this.getEngine();
         return new JsonRpcServer(
             {execute: async (method, params, token) => {
                 const ipAddress = this.getRequestInfoHolder().ip;
-                if (!(await this.ioc.getIpRateLimiterClient().canPerformRequest(ipAddress))) {
-                    return this.engine.rawResponse("Too many requests", "text/plain", 429);
+                if (ipAddress && !(await this.ioc.getIpRateLimiterClient().canPerformRequest(ipAddress))) {
+                    return engine.rawResponse("Too many requests", "text/plain", 429);
                 }
                 if (token) {
                     this.getAuthorizationDetector().setTokenFromRequestPayload(token);
@@ -80,7 +81,7 @@ export class RequestScopeIOC {
                 return this.ioc.getPlainApiResolver().execute(this, method, params);
             }},
             methodInfo,
-            this.getEngine(),
+            engine,
         );
     }
     

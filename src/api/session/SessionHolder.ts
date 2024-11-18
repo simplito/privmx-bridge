@@ -28,7 +28,7 @@ export class SessionHolder {
         return this.session;
     }
     
-    async createSession(tr: mongodb.ClientSession) {
+    async createSession(tr: mongodb.ClientSession|undefined) {
         if (this.session) {
             throw new Error("Session already exists");
         }
@@ -60,17 +60,17 @@ export class SessionHolder {
         return this.session;
     }
     
-    async closeCurrentSessionAndCreateNewOne(tr: mongodb.ClientSession) {
+    async closeCurrentSessionAndCreateNewOne(tr: mongodb.ClientSession|undefined) {
         await this.close(tr);
         return this.createSession(tr);
     }
     
-    async closeCurrentSessionAndRestoreGiven(tr: mongodb.ClientSession, sessionId: types.core.SessionId) {
+    async closeCurrentSessionAndRestoreGiven(tr: mongodb.ClientSession|undefined, sessionId: types.core.SessionId) {
         await this.close(tr);
         return this.restoreSession(sessionId);
     }
     
-    async close(tr: mongodb.ClientSession) {
+    async close(tr: mongodb.ClientSession|undefined) {
         if (this.session && this.session.isChanged()) {
             await this.sessionStorage.setSession(tr, this.session.id, this.session.changes);
         }
@@ -83,7 +83,7 @@ export class SessionHolder {
         }
     }
     
-    async destroy(tr: mongodb.ClientSession, session: Session) {
+    async destroy(tr: mongodb.ClientSession|undefined, session: Session) {
         await this.sessionStorage.removeSession(tr, session.id);
         if (this.session === session) {
             this.session = null;

@@ -17,7 +17,7 @@ import * as mongodb from "mongodb";
 import { Config } from "../common/ConfigUtils";
 
 export type InstanceEntry = {host: types.core.Host, dbName: string, map: Map<db.system.ServerStatsId, StatsEntry>};
-export type StatsEntry = {id: db.system.ServerStatsId, executionTime: number, requests: number, errors: number, tid: NodeJS.Timeout};
+export type StatsEntry = {id: db.system.ServerStatsId, executionTime: number, requests: number, errors: number, tid: NodeJS.Timeout|null};
 
 export class ServerStatsWorkerService {
     
@@ -44,7 +44,9 @@ export class ServerStatsWorkerService {
         const promises: Promise<void>[] = [];
         for (const instanceEntry of this.map.values()) {
             for (const statsEntry of instanceEntry.map.values()) {
-                clearTimeout(statsEntry.tid);
+                if (statsEntry.tid) {
+                    clearTimeout(statsEntry.tid);
+                }
                 promises.push(this.flushEntry(instanceEntry, statsEntry));
             }
         }
@@ -80,7 +82,9 @@ export class ServerStatsWorkerService {
     }
     
     private resheduleStatsFlush(instanceEntry: InstanceEntry, statsEntry: StatsEntry) {
-        clearTimeout(statsEntry.tid);
+        if (statsEntry.tid) {
+            clearTimeout(statsEntry.tid);
+        }
         statsEntry.tid = setTimeout(() => {
             instanceEntry.map.delete(statsEntry.id);
             this.jobService.addJob(async () => {

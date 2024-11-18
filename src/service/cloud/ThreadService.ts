@@ -227,7 +227,7 @@ export class ThreadService {
                 return {contextId: null, toNotify: []};
             }
             const contextId = threads[0].contextId;
-            let additionalAccessCheck: ((thread: db.thread.Thread) => boolean)|null = null;
+            let additionalAccessCheck: ((thread: db.thread.Thread) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "thread/threadDeleteMany", []);
                 additionalAccessCheck = thread => this.policy.canDeleteContainer(user, context, thread);
@@ -238,7 +238,7 @@ export class ThreadService {
                 if(thread.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(thread)) {
+                if (!additionalAccessCheck(thread)) {
                     resultMap.set(thread.id, "ACCESS_DENIED");
                 }
                 else {
@@ -257,8 +257,10 @@ export class ThreadService {
             await threadMessageRepository.deleteAllFromThreads(toDelete);
             return {contextId, toNotify, usedContext};
         });
-        for (const deletedThread of result.toNotify) {
-            this.threadNotificationService.sendDeletedThread(deletedThread, result.usedContext.solution);
+        if (result.usedContext) {
+            for (const deletedThread of result.toNotify) {
+                this.threadNotificationService.sendDeletedThread(deletedThread, result.usedContext.solution);
+            }
         }
 
         const resultArray: types.thread.ThreadDeleteStatus[] = [];
@@ -364,8 +366,11 @@ export class ThreadService {
             const threadRepository = this.repositoryFactory.createThreadRepository();
             const threadId = messages[0].threadId;
             const thread = await threadRepository.get(threadId);
+            if (!thread) {
+                throw new DbInconsistencyError(`Thread=${threadId} does not exist, message=${messages[0].id}`);
+            }
             const contextId = thread.contextId;
-            let additionalAccessCheck: ((message: db.thread.ThreadMessage) => boolean)|null = null;
+            let additionalAccessCheck: ((message: db.thread.ThreadMessage) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 if (checkAccess) {
                     this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageDeleteMany", ["threadId=" + threadId]);
@@ -378,7 +383,7 @@ export class ThreadService {
                 if(message.threadId !== threadId) {
                     throw new AppException("MESSAGES_BELONGS_TO_DIFFERENT_THREADS");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(message)) {
+                if (!additionalAccessCheck(message)) {
                     resultMap.set(message.id, "ACCESS_DENIED");
                 }
                 else {
@@ -395,9 +400,9 @@ export class ThreadService {
         });
         if (result.thread && result.threadStats) {
             this.threadNotificationService.sendThreadStats({...result.thread, ...result.threadStats}, result.context.solution);
-        }
-        for (const deletedMessage of result.toNotify) {
-            this.threadNotificationService.sendDeletedThreadMessage(result.thread, deletedMessage, result.context.solution);
+            for (const deletedMessage of result.toNotify) {
+                this.threadNotificationService.sendDeletedThreadMessage(result.thread, deletedMessage, result.context.solution);
+            }
         }
 
         const resultArray: types.thread.ThreadMessageDeleteStatus[] = [];
@@ -405,7 +410,7 @@ export class ThreadService {
             resultArray.push({id, status});
         }
 
-        return {contextId: result.context.id, results: resultArray};
+        return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
 
     async deleteMessagesOlderThan(executor: Executor, threadId: types.thread.ThreadId, timestamp: types.core.Timestamp) {

@@ -67,8 +67,8 @@ export namespace session {
     export interface TicketData {
         id: TicketDataId;
         createDate: types.core.Timestamp;
-        sessionId: types.core.SessionId;
-        agent: types.core.UserAgent;
+        sessionId: types.core.SessionId|undefined;
+        agent: types.core.UserAgent|undefined;
         masterSecret: types.core.Base64;
     }
 }

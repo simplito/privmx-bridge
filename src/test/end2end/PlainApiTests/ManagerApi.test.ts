@@ -130,12 +130,18 @@ export class ManagerApiTests extends BaseTestSet {
 
     async shouldReceiveNotification() {
         await PromiseUtils.wait(1000);
+        if (!this.websocket) {
+            throw new Error("Websocket not initialized");
+        }
         const notifications = this.websocket.popAllNotifications();
         assert(notifications.length === 1 && notifications[0].type === "threadCreated", "Invalid number or type of notifications");
     }
 
     async shouldNotReceiveNotification() {
         await PromiseUtils.wait(1000);
+        if (!this.websocket) {
+            throw new Error("Websocket not initialized");
+        }
         const notifications = this.websocket.popAllNotifications();
         assert(notifications.length === 0, "Expected notifications length: 0, received: " + notifications.length);
     }
@@ -255,6 +261,9 @@ export class ManagerApiTests extends BaseTestSet {
     }
 
     async disableApiKey() {
+        if (!this.newApiKeyId) {
+            throw new Error("new ApiKeyId not initialized yet");
+        }
         this.helpers.authorizePlainApi();
         
         const result = await this.plainApis.managerApi.updateApiKey({
@@ -320,13 +329,14 @@ export class ManagerApiTests extends BaseTestSet {
     }
 
     async tryRefreshWithOldRefreshTokenAndFail() {
-        if (!this.oldRefreshToken) {
+        const oldRefreshToken = this.oldRefreshToken;
+        if (!oldRefreshToken) {
             throw new Error("Old refresh token not initialized yet!");
         }
         
         await shouldThrowErrorWithCode(async () => this.plainApis.managerApi.auth({
             grantType: "refresh_token",
-            refreshToken: this.oldRefreshToken,
+            refreshToken: oldRefreshToken,
         }), "INVALID_TOKEN");
     }
 

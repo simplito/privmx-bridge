@@ -50,7 +50,7 @@ export type RequestApiResolver = ApiResolver<RequestScopeIOC>;
 export class ServerEndpoint {
     
     connection: PrivmxConnectionServer;
-    private lowLogger: LowLogger;
+    private lowLogger!: LowLogger;
     
     constructor(
         private requestLogger: RequestLogger,
@@ -73,10 +73,9 @@ export class ServerEndpoint {
         private loggerFactory: LoggerFactory,
     ) {
         this.connection = new PrivmxConnectionServer(this.requestLogger, this.ticketsDb, this.serverAgent, this.packetValidator, this.srpLoginService, this.keyLoginService,
-            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.loggerFactory.get(PrivmxConnectionServer));
+            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.sessionValidator.bind(this), this.loggerFactory.get(PrivmxConnectionServer));
         this.connection.setOutputStream(new OutputBufferStream());
         this.connection.setAppFrameHandler(this.__invoke.bind(this));
-        this.connection.sessionValidator = this.sessionValidator.bind(this);
     }
     
     getConnection(): PrivmxConnectionServer {
@@ -104,7 +103,7 @@ export class ServerEndpoint {
             else {
                 response.result = result;
             }
-            response.error = null;
+            response.error = undefined;
         }
         catch (e) {
             success = false;
@@ -155,15 +154,7 @@ export class ServerEndpoint {
     async __invoke(conn: PrivmxConnectionServer, frameData: Buffer) {
         const startTime = MicroTimeUtils.nowBI();
         const methodInfo: MethodInfo = {
-            user: null,
-            sessionId: null,
-            id: null,
-            method: null,
-            params: null,
-            frame: null,
             frameRaw: frameData,
-            success: null,
-            response: null
         };
         this.requestLogger.setCurrentMethod(methodInfo);
         this.lowLogger.log("Server Endpoint Invoke start");
@@ -171,7 +162,7 @@ export class ServerEndpoint {
             const sessionId = this.connection.getSessionId();
             const session = sessionId ? await this.sessionHolder.restoreSession(sessionId) : null;
             const sessionService = new SessionService(session, this.maintenanceService, this.loggerFactory.get(SessionService));
-            methodInfo.sessionId = session ? session.getId() : "";
+            methodInfo.sessionId = session ? session.id : "";
             methodInfo.user = session ? session.get("username") || "" : "";
             if (session) {
                 methodInfo.solutionId = session.get("solution");
@@ -220,8 +211,8 @@ export class ServerEndpoint {
         this.lowLogger.log("Server Endpoint Invoke end");
     }
     
-    async sessionValidator(sessionId: types.core.SessionId): Promise<boolean> {
-        if (sessionId == null) {
+    async sessionValidator(sessionId: types.core.SessionId|undefined): Promise<boolean> {
+        if (!sessionId) {
             return true;
         }
         const restoreResult = await Utils.tryPromise(() => this.sessionHolder.restoreSession(sessionId));
@@ -269,12 +260,15 @@ export class ServerEndpoint {
             this.requestLogger.setConnectionException(e);
             this.connection.send(this.getMessageBufferForInternalServerError(e), ContentType.ALERT);
         }
+        if (!this.connection.output) {
+            throw new Error("No connection output");
+        }
         const result = this.connection.output.getContentsAndClear();
         
         // this.lock.release();
         
         await this.callbacks.trigger("afterRequest", []);
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         this.lowLogger.log("Server Endpoint Execute");
         this.lowLogger.flushLogInNextTick();
         
@@ -292,10 +286,13 @@ export class ServerEndpoint {
             this.requestLogger.setConnectionException(e);
             this.connection.send(this.getMessageBufferForInternalServerError(e), ContentType.ALERT);
         }
+        if (!this.connection.output) {
+            throw new Error("No connection output");
+        }
         const result = this.connection.output.getContentsAndClear();
         
         await this.callbacks.trigger("afterRequest", []);
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         this.lowLogger.log("Server Endpoint Execute");
         this.lowLogger.flushLogInNextTick();
         
@@ -311,7 +308,7 @@ export class ServerEndpoint {
             return await this.callMethod(this.requestScopeIoc, sessionService, method, params);
         }
         finally {
-            await this.sessionHolder.close(null);
+            await this.sessionHolder.close(undefined);
             this.lowLogger.log("Server Endpoint Execute Method");
             this.lowLogger.flushLogInNextTick();
         }

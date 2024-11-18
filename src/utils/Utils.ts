@@ -136,7 +136,7 @@ export class Utils {
         return JSON.parse(json);
     }
     
-    static jsonParseSafe<T>(json: types.core.Json<T>): T {
+    static jsonParseSafe<T>(json: types.core.Json<T>): T|null {
         try {
             return JSON.parse(json);
         }
@@ -197,16 +197,12 @@ export class Utils {
     }
     
     static defer<T = any>(): Deferred<T> {
-        const defer: Deferred<T> = {
-            resolve: null,
-            reject: null,
-            promise: null
-        };
+        const defer: Partial<Deferred<T>> = {};
         defer.promise = new Promise((resolve, reject) => {
             defer.resolve = resolve;
             defer.reject = reject;
         });
-        return defer;
+        return defer as Deferred<T>;
     }
     
     static deferSafe<T = any>(): Deferred<T> {
@@ -238,9 +234,9 @@ export class Utils {
         return -1;
     }
     
-    static findMin<T>(array: T[], func: (x: T) => number): T {
-        let res: T = null;
-        let min: number = null;
+    static findMin<T>(array: T[], func: (x: T) => number): T|null {
+        let res: T|null = null;
+        let min: number|null = null;
         for (const e of array) {
             const v = func(e);
             if (min == null || v < min) {
@@ -251,9 +247,9 @@ export class Utils {
         return res;
     }
     
-    static findMax<T>(array: T[], func: (x: T) => number): T {
-        let res: T = null;
-        let max: number = null;
+    static findMax<T>(array: T[], func: (x: T) => number): T|null {
+        let res: T|null = null;
+        let max: number|null = null;
         for (const e of array) {
             const v = func(e);
             if (max == null || v > max) {
@@ -264,8 +260,8 @@ export class Utils {
         return res;
     }
     
-    static findMin2<T>(array: T[], comparator: (a: T, b: T) => number): T {
-        let min: T = null;
+    static findMin2<T>(array: T[], comparator: (a: T, b: T) => number): T|null {
+        let min: T|null = null;
         for (const e of array) {
             if (min == null || comparator(min, e) > 0) {
                 min = e;
@@ -274,8 +270,8 @@ export class Utils {
         return min;
     }
     
-    static findMax2<T>(array: T[], comparator: (a: T, b: T) => number): T {
-        let max: T = null;
+    static findMax2<T>(array: T[], comparator: (a: T, b: T) => number): T|null {
+        let max: T|null = null;
         for (const e of array) {
             if (max == null || comparator(max, e) < 0) {
                 max = e;
@@ -284,8 +280,8 @@ export class Utils {
         return max;
     }
     
-    static getMax<T, N extends number>(array: T[], func: (x: T) => N): N {
-        let max: N = null;
+    static getMax<T, N extends number>(array: T[], func: (x: T) => N): N|null {
+        let max: N|null = null;
         for (const e of array) {
             const v = func(e);
             if (max == null || v > max) {
@@ -295,9 +291,9 @@ export class Utils {
         return max;
     }
     
-    static max<T>(array: T[], func: (x: T) => number): T {
-        let maxEntry: T = null;
-        let maxValue: number = null;
+    static max<T>(array: T[], func: (x: T) => number): T|null {
+        let maxEntry: T|null = null;
+        let maxValue: number|null = null;
         for (const e of array) {
             const v = func(e);
             if (maxValue == null || v > maxValue) {
@@ -323,7 +319,7 @@ export class Utils {
         return Array.prototype.concat.apply([], list);
     }
     
-    static getLast<T>(list: T[]): T {
+    static getLast<T>(list: T[]): T|null {
         return list.length > 0 ? list[list.length - 1] : null;
     }
     

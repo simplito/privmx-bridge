@@ -78,9 +78,9 @@ export class StringChecker {
         return StringChecker.getBase64Info(str).valid;
     }
     
-    static getBase64Info(str: string): {valid: boolean, length: number, value: types.core.Base64}  {
+    static getBase64Info(str: string): {valid: false}|{valid: true, length: number, value: types.core.Base64} {
         if (str.length % 4 != 0) {
-            return {valid: false, length: null, value: null};
+            return {valid: false};
         }
         let binLength = str.length * 3 / 4;
         let dataLength = str.length;
@@ -94,7 +94,7 @@ export class StringChecker {
         }
         for (let i = 0; i < dataLength; i++) {
             if (!StringChecker.isCharCodeBase64(str.charCodeAt(i))) {
-                return {valid: false, length: null, value: null};
+                return {valid: false};
             }
         }
         return {valid: true, length: binLength, value: <types.core.Base64>str};

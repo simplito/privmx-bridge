@@ -69,11 +69,11 @@ async function processTest(testCase: { testSetName: string; test: string }) {
     if (testSet) {
         const taskSetInstance = new testSet.testConstructor();
         try {
-            const testResult = await taskSetInstance.run(parsedTest, cluster.worker.id);
-            process.send(testResult);
+            const testResult = await taskSetInstance.run(parsedTest, cluster.worker?.id);
+            process.send?.(testResult);
         }
         catch {
-            process.send({testStatus: false, time: 0})
+            process.send?.({testStatus: false, time: 0})
         }
     }
 }

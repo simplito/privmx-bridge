@@ -23,6 +23,7 @@ import { ConfigLoader, InitConfigValues } from "../../service/config/ConfigLoade
 import { Callbacks } from "../../service/event/Callbacks";
 import { JobService } from "../../service/job/JobService";
 import * as util from "util";
+import { ConfigService } from "../../service/config/ConfigService";
 
 const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
 const logger = loggerFactory.get("MASTER");
@@ -40,7 +41,7 @@ async function go() {
         new MetricService(),
     );
     await mongoDbManager.init(fullConfig.db.mongo.url, fullConfig.db.mongo.dbName);
-    const repositoryFactory = new RepositoryFactory(mongoDbManager, null);
+    const repositoryFactory = new RepositoryFactory(mongoDbManager, null as unknown as ConfigService);
     const apiUserRepository = repositoryFactory.createApiUserRepository();
     const user = await apiUserRepository.create();
     const apiKeyRepository = repositoryFactory.createApiKeyRepository();

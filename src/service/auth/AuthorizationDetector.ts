@@ -44,7 +44,7 @@ export class AuthorizationDetector {
     }
     
     async bindAccessTokenToWebsocket(token: types.auth.ApiAccessToken) {
-        if (!this.webSocket) {
+        if (!this.webSocket || !this.webSocket.ex.plainUserInfo) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         const res = await this.isApiAccessTokenValid(token);
@@ -67,13 +67,16 @@ export class AuthorizationDetector {
     }
     
     async authorizeByWebsocket() {
-        if (this.webSocket.ex.plainUserInfo.token) {
+        if (this.webSocket && this.webSocket.ex.plainUserInfo && this.webSocket.ex.plainUserInfo.token) {
             return this.bearerAuthorization(this.webSocket.ex.plainUserInfo.token);
         }
     }
     
     async authorizeByRequest() {
-        const authorizationHeader = this.request && this.request.headers.authorization;
+        if (!this.request) {
+            return;
+        }
+        const authorizationHeader = this.request.headers.authorization;
         if (!authorizationHeader) {
             return;
         }
@@ -88,7 +91,7 @@ export class AuthorizationDetector {
             return this.bearerAuthorization(authHeader.value as types.auth.ApiAccessToken);
         }
         else if (authHeader.type === RequestSignature.PMX_HMAC_SHA256) {
-            return this.signatureAuthorization(authHeader.value);
+            return this.signatureAuthorization(this.request, authHeader.value);
         }
     }
     
@@ -145,7 +148,7 @@ export class AuthorizationDetector {
         }
         const session = await (async () => {
             if (tokenData.connectionId) {
-                return this.webSocket && this.webSocket.ex.plainUserInfo.connectionId === tokenData.connectionId ? this.webSocket.ex.plainUserInfo.session : null;
+                return this.webSocket && this.webSocket.ex.plainUserInfo && this.webSocket.ex.plainUserInfo.connectionId === tokenData.connectionId ? this.webSocket.ex.plainUserInfo.session : null;
             }
             return this.repositoryFactory.createTokenSessionRepository().get(tokenData.sessionId);
         })();
@@ -172,7 +175,7 @@ export class AuthorizationDetector {
         return {tokenData, session: {scopes: session.scopes}, apiKey, user};
     }
     
-    private async signatureAuthorization(pmxSignature: string) {
+    private async signatureAuthorization(request: http.IncomingMessage, pmxSignature: string) {
         const info = await this.parsePmxHmacSig(pmxSignature);
         if (info === false) {
             return;
@@ -187,10 +190,10 @@ export class AuthorizationDetector {
         }
         const verifed = await this.signatureVerificationService.verify({
             apiKey: apiKey,
-            request: this.request,
+            request: request,
             nonce: info.nonce,
             timestamp: info.timestamp as types.core.Timestamp,
-            requestBody: await HttpUtils.readBody(this.request),
+            requestBody: await HttpUtils.readBody(request),
             signature: info.signature,
         });
         if (!verifed) {

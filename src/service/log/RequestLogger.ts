@@ -31,18 +31,18 @@ export interface MethodInfo {
     // input
     id?: string;
     method?: string;
-    params?: any;
+    params?: unknown;
     contextId?: types.context.ContextId;
     solutionId?: types.cloud.SolutionId;
     
-    frame?: any;
+    frame?: unknown;
     frameRaw?: Buffer;
     
     // output
     success?: boolean;
-    response?: any;
-    error?: any;
-    outerError?: any;
+    response?: {error?: unknown, result?: unknown};
+    error?: unknown;
+    outerError?: unknown;
 }
 
 export class RequestLogger {
@@ -63,7 +63,7 @@ export class RequestLogger {
     
     constructor(
         private reqName: string,
-        private serverStatsService: ServerStatsService,
+        private serverStatsService: ServerStatsService|null,
         private logFactory: ILogFactory,
         private metricsContainer: MetricsContainer|null,
         private config: Config,
@@ -108,17 +108,7 @@ export class RequestLogger {
     
     async runWith<T>(func: (methodInfo: MethodInfo) => Promise<T>) {
         const startTime = MicroTimeUtils.nowBI();
-        const methodInfo: MethodInfo = {
-            user: null,
-            sessionId: null,
-            id: null,
-            method: null,
-            params: null,
-            frame: null,
-            frameRaw: null,
-            success: null,
-            response: null
-        };
+        const methodInfo: MethodInfo = {};
         try {
             return await func(methodInfo);
         }
@@ -189,7 +179,7 @@ export class RequestLogger {
         }
         builder.flush();
         if (this.list.length) {
-            const errors = this.list.filter(x => x.info.error && !RequestLogger.OMITTED_METHODS.includes(x.info.method)).length;
+            const errors = this.list.filter(x => x.info.error && (!x.info.method || !RequestLogger.OMITTED_METHODS.includes(x.info.method))).length;
             if (this.serverStatsService) {
                 this.serverStatsService.addRequestInfo(elpasedTime, this.list.length, errors);
             }
@@ -219,7 +209,7 @@ export class RequestLogger {
     }
     
     private getPrefix(elpasedTime: number) {
-        return "[" + new Date(this.startDate).toISOString() + "][" + `${cluster.isPrimary ? "MS" : `${cluster.worker.id.toString().padStart(2, "0")}`},P:${process.pid}` + "][" + this.reqName + "][id=" + this.requestId + "][t=" + elpasedTime + "][f=" + this.list.length + "][i=" + this.requestSize + "][o=" + this.responseSize + "]";
+        return "[" + new Date(this.startDate).toISOString() + "][" + `${cluster.isPrimary ? "MS" : `${cluster.worker?.id.toString().padStart(2, "0")}`},P:${process.pid}` + "][" + this.reqName + "][id=" + this.requestId + "][t=" + elpasedTime + "][f=" + this.list.length + "][i=" + this.requestSize + "][o=" + this.responseSize + "]";
     }
     
     private getMethodInfo(entry: {info: MethodInfo, time: number}) {

@@ -22,10 +22,10 @@ import { CloudUser } from "../../CommonTypes";
 
 export class SessionService {
     
-    private session: Session;
+    private session?: Session;
     
     constructor(
-        private inputSession: Session,
+        private inputSession: Session|null,
         private maintenanceService: MaintenanceService,
         private logger: Logger,
     ) {
@@ -58,7 +58,7 @@ export class SessionService {
             return this.getEstablishedSession();
         }
         this.logger.debug("No session established");
-        return new Session(null, {
+        return new Session("" as types.core.SessionId, {
             username: "" as types.core.Username,
             type: "guest"
         });
@@ -69,7 +69,7 @@ export class SessionService {
         return session && ["local", "basic"].includes(session.get("type")) ? session : null;
     }
     
-    getSession(): Session {
+    getSession(): Session|null {
         if (this.inputSession) {
             return this.getEstablishedSession();
         }
@@ -116,8 +116,10 @@ export class SessionService {
             if (session == null || session.get("state") != "exchange" || !session.get("rights").basic || session.get("subidentity") != null) {
                 this.throwError(session, "Failed assert USER_SESSION");
             }
-            const username = session.get("username");
-            this.logger.debug("Logged as: " + username);
+            else {
+                const username = session.get("username");
+                this.logger.debug("Logged as: " + username);
+            }
         }
         
         /*
@@ -148,7 +150,7 @@ export class SessionService {
         }
     }
     
-    private throwError(session: Session, msg: string) {
+    private throwError(session: Session|null, msg: string) {
         if (session != null && session.get("state") == "additionalLoginStep") {
             throw new AppException("NEED_2FA_AUTHENTICATION");
         }
@@ -167,7 +169,7 @@ export class SessionService {
     
     validateContextSessionAndGetCloudUser() {
         const session = this.getSession();
-        const ecdhe = session.get("ecdhe");
+        const ecdhe = session ? session.get("ecdhe") : null;
         if (!session || session.get("type") !== "ecdhe" || !ecdhe || !ecdhe.contextUser) {
             throw new AppException("ACCESS_DENIED");
         }

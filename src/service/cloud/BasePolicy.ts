@@ -184,5 +184,5 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
     
     protected abstract isItemCreator(user: db.context.ContextUser, item: I): boolean;
     
-    protected abstract extractPolicyFromContext(policy: types.context.ContextPolicy): types.cloud.ContainerPolicy|undefined;
+    protected abstract extractPolicyFromContext(policy: types.context.ContextPolicy): types.cloud.ContainerPolicy;
 }

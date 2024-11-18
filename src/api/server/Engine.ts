@@ -16,7 +16,7 @@ import * as types from "../../types";
 
 export interface EngineResponse {
     code?: number;
-    body?: string|Buffer;
+    body?: string|Buffer|null;
     headers?: {[name: string]: string};
     done?: boolean;
 }
@@ -25,18 +25,18 @@ export class Engine {
     
     constructor(
         private configService: ConfigService,
-        private request: express.Request
+        private request: express.Request|null,
     ) {
     }
     
     addCrossDomainHeaders(response: EngineResponse, addCache: boolean): void {
-        let origin = "*";
-        if (this.request.header("Origin") != null) {
-            origin = this.request.header("Origin");
-        }
         if (this.configService.values.server.cors.enabled) {
+            if (!this.request) {
+                throw new Error("Cannot set headers when request is null");
+            }
             const domains = this.configService.values.server.cors.domains;
-            if (domains.includes(<types.core.Host>"*") || domains.includes(<types.core.Host>origin) || this.configService.hostIsMyself(<types.core.Host>origin)) {
+            const origin = (this.request.header("Origin") || "*") as types.core.Host;
+            if (domains.includes("*" as types.core.Host) || domains.includes(origin) || this.configService.hostIsMyself(origin)) {
                 response.headers = response.headers || {};
                 response.headers.Allow = "OPTIONS,GET,POST";
                 response.headers["Access-Control-Allow-Origin"] = origin;
@@ -58,31 +58,31 @@ export class Engine {
         return response;
     }
     
-    setHeaders(response: EngineResponse, contentType: string = null, responseCode: number = null): void {
-        response.code = responseCode == null ? 200 : responseCode;
-        if (contentType != null) {
+    setHeaders(response: EngineResponse, contentType?: string, responseCode?: number): void {
+        response.code = typeof(responseCode) === "number" ? responseCode : 200;
+        if (contentType) {
             response.headers = response.headers || {};
             response.headers["Content-Type"] = contentType;
         }
         this.addCrossDomainHeaders(response, false);
     }
     
-    rawResponse(data: string, contentType: string = null, responseCode: number = null): EngineResponse {
+    rawResponse(data: string, contentType?: string, responseCode?: number): EngineResponse {
         const response: EngineResponse = {};
         this.setHeaders(response, contentType, responseCode);
         response.body = data;
         return response;
     }
     
-    rawJsonResponse(data: string, responseCode: number = null): EngineResponse {
+    rawJsonResponse(data: string, responseCode?: number): EngineResponse {
         return this.rawResponse(data, "application/json", responseCode);
     }
     
-    jsonResponse(data: any, responseCode: number = null): EngineResponse {
+    jsonResponse(data: any, responseCode?: number): EngineResponse {
         return this.rawJsonResponse(data == null ? "" : JSON.stringify(data), responseCode);
     }
     
-    jsonRpcSuccessResponse(id: string|number, result: any, responseCode: number = null): EngineResponse {
+    jsonRpcSuccessResponse(id: string|number, result: any, responseCode?: number): EngineResponse {
         return this.jsonResponse({
             jsonrpc: "2.0",
             id: id,
@@ -90,7 +90,7 @@ export class Engine {
         }, responseCode);
     }
     
-    jsonRpcErrorResponse(id: string|number, code: string, responseCode: number = null): EngineResponse {
+    jsonRpcErrorResponse(id: string|number, code: string, responseCode?: number): EngineResponse {
         const error = ERROR_CODES[code];
         return this.jsonResponse({
             jsonrpc: "2.0",
@@ -110,7 +110,10 @@ export class Engine {
         };
     }
     
-    getRequestContentType(): string {
+    getRequestContentType() {
+        if (!this.request) {
+            throw new Error("Cannot get Content-Type header when request is null");
+        }
         return this.request.header("Content-Type");
     }
     

@@ -39,8 +39,8 @@ export abstract class PrivmxConnectionBase {
     protected nextReadState: RWState;
     protected nextWriteState: RWState;
     
-    protected appFrameHandler: (connection: this, data: Buffer) => Promise<void>|void;
-    public output: StreamInterface;
+    protected appFrameHandler?: (connection: this, data: Buffer) => Promise<void>|void;
+    public output?: StreamInterface;
     public readonly psonHelper: PsonHelperEx;
     
     constructor(
@@ -69,7 +69,7 @@ export abstract class PrivmxConnectionBase {
         let frameHeader: Buffer;
         let frameData: Buffer;
         let frameMac: Buffer;
-        if (!forcePlaintext && this.writeState.initialized) {
+        if (!forcePlaintext && this.writeState.isInitialized()) {
             this.logger.debug("send encrypted " + contentType);
             let frameLength = packet.length;
             if (frameLength > 0) {
@@ -119,6 +119,9 @@ export abstract class PrivmxConnectionBase {
             frameMac = Buffer.alloc(0);
         }
         
+        if (!this.output) {
+            throw new Error("Output stream not set");
+        }
         this.output.write(frameHeader);
         this.output.write(frameData);
         this.output.write(frameMac);
@@ -144,7 +147,7 @@ export abstract class PrivmxConnectionBase {
         let frameIndex = 0;
         while (!input.eof()) {
             frameIndex++;
-            if (this.readState.initialized) {
+            if (this.readState.isInitialized()) {
                 frameHeader = Utils.readFromStream(input, 16);
                 if (frameHeader.length == 0) {
                     if (!input.eof()) {
@@ -189,13 +192,13 @@ export abstract class PrivmxConnectionBase {
             const frameContentType = frameHeader.readUInt8(1);
             const frameLength = frameHeader.readUInt32BE(2);
             
-            this.logger.debug("process " + (this.readState.initialized ? "encrypted" : "plaintext") + " frame " + frameContentType + ", l: " + frameLength);
+            this.logger.debug("process " + (this.readState.isInitialized() ? "encrypted" : "plaintext") + " frame " + frameContentType + ", l: " + frameLength);
             
             let frameData: Buffer;
             if (frameLength > 0) {
                 const cipherText = Utils.readFromStream(input, frameLength);
                 
-                if (this.readState.initialized) {
+                if (this.readState.isInitialized()) {
                     const frameMac  = Utils.readFromStream(input, 16);
                     
                     const macData = Buffer.concat([frameSeed, iv, cipherText]);
@@ -284,7 +287,7 @@ export abstract class PrivmxConnectionBase {
     }
     
     private changeReadCipherSpec() {
-        if (!this.nextReadState.initialized) {
+        if (!this.nextReadState.isInitialized()) {
             throw new RpcError("Invalid next read state");
         }
         this.readState = this.nextReadState;
@@ -292,7 +295,7 @@ export abstract class PrivmxConnectionBase {
     }
     
     changeWriteCipherSpec() {
-        if (!this.nextWriteState.initialized) {
+        if (!this.nextWriteState.isInitialized()) {
             throw new RpcError("Invalid next write state");
         }
         this.send(Buffer.alloc(0), ContentType.CHANGE_CIPHER_SPEC);

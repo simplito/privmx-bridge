@@ -23,7 +23,7 @@ export class Worker2Service implements IWorker2Service {
     }
 
     @ApiMethod({})
-    async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]; event: T; }): Promise<void> {
+    async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         return this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
     }
 

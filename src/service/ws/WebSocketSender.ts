@@ -35,7 +35,7 @@ export class WebSocketSender {
         return this.sendAtChannel(event.channel, clients, event);
     }
     
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[], event: T) {
+    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T) {
         return this.webSocketConnectionManager.sendAtChannel(channel, clients, event);
     }
 }

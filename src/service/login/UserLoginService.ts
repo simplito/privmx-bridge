@@ -43,11 +43,11 @@ export interface Subidentity {
 
 export class UserLoginService {
     
-    async getSrpUser(_I: types.user.UserLogin, _host: types.core.Host): Promise<SrpUser> {
+    async getSrpUser(_I: types.user.UserLogin, _host: types.core.Host): Promise<SrpUser|null> {
         return null;
     }
     
-    async getKeyUser(_pub: types.core.EccPubKey): Promise<KeyUser> {
+    async getKeyUser(_pub: types.core.EccPubKey): Promise<KeyUser|null> {
         return null;
     }
 }

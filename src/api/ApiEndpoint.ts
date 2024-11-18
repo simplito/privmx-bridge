@@ -22,7 +22,7 @@ export class ApiEndpoint {
     
     constructor(
         private engine: Engine,
-        private request: express.Request,
+        private request: express.Request|null,
         private serverEndpoint: ServerEndpoint,
         private requestInfoHolder: RequestInfoHolder,
         private clientIpService: ClientIpService,
@@ -33,6 +33,9 @@ export class ApiEndpoint {
     
     async v2_0(): Promise<EngineResponse> {
         this.logger.debug("Api request v 2.0");
+        if (!this.request) {
+            throw new Error("Cannot execute method on empty requst");
+        }
         const ipAddress = this.clientIpService.getClientIp(this.request);
         if (!(await this.ipRateLimiterClient.canPerformRequest(ipAddress))) {
             return this.engine.rawResponse("Too many requests", "text/plain", 429);

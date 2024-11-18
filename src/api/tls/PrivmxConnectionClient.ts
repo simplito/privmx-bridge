@@ -25,6 +25,7 @@ import * as types from "../../types";
 import { PrivmxConnectionBase } from "./PrivmxConnectionBase";
 import * as ByteBuffer from "bytebuffer";
 import { Logger } from "../../service/log/LoggerFactory";
+import * as BN from "bn.js";
 
 export interface Ticket {
     id: Buffer;
@@ -36,7 +37,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     session: Session;
     tickets: {[ticketId: string]: Ticket};
     passwordMixer: PasswordMixer;
-    ecKey: elliptic.ec.KeyPair;
+    ecKey: elliptic.ec.KeyPair|null;
     
     constructor(
         logger: Logger,
@@ -251,10 +252,10 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     }
     
     validateSrpInit(frame: types.packet.SrpInitResponsePacket): types.packet.SrpExchangeRequestPacket {
-        const data = this.session.get("srp_data", null);
+        const data = this.session.get<{I: string, password: string, tickets: number}>("srp_data");
         
         // srp init - server response
-        if (data.I == null || !data.password == null) {
+        if (!data || data.I == null || !data.password == null) {
             throw new Error("Invalid handshake state");
         }
         
@@ -299,12 +300,12 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     }
     
     validateSrpExchange(frame: types.packet.SrpExchangeResponsePacket) {
-        const data = this.session.get("srp_data", null);
-        if (data.M2 == null || data.K == null) {
+        const data = this.session.get<{M2: BN, K: Buffer}>("srp_data");
+        if (!data || data.M2 == null || data.K == null) {
             throw new Error("Invalid handshake state");
         }
         if (data.M2.cmp(Hex.toBN(frame.M2)) != 0) {
-            throw new Error("Invalid M2 - " + frame.M2 + ", expected " + data.M2.toHex());
+            throw new Error("Invalid M2 - " + frame.M2 + ", expected " + data.M2.toString("hex"));
         }
         
         const K = Utils.fillTo32(data.K);

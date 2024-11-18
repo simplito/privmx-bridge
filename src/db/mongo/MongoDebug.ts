@@ -47,7 +47,7 @@ export class MongoDebug {
         return db;
     }
     
-    static decorateCollection<T>(db: mongodb.Db, collection: mongodb.Collection<T>) {
+    static decorateCollection<T extends mongodb.Document>(db: mongodb.Db, collection: mongodb.Collection<T>) {
         if (!MongoDebug.DEBUG || (collection as any).__debugDecorated) {
             return collection;
         }

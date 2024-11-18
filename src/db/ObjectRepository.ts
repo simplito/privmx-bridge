@@ -45,12 +45,12 @@ export interface Query<T> {
 }
 
 export interface ObjectRepositoryRead<K extends string|number, V> {
-    get(key: K): Promise<V>;
+    get(key: K): Promise<V|null>;
     getMulti(keys: K[]): Promise<V[]>;
     getOrDefault(key: K, def: V): Promise<V>;
     getAll(): Promise<V[]>;
     count(f: (q: Query<V>) => QueryResult): Promise<number>;
-    find(f: (q: Query<V>) => QueryResult): Promise<V>;
+    find(f: (q: Query<V>) => QueryResult): Promise<V|null>;
     findAll(f: (q: Query<V>) => QueryResult): Promise<V[]>;
     exists(key: K): Promise<boolean>;
     query(f: (q: Query<V>) => QueryResult): ObjectQuery<V>;
@@ -59,7 +59,7 @@ export interface ObjectRepositoryRead<K extends string|number, V> {
 export type PickProperty<T, K extends keyof T, Z extends keyof T[K]> = Omit<T, K>&{[Property in K]: Pick<T[K], Z>};
 
 export interface ObjectQuery<T> {
-    one(): Promise<T>;
+    one(): Promise<T|null>;
     array(): Promise<T[]>;
     count(): Promise<number>;
     exists(): Promise<boolean>;

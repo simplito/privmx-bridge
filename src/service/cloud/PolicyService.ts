@@ -117,7 +117,7 @@ export class PolicyService {
             this.validatePolicyEntry(path + ".listMy", policy.listMy, ["default", "none", "all"], []);
         }
         if (policy.listAll !== undefined) {
-            this.validatePolicyEntry(path + ".listAll", policy.listMy, ["default", "none", "all"], []);
+            this.validatePolicyEntry(path + ".listAll", policy.listAll, ["default", "none", "all"], []);
         }
         if (policy.create !== undefined) {
             this.validatePolicyEntry(path + ".create", policy.create, ["default", "none", "all"], []);
@@ -253,7 +253,7 @@ export class PolicyService {
         return this.userMeetsPolicy(user, this.getPolicy2x(context, policy, func, func2));
     }
     
-    private userMeetsPolicy(user: PolicyUser, policy: types.cloud.PolicyEntry) {
+    private userMeetsPolicy(user: PolicyUser, policy: types.cloud.PolicyEntry|undefined) {
         return (policy || "").split(",").some(fragment => fragment.split("&").every(atom => this.userMeetsPolicyAtom(user, atom)));
     }
     

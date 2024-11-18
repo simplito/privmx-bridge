@@ -17,7 +17,7 @@ import * as assert from "assert";
 export class ContextApiTests extends BaseTestSet {
     
     private newContextId?: types.context.ContextId;
-    private contextListLength: number;
+    private contextListLength?: number;
 
     @Test()
     async shouldCreateNewContext() {

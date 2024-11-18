@@ -28,7 +28,7 @@ export interface ConfigValues {
     server: {
         version: types.core.Version;
         staticDirs: {url: string, path: string}[];
-        fallbackHtml: string;
+        fallbackHtml: string|undefined;
         compressedPaths: string[];
         cors: {
             enabled: boolean;
@@ -67,7 +67,7 @@ export interface ConfigValues {
     };
     misc: {
         maxTimestampDifference: types.core.Timespan;
-        dumpDepsDir: string;
+        dumpDepsDir: string|null;
     };
     user: {
         allowedUsernames: string[];
@@ -101,7 +101,7 @@ export class ConfigLoader {
         const baseDir = VersionDetector.detectBaseDir();
         const values: ConfigValues = {
             domain: "localhost",
-            hosts: undefined,
+            hosts: undefined as unknown as types.core.Host[],
             baseDir: baseDir,
             assetsDir: NodePath.resolve(baseDir, "public"),
             server: {
@@ -131,7 +131,7 @@ export class ConfigLoader {
             db: {
                 mongo: {
                     url: "mongodb://localhost:27017",
-                    dbName: undefined
+                    dbName: undefined as unknown as string,
                 },
                 storageProviderName: "fs",
             },

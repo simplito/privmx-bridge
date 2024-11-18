@@ -127,7 +127,7 @@ export type InboxUpdatedEventData = Inbox;
 export type InboxDeletedEvent = types.cloud.Event<"inboxDeleted", "inbox", InboxDeletedEventData>;
 export interface InboxDeletedEventData {
     inboxId: types.inbox.InboxId;
-    type: types.inbox.InboxType;
+    type?: types.inbox.InboxType;
 }
 
 export interface IInboxApi {

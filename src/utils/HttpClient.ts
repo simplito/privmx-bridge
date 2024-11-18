@@ -27,7 +27,7 @@ export class HttpClient {
     
     async request(method: string, url: string, options: {[key: string]: any}): Promise<FetchResponse> {
         if (!url) {
-            url = this.options.base_uri;
+            url = this.options?.base_uri || "";
         }
         if (method != "POST") {
             throw new Error("Http method not supported");

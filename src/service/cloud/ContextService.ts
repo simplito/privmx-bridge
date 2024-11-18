@@ -20,6 +20,7 @@ import { ThreadService } from "./ThreadService";
 import { StoreService } from "./StoreService";
 import { InboxService } from "./InboxService";
 import { StreamService } from "./StreamService";
+import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 
 export class ContextService {
     
@@ -173,6 +174,9 @@ export class ContextService {
             throw new AppException("ACCESS_DENIED");
         }
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`)
+        }
         if (cloudUser.solutionId) {
             if (context.solution !== cloudUser.solutionId || !context.shares.includes(cloudUser.solutionId)) {
                 throw new AppException("ACCESS_DENIED");

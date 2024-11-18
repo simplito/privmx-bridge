@@ -104,7 +104,7 @@ export type StreamRoomUpdatedEventData = StreamRoom;
 export type StreamRoomDeletedEvent = types.cloud.Event<"streamRoomDeleted", "stream", StreamRoomDeletedEventData>;
 export interface StreamRoomDeletedEventData {
     streamRoomId: types.stream.StreamRoomId;
-    type: types.stream.StreamRoomType;
+    type?: types.stream.StreamRoomType;
 }
 
 export interface IStreamApi {

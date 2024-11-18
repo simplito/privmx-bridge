@@ -40,14 +40,14 @@ export type MigrationStatus = "PERFORMING"|"FAIL"|"SUCCESS";
 export interface MigrationModel {
     id: MigrationId;
     startDate: types.core.Timestamp;
-    endDate: types.core.Timestamp;
+    endDate: types.core.Timestamp|null;
     status: MigrationStatus;
 }
 
 export interface Migration {
     id: MigrationId;
     transaction?: boolean;
-    go: (ioc: IOC, session: mongodb.ClientSession) => Promise<void>;
+    go: (ioc: IOC, session: mongodb.ClientSession|undefined) => Promise<void>;
 }
 
 export class MigrationManager {
@@ -113,7 +113,7 @@ export class MigrationManager {
                 await repo.insert(model);
                 try {
                     if (migration.transaction === false) {
-                        await migration.go(this.ioc, null);
+                        await migration.go(this.ioc, undefined);
                     }
                     else {
                         await this.ioc.getMongoDbManager().withTransaction(session => migration.go(this.ioc, session));

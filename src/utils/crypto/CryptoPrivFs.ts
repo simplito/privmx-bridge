@@ -57,9 +57,12 @@ export class CryptoPrivFs {
         return Buffer.concat([Buffer.from([CryptoPrivFs.AES_256_CBC_PKC7_WITH_IV_AND_HMAC_SHA256]), encrypted]);
     }
     
-    static decrypt(data: Buffer, key32: Buffer = null, iv16: Buffer = null): Buffer {
+    static decrypt(data: Buffer, key32: Buffer, iv16: Buffer|null = null): Buffer {
         const type = data.readUInt8(0);
         if (type == CryptoPrivFs.AES_256_CBC_PKC7_NO_IV) {
+            if (!iv16) {
+                throw new Error("Cannot decrypt AES_256_CBC_PKC7_NO_IV without iv");
+            }
             return Crypto.aes256CbcPkcs7Decrypt(data.slice(1), key32, iv16);
         }
         if (type == CryptoPrivFs.AES_256_CBC_PKC7_WITH_IV) {

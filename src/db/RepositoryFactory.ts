@@ -61,11 +61,11 @@ export class RepositoryFactory {
         return this.mongoDbManager.generateId();
     }
     
-    createObjectRepositoryFor<Id extends string|number, Type>(repositoryClass: {new(repo: MongoObjectRepository<Id, Type>, ...args: any[]): unknown, COLLECTION_NAME: string, COLLECTION_ID_PROP: keyof Type}, session?: mongodb.ClientSession) {
+    createObjectRepositoryFor<Id extends string|number, Type extends mongodb.Document>(repositoryClass: {new(repo: MongoObjectRepository<Id, Type>, ...args: any[]): unknown, COLLECTION_NAME: string, COLLECTION_ID_PROP: keyof Type}, session?: mongodb.ClientSession) {
         return this.mongoDbManager.getRepository<Id, Type>(repositoryClass.COLLECTION_NAME, repositoryClass.COLLECTION_ID_PROP, session);
     }
     
-    createObjectRepositoryForX<Id extends string|number, Type>(repositoryClass: {new(repo: MongoObjectRepository<Id, Type>, ...args: any[]): unknown, COLLECTION_NAME: string, COLLECTION_ID_PROP: keyof Type}, id: string, session?: mongodb.ClientSession) {
+    createObjectRepositoryForX<Id extends string|number, Type extends mongodb.Document>(repositoryClass: {new(repo: MongoObjectRepository<Id, Type>, ...args: any[]): unknown, COLLECTION_NAME: string, COLLECTION_ID_PROP: keyof Type}, id: string, session?: mongodb.ClientSession) {
         return this.mongoDbManager.getRepository<Id, Type>(this.getCollectionName(repositoryClass, id), repositoryClass.COLLECTION_ID_PROP, session);
     }
     

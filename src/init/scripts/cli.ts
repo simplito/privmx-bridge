@@ -134,14 +134,14 @@ async function go() {
         process.exit(1);
     }
     if (!args.apiKeyId) {
-        args.apiKeyId = process.env.API_KEY_ID;
+        args.apiKeyId = process.env.API_KEY_ID || null;
         if (!args.apiKeyId) {
             consoleErr("API Key Id is not provided. Pass it through --apikeyid= option or by API_KEY_ID environment variable");
             process.exit(1);
         }
     }
     if (!args.apiKeySecret) {
-        args.apiKeySecret = process.env.API_KEY_SECRET;
+        args.apiKeySecret = process.env.API_KEY_SECRET || null;
         if (!args.apiKeySecret) {
             consoleErr("API Key Secret is not provided. Pass it through --apikeysecret= option or by API_KEY_SECRET environment variable");
             process.exit(1);

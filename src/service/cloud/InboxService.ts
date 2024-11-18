@@ -30,7 +30,7 @@ import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 export interface FileDefinition {
     meta: types.store.StoreFileMeta;
     file: db.request.FileDefinition;
-    thumb: db.request.FileDefinition|null;
+    thumb: db.request.FileDefinition|undefined;
 }
 
 export class InboxService {
@@ -130,7 +130,7 @@ export class InboxService {
                 return {context: null, toNotify: []};
             }
             const contextId = inboxes[0].contextId;
-            let additionalAccessCheck: ((inbox: db.inbox.Inbox) => boolean)|null = null;
+            let additionalAccessCheck: ((inbox: db.inbox.Inbox) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDeleteMany", []);
                 additionalAccessCheck = inbox => this.policy.canDeleteContainer(user, context, inbox);
@@ -141,7 +141,7 @@ export class InboxService {
                 if (inbox.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(inbox)) {
+                if (!additionalAccessCheck(inbox)) {
                     resultMap.set(inbox.id, "ACCESS_DENIED");
                 }
                 else {
@@ -153,8 +153,10 @@ export class InboxService {
             await inboxRepository.deleteManyInboxes(toDelete);
             return {context: usedContext, toNotify};
         });
-        for (const deletedInbox of result.toNotify) {
-            this.inboxNotificationService.sendInboxDeleted(deletedInbox, result.context.solution);
+        if (result.context) {
+            for (const deletedInbox of result.toNotify) {
+                this.inboxNotificationService.sendInboxDeleted(deletedInbox, result.context.solution);
+            }
         }
 
         const resultArray: types.inbox.InboxDeleteStatus[] = [];
@@ -162,7 +164,7 @@ export class InboxService {
             resultArray.push({id, status});
         }
 
-        return {contextId: result.context.id, results: resultArray};
+        return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
     
     async deleteInboxesByContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {
@@ -258,10 +260,10 @@ export class InboxService {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
-        if (model.files.length > 0  && !model.requestId) {
+        if (model.files.length > 0 && !model.requestId) {
             throw new AppException("REQUEST_DOES_NOT_EXIST");
         }
-        const request = model.files.length > 0 ? await requestRepository.getReadyForUser(username, model.requestId) : null;
+        const request = model.requestId && model.files.length > 0 ? await requestRepository.getReadyForUser(username, model.requestId) : null;
         const files = this.checkFilesIndexesAndCountAndSize(last.data.fileConfig, request, model);
         await this.commitFiles(files);
         const msgId = this.repositoryFactory.createThreadMessageRepository().generateMsgId();
@@ -315,7 +317,7 @@ export class InboxService {
         }
     }
     
-    private checkFilesIndexesAndCountAndSize(fileConfig: types.inbox.InboxFileConfig, request: db.request.Request, model: inboxApi.InboxSendModel) {
+    private checkFilesIndexesAndCountAndSize(fileConfig: types.inbox.InboxFileConfig, request: db.request.Request|null, model: inboxApi.InboxSendModel) {
         if (model.files.length > fileConfig.maxCount) {
             throw new AppException("TOO_MANY_FILES_IN_REQUEST");
         }
@@ -325,6 +327,9 @@ export class InboxService {
         const usedIndexes: number[] = [];
         const result: FileDefinition[] = [];
         for (const file of model.files) {
+            if (!request) {
+                throw new Error("Request is required");
+            }
             const reqFile = request.files[file.fileIndex];
             if (!reqFile) {
                 throw new AppException("INVALID_FILE_INDEX");
@@ -336,9 +341,8 @@ export class InboxService {
                 throw new AppException("REQUEST_FILE_SIZE_EXCEEDED");
             }
             usedIndexes.push(file.fileIndex);
-            const hasThumb = "thumbIndex" in file;
-            const reqThumb = hasThumb ? request.files[file.thumbIndex] : null;
-            if (hasThumb) {
+            const reqThumb = typeof(file.thumbIndex) === "number" ? request.files[file.thumbIndex] : undefined;
+            if (typeof(file.thumbIndex) === "number") {
                 if (!reqThumb) {
                     throw new AppException("INVALID_FILE_INDEX");
                 }

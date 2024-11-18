@@ -275,7 +275,7 @@ export class TypesValidator {
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
             creatorHasToBeManager: policyEntry,
-            updaterHasToBeManager: policyEntry,
+            updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
             canOverwriteContextPolicy: policyEntry,
         });

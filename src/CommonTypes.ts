@@ -31,7 +31,7 @@ export interface ParsedHashmail {
 }
 
 export interface Deferred<T> {
-    resolve: (value?: T) => void;
+    resolve: (value: T | PromiseLike<T>) => void;
     reject: (e: any) => void;
     promise: Promise<T>;
 }

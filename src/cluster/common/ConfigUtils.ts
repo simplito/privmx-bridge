@@ -99,10 +99,10 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
     const defaultConfig: Config = {
         cloudUrl: undefined,
         server: {
-            port: parseInt(process.env.PRIVMX_PORT, 10) || 3000,
+            port: parseInt(process.env.PRIVMX_PORT || "", 10) || 3000,
             unixSocket: path.resolve(__dirname, "../../../unix.sock"),
             hostname: process.env.PRIVMX_HOSTNAME || "0.0.0.0",
-            workers: parseInt(process.env.PRIVMX_WORKERS, 10) || os.cpus().length,
+            workers: parseInt(process.env.PRIVMX_WORKERS || "", 10) || os.cpus().length,
             mainPageRedirect: process.env.PRIVMX_MAIN_PAGE_REDIRECT || "",
             mode: {
                 type: "single",
@@ -112,7 +112,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             shutdownTimeout: parseInt(process.env.PRIVMX_SHUTDOWN_TIMEOUT || "", 10) as types.core.Timespan || DateUtils.seconds(5),
             ssl: {
                 enabled: process.env.PRIVMX_SSL_ENABLED === "true" || false,
-                port: parseInt(process.env.PRIVMX_SSL_PORT, 10) || 3443,
+                port: parseInt(process.env.PRIVMX_SSL_PORT || "", 10) || 3443,
                 privKeyPath: process.env.PRIVMX_SSL_PRIV_KEY_PATH || "privkey.pem",
                 certificatePath: process.env.PRIVMX_SSL_CERT_PATH || "cert.pem",
             },
@@ -133,7 +133,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             password: process.env.PRIVMX_METRICS_PASSWORD || "password",
         },
         request: {
-            chunkSize: parseInt(process.env.PRIVMX_REQUEST_CHUNK_SIZE, 10) || 5 * 1024 * 1024,
+            chunkSize: parseInt(process.env.PRIVMX_REQUEST_CHUNK_SIZE || "", 10) || 5 * 1024 * 1024,
         },
         loggerEscapeNewLine: process.env.PRIVMX_LOGGER_ESCAPE_NEW_LINE === "false" ? false : true,
         apiRateLimit: {

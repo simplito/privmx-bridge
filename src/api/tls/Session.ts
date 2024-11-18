@@ -23,11 +23,11 @@ export class Session implements ISession {
         return key in this.container;
     }
     
-    save<T = any>(key: string, value: T): void {
+    save<T = unknown>(key: string, value: T): void {
         this.container[key] = value;
     }
     
-    get<T = any>(key: string, def: T = null): T {
+    get<T = unknown>(key: string, def?: T): T {
         return key in this.container ? this.container[key] : def;
     }
     

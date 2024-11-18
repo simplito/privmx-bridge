@@ -59,7 +59,7 @@ export class AuthService {
         }
         const session = await (async () => {
             if (tokenData.connectionId) {
-                return this.webSocket && this.webSocket.ex.plainUserInfo.connectionId === tokenData.connectionId ? this.webSocket.ex.plainUserInfo.session : null;
+                return this.webSocket && this.webSocket.ex.plainUserInfo && this.webSocket.ex.plainUserInfo.connectionId === tokenData.connectionId ? this.webSocket.ex.plainUserInfo.session : null;
             }
             return this.repositoryFactory.createTokenSessionRepository().get(tokenData.sessionId);
         })();
@@ -139,7 +139,7 @@ export class AuthService {
     
     private async createSession(user: types.auth.ApiUserId, apiKeyId: types.auth.ApiKeyId, ttl: types.core.Timespan, scopes: ParsedScope) {
         if (scopes.connectionLimited) {
-            if (!this.webSocket) {
+            if (!this.webSocket || !this.webSocket.ex.plainUserInfo) {
                 throw new AppException("INSUFFICIENT_SCOPE", "connection scope can be used with websocket only");
             }
             const session: db.auth.TokenSession = {

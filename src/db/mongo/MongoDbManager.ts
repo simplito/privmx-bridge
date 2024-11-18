@@ -24,21 +24,23 @@ export interface Collection {
     type?: string;
 }
 
+export interface MongoInstance {
+    client: mongodb.MongoClient;
+    db: mongodb.Db;
+}
+
 const LOCK_COLLECTION_NAME = "__lock";
 
 export class MongoDbManager {
     
-    private mongo: {
-        client: mongodb.MongoClient;
-        db: mongodb.Db;
-    };
+    private mongo: MongoInstance|null;
     private indexesForSubCollections: {[collectionType: string]: string[]} = {
         "kvdbentry": ["seq"],
         "msg": ["modSeq"]
     };
     
     constructor(
-        private client: mongodb.MongoClient,
+        private client: mongodb.MongoClient|null,
         public readonly logger: Logger,
         public readonly metricService: MetricService,
     ) {
@@ -46,8 +48,8 @@ export class MongoDbManager {
         this.mongo = null;
     }
     
-    checkInitialization() {
-        if (this.mongo == null) {
+    checkInitialization(mongo: MongoInstance|null): asserts mongo is MongoInstance {
+        if (mongo == null) {
             throw new Error("MongoDbManager not initialized yet");
         }
     }
@@ -88,6 +90,7 @@ export class MongoDbManager {
     }
     
     async tryCreateCollection(dbCollectionName: string, indexes: string[]) {
+        this.checkInitialization(this.mongo);
         try {
             const collection = await this.mongo.db.createCollection(dbCollectionName);
             for (const index of indexes) {
@@ -106,6 +109,7 @@ export class MongoDbManager {
     }
     
     async createOrGetCollection<T extends mongodb.Document = mongodb.Document>(collectionName: string) {
+        this.checkInitialization(this.mongo);
         try {
             return await this.mongo.db.createCollection<T>(collectionName);
         }
@@ -129,13 +133,13 @@ export class MongoDbManager {
     }
     
     async getCollection<T extends mongodb.Document = mongodb.Document>(collectionType: string, collectionName: string): Promise<mongodb.Collection<T>> {
-        this.checkInitialization();
+        this.checkInitialization(this.mongo);
         const dbCollectionName = this.getCollectionName(collectionType, collectionName);
         return this.mongo.db.collection(dbCollectionName);
     }
     
-    async removeCollection(collectionType: string, collectionName: string): Promise<boolean> {
-        this.checkInitialization();
+    async removeCollection(collectionType: string, collectionName: string): Promise<boolean|null> {
+        this.checkInitialization(this.mongo);
         const dbColName = this.getCollectionName(collectionType, collectionName);
         try {
             return await this.mongo.db.collection(dbColName).drop();
@@ -150,35 +154,36 @@ export class MongoDbManager {
     }
     
     async withBinaryMongo<T, K extends string>(collectionName: string, func: (col: MongoBinaryDb<K>) => Promise<T>): Promise<T> {
-        this.checkInitialization();
-        return await func(new MongoBinaryDb(await this.getCollection(collectionName, ""), null, this.logger));
+        this.checkInitialization(this.mongo);
+        return await func(new MongoBinaryDb(await this.getCollection(collectionName, ""), undefined, this.logger));
     }
     
     async withMongo<T>(collectionType: string, collectionName: string, func: (col: mongodb.Collection) => Promise<T>): Promise<T> {
-        this.checkInitialization();
+        this.checkInitialization(this.mongo);
         return await func(await this.getCollection(collectionType, collectionName));
     }
     
     async getStorageSize() {
-        this.checkInitialization();
+        this.checkInitialization(this.mongo);
         const stats = await this.mongo.db.command({dbStats: 1});
         return <number>stats.storageSize || 0;
     }
     
     getDb() {
-        this.checkInitialization();
+        this.checkInitialization(this.mongo);
         return this.mongo.db;
     }
     
     getClient() {
-        this.checkInitialization();
+        this.checkInitialization(this.mongo);
         return this.mongo.client;
     }
     
     async withTransaction<T>(func: (session: mongodb.ClientSession) => Promise<T>): Promise<T> {
+        this.checkInitialization(this.mongo);
         const session = this.mongo.client.startSession();
         try {
-            let res: T;
+            let res: T|null = null;
             await session.withTransaction(async () => {
                 res = await func(session);
             }, {
@@ -190,7 +195,7 @@ export class MongoDbManager {
                     w: "majority"
                 }
             });
-            return res;
+            return res as T;
         }
         finally {
             await session.endSession();
@@ -202,6 +207,7 @@ export class MongoDbManager {
     }
     
     async withLock<T>(lockId: string|string[], session: mongodb.ClientSession, func: () => Promise<T>) {
+        this.checkInitialization(this.mongo);
         const locksList = typeof(lockId) === "string" ? [lockId] : Utils.unique(lockId);
         const lockCollection = this.mongo.db.collection<{_id: string}>(LOCK_COLLECTION_NAME);
         for (const lock of locksList) {
@@ -219,15 +225,18 @@ export class MongoDbManager {
         return this.withTransaction(session => this.withLock(lockId, session, () => func(session)));
     }
     
-    getRepository<K extends string|number, V>(collectionName: string, idProp: keyof V, session?: mongodb.ClientSession): MongoObjectRepository<K, V> {
+    getRepository<K extends string|number, V extends mongodb.Document>(collectionName: string, idProp: keyof V, session?: mongodb.ClientSession): MongoObjectRepository<K, V> {
+        this.checkInitialization(this.mongo);
         return new MongoObjectRepository(this.mongo.db.collection<V>(collectionName), idProp, session, this.logger, this.metricService);
     }
     
     getCollectionByName<T extends mongodb.Document = mongodb.Document>(colName: string) {
+        this.checkInitialization(this.mongo);
         return this.mongo.db.collection<T>(colName);
     }
     
     async createCollections(collectionsToCreate: string[]) {
+        this.checkInitialization(this.mongo);
         const db = this.mongo.db;
         const collections: Collection[] = await db.listCollections().toArray();
         
@@ -239,6 +248,7 @@ export class MongoDbManager {
     }
     
     async createIndexes(info: {[collectionName: string]: string[]}) {
+        this.checkInitialization(this.mongo);
         for (const collectioName in info) {
             const indexes = info[collectioName];
             const collection = this.mongo.db.collection(collectioName);
@@ -248,7 +258,8 @@ export class MongoDbManager {
         }
     }
     
-    async deleteCollection(collectionName: string): Promise<boolean> {
+    async deleteCollection(collectionName: string): Promise<boolean|null> {
+        this.checkInitialization(this.mongo);
         try {
             return await this.mongo.db.collection(collectionName).drop();
         }

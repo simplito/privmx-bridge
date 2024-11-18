@@ -67,7 +67,7 @@ export class Callbacks {
         return res;
     }
     
-    async triggerForResult<T = any>(name: string, args: any[]): Promise<T> {
+    async triggerForResult<T = unknown>(name: string, args: any[]): Promise<T|null> {
         if (!(name in this.callbacks)) {
             return null;
         }

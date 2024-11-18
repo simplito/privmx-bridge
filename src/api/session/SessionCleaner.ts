@@ -24,36 +24,36 @@ export class SessionCleaner {
     ) {
     }
     
-    async clearOldSessions(session: mongodb.ClientSession) {
+    async clearOldSessions(session: mongodb.ClientSession|undefined) {
         await this.ticketsDb.cleanTicketsDb(session);
         await this.sessionStorage.cleanOldSessions(session);
     }
     
-    async destroySession(session: mongodb.ClientSession, sessionId: types.core.SessionId) {
+    async destroySession(session: mongodb.ClientSession|undefined, sessionId: types.core.SessionId) {
         await this.sessionStorage.removeSession(session, sessionId);
         await this.ticketsDb.removeTickestBySessions(session, [sessionId]);
         this.webSocketConnectionManager.disconnectWebSocketsBySession(sessionId);
     }
     
-    async destroySessionsOfUser(session: mongodb.ClientSession, username: types.core.Username) {
+    async destroySessionsOfUser(session: mongodb.ClientSession|undefined, username: types.core.Username) {
         const sessionIds = await this.sessionStorage.removeSessionsByUser(session, username);
         await this.ticketsDb.removeTickestBySessions(session, sessionIds);
         this.webSocketConnectionManager.disconnectWebSocketsByUsername(username);
     }
     
-    async destroySessionsOfSubidentity(session: mongodb.ClientSession, pub: types.core.EccPubKey) {
+    async destroySessionsOfSubidentity(session: mongodb.ClientSession|undefined, pub: types.core.EccPubKey) {
         const sessionIds = await this.sessionStorage.removeSessionsBySubidentity(session, pub);
         await this.ticketsDb.removeTickestBySessions(session, sessionIds);
         this.webSocketConnectionManager.disconnectWebSocketsBySubidentity(pub);
     }
     
-    async destroySessionsOfDevice(session: mongodb.ClientSession, deviceId: types.core.DeviceId) {
+    async destroySessionsOfDevice(session: mongodb.ClientSession|undefined, deviceId: types.core.DeviceId) {
         const sessionIds = await this.sessionStorage.removeSessionsByDeviceId(session, deviceId);
         await this.ticketsDb.removeTickestBySessions(session, sessionIds);
         this.webSocketConnectionManager.disconnectWebSocketsByDeviceId(deviceId);
     }
     
-    async destroySubidentitySessionsWithGroup(session: mongodb.ClientSession, groupId: types.user.UsersGroupId) {
+    async destroySubidentitySessionsWithGroup(session: mongodb.ClientSession|undefined, groupId: types.user.UsersGroupId) {
         const sessionIds = await this.sessionStorage.removeSessionsBySubidentityGroup(session, groupId);
         await this.ticketsDb.removeTickestBySessions(session, sessionIds);
         this.webSocketConnectionManager.disconnectWebSocketsBySubidentityGroup(groupId);

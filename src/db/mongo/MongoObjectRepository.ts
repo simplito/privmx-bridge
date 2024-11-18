@@ -25,7 +25,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     constructor(
         public collection: mongodb.Collection<any>,
         private idProperty: keyof V,
-        private session: mongodb.ClientSession,
+        private session: mongodb.ClientSession|undefined,
         private logger: Logger,
         private metricService: MetricService,
     ) {
@@ -71,7 +71,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         return opt;
     }
     
-    async get(key: K): Promise<V> {
+    async get(key: K): Promise<V|null> {
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {
@@ -138,7 +138,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         }
     }
     
-    async find(f: (q: Query<V>) => QueryResult): Promise<V> {
+    async find(f: (q: Query<V>) => QueryResult): Promise<V|null> {
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         const query = f(new MongoQuery(this.idProperty));
@@ -173,7 +173,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         this.metricService.addDbRequest();
         try {
             await this.collection.insertOne(this.convertToDbObj(value), this.getOptions());
-            return null;
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo insert", this.collection.collectionName, value[this.idProperty]);
@@ -184,8 +184,8 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {
-            await this.collection.replaceOne({_id: value[this.idProperty]}, this.convertToDbObj(value), this.getOptions());
-            return null;
+            await this.collection.replaceOne({_id: value[this.idProperty]}, this.withoutId(this.convertToDbObj(value)), this.getOptions());
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo replace", this.collection.collectionName, value[this.idProperty]);
@@ -196,8 +196,8 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {
-            await this.collection.replaceOne({_id: value[this.idProperty]}, this.convertToDbObj(value), this.getOptions<mongodb.ReplaceOptions>({upsert: true}));
-            return null;
+            await this.collection.replaceOne({_id: value[this.idProperty]}, this.withoutId(this.convertToDbObj(value)), this.getOptions<mongodb.ReplaceOptions>({upsert: true}));
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo update", this.collection.collectionName, value[this.idProperty]);
@@ -214,7 +214,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         this.metricService.addDbRequest();
         try {
             await this.collection.deleteOne({_id: key}, this.getOptions());
-            return null;
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo delete", this.collection.collectionName, key);
@@ -227,7 +227,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const query = f(new MongoQuery(this.idProperty));
         try {
             await this.collection.deleteMany(query, this.getOptions());
-            return null;
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo delete many", this.collection.collectionName, JSON.stringify(query));
@@ -235,7 +235,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     query(f: (q: Query<V>) => QueryResult): ObjectQuery<V> {
-        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), this.convertFromDbObj.bind(this), this.session, <string>this.idProperty, this.logger, this.metricService);
+        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), x => this.convertFromDbObj(x), this.session, <string>this.idProperty, this.logger, this.metricService);
     }
     
     /** Perform find with sort, skip and limit and returns list of found elements and count of all matched elements */
@@ -321,5 +321,10 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         ];
         const result = <{totalData: V[], totalCount: {count: number}[]}[]>await this.collection.aggregate(pipeline).toArray();
         return {list: result[0].totalData.map(x => this.convertFromDbObjEx(x)), count: result[0].totalCount.length === 0 ? 0 : result[0].totalCount[0].count};
+    }
+    
+    private withoutId<Q>(obj: Q): Omit<Q, "_id"> {
+        delete (obj as any)._id;
+        return obj;
     }
 }

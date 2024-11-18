@@ -292,7 +292,11 @@ export class BaseTestSet {
 
     private async performMigrations() {
         const {serverProcess} = await this.spawnServerProcess(this.configPath, {...process.env, "PMX_MIGRATION": "Migration048FixAclCache"});
-        const status = await this.onServerReady(() => process.kill(-serverProcess.pid, "SIGINT"));
+        const status = await this.onServerReady(() => {
+            if (serverProcess.pid) {
+                process.kill(-serverProcess.pid, "SIGINT");
+            }
+        });
         if(!status.success) {
             if (serverProcess.pid) {
                 process.kill(-serverProcess.pid, "SIGINT");

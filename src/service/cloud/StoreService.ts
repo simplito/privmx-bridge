@@ -123,7 +123,7 @@ export class StoreService {
                 return {context: null, toNotify: [], files: []};
             }
             const contextId = stores[0].contextId;
-            let additionalAccessCheck: ((store: db.store.Store) => boolean)|null = null;
+            let additionalAccessCheck: ((store: db.store.Store) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "store/storeDeleteMany", []);
                 additionalAccessCheck = store => this.policy.canDeleteContainer(user, context, store);
@@ -134,7 +134,7 @@ export class StoreService {
                 if (store.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(store)) {
+                if (!additionalAccessCheck(store)) {
                     resultMap.set(store.id, "ACCESS_DENIED");
                 }
                 else {
@@ -147,8 +147,10 @@ export class StoreService {
             const files = await storeFileRepository.deleteAllFromStores(toDelete);
             return {context: usedContext, toNotify, files};
         });
-        for (const deletedStore of result.toNotify) {
-            this.storeNotificationService.sendStoreDeleted(deletedStore, result.context.solution);
+        if (result.context) {
+            for (const deletedStore of result.toNotify) {
+                this.storeNotificationService.sendStoreDeleted(deletedStore, result.context.solution);
+            }
         }
         this.clearFilesInStorage(result.files);
 
@@ -157,7 +159,7 @@ export class StoreService {
             resultArray.push({id, status});
         }
 
-        return {contextId: result.context.id, results: resultArray};
+        return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
     
     async deleteStoresByContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {
@@ -344,7 +346,7 @@ export class StoreService {
         if (!request.files[model.fileIndex]) {
             throw new AppException("INVALID_FILE_INDEX");
         }
-        if ("thumbIndex" in model) {
+        if (typeof(model.thumbIndex) === "number") {
             if (!request.files[model.thumbIndex]) {
                 throw new AppException("INVALID_FILE_INDEX");
             }
@@ -353,7 +355,7 @@ export class StoreService {
             }
         }
         const uploadedFile = request.files[model.fileIndex];
-        const uploadedThumb = "thumbIndex" in model ? request.files[model.thumbIndex] : undefined;
+        const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
         
         await this.storageService.commit(uploadedFile.id);
         if (uploadedThumb) {
@@ -387,7 +389,7 @@ export class StoreService {
         if (!request.files[model.fileIndex]) {
             throw new AppException("INVALID_FILE_INDEX");
         }
-        if ("thumbIndex" in model) {
+        if (typeof(model.thumbIndex) === "number") {
             if (!request.files[model.thumbIndex]) {
                 throw new AppException("INVALID_FILE_INDEX");
             }
@@ -396,7 +398,7 @@ export class StoreService {
             }
         }
         const uploadedFile = request.files[model.fileIndex];
-        const uploadedThumb = "thumbIndex" in model ? request.files[model.thumbIndex] : undefined;
+        const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
         
         await this.storageService.commit(uploadedFile.id);
         if (uploadedThumb) {
@@ -472,7 +474,7 @@ export class StoreService {
                 throw new DbInconsistencyError(`store=${storeId} does not exist, from file=${files[0].id}`);
             }
             const contextId = store.contextId;
-            let additionalAccessCheck: ((file: db.store.StoreFile) => boolean)|null = null;
+            let additionalAccessCheck: ((file: db.store.StoreFile) => boolean) = () => true;
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
                 if (checkAccess) {
                     this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileDeleteMany", ["storeId=" + store.id]);
@@ -485,7 +487,7 @@ export class StoreService {
                 if(file.storeId !== storeId) {
                     throw new AppException("FILES_BELONGS_TO_DIFFERENT_STORES");
                 }
-                if (additionalAccessCheck && !additionalAccessCheck(file)) {
+                if (!additionalAccessCheck(file)) {
                     resultMap.set(file.id, "ACCESS_DENIED");
                 }
                 else {
@@ -503,8 +505,10 @@ export class StoreService {
         if (result.store) {
             this.storeNotificationService.sendStoreStatsChanged({...result.store, files: result.store.files - 1, lastFileDate: result.deletedAt}, result.context.solution);
         }
-        for (const deletedFile of result.filesToDeleteData) {
-            this.storeNotificationService.sendStoreFileDeleted(result.store, deletedFile, result.context.solution);
+        if (result.store && result.context) {
+            for (const deletedFile of result.filesToDeleteData) {
+                this.storeNotificationService.sendStoreFileDeleted(result.store, deletedFile, result.context.solution);
+            }
         }
 
         const resultArray: types.store.StoreFileDeleteStatus[] = [];
@@ -512,7 +516,7 @@ export class StoreService {
             resultArray.push({id, status});
         }
 
-        return {contextId: result.context.id, results: resultArray};
+        return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
 
     async deleteFilesOlderThan(executor: Executor, storeId: types.store.StoreId, timestamp: types.core.Timestamp) {
@@ -540,10 +544,16 @@ export class StoreService {
         if (typeof(version) === "number" && this.getFileVersion(file) !== version) {
             throw new AppException("STORE_FILE_VERSION_MISMATCH");
         }
-        if (thumb && !file.thumb) {
-            throw new AppException("FILES_CONTAINER_FILE_HAS_NOT_THUMB");
-        }
-        const data = await this.storageService.read(thumb ? file.thumb.fileId : file.fileId, range);
+        const fileIdToRead = (() => {
+            if (thumb) {
+                if (!file.thumb) {
+                    throw new AppException("FILES_CONTAINER_FILE_HAS_NOT_THUMB");
+                }
+                return file.thumb.fileId;
+            }
+            return file.fileId;
+        })();
+        const data = await this.storageService.read(fileIdToRead, range);
         return {file, store, user, data};
     }
     

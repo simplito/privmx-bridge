@@ -17,7 +17,7 @@ import * as types from "../../../types";
 export class ThreadTests extends BaseTestSet {
     
     private messageIds: types.thread.ThreadMessageId[] = [];
-    private threadId: types.thread.ThreadId;
+    private threadId?: types.thread.ThreadId;
 
     @Test()
     async shouldDeleteManyThreadMessages() {
@@ -42,6 +42,9 @@ export class ThreadTests extends BaseTestSet {
     }
 
     private async sendHundredMessages() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
         for (let i = 0; i < 100; i++ ) {
             const res = await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
@@ -53,6 +56,9 @@ export class ThreadTests extends BaseTestSet {
     }
 
     private async fetchMessagesAndCheckTheirCount() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
         const res = await this.apis.threadApi.threadMessagesGet({
             threadId: this.threadId,
             limit: 100,
@@ -73,6 +79,9 @@ export class ThreadTests extends BaseTestSet {
     }
 
     private async fetchMessagesAndCheckIfEmpty() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
         const res = await this.apis.threadApi.threadMessagesGet({
             threadId: this.threadId,
             limit: 100,

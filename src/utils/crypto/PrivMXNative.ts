@@ -164,11 +164,11 @@ export function init(logger: Logger) {
         
         // eslint-disable-next-line @typescript-eslint/unbound-method
         const orgEciesEncrypt = ECIES.prototype.encrypt;
-        ECIES.prototype.encrypt = function(this: ECIES, encBuf: Buffer, ivBuf: Buffer = null): Buffer {
+        ECIES.prototype.encrypt = function(this: ECIES, encBuf: Buffer, ivBuf: Buffer|null = null): Buffer {
             if (this.privateKey.ec.curve == secp256k1.curve && this.opts.noKey && this.opts.shortTag && ivBuf == null) {
                 return PrivmxNative.ecies_encrypt(serializePriv(this.privateKey), serializePub(this.publicKey), encBuf);
             }
-            return orgEciesEncrypt.call(this, encBuf, ivBuf);
+            return orgEciesEncrypt.call(this, encBuf, ivBuf as Buffer);
         };
         
         // eslint-disable-next-line @typescript-eslint/unbound-method

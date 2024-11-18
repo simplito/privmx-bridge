@@ -129,14 +129,14 @@ export type StoreUpdatedEventData = Store;
 export type StoreDeletedEvent = types.cloud.Event<"storeDeleted", "store", StoreDeletedEventData>;
 export interface StoreDeletedEventData {
     storeId: types.store.StoreId;
-    type: types.store.StoreType;
+    type?: types.store.StoreType;
 }
 
 export type StoreStatsChangedEvent = types.cloud.Event<"storeStatsChanged", "store", StoreStatsChangedEventData>;
 export interface StoreStatsChangedEventData {
     id: types.store.StoreId;
     contextId: types.context.ContextId;
-    type: types.store.StoreType;
+    type?: types.store.StoreType;
     lastFileDate: types.core.Timestamp;
     files: number;
 }

@@ -27,7 +27,7 @@ export class ImageTypeDetector {
         return true;
     }
     
-    static detect(data: NumericEnumerable): DetectionResult {
+    static detect(data: NumericEnumerable): DetectionResult|null {
         if (ImageTypeDetector.check([0xFF, 0xD8, 0xFF], data)) {
             return {
                 ext: "jpg",

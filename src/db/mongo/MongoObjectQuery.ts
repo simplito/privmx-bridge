@@ -18,8 +18,8 @@ import { ObjectQuery, PickProperty, QueryResult } from "../ObjectRepository";
 
 export class MongoObjectQuery<T> implements ObjectQuery<T> {
     
-    limitValue: number;
-    skipValue: number;
+    limitValue?: number;
+    skipValue?: number;
     sorts: {field: string, asc: boolean}[] = [];
     selectedProps: string[] = [];
     omittedProps: string[] = [];
@@ -28,7 +28,7 @@ export class MongoObjectQuery<T> implements ObjectQuery<T> {
         private collection: mongodb.Collection,
         private query: QueryResult,
         private convertFromDb: (x: T) => T,
-        private session: mongodb.ClientSession,
+        private session: mongodb.ClientSession|undefined,
         private idProperty: string,
         private logger: Logger,
         private metricService: MetricService,
@@ -71,7 +71,7 @@ export class MongoObjectQuery<T> implements ObjectQuery<T> {
         return cursor;
     }
     
-    async one(): Promise<T> {
+    async one(): Promise<T|null> {
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {

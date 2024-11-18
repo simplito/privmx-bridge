@@ -70,6 +70,9 @@ export class NonceService {
     
     async nonceCheck2(data: Buffer, key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature) {
         const eccKey = ECUtils.publicFromBase58DER(key);
+        if (!eccKey) {
+            throw new AppException("INVALID_SIGNATURE");
+        }
         await this.nonceCheck(data, eccKey, nonce, timestamp, Base64.toBuf(signature));
     }
     

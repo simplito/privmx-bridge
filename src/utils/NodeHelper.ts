@@ -33,7 +33,7 @@ export class NodeHelper {
     
     executeCommand(command: string, stdin: string): Promise<string> {
         return new Promise<string>((resolve, reject) => {
-            let exitCode: number;
+            let exitCode: number|null = null;
             const proc = exec
                 .exec(command, {encoding: "utf8"}, (error, stdout, stderr) => {
                     if (error) {
@@ -49,12 +49,12 @@ export class NodeHelper {
                 .on("exit", code => {
                     exitCode = code;
                 });
-            proc.stdin.on("error", e => this.logger.error("Error stdin during spawning process", e));
-            proc.stdout.on("error", e => this.logger.error("Error stdout during spawning process", e));
-            proc.stderr.on("error", e => this.logger.error("Error stderr during spawning process", e));
+            proc.stdin?.on("error", e => this.logger.error("Error stdin during spawning process", e));
+            proc.stdout?.on("error", e => this.logger.error("Error stdout during spawning process", e));
+            proc.stderr?.on("error", e => this.logger.error("Error stderr during spawning process", e));
             if (stdin) {
-                proc.stdin.write(stdin);
-                proc.stdin.end();
+                proc.stdin?.write(stdin);
+                proc.stdin?.end();
             }
         });
     }

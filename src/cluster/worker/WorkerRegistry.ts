@@ -60,8 +60,8 @@ export class WorkerRegistry {
     private typesValidator?: TypesValidator;
     private jobManager?: JobManager;
     private jobService?: JobService;
-    private workerCallbacks: Callbacks;
-    private workerPluginsManager: WorkerPluginsManager;
+    private workerCallbacks?: Callbacks;
+    private workerPluginsManager?: WorkerPluginsManager;
     private serverStatsWorkerService?: ServerStatsWorkerService;
     protected cloudAclChecker?: CloudAclChecker;
     private ipRateLimiterClient?: IpRateLimiterClient;

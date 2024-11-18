@@ -26,8 +26,8 @@ export type TicketId = Buffer&{__ticketId: never};
 export type TicketIdHex = types.core.Hex&{__ticketIdHex: never};
 
 export interface TicketData {
-    sessionId: types.core.SessionId;
-    agent: types.core.UserAgent;
+    sessionId: types.core.SessionId|undefined;
+    agent: types.core.UserAgent|undefined;
     masterSecret: Buffer;
 }
 
@@ -47,7 +47,7 @@ export class TicketsDb {
     ) {
     }
     
-    async generateTickets(session: mongodb.ClientSession, count: number, ticketData: TicketData): Promise<{ids: TicketId[], ttl: types.core.Timespan}> {
+    async generateTickets(session: mongodb.ClientSession|undefined, count: number, ticketData: TicketData): Promise<{ids: TicketId[], ttl: types.core.Timespan}> {
         if (count === 0) {
             return {
                 ids: [],
@@ -76,7 +76,7 @@ export class TicketsDb {
         };
     }
     
-    async useTicket(session: mongodb.ClientSession, ticketId: TicketId): Promise<TicketData> {
+    async useTicket(session: mongodb.ClientSession|undefined, ticketId: TicketId): Promise<TicketData|null> {
         if (ticketId.length != 32) {
             return null;
         }
@@ -104,11 +104,11 @@ export class TicketsDb {
         return this.configService.values.user.session.ticketsTTL;
     }
     
-    async cleanTicketsDb(session: mongodb.ClientSession) {
+    async cleanTicketsDb(session: mongodb.ClientSession|undefined) {
         await this.repositoryFactory.createTicketDataRepository(session).deleteExpired(this.getTicketsTTL());
     }
     
-    async removeTickestBySessions(session: mongodb.ClientSession, sessionIds: types.core.SessionId[]) {
+    async removeTickestBySessions(session: mongodb.ClientSession|undefined, sessionIds: types.core.SessionId[]) {
         await this.repositoryFactory.createTicketDataRepository(session).removeBySessions(sessionIds);
     }
 }

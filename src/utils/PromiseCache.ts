@@ -11,7 +11,7 @@ limitations under the License.
 
 export class PromiseCache<T> {
     
-    promise: Promise<T>;
+    private promise?: Promise<T>;
     
     async go(func: () => Promise<T>): Promise<T> {
         if (this.promise != null) {
@@ -22,7 +22,7 @@ export class PromiseCache<T> {
             return await this.promise;
         }
         finally {
-            this.promise = null;
+            delete this.promise;
         }
     }
 }

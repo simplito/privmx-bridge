@@ -11,7 +11,7 @@ limitations under the License.
 
 export class Max<T extends number = number> {
     
-    constructor(public value: T = null) {
+    constructor(public value: T|null = null) {
     }
     
     add(value: T) {

@@ -52,10 +52,6 @@ export class Session {
         return Object.keys(this.changes).length > 0;
     }
     
-    getId(): types.core.SessionId {
-        return this.id;
-    }
-    
     get(name: "state", value?: SessionState): SessionState;
     get(name: "properties", value?: types.user.LoginProperties): types.user.LoginProperties;
     get(name: "srp", value?: SrpDataInSession): SrpDataInSession;
@@ -72,7 +68,7 @@ export class Session {
     get(name: "lastUsage", value?: types.core.Timestamp): types.core.Timestamp;
     get(name: "solution", value?: types.cloud.SolutionId): types.cloud.SolutionId;
     get(name: "deviceToken", value?: boolean): boolean;
-    get<K extends keyof db.session.SessionData>(name: K, def: db.session.SessionData[K] = null): db.session.SessionData[K] {
+    get<K extends keyof db.session.SessionData>(name: K, def?: db.session.SessionData[K]): db.session.SessionData[K] {
         return name in this.data ? this.data[name] : def;
     }
     

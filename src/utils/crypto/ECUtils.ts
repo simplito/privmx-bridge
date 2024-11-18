@@ -45,7 +45,7 @@ export class ECUtils {
         return keyPair.ec.keyFromPublic(hex, "hex");
     }
     
-    static fromWIF(wif: types.core.EccWif, curve: string = "secp256k1"): elliptic.ec.KeyPair {
+    static fromWIF(wif: types.core.EccWif, curve: string = "secp256k1"): elliptic.ec.KeyPair|null {
         const payloadResult = Utils.try(() => Base58.decodeWithChecksum(wif));
         if (payloadResult.success === false) {
             return null;
@@ -72,7 +72,7 @@ export class ECUtils {
         return <types.core.EccWif>Base58.encodeWithChecksum(Buffer.from(priv, "hex"));
     }
     
-    static publicFromBase58DER(base58: types.core.EccPubKey, curve: string = "secp256k1"): elliptic.ec.KeyPair {
+    static publicFromBase58DER(base58: types.core.EccPubKey, curve: string = "secp256k1"): elliptic.ec.KeyPair|null {
         const result = Utils.try(() => Base58.decodeWithChecksum(base58));
         if (result.success === false || result.result.length === 0) {
             return null;
@@ -105,14 +105,15 @@ export class ECUtils {
     }
     
     static verifySignature2(pubkey: types.core.EccPubKey, signature: types.core.EccSignature, data: Buffer): boolean {
-        return ECUtils.verifySignature(ECUtils.publicFromBase58DER(pubkey), Base64.toBuf(signature), data);
+        const pub = ECUtils.publicFromBase58DER(pubkey);
+        return !!pub && ECUtils.verifySignature(pub, Base64.toBuf(signature), data);
     }
     
     static verifySignature3(pubkey: elliptic.ec.KeyPair, signature: types.core.EccSignature, data: Buffer): boolean {
         return ECUtils.verifySignature(pubkey, Base64.toBuf(signature), data);
     }
     
-    static toBase58Address(key: elliptic.ec.KeyPair, network: string = "00"): types.core.EccAddress {
+    static toBase58Address(key: elliptic.ec.KeyPair, network: string = "00"): types.core.EccAddress|null {
         const networkBin = Buffer.from(network, "hex");
         if (networkBin == null || networkBin.length != 1) {
             return null;

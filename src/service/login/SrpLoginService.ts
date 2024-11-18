@@ -82,7 +82,7 @@ export class SrpLoginService {
             await this.loginLogService.saveSrpLoginAttempt(null, I, false, "USER_DOESNT_EXIST", this.requestInfoHolder.ip, properties);
             throw new AppException("USER_DOESNT_EXIST");
         }
-        const proxy: types.core.Host = null;
+        const proxy: types.core.Host|null = null;
         if (user.loginByProxy != null && (this.requestInfoHolder.serverSession == null || user.loginByProxy != this.requestInfoHolder.serverSession.host)) {
             throw new AppException("INVALID_PROXY_SESSION");
         }
@@ -94,7 +94,7 @@ export class SrpLoginService {
         const b = SrpLogic.get_b();
         const bigB = SrpLogic.get_big_B(g, N, k, b, v);
         
-        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(null);
+        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);
         session.set("state", "init");
         session.set("properties", properties);
         session.set("srp", {
@@ -113,10 +113,10 @@ export class SrpLoginService {
         if (proxy) {
             session.set("proxy", proxy);
         }
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         
         const res = {
-            sessionId: session.getId(),
+            sessionId: session.id,
             N: Hex.fromBN(N),
             g: Hex.fromBN(g),
             k: Hex.fromBN(k),
@@ -127,11 +127,11 @@ export class SrpLoginService {
         return res;
     }
     
-    async exchange(out: {user?: string}, sessionId: types.core.SessionId, A: BN, clientM1: BN, withK: boolean, sessionKey: types.core.EccPubKey): Promise<SrpExchangeResult> {
+    async exchange(out: {user?: string}, sessionId: types.core.SessionId, A: BN, clientM1: BN, withK: boolean, sessionKey: types.core.EccPubKey|undefined): Promise<SrpExchangeResult> {
         this.logger.debug("exchange", {A: A, clientM1: clientM1});
         let session: Session;
         try {
-            session = await this.sessionHolder.closeCurrentSessionAndRestoreGiven(null, sessionId);
+            session = await this.sessionHolder.closeCurrentSessionAndRestoreGiven(undefined, sessionId);
         }
         catch (e) {
             this.logger.error(e);
@@ -144,14 +144,14 @@ export class SrpLoginService {
         const srpData = session.get("srp");
         const properties = session.get("properties");
         if (await this.loginLogService.detectAttack(this.requestInfoHolder.ip)) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             await this.loginLogService.saveSrpLoginAttempt(username, srpData.I, false, "LOGIN_REJECTED", this.requestInfoHolder.ip, properties);
             await Utils.sleep(2000);
             throw new AppException("LOGIN_REJECTED");
         }
         const proxy = session.get("proxy");
         if (proxy != null && (this.requestInfoHolder.serverSession == null || proxy != this.requestInfoHolder.serverSession.host)) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             throw new AppException("INVALID_PROXY_SESSION");
         }
         const N = this.deserializeBigInteger(srpData.N);
@@ -161,7 +161,7 @@ export class SrpLoginService {
         const b = this.deserializeBigInteger(srpData.b);
         const bigB = this.deserializeBigInteger(srpData.B);
         if (SrpLogic.valid_A(A, N) == false) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             throw new AppException("INVALID_A");
         }
         const u = SrpLogic.get_u(A, bigB, N);
@@ -176,7 +176,7 @@ export class SrpLoginService {
         });
         
         if (serverM1.cmp(clientM1) != 0) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             await this.loginLogService.saveSrpLoginAttempt(username, srpData.I, false, "DIFFERENT_M1", this.requestInfoHolder.ip, properties);
             throw new AppException("DIFFERENT_M1");
         }
@@ -201,9 +201,9 @@ export class SrpLoginService {
         if (als) {
             result.additionalLoginStep = als;
         }
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         
-        await this.loginLogService.saveSrpLoginAttempt(username, srpData.I, true, null, this.requestInfoHolder.ip, properties);
+        await this.loginLogService.saveSrpLoginAttempt(username, srpData.I, true, undefined, this.requestInfoHolder.ip, properties);
         if (withK === true) {
             result.K = bigK;
         }

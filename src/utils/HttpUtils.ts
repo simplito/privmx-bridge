@@ -18,7 +18,7 @@ export class HttpUtils {
     
     static readBody(request: http.IncomingMessage) {
         const requestX = request as HttpRequestX;
-        if ("readBodyPromise" in requestX) {
+        if (requestX.readBodyPromise != null) {
             return requestX.readBodyPromise;
         }
         return requestX.readBodyPromise = new Promise<Buffer>((resolve, reject) => {

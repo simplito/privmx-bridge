@@ -35,7 +35,7 @@ export class EcdheLoginService {
     }
     
     private async startEcdheSession(key: types.core.EccPubKey, solution?: types.cloud.SolutionId) {
-        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(null);
+        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);
         session.set("username", <types.core.Username><unknown>key);
         session.set("state", "ecdhePre");
         session.set("ecdhe", {pub: key});
@@ -68,6 +68,9 @@ export class EcdheLoginService {
     
     async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solution: types.cloud.SolutionId|undefined) {
         const pub = ECUtils.publicFromBase58DER(key);
+        if (!pub) {
+            throw new AppException("INVALID_SIGNATURE");
+        }
         await this.nonceService.nonceCheck2P(Buffer.from("ecdhexlogin", "utf8"), pub, nonce, timestamp, signature);
         
         const keyExists = await this.repositoryFactory.createContextUserRepository().userPubKeyExists(key);
@@ -75,7 +78,7 @@ export class EcdheLoginService {
             throw new AppException("USER_DOESNT_EXIST");
         }
         
-        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(null);
+        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);
         session.set("username", <types.core.Username><unknown>key);
         session.set("state", "exchange");
         session.set("ecdhe", {pub: key, contextUser: true});

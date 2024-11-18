@@ -142,7 +142,7 @@ export class Crypto {
         const counters = options.counters === false ? false : true;
         const feedback = options.feedback === false ? false : true;
         let seed = Buffer.alloc(0);
-        const opt2buffer = (opt: Buffer|string) => {
+        const opt2buffer = (opt: Buffer|string|undefined) => {
             if (typeof(opt) === "string") {
                 return Buffer.from(opt);
             }

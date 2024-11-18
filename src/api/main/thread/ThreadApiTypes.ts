@@ -182,7 +182,7 @@ export type ThreadUpdatedEventData = ThreadInfo;
 export type ThreadDeletedEvent = types.cloud.Event<"threadDeleted", "thread", ThreadDeletedEventData>;
 export interface ThreadDeletedEventData {
     threadId: types.thread.ThreadId;
-    type: types.thread.ThreadType;
+    type?: types.thread.ThreadType;
 }
 
 export type ThreadNewMessageEvent = types.cloud.Event<"threadNewMessage", `thread/${types.thread.ThreadId}/messages`, ThreadNewMessageEventData>;
@@ -201,7 +201,7 @@ export type ThreadStatsEvent = types.cloud.Event<"threadStats", "thread", Thread
 export interface ThreadStatsEventData {
     threadId: types.thread.ThreadId;
     contextId: types.context.ContextId;
-    type: types.thread.ThreadType;
+    type?: types.thread.ThreadType;
     lastMsgDate: types.core.Timestamp;
     messages: number;
 }

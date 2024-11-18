@@ -65,7 +65,7 @@ export class ApiMethodFinder {
         debugLog(`Processing ${apiFile.fileName}`);
         for (const statement of apiFile.statements) {
             if (ts.isClassDeclaration(statement)) {
-                debugLog("Class found", statement.name.escapedText);
+                debugLog("Class found", statement.name?.escapedText);
                 const methods = ApiMethodFinder.findApiMethods(statement);
                 for (const method of methods) {
                     if (!methodToFind || methodToFind.test(Helper.getMethodName(method))) {
@@ -103,7 +103,7 @@ export class Helper {
     static getMethodName(method: ts.MethodDeclaration) {
         const methodName = Helper.getName(method.name);
         if (ts.isClassDeclaration(method.parent)) {
-            const className = method.parent.name.escapedText as string;
+            const className = method.parent.name?.escapedText || "";
             return `${className}.${methodName}`;
         }
         return `<unknown>.${methodName}`;
@@ -202,7 +202,7 @@ export class JsStaticExecutor {
         return new JsStaticExecutor(this.project, callStack);
     }
     
-    executeStatement(statement: ts.Statement) {
+    executeStatement(statement?: ts.Statement) {
         if (!statement) {
             return;
         }
@@ -326,7 +326,7 @@ export class JsStaticExecutor {
         debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}}`);
     }
     
-    executeExpression(expression: ts.Expression): ArrowFunction|void {
+    executeExpression(expression?: ts.Expression): ArrowFunction|void {
         if (!expression) {
             return;
         }
@@ -465,7 +465,7 @@ export class JsStaticExecutor {
         }
         else if (ts.isNewExpression(expression)) {
             this.executeExpression(expression.expression);
-            for (const x of expression.arguments) {
+            for (const x of expression.arguments || []) {
                 if (ts.isArrowFunction(x)) {
                     if (ts.isIdentifier(expression.expression) && expression.expression.escapedText === "Promise") {
                         this.executeArrow({executor: this, value: x}, []);

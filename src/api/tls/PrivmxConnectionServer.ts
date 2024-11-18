@@ -36,26 +36,24 @@ import { Logger } from "../../service/log/LoggerFactory";
 
 export class PrivmxConnectionServer extends PrivmxConnectionBase {
     
-    sessionId: types.core.SessionId;
-    clientAgent: types.core.UserAgent;
-    sessionValidator: (sessionId: types.core.SessionId) => Whenable<boolean> = null;
+    private sessionId?: types.core.SessionId;
+    private clientAgent?: types.core.UserAgent;
     
     constructor(
         private requestLogger: RequestLogger,
         private ticketsDb: TicketsDb,
         private serverAgent: ServerAgent,
-        private validators: PacketValidator = null,
-        private srpLoginService: SrpLoginService = null,
-        private keyLoginService: KeyLoginService = null,
-        private ecdheLoginService: EcdheLoginService = null,
-        private sessionLoginService: SessionLoginService = null,
+        private validators: PacketValidator,
+        private srpLoginService: SrpLoginService,
+        private keyLoginService: KeyLoginService,
+        private ecdheLoginService: EcdheLoginService,
+        private sessionLoginService: SessionLoginService,
         private serverKeystoreProvider: () => Promise<pki.common.Types.keystore.IKeyStore2>,
         private configService: ConfigService,
+        private sessionValidator: (sessionId: types.core.SessionId|undefined) => Whenable<boolean>,
         logger: Logger,
     ) {
         super(!configService.values.application.allowUnauthorized, logger);
-        this.sessionId = null;
-        this.clientAgent = null;
     }
     
     private getServerConfig() {
@@ -126,6 +124,9 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.params = packet;
                 const ec = elliptic.ec("secp256k1");
                 const clientKey = ECUtils.publicFromBase58DER(packet.sessionKey);
+                if (!clientKey) {
+                    throw new RpcError("Invalid client key");
+                }
                 const session = await this.sessionLoginService.onSession(packet.sessionId, clientKey, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature);
                 methodInfo.user = session.get("username");
                 this.sessionId = session.id;
@@ -142,7 +143,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.setPreMasterSecret(z);
                 this.changeWriteCipherSpec();
                 methodInfo.success = true;
-                methodInfo.response = response;
+                methodInfo.response = {result: response};
             });
         }
         else if (raw.type == "ticket_request") {
@@ -160,7 +161,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     ttl: Math.floor(tickets.ttl / 1000)
                 };
                 methodInfo.success = true;
-                methodInfo.response = ticketResponse;
+                methodInfo.response = {result: ticketResponse};
                 this.send(this.psonHelper.pson_encode(ticketResponse), ContentType.HANDSHAKE);
             });
         }
@@ -213,7 +214,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 };
                 methodInfo.success = true;
                 methodInfo.sessionId = response.sessionId;
-                methodInfo.response = srpResponse;
+                methodInfo.response = {result: srpResponse};
                 this.logger.debug("send srp init response", {response: srpResponse});
                 this.send(
                     this.psonHelper.pson_encode(srpResponse),
@@ -247,7 +248,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     ttl: Math.floor(tickets.ttl / 1000)
                 };
                 methodInfo.success = true;
-                methodInfo.response = srpResponse;
+                methodInfo.response = {result: srpResponse};
                 this.logger.debug("srp exchange done on server", {response: srpResponse});
                 this.send(
                     this.psonHelper.pson_encode(srpResponse),
@@ -299,7 +300,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.logger.debug("send key init response", {response: keyResponse});
                 methodInfo.success = true;
                 methodInfo.sessionId = response.sessionId;
-                methodInfo.response = keyResponse;
+                methodInfo.response = {result: keyResponse};
                 this.send(
                     this.psonHelper.pson_encode(keyResponse),
                     ContentType.HANDSHAKE
@@ -339,7 +340,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 };
                 this.logger.debug("send key exchange response", {response: keyResponse});
                 methodInfo.success = true;
-                methodInfo.response = keyResponse;
+                methodInfo.response = {result: keyResponse};
                 this.send(
                     this.psonHelper.pson_encode(keyResponse),
                     ContentType.HANDSHAKE
@@ -385,11 +386,11 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
     }
     
     generateTickets(count: number) {
-        return this.ticketsDb.generateTickets(null, Math.min(count, 50), this.getCurrentTicketData());
+        return this.ticketsDb.generateTickets(undefined, Math.min(count, 50), this.getCurrentTicketData());
     }
     
     useTicket(ticketId: TicketId) {
-        return this.ticketsDb.useTicket(null, ticketId);
+        return this.ticketsDb.useTicket(undefined, ticketId);
     }
     
     restore(ticketId: TicketId, ticketData: TicketData, clientRandom: Buffer, plain: boolean) {
@@ -406,7 +407,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         };
     }
     
-    getSessionId(): types.core.SessionId {
+    getSessionId() {
         return this.sessionId;
     }
 }

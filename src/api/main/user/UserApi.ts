@@ -28,7 +28,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     constructor(
         userApiValidator: UserApiValidator,
         private sessionService: SessionService,
-        private webSocket: WebSocket,
+        private webSocket: WebSocket|null,
         private sessionCleaner: SessionCleaner,
         private webSocketConnectionManager: WebSocketConnectionManager,
         private repositoryFactory: RepositoryFactory,
@@ -48,7 +48,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     @ApiMethod({})
     async authorizeWebSocket(model: {key: types.core.Base64, addWsChannelId: boolean}): Promise<{wsChannelId: types.core.WsChannelId}> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
-        if (this.webSocket == null) {
+        if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
         const wsChannelId = await this.webSocketConnectionManager.authorizeWebSocket(
@@ -59,7 +59,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     @ApiMethod({})
     async unauthorizeWebSocket(): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
-        if (this.webSocket == null) {
+        if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
         await this.webSocketConnectionManager.unauthorizeWebSocket(this.getSession(), this.webSocket as WebSocketEx);
@@ -69,7 +69,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     @ApiMethod({})
     async subscribeToChannel(model: {channel: string}): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
-        if (this.webSocket == null) {
+        if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
         await this.webSocketConnectionManager.subscribeToChannel(this.getSession(), this.webSocket as WebSocketEx, model.channel);
@@ -79,7 +79,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     @ApiMethod({})
     async unsubscribeFromChannel(model: {channel: string}): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
-        if (this.webSocket == null) {
+        if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
         await this.webSocketConnectionManager.unsubscribeFromChannel(this.getSession(), this.webSocket as WebSocketEx, model.channel);
@@ -90,9 +90,11 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async logout(): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.SESSION_ESTABLISHED);
         const session = this.sessionService.getSession();
-        await this.repositoryFactory.withTransaction(async tr => {
-            await this.sessionCleaner.destroySession(tr, session.id);
-        });
+        if (session) {
+            await this.repositoryFactory.withTransaction(async tr => {
+                await this.sessionCleaner.destroySession(tr, session.id);
+            });
+        }
         return "OK";
     }
 }

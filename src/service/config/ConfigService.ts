@@ -16,7 +16,7 @@ import * as path from "path";
 
 export class ConfigService {
     
-    values: ConfigValues;
+    values!: ConfigValues;
     
     constructor(
         private configLoader: ConfigLoaderFunc,

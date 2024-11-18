@@ -30,8 +30,8 @@ export function executeCommand(command: string, stdin: string): Promise<string> 
             }
             resolve(stdout);
         });
-        proc.stdin.write(stdin);
-        proc.stdin.end();
+        proc.stdin?.write(stdin);
+        proc.stdin?.end();
     });
 }
 

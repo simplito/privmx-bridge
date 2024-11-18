@@ -16,7 +16,7 @@ export class StringLogger extends Logger {
     logs: {level: string, text: string, data?: any, data2?: any}[] = [];
     
     constructor() {
-        super("test", "fake", Logger.DEBUG, null, true);
+        super("test", "fake", Logger.DEBUG, {log: () => {/* Do nothing */}}, true);
     }
     
     log(level: string, text: string, data?: any, data2?: any): void {

@@ -49,7 +49,7 @@ export class ServerSessionService {
         return id;
     }
     
-    getSession(id: types.core.ServerSessionId): SessionData {
+    getSession(id: types.core.ServerSessionId): SessionData|null {
         const session = this.sessions[id];
         if (session == null) {
             return null;

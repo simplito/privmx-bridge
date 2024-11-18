@@ -11,15 +11,17 @@ limitations under the License.
 
 export class RWState {
     
-    initialized: boolean;
     sequenceNumber: number;
-    key: Buffer;
-    macKey: Buffer;
+    key?: Buffer;
+    macKey?: Buffer;
     
     constructor(key?: Buffer, macKey?: Buffer) {
         this.key = key;
         this.macKey = macKey;
-        this.initialized = (this.key != null) && (this.macKey != null);
         this.sequenceNumber = 0;
+    }
+    
+    isInitialized(): this is this&{key: Buffer, macKey:Buffer} {
+        return this.key != null && this.macKey != null;
     }
 }

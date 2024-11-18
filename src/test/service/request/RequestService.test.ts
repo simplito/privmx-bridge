@@ -25,6 +25,7 @@ import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { RequestRepository } from "../../../service/request/RequestRepository";
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { StringLogger } from "../../testUtils/logger/StringLogger";
+import * as mongodb from "mongodb";
 
 const requestId = <types.request.RequestId>"req-1";
 const notExistentRequestId = <types.request.RequestId>"req-2";
@@ -347,7 +348,7 @@ function createRequestService() {
     mock(repository, "insert");
     mock(repository, "update");
     const repositoryFactory = createMock<RepositoryFactory>({});
-    mock(repositoryFactory, "withTransaction", f => f(null));
+    mock(repositoryFactory, "withTransaction", f => f({} as mongodb.ClientSession));
     mock(repositoryFactory, "createRequestRepository", () => new RequestRepository(repository));
     const configService = createFake<ConfigService>({values: createFake<ConfigValues>({request: {
         chunkSize: 100,

@@ -56,13 +56,13 @@ export class KeyLoginService {
                 throw new AppException("INVALID_DEVICE_ID");
             }
         }
-        const proxy: types.core.Host = null;
+        const proxy: types.core.Host|null = null;
         if (user.loginByProxy != null && (this.requestInfoHolder.serverSession == null || user.loginByProxy != this.requestInfoHolder.serverSession.host)) {
             throw new AppException("INVALID_PROXY_SESSION");
         }
         const priv = ECUtils.generateRandom();
         
-        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(null);
+        const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);
         session.set("state", "keyInit");
         session.set("properties", properties);
         session.set("keyLogin", {
@@ -77,20 +77,20 @@ export class KeyLoginService {
         if (proxy) {
             session.set("proxy", proxy);
         }
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         
         return {
-            sessionId: session.getId(),
+            sessionId: session.id,
             I: user.I,
             pub: ECUtils.publicToBase58DER(priv)
         };
     }
     
     async exchange(out: {user?: string}, sessionId: types.core.SessionId, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature,
-        K: types.core.Base64, returnK: boolean, sessionKey: types.core.EccPubKey): Promise<KeyExchangeResult> {
+        K: types.core.Base64, returnK: boolean, sessionKey: types.core.EccPubKey|undefined): Promise<KeyExchangeResult> {
         let session: Session;
         try {
-            session = await this.sessionHolder.closeCurrentSessionAndRestoreGiven(null, sessionId);
+            session = await this.sessionHolder.closeCurrentSessionAndRestoreGiven(undefined, sessionId);
         }
         catch (e) {
             this.logger.error(e);
@@ -102,20 +102,27 @@ export class KeyLoginService {
         out.user = session.get("username");
         const proxy = session.get("proxy");
         if (proxy != null && (this.requestInfoHolder.serverSession == null || proxy != this.requestInfoHolder.serverSession.host)) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             throw new AppException("INVALID_PROXY_SESSION");
         }
         const keyLoginData = session.get("keyLogin");
         const pub = ECUtils.publicFromBase58DER(keyLoginData.pub);
+        if (!pub) {
+            throw new AppException("INVALID_SESSION_STATE");
+        }
         try {
             await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), pub, nonce, timestamp, signature);
         }
         catch (e) {
-            await this.sessionHolder.destroy(null, session);
+            await this.sessionHolder.destroy(undefined, session);
             throw e;
         }
         
-        const ecies = new ECIES(ECUtils.fromWIF(keyLoginData.priv), pub);
+        const priv = ECUtils.fromWIF(keyLoginData.priv);
+        if (!priv) {
+            throw new AppException("INVALID_SESSION_STATE");
+        }
+        const ecies = new ECIES(priv, pub);
         const newK = ecies.decrypt(Base64.toBuf(K));
         
         const result = <KeyExchangeResult>{};
@@ -128,7 +135,7 @@ export class KeyLoginService {
         if (als) {
             result.additionalLoginStep = als;
         }
-        await this.sessionHolder.close(null);
+        await this.sessionHolder.close(undefined);
         
         if (returnK === true) {
             result.K = newK;

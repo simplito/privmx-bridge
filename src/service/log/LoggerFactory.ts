@@ -19,7 +19,7 @@ import type * as Cluster from "cluster";
 const cluster = require("cluster") as Cluster.Cluster;
 
 function getWorkerId() {
-    const mainId = cluster.isPrimary ? "MS" : cluster.worker.id.toString().padStart(2, "0");
+    const mainId = cluster.isPrimary ? "MS" : (cluster.worker?.id.toString().padStart(2, "0") || "-1");
     const pid = process.pid.toString().padStart(5, "0");
     return `${mainId},P:${pid}`;
 }
@@ -287,7 +287,7 @@ function serialize(x: unknown, escapeString: boolean): string {
             return "null";
         }
         if (x instanceof Error) {
-            let res = x.constructor.name + x.stack.slice(5);
+            let res = x.constructor.name + (x.stack?.slice(5) || "");
             for (const k in x) {
                 const value = (res as any)[k];
                 if (typeof(value) != "undefined") {

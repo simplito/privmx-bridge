@@ -13,11 +13,11 @@ import * as types from "../../types";
 
 export class LoginLogService {
     
-    async saveSrpLoginAttempt(_username: types.core.Username, _login: types.user.UserLogin, _success: boolean, _error: string, _ip: types.core.IPAddress, _properties: types.user.LoginProperties) {
+    async saveSrpLoginAttempt(_username: types.core.Username|null, _login: types.user.UserLogin, _success: boolean, _error: string|undefined, _ip: types.core.IPAddress, _properties: types.user.LoginProperties) {
         // do nothing
     }
     
-    async saveKeyLoginAttempt(_username: types.core.Username, _key: types.core.EccPubKey, _subidentity: boolean, _success: boolean, _error: string, _ip: types.core.IPAddress, _properties: types.user.LoginProperties) {
+    async saveKeyLoginAttempt(_username: types.core.Username|null, _key: types.core.EccPubKey, _subidentity: boolean, _success: boolean, _error: string, _ip: types.core.IPAddress, _properties: types.user.LoginProperties) {
         // do nothing
     }
     

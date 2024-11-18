@@ -92,7 +92,7 @@ export class PrivmxExpressApp {
         });
 
         this.expressApp.get("/metrics", (req, res) => {
-            return this.onRequest("metrics", req, res, async context => {
+            return this.onRequest("metrics", req, res, async (context): Promise<EngineResponse> => {
                 if (!this.config.metrics.enabled) {
                     return {code: 404, body: "Not found"}
                 }
@@ -151,6 +151,9 @@ export class PrivmxExpressApp {
         
         if (this.configService.values.server.fallbackHtml) {
             this.expressApp.use((req, res, next) => this.safelyProcessRequest(req, res, async () => {
+                if (!this.configService.values.server.fallbackHtml) {
+                    return next();
+                }
                 const reqUrl = new URL("http://localhost" + req.url);
                 const pathParts = reqUrl.pathname.split("/").filter(x => !!x);
                 const lastPathPart = pathParts[pathParts.length - 1];

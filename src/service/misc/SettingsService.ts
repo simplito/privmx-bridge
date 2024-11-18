@@ -41,15 +41,15 @@ export class SettingsService {
     //      STRINGS
     // ====================
     
-    async getString<T extends string = string>(name: string): Promise<T> {
+    async getString<T extends string = string>(name: string): Promise<T|null> {
         const repo = this.repositoryFactory.createSettingsRepository();
-        const entry = await repo.getOrDefault(name, null);
+        const entry = await repo.get(name);
         return entry ? <T>entry.value : null;
     }
     
-    async getStrings<T = {[key: string]: string}>(names: string[]): Promise<T> {
+    async getStrings<T = {[key: string]: string|null}>(names: string[]): Promise<T> {
         const repo = this.repositoryFactory.createSettingsRepository();
-        const values: {[key: string]: string} = {};
+        const values: {[key: string]: string|null} = {};
         const entries = await repo.getMulti(names);
         for (const name of names) {
             const entry = entries.find(x => x.id == name);
@@ -82,15 +82,15 @@ export class SettingsService {
         }
     }
     
-    updateString(name: string, func: (value: string) => string|false): Promise<void> {
+    updateString(name: string, func: (value: string|null) => string|false): Promise<void> {
         return this.repositoryFactory.withTransactionAndLock(`setting-${name}`, async session => {
             return this.updateStringSession(session, name, func);
         });
     }
     
-    async updateStringSession(session: mongodb.ClientSession, name: string, func: (value: string) => string|false): Promise<void> {
+    async updateStringSession(session: mongodb.ClientSession, name: string, func: (value: string|null) => string|false): Promise<void> {
         const repo = this.repositoryFactory.createSettingsRepository(session);
-        const entry = await repo.getOrDefault(name, null);
+        const entry = await repo.get(name);
         const res = func(entry ? entry.value : null);
         if (res !== false) {
             await repo.update({id: name, value: res});
@@ -101,9 +101,9 @@ export class SettingsService {
     //      NUMBER
     // ====================
     
-    async getNumber<T extends number = number>(name: string): Promise<T> {
+    async getNumber<T extends number = number>(name: string): Promise<T|null> {
         const repo = this.repositoryFactory.createSettingsRepository();
-        const entry = await repo.getOrDefault(name, null);
+        const entry = await repo.get(name);
         return entry ? <T>parseFloat(entry.value) : null;
     }
     
@@ -122,9 +122,9 @@ export class SettingsService {
     //      OBJECT
     // ====================
     
-    async getObject<T = any>(name: string): Promise<T> {
+    async getObject<T = unknown>(name: string): Promise<T|null> {
         const repo = this.repositoryFactory.createSettingsRepository();
-        const entry = await repo.getOrDefault(name, null);
+        const entry = await repo.get(name);
         return entry ? JSON.parse(entry.value) : null;
     }
     

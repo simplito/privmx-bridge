@@ -44,14 +44,14 @@ export class WebSocketInnerManager {
         }
     }
     
-    send<T extends types.core.Event<any, any>>(host: types.core.Host, channel: string, clients: types.core.Client[], event: T) {
+    send<T extends types.core.Event<any, any>>(host: types.core.Host, channel: string, clients: types.core.Client[]|null, event: T) {
         if (clients != null && clients.length == 0) {
             return;
         }
         return this.sendBuffer(host, channel, clients, this.serializeEvent(event));
     }
     
-    private sendBuffer(host: types.core.Host, channel: string, clients: types.core.Client[], message: Buffer) {
+    private sendBuffer(host: types.core.Host, channel: string, clients: types.core.Client[]|null, message: Buffer) {
         for (const server of this.servers) {
             for (const client of server.clients) {
                 const ws = <WebSocketEx>client;

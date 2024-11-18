@@ -21,7 +21,7 @@ export class PromiseUtils {
         let i = 0;
         const next = async (): Promise<void> => {
             if (i >= list.length) {
-                return null;
+                return;
             }
             const index = i;
             const entry = list[index];
@@ -33,16 +33,12 @@ export class PromiseUtils {
     }
     
     static defer<T = any>(): Deferred<T> {
-        const defer: Deferred<T> = {
-            resolve: null,
-            reject: null,
-            promise: null
-        };
+        const defer: Partial<Deferred<T>> = {};
         defer.promise = new Promise((resolve, reject) => {
             defer.resolve = resolve;
             defer.reject = reject;
         });
-        return defer;
+        return defer as Deferred<T>;
     }
     
     static callbackToPromise<T>(func: (callback: (err: any, result: T) => void) => void): Promise<T> {

@@ -53,7 +53,7 @@ export class CloudAccessValidator {
     async getUserFromContext(cloudUser: CloudUser, contextId: types.context.ContextId) {
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
-        if (!user) {
+        if (!user || !context) {
             throw new AppException("ACCESS_DENIED");
         }
         if (cloudUser.solutionId) {

@@ -56,7 +56,7 @@ export interface IEngine {
 
 export class JsonRpcServer {
     
-    private id: JsonRpcId;
+    private id?: JsonRpcId;
     
     constructor(
         private executor: Executor,
@@ -99,12 +99,12 @@ export class JsonRpcServer {
         return res;
     }
     
-    private async with(func: () => Promise<any>) {
+    private async with(func: () => Promise<unknown>) {
         try {
             const result = await func();
             const response: JsonRpcResponseSuccess = {
                 jsonrpc: "2.0",
-                id: this.id,
+                id: this.id as JsonRpcId,
                 result: result
             };
             this.reportSuccess(response);
@@ -116,7 +116,7 @@ export class JsonRpcServer {
                 {code: -32603, message: "Internal error"};
             const response: JsonRpcResponseError = {
                 jsonrpc: "2.0",
-                id: this.id,
+                id: this.id as JsonRpcId,
                 error: error
             };
             this.reportError(e, response);

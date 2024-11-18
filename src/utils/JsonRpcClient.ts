@@ -96,7 +96,9 @@ export class JsonRpcClient {
         if (value === undefined) {
             delete this.headers[header];
         }
-        this.headers[header] = value;
+        else {
+            this.headers[header] = value;
+        }
     }
 
     static async requestFull<T = unknown>(options: JsonRpcRequestOptions) {
@@ -186,7 +188,7 @@ export class JsonRpcException extends Error {
     }
     
     getResponse() {
-        return this.response.response;
+        return this.response?.response;
     }
     
     static isJsonRpcError(e: unknown, code: number) {

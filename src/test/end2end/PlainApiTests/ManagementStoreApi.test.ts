@@ -164,11 +164,12 @@ export class ManagementStoreApiTest extends BaseTestSet {
     }
     
     private async tryFetchStoreFileAndFail() {
-        if (!this.newStoreFile) {
+        const newStoreFile = this.newStoreFile;
+        if (!newStoreFile) {
             throw new Error("newStoreFile not initialized yet");
         }
         await shouldThrowErrorWithCode(() => this.plainApis.storeApi.getStoreFile({
-            storeFileId: this.newStoreFile,
+            storeFileId: newStoreFile,
         }), "STORE_FILE_DOES_NOT_EXIST");
     }
     

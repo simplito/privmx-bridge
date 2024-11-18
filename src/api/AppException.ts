@@ -107,11 +107,9 @@ export class AppException extends Error {
     
     constructor(name: ErrorCode, data: any = null) {
         super();
-        const e = ERROR_CODES[name];
-        if (e) {
-            this.message = e.message;
-            this.code = e.code;
-        }
+        const e = ERROR_CODES[name] || ERROR_CODES.INTERNAL_ERROR;
+        this.message = e.message;
+        this.code = e.code;
         this.data = data;
     }
     

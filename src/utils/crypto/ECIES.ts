@@ -19,10 +19,10 @@ export interface Options {
 
 export class ECIES {
     
-    private pubKeyBuf: Buffer;
-    private sharedKey: Buffer;
-    private encryptionKey: Buffer;
-    private kM: Buffer;
+    private pubKeyBuf?: Buffer;
+    private sharedKey?: Buffer;
+    private encryptionKey?: Buffer;
+    private kM?: Buffer;
     
     constructor(
         public privateKey: elliptic.ec.KeyPair,
@@ -76,7 +76,7 @@ export class ECIES {
         return r;
     }
     
-    encrypt(message: Buffer, ivBuf: Buffer = null): Buffer {
+    encrypt(message: Buffer, ivBuf: Buffer|null = null): Buffer {
         if (ivBuf == null) {
             ivBuf = Crypto.hmacSha256(this.getPrivateEncKey(), message).slice(0, 16);
         }

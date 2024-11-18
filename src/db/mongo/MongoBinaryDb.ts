@@ -19,7 +19,7 @@ export class MongoBinaryDb<K extends string> implements BinaryRepository2<K> {
     
     constructor(
         private collection: mongodb.Collection<{_id: string, data: Binary}>,
-        private session: mongodb.ClientSession,
+        private session: mongodb.ClientSession|undefined,
         private logger: Logger
     ) {
     }
@@ -36,14 +36,14 @@ export class MongoBinaryDb<K extends string> implements BinaryRepository2<K> {
         const startTime = MicroTimeUtils.now();
         try {
             await this.collection.replaceOne({_id: key}, {data: new Binary(value)}, this.getOptions<mongodb.ReplaceOptions>({upsert: true}));
-            return null;
+            return;
         }
         finally {
             this.logger.time(startTime, "Mongo insert", this.collection.collectionName, key);
         }
     }
     
-    async get(key: K): Promise<Buffer> {
+    async get(key: K): Promise<Buffer|null> {
         const startTime = MicroTimeUtils.now();
         try {
             const x = await this.collection.findOne({_id: key}, this.getOptions());

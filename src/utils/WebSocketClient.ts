@@ -25,7 +25,7 @@ interface MapEntry {
 
 export class WebSocketClient {
     
-    protected ws: WebSocket;
+    protected ws: WebSocket|null = null;
     private id = 1;
     private map = new Map<JsonRpcId, MapEntry>();
     private closed = false;
@@ -129,12 +129,16 @@ export class WebSocketClient {
     }
     
     async send<T = unknown>(method: string, params: unknown) {
+        const ws = this.ws;
+        if (!ws) {
+            throw new Error("Weboscket not initliazed yet");
+        }
         const id = this.id++;
         const defer = PromiseUtils.defer<T>();
         const req: JsonRpcRequest&{auth?: string} = {jsonrpc: "2.0", id: id, method: method, params: params, auth: this.config.auth};
         this.map.set(id, {createDate: DateUtils.now(), defer: defer as Deferred<unknown>});
         try {
-            await PromiseUtils.callbackToPromiseVoid(cb => this.ws.send(Buffer.from(JSON.stringify(req), "utf8"), cb));
+            await PromiseUtils.callbackToPromiseVoid(cb => ws.send(Buffer.from(JSON.stringify(req), "utf8"), cb));
         }
         catch (e) {
             defer.reject(e);

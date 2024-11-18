@@ -17,7 +17,7 @@ export class DeferredMap {
     private id: number = 1;
     private deferMap = new Map<number, Deferred<unknown>>();
     
-    pop(id: number): Deferred<unknown> {
+    pop(id: number): Deferred<unknown>|undefined {
         const res = this.deferMap.get(id);
         this.deferMap.delete(id);
         return res;

@@ -378,7 +378,7 @@ export class JsonDocsGenerator {
             return this.readTheType(theType.types[0]);
         }
         if (theType.isUnion()) {
-            const declarartion = theType.aliasSymbol?.declarations[0];
+            const declarartion = theType.aliasSymbol?.declarations?.[0];
             if (declarartion) {
                 const propComment = this.tryReadComment(declarartion);
                 if (propComment && propComment.doctype) {

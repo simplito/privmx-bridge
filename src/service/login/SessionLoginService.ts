@@ -50,7 +50,7 @@ export class SessionLoginService {
             if (!sessionId) {
                 throw new AppException("UNKNOWN_SESSION");
             }
-            return await this.sessionHolder.closeCurrentSessionAndRestoreGiven(null, sessionId);
+            return await this.sessionHolder.closeCurrentSessionAndRestoreGiven(undefined, sessionId);
         }
         catch (e) {
             this.logger.error(e);

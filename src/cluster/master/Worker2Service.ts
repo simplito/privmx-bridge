@@ -36,7 +36,7 @@ export class Worker2Service implements IWorker2Service {
     }
     
     @ApiMethod({})
-    async sendWebsocketNotification<T = unknown>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]; event: T; }): Promise<void> {
+    async sendWebsocketNotification<T = unknown>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         await this.request("sendWebsocketNotification", model);
     }
     

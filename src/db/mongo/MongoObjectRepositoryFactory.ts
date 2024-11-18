@@ -24,13 +24,13 @@ export class MongoObjectRepositoryFactory<K extends string|number, V> implements
     
     withRepositoryRead<T = any>(func: (repository: ObjectRepositoryRead<K, V>) => Promise<T>): Promise<T> {
         return this.dbManager.withMongo(this.dbName, "", db => {
-            return func(new MongoObjectRepository(db, this.idProperty, null, this.dbManager.logger, this.dbManager.metricService));
+            return func(new MongoObjectRepository(db, this.idProperty, undefined, this.dbManager.logger, this.dbManager.metricService));
         });
     }
     
     withRepositoryWrite<T = any>(func: (repository: ObjectRepository<K, V>) => Promise<T>): Promise<T> {
         return this.dbManager.withMongo(this.dbName, "", db => {
-            return func(new MongoObjectRepository(db, this.idProperty, null, this.dbManager.logger, this.dbManager.metricService));
+            return func(new MongoObjectRepository(db, this.idProperty, undefined, this.dbManager.logger, this.dbManager.metricService));
         });
     }
 }

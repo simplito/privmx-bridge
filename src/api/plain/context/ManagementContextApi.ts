@@ -99,7 +99,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
     @ApiMethod({errorCodes: ["CONTEXT_DOES_NOT_EXIST"]})
     async addUserToContext(model: managementContextApi.AddUserToContextModel): Promise<types.core.OK> {
         await this.checkIfHasAccessToContext(model.contextId);
-        const acl = "acl" in model ? model.acl : "ALLOW ALL" as types.cloud.ContextAcl;
+        const acl = typeof(model.acl) === "string" ? model.acl : "ALLOW ALL" as types.cloud.ContextAcl;
         await this.contextService.addUserToContext(model.contextId, model.userId, model.userPubKey, acl);
         return "OK";
     }

@@ -106,7 +106,7 @@ export class App {
     
     async initDb(options: {tryManyTimes?: boolean, /* loadSessionsAndTickets?: boolean */}) {
         const mongoDbManager = this.ioc.getMongoDbManager();
-        await this.initMongoDb(mongoDbManager, options.tryManyTimes);
+        await this.initMongoDb(mongoDbManager, !!options.tryManyTimes);
         this.ioc.registerBinaryRepositoryFactory("mongo", dbName => new MongoBinaryRepositoryFactory(mongoDbManager, dbName));
     }
     
@@ -232,20 +232,21 @@ export class App {
     }
     
     async tryRunJobs() {
-        if (!this.needToRunJobs()) {
+        const jobInfo = this.getJobInfoIfThereIsNeedToRunJobs();
+        if (!jobInfo) {
             return;
         }
         try {
             const configRepository = this.ioc.workerRegistry.getConfigRepository();
-            const res = await configRepository.updateLastJobRun(this.jobInfo.dbName, this.jobInfo.lastJobRun);
+            const res = await configRepository.updateLastJobRun(jobInfo.dbName, jobInfo.lastJobRun);
             if (!res.updated) {
                 return;
             }
-            this.jobInfo.lastJobRun = res.date;
+            jobInfo.lastJobRun = res.date;
             this.logger.out("Running jobs");
             const jobManager = this.ioc.getJobManager();
             void jobManager.run({name: "nonceCleaner", func: () => this.ioc.getNonceService().cleanNonceDb()});
-            void jobManager.run({name: "clearSessions", func: () => this.ioc.getSessionCleaner().clearOldSessions(null)});
+            void jobManager.run({name: "clearSessions", func: () => this.ioc.getSessionCleaner().clearOldSessions(undefined)});
             void jobManager.run({name: "clearRequests", func: () => this.ioc.getRequestService().clearExpired()});
             void jobManager.run({name: "clearOldStats", func: () => this.ioc.getServerStatsService().clearOld()});
         }
@@ -254,8 +255,8 @@ export class App {
         }
     }
     
-    private needToRunJobs() {
-        return this.jobInfo && DateUtils.timeElapsed(this.jobInfo.lastJobRun, DateUtils.minutes(10));
+    private getJobInfoIfThereIsNeedToRunJobs() {
+        return this.jobInfo && DateUtils.timeElapsed(this.jobInfo.lastJobRun, DateUtils.minutes(10)) ? this.jobInfo : null;
     }
     
     private async checkAdmin() {

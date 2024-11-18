@@ -77,8 +77,8 @@ export class ResourceService {
         if (!resource) {
             throw new AppException("RESOURCE_DOES_NOT_EXIST", {type: type, id: id});
         }
-        const {parent} = await this.validateReadAcl(user, contextId, resInfo, resource);
-        return {user, resource, parent};
+        const validateResult = await this.validateReadAcl(user, contextId, resInfo, resource);
+        return {user, resource, parent: validateResult ? validateResult.parent : null};
     }
     
     async getResources(userPubKey: types.core.EccPubKey, contextId: types.context.ContextId, type: types.resource.ResourceType) {
@@ -117,13 +117,13 @@ export class ResourceService {
         if (!resource) {
             throw new AppException("RESOURCE_DOES_NOT_EXIST", {type: type, id: id});
         }
-        const {parent} = await this.validateReadAcl(user, contextId, resInfo, resource);
+        const validateResult = await this.validateReadAcl(user, contextId, resInfo, resource);
         const field = this.findBufferField(resInfo, resource.last.props, fieldPath);
         if (!field) {
             throw new AppException("RESOURCE_FIELD_DOES_NOT_EXIST", {type: type, id: id});
         }
         const data = await this.storageService.read(field.fileId, range);
-        return {user, resource, parent, data};
+        return {user, resource, parent: validateResult ? validateResult.parent : null, data};
     }
     
     async updateResource() {
@@ -211,7 +211,7 @@ export class ResourceService {
         throw new Error("Invalid acl type");
     }
     
-    private async validateAclForCreating(user: db.context.ContextUser, contextId: types.context.ContextId, type: ResourceTypeAcl, acl: ResourceAcl, managers: types.cloud.UserId[], keyId: types.core.KeyId): Promise<{parent: db.resource.Resource, result: types.resource.ResourceAcl}> {
+    private async validateAclForCreating(user: db.context.ContextUser, contextId: types.context.ContextId, type: ResourceTypeAcl, acl: ResourceAcl, managers: types.cloud.UserId[], keyId: types.core.KeyId): Promise<{parent: db.resource.Resource|null, result: types.resource.ResourceAcl}> {
         if (type.type === "embedded") {
             if (acl.type !== "embedded") {
                 throw new AppException("INVALID_PARAMS", "acl.type expected embedded");
@@ -445,9 +445,9 @@ export class ResourceService {
         }
     }
     
-    private findBufferField(type: ResourceTypeInfo, props: types.resource.ResourceProps, fieldPath: string): {fileId: types.request.FileId, size: number} {
+    private findBufferField(type: ResourceTypeInfo, props: types.resource.ResourceProps, fieldPath: string): {fileId: types.request.FileId, size: number}|null {
         const propPath = FieldPathParser.parseFieldPath(fieldPath);
-        let currentType: PropDescription = {type: "object", props: type.props};
+        let currentType: PropDescription|null = {type: "object", props: type.props};
         let currentProp = props;
         for (const entry of propPath) {
             if (currentProp == null || currentType == null) {
