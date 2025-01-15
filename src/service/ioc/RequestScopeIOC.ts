@@ -206,7 +206,7 @@ export class RequestScopeIOC {
             this.authorizationDetector = new AuthorizationDetector(
                 this.ioc.getRepositoryFactory(),
                 this.ioc.getTokenEncryptionService(),
-                this.ioc.getSignatureVerificationService(),
+                this.ioc.workerRegistry.getSignatureVerificationService(),
                 this.getAuthorizationHolder(),
                 this.request,
                 this.webSocket,
@@ -230,7 +230,7 @@ export class RequestScopeIOC {
                 this.ioc.getConfigService(),
                 this.ioc.getTokenEncryptionService(),
                 this.ioc.getTokenEncryptionKeyProvider(),
-                this.ioc.getSignatureVerificationService(),
+                this.ioc.workerRegistry.getSignatureVerificationService(),
                 this.webSocket,
             );
         }

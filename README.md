@@ -31,6 +31,14 @@ npm run compile
 npm start
 ```
 
+## Create api key
+
+To use management API, you need an API key. You can create one by running:
+
+```
+npm run create-api-key
+```
+
 ## Develop
 
 First, run the compilation in watch mode (it will recompile the project whenever any changes are made):

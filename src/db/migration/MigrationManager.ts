@@ -32,6 +32,7 @@ import { Migration058FileUpdates } from "./Migration058FileUpdates";
 import { Migration059ApiKeyScopes } from "./Migration059ApiKeyScopes";
 import { Migration060IndexesForSortableFields } from "./Migration060IndexesForSortableFields";
 import { Migration061IndexesForAuthorField } from "./Migration061IndexesForAuthorField";
+import { Migration062IndexesForCreateDate } from "./Migration062IndexesForCreateDate";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -69,6 +70,7 @@ export class MigrationManager {
         Migration059ApiKeyScopes,
         Migration060IndexesForSortableFields,
         Migration061IndexesForAuthorField,
+        Migration062IndexesForCreateDate
     ];
     static DB_VERSION: string|null = null;
     

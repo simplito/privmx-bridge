@@ -15,7 +15,8 @@
     "e2e-tests-single-thread": "node ./out/test/end2end/run.js",
     "e2e-tests": "node ./out/test/end2end/runMulti.js",
     "gen-json-docs": "node ./out/docs/scripts/gen_json_docs.js",
-    "gen-slate-from-json": "node ./out/docs/scripts/gen_slate_from_json.js"
+    "gen-slate-from-json": "node ./out/docs/scripts/gen_slate_from_json.js",
+    "create-api-key": "node ./out/init/scripts/createApiKey.js"
   },
   "jest": {
     "roots": [
@@ -59,8 +60,8 @@
     "bs58check": "^2.1.2",
     "bytebuffer": "^3.5.5",
     "compression": "^1.7.4",
-    "elliptic": "^6.5.4",
-    "express": "^4.19.2",
+    "elliptic": "^6.6.1",
+    "express": "^4.21.2",
     "int64-buffer": "^1.0.0",
     "jsx-to-str": "^1.1.2",
     "long": "^2.4.0",
@@ -150,7 +151,7 @@
       "plugins",
       "docker"
     ],
-    "version": "1.0.0-20241106133538385"
+    "version": "1.0.0-20250109155539884"
   },
-  "typingsVersion": "1.0.202410171444"
+  "typingsVersion": "1.0.202501091706"
 }

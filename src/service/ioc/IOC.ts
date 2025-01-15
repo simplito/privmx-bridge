@@ -86,7 +86,6 @@ import { ManagementContextApiValidator } from "../../api/plain/context/Managemen
 import { ManagementSolutionApiValidator } from "../../api/plain/solution/ManagementSolutionApiValidator";
 import { ManagementSolutionApi } from "../../api/plain/solution/ManagementSolutionApi";
 import { SolutionService } from "../cloud/SolutionService";
-import { SignatureVerificationService } from "../auth/SignatureVerificationService";
 import { PolicyService } from "../cloud/PolicyService";
 import { UserApi } from "../../api/main/user/UserApi";
 import { RequestApi } from "../../api/main/request/RequestApi";
@@ -195,7 +194,6 @@ export class IOC {
     protected tokenEncryptionService?: TokenEncryptionService;
     protected tokenEncryptionKeyProvider?: TokenEncryptionKeyProvider;
     protected apiKeyService?: ApiKeyService;
-    protected signatureVerificationService?: SignatureVerificationService;
     protected policyService?: PolicyService;
     protected cloudAccessValidator?: CloudAccessValidator;
     protected managementThreadConverter?: ManagementThreadConverter;
@@ -1099,15 +1097,6 @@ export class IOC {
             );
         }
         return this.apiKeyService;
-    }
-    
-    getSignatureVerificationService() {
-        if (this.signatureVerificationService == null) {
-            this.signatureVerificationService = new SignatureVerificationService(
-                this.workerRegistry.getNonceMap(),
-            );
-        }
-        return this.signatureVerificationService;
     }
     
     getManagementThreadConverter() {

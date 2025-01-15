@@ -15,24 +15,24 @@ WORK_DIR=`mktemp -d`
 
 mkdir -p $WORK_DIR/src/api/plain/types
 cp -R $MAIN_DIR/src/types $WORK_DIR/src/types
-cp -R $MAIN_DIR/src/api/plain/context/ContextApiTypes.ts $WORK_DIR/src/api/plain/types/Context.d.ts
+cp -R $MAIN_DIR/src/api/plain/context/ManagementContextApiTypes.ts $WORK_DIR/src/api/plain/types/Context.d.ts
 cp -R $MAIN_DIR/src/api/plain/inbox/ManagementInboxApiTypes.ts $WORK_DIR/src/api/plain/types/Inbox.d.ts
 cp -R $MAIN_DIR/src/api/plain/init/InitApiTypes.ts $WORK_DIR/src/api/plain/types/Init.d.ts
 cp -R $MAIN_DIR/src/api/plain/manager/ManagerApiTypes.ts $WORK_DIR/src/api/plain/types/Manager.d.ts
-cp -R $MAIN_DIR/src/api/plain/solution/SolutionApiTypes.ts $WORK_DIR/src/api/plain/types/Solution.d.ts
+cp -R $MAIN_DIR/src/api/plain/solution/ManagementSolutionApiTypes.ts $WORK_DIR/src/api/plain/types/Solution.d.ts
 cp -R $MAIN_DIR/src/api/plain/store/ManagementStoreApiTypes.ts $WORK_DIR/src/api/plain/types/Store.d.ts
 cp -R $MAIN_DIR/src/api/plain/stream/ManagementStreamApiTypes.ts $WORK_DIR/src/api/plain/types/Stream.d.ts
 cp -R $MAIN_DIR/src/api/plain/thread/ManagementThreadApiTypes.ts $WORK_DIR/src/api/plain/types/Thread.d.ts
 
 tee $WORK_DIR/src/api/plain/types/index.d.ts > /dev/null << END
-export * as context from "./Context.d.ts";
-export * as inbox from "./Inbox.d.ts";
-export * as init from "./Init.d.ts";
-export * as manager from "./Manager.d.ts";
-export * as solution from "./Solution.d.ts";
-export * as store from "./Store.d.ts";
-export * as stream from "./Stream.d.ts";
-export * as thread from "./Thread.d.ts";
+export * as context from "./Context";
+export * as inbox from "./Inbox";
+export * as init from "./Init";
+export * as manager from "./Manager";
+export * as solution from "./Solution";
+export * as store from "./Store";
+export * as stream from "./Stream";
+export * as thread from "./Thread";
 END
 
 tee $WORK_DIR/typings.d.ts > /dev/null << END

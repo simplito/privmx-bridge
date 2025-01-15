@@ -40,7 +40,7 @@ export class ThreadMessageRepository {
     }
     
     async getPageByThreadAndUser(userId: types.cloud.UserId, threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "id";
+        const sortBy = "createDate";
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -55,7 +55,7 @@ export class ThreadMessageRepository {
     }
     
     async getPageByThread(threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "id";
+        const sortBy = "createDate";
         return this.repository.matchX({threadId: threadId}, listParams, sortBy);
     }
     
