@@ -26,6 +26,7 @@ import { Dumper } from "../../utils/Dumper";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { RequestLogger } from "../log/RequestLogger";
 import { HttpUtils } from "../../utils/HttpUtils";
+import * as path from "path";
 
 export interface ServerBinding {
     server: http.Server|https.Server;
@@ -149,21 +150,23 @@ export class PrivmxExpressApp {
             }
         });
         
+        this.bindFallback("/panel/", path.resolve(this.configService.values.assetsDir, "panel/index.html"));
         if (this.configService.values.server.fallbackHtml) {
-            this.expressApp.use((req, res, next) => this.safelyProcessRequest(req, res, async () => {
-                if (!this.configService.values.server.fallbackHtml) {
-                    return next();
-                }
-                const reqUrl = new URL("http://localhost" + req.url);
-                const pathParts = reqUrl.pathname.split("/").filter(x => !!x);
-                const lastPathPart = pathParts[pathParts.length - 1];
-                if (lastPathPart && lastPathPart.includes(".")) {
-                    return next();
-                }
-                this.applyResponse(await ExpressUtils.download(req, res, this.logger, null, this.configService.values.server.fallbackHtml, "index from fallback", "text/html"), res);
-            }));
+            this.bindFallback("/", this.configService.values.server.fallbackHtml);
         }
         this.expressApp.use("/", express.static(this.configService.values.assetsDir));
+    }
+    
+    bindFallback(route: string, fallbackFilePath: string) {
+        this.expressApp.use(route, (req, res, next) => this.safelyProcessRequest(req, res, async () => {
+            const reqUrl = new URL("http://localhost" + req.url);
+            const pathParts = reqUrl.pathname.split("/").filter(x => !!x);
+            const lastPathPart = pathParts[pathParts.length - 1];
+            if (lastPathPart && lastPathPart.includes(".")) {
+                return next();
+            }
+            this.applyResponse(await ExpressUtils.download(req, res, this.logger, null, fallbackFilePath, "index from fallback", "text/html"), res);
+        }));
     }
     
     getExpress() {
