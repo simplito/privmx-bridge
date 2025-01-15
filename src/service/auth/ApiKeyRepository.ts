@@ -30,6 +30,12 @@ export class ApiKeyRepository {
         return this.repository.get(id);
     }
     
+    async getMasterKey() {
+        return await this.repository.col<db.auth.ApiKey>().findOne({
+            masterKey: true
+        }) as db.auth.ApiKey
+    }
+
     async listForUser(userId: types.auth.ApiUserId) {
         return this.repository.findAll(q => q.eq("user", userId));
     }

@@ -38,6 +38,7 @@ import { IpRateLimiterClient } from "./IpRateLimiterClient";
 import type { NonceMap } from "../master/ipcServices/NonceMap";
 import { IpcServiceDescriptor } from "../master/Decorators";
 import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
+import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
 
 export class WorkerRegistry {
     
@@ -64,6 +65,7 @@ export class WorkerRegistry {
     private workerPluginsManager?: WorkerPluginsManager;
     private serverStatsWorkerService?: ServerStatsWorkerService;
     protected cloudAclChecker?: CloudAclChecker;
+    protected signatureVerificationService?: SignatureVerificationService;
     private ipRateLimiterClient?: IpRateLimiterClient;
     private ipcServices = new Map<string, any>();
     
@@ -337,6 +339,15 @@ export class WorkerRegistry {
             throw new Error(`IPC service with name '${serviceName}' not yet initialized`);
         }
         return service as T;
+    }
+
+    getSignatureVerificationService() {
+        if (this.signatureVerificationService == null) {
+            this.signatureVerificationService = new SignatureVerificationService(
+                this.getNonceMap(),
+            );
+        }
+        return this.signatureVerificationService;
     }
     
     async initIpc() {

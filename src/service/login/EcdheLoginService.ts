@@ -17,6 +17,7 @@ import { NonceService } from "../misc/NonceService";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { AppException } from "../../api/AppException";
+import { RpcError } from "../../api/tls/RpcError";
 
 export class EcdheLoginService {
     
@@ -28,8 +29,14 @@ export class EcdheLoginService {
     ) {
     }
     
-    async onLogin(key: types.core.EccPubKey, solution?: types.cloud.SolutionId) {
-        const session = await this.startEcdheSession(key, solution);
+    async onLogin(key: types.core.EccPubKey, solutionId?: types.cloud.SolutionId) {
+        if (solutionId) {
+            const solution = await this.repositoryFactory.createSolutionRepository().get(solutionId);
+            if (!solution) {
+                throw new RpcError("Solution does not exist");
+            }
+        }
+        const session = await this.startEcdheSession(key, solutionId);
         await this.callbacks.trigger("ecdheLogin", [key, this, this.sessionHolder]);
         return session.id;
     }
@@ -66,7 +73,13 @@ export class EcdheLoginService {
         }
     }
     
-    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solution: types.cloud.SolutionId|undefined) {
+    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solutionId: types.cloud.SolutionId|undefined) {
+        if (solutionId) {
+            const solution = await this.repositoryFactory.createSolutionRepository().get(solutionId);
+            if (!solution) {
+                throw new RpcError("Solution does not exist");
+            }
+        }
         const pub = ECUtils.publicFromBase58DER(key);
         if (!pub) {
             throw new AppException("INVALID_SIGNATURE");
@@ -92,8 +105,8 @@ export class EcdheLoginService {
             regular_sections_manager: false,
             all_users_lookup: false
         });
-        if (solution) {
-            session.set("solution", solution);
+        if (solutionId) {
+            session.set("solution", solutionId);
         }
         return session.id;
     }

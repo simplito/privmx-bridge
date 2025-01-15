@@ -118,14 +118,14 @@ ${notificationMarkdowns.join("")}
         const markdown = `
 # Policy
 
-This object determines who is allowed to do what.
-The policy can be set in two places: in the Context and in the Container.
+Policies determine who is allowed to perform specific actions.
+You can define your policy on two levels: for a Context or for a Container (Thread, Store etc).
 Setting a policy in the Container overwrites the policy from the Context.
 Some of the Containers (Threads, Stores) can include items (Messages, Files), which have their own policy.
 The property of the policy can be set to one of the following values:
 
-- "default" - take the default value
-- "inherit" - take value from the Context (can be used only in the Container policy)
+- "default" - takes the default value
+- "inherit" - takes value from the Context (can be used only in the Container policy)
 - "none" - no one can perform this action
 - "all" - all Context users can perform this action
 - "user" - all Container users can perform this action
@@ -134,7 +134,7 @@ The property of the policy can be set to one of the following values:
 - "itemOwner" - only item owner can perform this action (can be used only in the item policy)
 
 You can also combine the values listed above. If you want to allow item updates to be executed only by the item owner,
-with the additional assumption that he must be an active user of the Container, you can write \`itemOwner&user\`.
+with the additional assumption that they must be an active user of the Container, you can write \`itemOwner&user\`.
 But if you want to allow the Container managers to also update the item, you can write \`itemOwner&user,manager\`.
 In the policy entry, the \`&\` character means 'and', and the coma \`,\` means 'or'.
 

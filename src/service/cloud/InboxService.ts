@@ -192,10 +192,17 @@ export class InboxService {
         return inbox;
     }
     
-    async getInboxWithoutCheckingAccess(inboxId: types.inbox.InboxId) {
+    async getInboxWithoutCheckingAccess(inboxId: types.inbox.InboxId, solutionId: types.cloud.SolutionId) {
         const inbox = await this.repositoryFactory.createInboxRepository().get(inboxId);
         if (!inbox) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
+        }
+        const context = await this.repositoryFactory.createContextRepository().get(inbox.contextId);
+        if (!context) {
+            throw new AppException("CONTEXT_DOES_NOT_EXIST");
+        }
+        if (context.solution !== solutionId && !context.shares.includes(solutionId)) {
+            throw new AppException("INBOX_DOES_NOT_EXIST")
         }
         return inbox;
     }

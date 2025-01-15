@@ -42,27 +42,27 @@ export interface Event<T extends string, C extends string, D> {
 }
 
 export interface ContainerWithoutItemPolicy extends ItemPolicy {
-    /** Determine who can get a container */
+    /** Determines who can get a container */
     get?: PolicyEntry;
-    /** Determine who can list containers created by me */
+    /** Determines who can list containers created by themselves */
     listMy?: PolicyEntry;
-    /** Determine who can list all containers */
+    /** Determines who can list all containers */
     listAll?: PolicyEntry;
-    /** Determine who can create a container */
+    /** Determines who can create a container */
     create?: PolicyEntry;
-    /** Determine who can update a container */
+    /** Determines who can update a container */
     update?: PolicyEntry;
-    /** Determine who can update a container */
+    /** Determines who can update a container */
     delete?: PolicyEntry;
-    /** Determine who can update policy */
+    /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
-    /** Determine whether the creator has to be added to the list of managers */
+    /** Determines whether the creator has to be added to the list of managers */
     creatorHasToBeManager?: PolicyBooleanEntry;
-    /** Determine whether the updater can be removed from the list of managers */
+    /** Determines whether the updater can be removed from the list of managers */
     updaterCanBeRemovedFromManagers?: PolicyBooleanEntry;
-    /** Determine whether the owner can be removed from the list of managers */
+    /** Determines whether the owner can be removed from the list of managers */
     ownerCanBeRemovedFromManagers?: PolicyBooleanEntry;
-    /** Determine whether the policy can be overwritten in container */
+    /** Determines whether the policy can be overwritten in container */
     canOverwriteContextPolicy?: PolicyBooleanEntry;
 }
 
@@ -76,16 +76,16 @@ export type PolicyEntry = "inherit"|"yes"|"no"|"default"|"none"|"all"|"user"|"ow
 export type PolicyBooleanEntry = "inherit"|"default"|"yes"|"no";
 
 export interface ItemPolicy {
-    /** Determine who can get an item */
+    /** Determines who can get an item */
     get?: PolicyEntry;
-    /** Determine who can list items created by me */
+    /** Determines who can list items created by themselves */
     listMy?: PolicyEntry;
-    /** Determine who can list all items */
+    /** Determines who can list all items */
     listAll?: PolicyEntry;
-    /** Determine who can create an item */
+    /** Determines who can create an item */
     create?: PolicyEntry;
-    /** Determine who can update an item */
+    /** Determines who can update an item */
     update?: PolicyEntry;
-    /** Determine who can update an item */
+    /** Determines who can update an item */
     delete?: PolicyEntry;
 }

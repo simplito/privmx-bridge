@@ -75,7 +75,8 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
     
     @ApiMethod({})
     async inboxGetPublicView(model: inboxApi.InboxGetModel): Promise<inboxApi.InboxGetPublicViewResult> {
-        const inbox = await this.inboxService.getInboxWithoutCheckingAccess(model.id);
+        const sessionSolution = this.sessionService.getSessionUser().get("solution");
+        const inbox = await this.inboxService.getInboxWithoutCheckingAccess(model.id, sessionSolution);
         this.requestLogger.setContextId(inbox.contextId);
         return this.inboxConverter.convertInboxToPublicView(inbox);
     }
