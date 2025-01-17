@@ -1,6 +1,9 @@
-# Introduction to ACL
+# Access Control List
 
-An ACL (Access Control List) is a set of rules that determines which functions a user can access. It consists of simple instructions using the terms "ALLOW" or "DENY" followed by the name of a function or group. By default, an ACL is set to "DENY ALL." Instructions are executed in the order they are listed. If group scopes overlap, the second instruction will override the overlapping portion.
+An Access Control List (ACL) is a set of **rules that determine which functions a user can access**.
+It consists of simple instructions using the terms "**ALLOW**" or "**DENY**" followed by the name of a function or group.
+By default, an ACL is set to "**DENY ALL**". Instructions are executed in the order they are listed.
+If group scopes overlap, the second instruction will override the overlapping portion.
 
 <div class="center-column"></div>
 
@@ -14,9 +17,9 @@ DENY thread/deleteManyMessages
 DENY thread/deleteMessagesOlderThan
 ```
 
-The example above allows the user to browse Stores, create files, and use Threads, but excludes the ability to delete Threads or messages.
+The example below allows the user to browse Stores, create files, and use Threads, but doesn't allow to delete Threads or messages:
 
-Explanation and breakdown of the example:
+A more detailed explanation and breakdown of the example:
 
 <div class="center-column"></div>
 
@@ -30,7 +33,6 @@ DENY thread/deleteManyMessages       => Revokes access to the thread/deleteManyM
 DENY thread/deleteMessagesOlderThan  => Revokes access to the thread/deleteMessagesOlderThan method, other thread methods remain unchanged
 ```
 
-
 It's also possible to bind an ACL rule to a specific object by using function arguments:
 
 <div class="center-column"></div>
@@ -43,7 +45,7 @@ Example:
 
 <div class="center-column"></div>
 
-``` 
+```
 ALLOW store/storeFileWrite storeId=65ad8f6c2e4f4f1adb40bf81
 ```
 

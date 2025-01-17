@@ -1,19 +1,18 @@
 # PrivMX Bridge API
-This documentation provides a comprehensive guidance for using PrivMX Bridge API.
-[PrivMX Bridge](https://github.com/simplito/privmx-bridge) is a secure, zero-knowledge server for encrypted data storage and communication.
-It allows users to communicate and exchange data in a fully encrypted environment, ensuring end-to-end encryption and protecting data privacy at every step.
-Client software for PrivMX Bridge is [PrivMX Endpoint](https://github.com/simplito/privmx-endpoint), which handles the encryption.
-Learn more about how PrivMX works with our [docs](https://docs.privmx.dev/).
+
+This site is only a reference to managing PrivMX Bridge. To get an overview of the whole PrivMX platform and read about using client applications, refer to [PrivMX Documentation](https://docs.privmx.dev/).
+
+PrivMX Bridge is a secure, zero-knowledge server for encrypted data storage and communication. It allows users to communicate and exchange data in a fully encrypted environment, ensuring end-to-end encryption and protecting data privacy at every step. Client software for PrivMX Bridge is [PrivMX Endpoint](https://docs.privmx.dev/endpoint), which handles the encryption.
 
 # Introduction
 
-We use the [JSON-rpc protocol](https://www.jsonrpc.org/specification) to call API methods.
+Use the [JSON-rpc protocol](https://www.jsonrpc.org/specification) to call API methods.
 
 Below is an example cURL command for querying the API to list Solutions:
 
 <div class="center-column"></div>
 
-```  c
+```c
 curl -X POST -H "Content-Type: application/json" \
     -H "Authorization: one-of-our-authorization-methods" \
     --data-binary '{
@@ -31,7 +30,7 @@ curl -X POST -H "Content-Type: application/json" \
 
 You can access the API methods using API Keys. These keys have no time-to-live (TTL) but can be disabled or deleted. Each key is assigned a specific [scope](#api-scopes). You can create up to 10 API Keys by calling the method [manager/createApiKey](#manager-createapikey).
 
-NOTICE: When you install PrivMX Bridge, you should receive your first API Key during the installation, and it should have full API access.
+NOTICE: When you install PrivMX Bridge, you receive your first API Key with full API access.
 
 An API Key can be created without public key:
 
@@ -89,7 +88,7 @@ You will receive an `id` and `secret` of API Key:
 
 You can now authorize requests using your API Key in one of the following ways:
 
-### Signatures
+#### Signatures
 
 You can sign your request using your API Key.
 
@@ -99,7 +98,8 @@ First, prepare the data to be signed:
 
 ```js
 apiKeyId = "6XMc4VMf3q54YNarSn9CWUn4htStNu1ry9ajamemdo23sS1y21";
-requestPayload = '{"jsonrpc":"2.0","id":0,"method":"solution/listSolutions","params":{}}';
+requestPayload =
+  '{"jsonrpc":"2.0","id":0,"method":"solution/listSolutions","params":{}}';
 requestData = `POST\n/api\n${requestPayload}\n`; // UPPERCASE(HTTP_METHOD()) + "\n" + URI() + "\n" + RequestBody + "\n";
 timestamp = 1702555410352;
 nonce = "3xUee4EA0gr8dg==";
@@ -114,7 +114,7 @@ Next, generate a signature corresponding to your API Key credentials:
 
 ```js
 apiKeySecret = "CspXxVtTyE3sf6jB7z4CSjxoymuS2H67ZjNDfovTu3i8";
-signature = BASE64(HMACSHA256(apiKeySecret, dataToSign).SUBARRAY(0, 20))
+signature = BASE64(HMACSHA256(apiKeySecret, dataToSign).SUBARRAY(0, 20));
 ```
 
 **ECC signature**, if you provided a `publicKey`:
@@ -122,11 +122,12 @@ signature = BASE64(HMACSHA256(apiKeySecret, dataToSign).SUBARRAY(0, 20))
 <div class="center-column"></div>
 
 ```js
-privateKey = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIOBVFGaSFtfqbNvZWctFKg3k+I0T5YXRavpKAD9+BgCX\n-----END PRIVATE KEY-----";
-signature = BASE64(SIGN(dataToSign, privateKey))
+privateKey =
+  "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIOBVFGaSFtfqbNvZWctFKg3k+I0T5YXRavpKAD9+BgCX\n-----END PRIVATE KEY-----";
+signature = BASE64(SIGN(dataToSign, privateKey));
 ```
 
-To sign a request, include the following in the `Authorization` header: 
+To sign a request, include the following in the `Authorization` header:
 
 <div class="center-column"></div>
 
@@ -146,9 +147,9 @@ curl -X POST -H "Content-Type: application/json" \
         "params": {}
     }' \
     https://my-privmx-bridge-instance/api
-``` 
+```
 
-### API Key Credentials  
+#### API Key Credentials
 
 You can authorize the request by placing your API Key credentials in the `Authorization` header:
 
@@ -172,9 +173,10 @@ curl -X POST -H "Content-Type: application/json" \
     }' \
     https://my-privmx-bridge-instance/api
 ```
+
 Note that you cannot use this authorization method if your API Key includes a public key. In such a case, only ECC signatures are available for this API Key.
 
-### Access Tokens
+#### Access Tokens
 
 Access Tokens have a TTL but can be refreshed using refresh tokens. You can generate them by calling [manager/auth](#manager-auth):
 
@@ -196,6 +198,7 @@ curl -X POST \
     }' \
     https://my-privmx-bridge-instance/api
 ```
+
 You will receive an `access_token` and a `refresh_token`:
 
 <div class="center-column"></div>
@@ -252,34 +255,37 @@ curl -X POST \
             "refreshToken": "TG9yZW0gaXBzdW1Mb3JlbSBpcHN1bUxvcmVtIGlwc3VtTG9yZW0gaXBzdW0=",
         }
     }' \
-    https://my-privmx-bridge-instance/api   
+    https://my-privmx-bridge-instance/api
 ```
+
 In response, you will receive a new pair of tokens, and the old pair will be revoked.
 
 ### API Scopes
 
 When requesting an Access Token, you can specify the scope, which defines the level of access granted. Here's a breakdown of the available scopes:
 
-| Scope                      | Description |
-|----------------------------|-------------|
-| **session:NAME**            | Creates a new session with the provided name, generating tokens bound to that session. Access is granted for the session's lifetime. A user can have up to 16 sessions; when this limit is reached, the oldest session is removed. |
-| **ipAddr:ADDR**             | Restricts the token to connections from a specific IPv4 address (ADDR). |
-| **expiresIn:NUMBER**        | Access Token will expire after NUMBER of milliseconds. Max value is refresh token TTL. |
-| **apiKey**                  | Restricts the token to manager api scope. |
-| **solution**                | Restricts the token to solution api scope. |
-| **context**                 | Restricts the token to context api scope. |
-| **thread**                  | Restricts the token to thread api scope. |
-| **store**                   | Restricts the token to store api scope. |
-| **inbox**                   | Restricts the token to inbox api scope. |
-| **stream**                  | Restricts the token to stream api scope. |
-| **solution:SOLUTION_ID**    | Restricts the token to manage contexts only under given SOLUTION_ID. |
-| **solution:***              | Restricts the token to manage all contexts. |
+| Scope                    | Description                                                                                                                                                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **session:NAME**         | Creates a new session with the provided name, generating tokens bound to that session. Access is granted for the session's lifetime. A user can have up to 16 sessions; when this limit is reached, the oldest session is removed. |
+| **ipAddr:ADDR**          | Restricts the token to connections from a specific IPv4 address (ADDR).                                                                                                                                                            |
+| **expiresIn:NUMBER**     | Access Token will expire after NUMBER of milliseconds. Max value is refresh token TTL.                                                                                                                                             |
+| **apiKey**               | Restricts the token to manager API scope.                                                                                                                                                                                          |
+| **solution**             | Restricts the token to Solution API scope.                                                                                                                                                                                         |
+| **context**              | Restricts the token to Context API scope.                                                                                                                                                                                          |
+| **thread**               | Restricts the token to Thread API scope.                                                                                                                                                                                           |
+| **store**                | Restricts the token to Store API scope.                                                                                                                                                                                            |
+| **inbox**                | Restricts the token to Inbox API scope.                                                                                                                                                                                            |
+| **stream**               | Restricts the token to stream API scope.                                                                                                                                                                                           |
+| **solution:SOLUTION_ID** | Restricts the token to manage Contexts only under given SOLUTION_ID.                                                                                                                                                               |
+| **solution:\***          | Restricts the token to manage all Contexts.                                                                                                                                                                                        |
+
 These scopes allow fine-grained control over what actions can be performed with the generated tokens, making it easier to manage permissions across different parts of the system.
 
 # Metrics Documentation
 
 ### Overview
-The application provides a `/metrics` endpoint that returns various metrics in a format compatible with Prometheus. The endpoint is protected by HTTP Basic Authorization for security.
+
+The application provides a `/metrics` endpoint that returns various metrics in a format compatible with [Prometheus](https://prometheus.io/). The endpoint is protected by HTTP Basic Authorization for security.
 
 ### Metrics Endpoint
 
