@@ -46,13 +46,28 @@ export class SlateDocsGenerator {
             console.log(`${api.name} docs generated`);
         }
         await this.generateNotificationSection(files, apisArray);
+        
         await this.generateErrorCodesSection(files, jsonDocs.httpErrorCodes, jsonDocs.jsonRpcErrors, jsonDocs.errorsWithDescription);
         console.log("Error codes section generated");
+        
+        await this.generateDetailsSection(files);
+        console.log("Details section generated");
+        
         await this.generateAclGroupsSection(jsonDocs.aclGroups, files);
         console.log("ACL Section generated");
+        
         await this.generatePolicySection(jsonDocs.policy, files);
         console.log("Policy section generated");
+        
         await this.changeIncludesInIndex(files);
+    }
+    
+    async generateDetailsSection(files: string[]) {
+        const fileName = "Details";
+        files.push(`_${fileName}.md`);
+        const filePath = path.resolve(this.slateDir, `includes/_${fileName}.md`);
+        await fs.promises.mkdir(path.dirname(filePath), {recursive: true});
+        await fs.promises.writeFile(filePath, "# Details\n");
     }
     
     async generateAclGroupsSection(aclGroups: types.AclGroups, files: string[]) {
@@ -388,10 +403,8 @@ Parameter | Type | Enum | Description
         await fs.promises.mkdir(path.dirname(filePath), {recursive: true});
         const result =
 `
-# Api errors
-Every API request can return any of the common errors, which are only specified in [Error Codes section](#common-errors) not to duplicate them in every method description.
-
 # Methods
+Note: Every API request can return any of the common errors, which are only specified in [Error Codes section](#common-errors) not to duplicate them in every method description.
 `;
         await fs.promises.writeFile(filePath, result);
     }
@@ -411,6 +424,7 @@ Error Code | Message | Description
 ${httpErrorCodes.map(error => `${error.errorCode} | ${error.message} | ${error.description}`).join("\n")}
 
 # Common Errors
+Every API request can return any of the common errors, so they are not specified in the method descriptions to avoid duplication.
 
 Error Code | Message | Description |
 ---------- | ------- |-------------|
