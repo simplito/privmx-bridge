@@ -100,7 +100,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
         await this.authorizationDetector.bindAccessTokenToWebsocket(model.accessToken);
         return "OK";
     }
-
+    
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async subscribeToChannel(model: managerApi.SubscribeToChannelModel): Promise<types.core.OK> {
         if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
@@ -121,7 +121,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
         }
         return "OK";
     }
-
+    
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async unsubscribeFromChannel(model: managerApi.UnsubscribeFromChannelModel): Promise<types.core.OK> {
         if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
@@ -138,7 +138,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
             }
             else {
                 solutions.forEach(solution => entry.delete(solution));
-
+                
             }
         }
         return "OK";
@@ -154,7 +154,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
             throw new AppException("INSUFFICIENT_SCOPE", scope);
         }
     }
-
+    
     private getSolutionsToWhichUserIsLimited() {
         const solutions: types.cloud.SolutionId[] = [];
         const auth = this.authorizationHolder.getAuth();

@@ -17,13 +17,13 @@ import * as http from "http";
 import { NonceMap } from "../../cluster/master/ipcServices/NonceMap";
 
 export class SignatureVerificationService {
-
+    
     private static readonly MAX_CLOCK_DESYNCHRONIZATION: types.core.Timespan = DateUtils.minutes(10);
-
+    
     constructor(
         private nonceMap: NonceMap,
     ) {}
-
+    
     async verify({request, apiKey, nonce, timestamp, signature, requestBody}: {request: http.IncomingMessage|null, apiKey: db.auth.ApiKey, nonce: string, timestamp: number, signature: string, requestBody: Buffer}) {
         if (!await this.isValidNonce(nonce)) {
             return false;
@@ -31,7 +31,7 @@ export class SignatureVerificationService {
         if (!this.isValidTimestamp(timestamp)) {
             return false;
         }
-
+        
         const params: BaseParams = {
             apiKeyId: apiKey.id,
             httpMethod: request?.method || "",
@@ -40,7 +40,7 @@ export class SignatureVerificationService {
             requestBody: requestBody,
             urlPath: (request as any)?.originalUrl || request?.url || "",
         };
-
+        
         if (apiKey.publicKey) {
             return RequestSignature.verifyEddsa({
                 ...params,
@@ -54,11 +54,11 @@ export class SignatureVerificationService {
             signature: signature,
         });
     }
-
+    
     async isValidNonce(nonce: string) {
         return (nonce.length <= 128 && await this.nonceMap.isValidNonce({nonce, ttl: (SignatureVerificationService.MAX_CLOCK_DESYNCHRONIZATION * 2) as types.core.Timespan}));
     }
-
+    
     isValidTimestamp(timestamp: number) {
         return (Math.abs(Date.now() - timestamp) < SignatureVerificationService.MAX_CLOCK_DESYNCHRONIZATION);
     }

@@ -27,7 +27,7 @@ export class ServerSessionService {
     sessions: {[id: string]: SessionData};
     
     constructor(
-        private configService: ConfigService
+        private configService: ConfigService,
     ) {
         this.sessions = {};
     }
@@ -44,7 +44,7 @@ export class ServerSessionService {
             host: host,
             serverKey: serverKey,
             established: now,
-            lastUsage: now
+            lastUsage: now,
         };
         return id;
     }

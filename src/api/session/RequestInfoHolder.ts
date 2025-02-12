@@ -18,7 +18,7 @@ export class RequestInfoHolder {
     serverSession?: SessionData;
     
     constructor(
-        private serverSessionService: ServerSessionService
+        private serverSessionService: ServerSessionService,
     ) {
     }
     

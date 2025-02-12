@@ -18,7 +18,7 @@ export class MongoObjectRepositoryFactory<K extends string|number, V> implements
     constructor(
         private dbManager: MongoDbManager,
         private dbName: string,
-        private idProperty: keyof V
+        private idProperty: keyof V,
     ) {
     }
     

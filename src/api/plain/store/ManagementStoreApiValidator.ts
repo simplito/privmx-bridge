@@ -18,7 +18,7 @@ export class ManagementStoreApiValidator extends BaseValidator {
         private tv: TypesValidator,
     ) {
         super();
-
+        
         this.registerMethod("getStore", this.builder.createObject({
             storeId: this.tv.storeId,
         }));
@@ -37,7 +37,7 @@ export class ManagementStoreApiValidator extends BaseValidator {
         this.registerMethod("deleteManyStores", this.builder.createObject({
             storeIds: this.builder.createListWithMaxLength(this.tv.storeId, 128),
         }));
-
+        
         this.registerMethod("getStoreFile", this.builder.createObject({
             storeFileId: this.tv.storeFileId,
         }));
@@ -56,7 +56,7 @@ export class ManagementStoreApiValidator extends BaseValidator {
         this.registerMethod("deleteManyStoreFiles", this.builder.createObject({
             fileIds: this.builder.createListWithMaxLength(this.tv.storeFileId, 128),
         }));
-
+        
         this.registerMethod("deleteStoreFilesOlderThan", this.builder.createObject({
             storeId: this.tv.storeId,
             timestamp: this.tv.timestamp,

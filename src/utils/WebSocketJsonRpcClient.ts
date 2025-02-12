@@ -25,7 +25,7 @@ export class WebSocketJsonRpcRequester {
     constructor(private socket: WebSocket) {
         socket.on("message", data => this.handleMessage(data));
     }
-
+    
     async request<T>(method: string, params: unknown) {
         if (this.socket.readyState !== 1) {
             throw new Error("Websocket already in closing/closed state");
@@ -49,13 +49,13 @@ export class WebSocketJsonRpcRequester {
         this.socket.send(JSON.stringify(request));
         return defer.promise;
     }
-
+    
     popAllNotifications() {
         const notifications = this.notifications;
         this.notifications = [];
         return notifications;
     }
-
+    
     private handleMessage(data: WebSocket.Data) {
         const payload = this.getWebSocketDataAsString(data);
         const response = JSON.parse(payload);
@@ -71,7 +71,7 @@ export class WebSocketJsonRpcRequester {
         }
         const {defer, options} = deferAndOptions;
         this.requestMap.delete(response.id);
-
+        
         if (this.isJsonRpcSuccessResponse(response)) {
             defer.resolve(response.result);
         }
@@ -83,7 +83,7 @@ export class WebSocketJsonRpcRequester {
     private isNotification(x: any): x is cloudTypes.notification.Event  {
         return x && typeof(x) === "object" && "type" in x && typeof(x.type) === "string" && "data" in x;
     }
-
+    
     private isJsonRpcSuccessResponse(response: JsonRpcResponse): response is JsonRpcResponseSuccess {
         return "result" in response;
     }

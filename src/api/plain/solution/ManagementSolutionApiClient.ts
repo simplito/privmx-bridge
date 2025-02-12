@@ -18,25 +18,25 @@ export class ManagementSolutionApiClient implements managementSolutionApi.ISolut
     constructor(
         private requester: Requester,
     ) {}
-
+    
     async createSolution(model: managementSolutionApi.CreateSolutionModel): Promise<managementSolutionApi.CreateSolutionResult> {
         return await this.requester.request("solution/createSolution", model);
     }
-
+    
     async getSolution(model: managementSolutionApi.GetSolutionModel): Promise<managementSolutionApi.GetSolutionResult> {
         return await this.requester.request("solution/getSolution", model);
     }
-
+    
     async listSolutions(): Promise<managementSolutionApi.ListSolutionsResult> {
         return await this.requester.request("solution/listSolutions", {});
     }
-
+    
     async updateSolution(model: managementSolutionApi.UpdateSolutionModel): Promise<types.core.OK> {
         return await this.requester.request("solution/updateSolution", model);
     }
-
+    
     async deleteSolution(model: managementSolutionApi.DeleteSolutionModel): Promise<types.core.OK> {
         return await this.requester.request("solution/deleteSolution", model);
     }
-
+    
 }

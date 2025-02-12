@@ -17,10 +17,10 @@ import { PlainApiEvent } from "../../api/plain/Types";
 export class Worker2ServiceClient implements IWorker2Service {
     
     constructor(
-        private ipcRequester: WorkerIpcRequester
+        private ipcRequester: WorkerIpcRequester,
     ) {
     }
-
+    
     sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId; event: PlainApiEvent}): Promise<void> {
         return this.ipcRequester.request("sendWebsocketNotificationToPlainUsers", model);
     }

@@ -9,20 +9,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+/* eslint-disable max-classes-per-file */
 import * as types from "../../types";
 import { AppException } from "../../api/AppException";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { CloudUser } from "../../CommonTypes";
 import * as managementContextApi from "../../api/plain/context/ManagementContextApiTypes";
-import { PolicyService } from "./PolicyService";
+import { PolicyService, PolicyUser } from "./PolicyService";
 import { CloudAclChecker } from "./CloudAclChecker";
 import { ThreadService } from "./ThreadService";
 import { StoreService } from "./StoreService";
 import { InboxService } from "./InboxService";
 import { StreamService } from "./StreamService";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
-
+import * as db from "../../db/Model";
+import { ContextNotificationService } from "./ContextNotificationService";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 export class ContextService {
+    
+    private policy: ContextPolicy;
     
     constructor(
         private repositoryFactory: RepositoryFactory,
@@ -32,7 +37,10 @@ export class ContextService {
         private storeService: StoreService,
         private inboxService: InboxService,
         private streamService: StreamService,
+        private contextNotificationService: ContextNotificationService,
+        private activeUsersMap: ActiveUsersMap,
     ) {
+        this.policy = new ContextPolicy(this.policyService);
     }
     
     async checkSolutionExistance(solutionId: types.cloud.SolutionId) {
@@ -175,10 +183,10 @@ export class ContextService {
         }
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!context) {
-            throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`)
+            throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`);
         }
         if (cloudUser.solutionId) {
-            if (context.solution !== cloudUser.solutionId || !context.shares.includes(cloudUser.solutionId)) {
+            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
                 throw new AppException("ACCESS_DENIED");
             }
         }
@@ -218,5 +226,99 @@ export class ContextService {
             throw new AppException("USER_DOESNT_EXIST");
         }
         await this.repositoryFactory.createContextUserRepository().updateAcl(contextId, userId, acl);
+    }
+    
+    async getAllContextUsers(cloudUser: CloudUser, contextId: types.context.ContextId) {
+        const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
+        if (!user) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        this.cloudAclChecker.verifyAccess(user.acl, "context/contextSendCustomNotification", ["contextId=" + contextId]);
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new AppException("CONTEXT_DOES_NOT_EXIST");
+        }
+        if (!this.policy.canListUsers(context)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (cloudUser.solutionId) {
+            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const users = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
+        const usersState = await this.activeUsersMap.getUsersState({userPubkeys: users.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
+        return users.map((contextUser, index) => ({ ...contextUser, ...usersState[index] })) as db.context.ContextUserWithStatus[];
+    }
+    
+    async sendCustomNotification(cloudUser: CloudUser, contextId: types.context.ContextId, data: unknown, customChannelName: types.core.WsChannelName,  usersWithEncryptionKey: {id: types.cloud.UserId, key: types.core.UserKeyData}[]) {
+        const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
+        if (!user) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        this.cloudAclChecker.verifyAccess(user.acl, "context/contextSendCustomNotification", ["contextId=" + contextId]);
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`);
+        }
+        if (!this.policy.canSendContextCustomNotification(context)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (cloudUser.solutionId) {
+            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const usersWithPubKey = await this.repositoryFactory.createContextUserRepository().getUsers(contextId, usersWithEncryptionKey.map(e => e.id));
+        const users = this.mergeUsersArrays(usersWithPubKey, usersWithEncryptionKey);
+        this.contextNotificationService.sendContextCustomEvent(contextId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+    }
+    
+    private mergeUsersArrays(usersWithPubKey: db.context.ContextUser[], usersWithEncryptionKey: {id: types.cloud.UserId, key: types.core.UserKeyData}[]): {id: types.cloud.UserId, key: types.core.UserKeyData, pubKey: types.core.EccPubKey}[] {
+        return usersWithEncryptionKey.map(user => {
+            const userWithPubKey = usersWithPubKey.find(x => x.userId === user.id);
+            if (!userWithPubKey) {
+                throw new AppException("USER_DOESNT_EXIST");
+            }
+            return {
+                id: user.id,
+                key: user.key,
+                pubKey: userWithPubKey.userPubKey,
+            };
+        });
+      }
+}
+
+class ContextPolicy {
+    
+    constructor(
+        private policyService: PolicyService,
+    ) {
+    }
+    
+    canSendContextCustomNotification(context: db.context.Context) {
+        return this.isContextInnerPolicyMet(context, p => p?.sendCustomNotification);
+    }
+    
+    canListUsers(context: db.context.Context) {
+        return this.isContextInnerPolicyMet(context, p => p?.listUsers);
+    }
+    
+    private isContextInnerPolicyMet(context: db.context.Context, func: (policy: types.cloud.ContextInnerPolicy) => types.cloud.PolicyEntry|undefined) {
+        return this.policyService.isPolicyMet(this.getEmptyPolicyUser(), context, policy => func(this.extractPolicyFromContext(policy)));
+    }
+    
+    private getEmptyPolicyUser() {
+        const res: PolicyUser = {
+            user: false,
+            manager: false,
+            owner: false,
+            itemOwner: false,
+        };
+        return res;
+    }
+    
+    private extractPolicyFromContext(policy: types.context.ContextPolicy) {
+        return policy?.context || {};
     }
 }

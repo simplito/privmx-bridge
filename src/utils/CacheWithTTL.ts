@@ -20,7 +20,7 @@ export class CacheWithTTL<T> {
         const item = this.map.get(key);
         return (item && item.expires > DateUtils.now()) ? item.value as T : undefined;
     }
-
+    
     getAndRefresh(key: string) {
         const item = this.map.get(key);
         if (item && item.expires > DateUtils.now()) {

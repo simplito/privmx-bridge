@@ -23,7 +23,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
     @Test()
     async shouldGetThread() {
         this.helpers.authorizePlainApi();
-        await this.fetchThread()
+        await this.fetchThread();
     }
     
     @Test()
@@ -56,7 +56,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
     @Test()
     async shouldListThreadMessages() {
         this.helpers.authorizePlainApi();
-        await this.listAllThreadMessages()
+        await this.listAllThreadMessages();
     }
     
     @Test()
@@ -81,7 +81,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
         });
         verifyResponseFor("getThread", result, ["thread"]);
     }
-
+    
     private async listAllThreads() {
         const result = await this.plainApis.threadApi.listThreads({
             contextId: testData.contextId,
@@ -92,14 +92,14 @@ export class ManagementThreadApiTest extends BaseTestSet {
         verifyResponseFor("listThreads", result, ["list", "count"]);
         assert(result.count === this.newThreads.length + 1);
     }
-
+    
     private async deleteSingleThread() {
         const result = await this.plainApis.threadApi.deleteThread({
             threadId: testData.threadId,
         });
         verifyResponseIsOK("deleteThread", result);
     }
-
+    
     private async createNewThreads() {
         for (let i = 0; i < 5; i++) {
             const newThread = await this.apis.threadApi.threadCreate({
@@ -137,7 +137,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
         const result = await this.plainApis.threadApi.getThreadMessage({
             threadMessageId: testData.threadMessageId,
         });
-        verifyResponseFor("getThreadMessage", result, ["threadMessage"])
+        verifyResponseFor("getThreadMessage", result, ["threadMessage"]);
     }
     
     private async listAllThreadMessages() {
@@ -156,7 +156,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
             const result = await this.apis.threadApi.threadMessageSend({
                 data: "New Data!",
                 keyId: testData.keyId,
-                threadId: testData.threadId
+                threadId: testData.threadId,
             });
             this.newThreadMessages.push(result.messageId);
         }

@@ -41,8 +41,8 @@ export class HttpHandler {
                     code: 500,
                     body: "500 Internal server error",
                     headers: {
-                        "Content-Type": "text/plain"
-                    }
+                        "Content-Type": "text/plain",
+                    },
                 }, response, requestLogger);
             }
             finally {

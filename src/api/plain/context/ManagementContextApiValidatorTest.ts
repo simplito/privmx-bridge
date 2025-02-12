@@ -47,7 +47,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
             description: "context description" as types.context.ContextDescription,
             scope: "private" as types.context.ContextScope,
             policy: {},
-        }]
+        }],
     });
     call("createContext", api => api.createContext({
         solution: "65ad8f6c2e4f4f1adb40bf81" as types.cloud.SolutionId,
@@ -92,7 +92,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
             description: "context description" as types.context.ContextDescription,
             scope: "private" as types.context.ContextScope,
             policy: {},
-        }]
+        }],
     });
     call("getUserFromContext", api => api.getUserFromContext({
         contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,

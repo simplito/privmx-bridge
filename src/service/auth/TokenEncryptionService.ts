@@ -16,16 +16,16 @@ import { Hex } from "../../utils/Hex";
 import { Utils } from "../../utils/Utils";
 
 export class TokenEncryptionService {
-
+    
     constructor(
         private tokenEncryptionKeyProvider: TokenEncryptionKeyProvider,
     ) {
     }
-
+    
     async getKeyToEncode() {
         return this.tokenEncryptionKeyProvider.getCurrentKey();
     }
-
+    
     async encrypt(data: unknown, encKey: db.auth.TokenEncryptionKey) {
         const iv = this.generateNewIv();
         const keyId = Hex.toBuf(encKey.id);
@@ -37,7 +37,7 @@ export class TokenEncryptionService {
         const buff = Buffer.concat([keyId, iv, update, final, tag]).toString("base64");
         return buff;
     }
-
+    
     async decrypt(encodedBase64Token: string): Promise<unknown> {
         const buffer = Buffer.from(encodedBase64Token, "base64");
         const keyId = buffer.subarray(0, 16);
@@ -54,7 +54,7 @@ export class TokenEncryptionService {
         const final = decipher.final().toString("utf8");
         return JSON.parse(update + final);
     }
-
+    
     private generateNewIv() {
         return crypto.randomBytes(12);
     }

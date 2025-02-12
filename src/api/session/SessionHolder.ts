@@ -20,7 +20,7 @@ export class SessionHolder {
     private session: Session|null = null;
     
     constructor(
-        private sessionStorage: SessionStorage
+        private sessionStorage: SessionStorage,
     ) {
     }
     

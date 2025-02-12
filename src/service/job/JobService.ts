@@ -20,11 +20,11 @@ export interface JobEntry {
 export class JobService {
     
     private jobs: {[name: string]: JobEntry} = {};
-
+    
     constructor(
         private logger: Logger,
     ) {}
-
+    
     addPeriodicJob(func: () => unknown, interval: number, name: string) {
         const newJobEntry = {
             func: func,
@@ -33,7 +33,7 @@ export class JobService {
         };
         this.jobs[name] = newJobEntry;
     }
-
+    
     clearJob(name: string) {
         if (!this.jobs[name]) {
             throw new Error("Job not set");
@@ -41,7 +41,7 @@ export class JobService {
         clearInterval(this.jobs[name].intervalId);
         delete this.jobs[name];
     }
-
+    
     clearAllJobs() {
         for (const name in this.jobs) {
             clearInterval(this.jobs[name].intervalId);
@@ -49,7 +49,7 @@ export class JobService {
         this.jobs = {};
     }
     
-    addJob(job: Promise<any>|(() => any), errorMessage: string): void {
+    addJob(job: Promise<unknown>|(() => unknown), errorMessage: string): void {
         // eslint-disable-next-line @typescript-eslint/no-floating-promises
         (async () => {
             try {

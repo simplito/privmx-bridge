@@ -61,7 +61,7 @@ export interface StoreDeleteManyResult {
 
 export interface StoreFileDeleteManyResult {
     results: types.store.StoreFileDeleteStatus[]
-
+    
 }
 
 export interface StoreFileDeleteOlderThanResult {
@@ -130,6 +130,15 @@ export type StoreDeletedEvent = types.cloud.Event<"storeDeleted", "store", Store
 export interface StoreDeletedEventData {
     storeId: types.store.StoreId;
     type?: types.store.StoreType;
+}
+
+export type StoreCustomEvent = types.cloud.Event<"custom", `store/${types.store.StoreId}/${types.core.WsChannelName}`, StoreCustomEventData>;
+
+export interface StoreCustomEventData {
+    id: types.store.StoreId;
+    keyId: types.core.KeyId;
+    eventData: unknown;
+    author: types.cloud.UserIdentity;
 }
 
 export type StoreStatsChangedEvent = types.cloud.Event<"storeStatsChanged", "store", StoreStatsChangedEventData>;
@@ -257,6 +266,14 @@ export interface StoreFileDeletedEventData {
     storeId: types.store.StoreId;
 }
 
+export interface StoreSendCustomEventModel {
+    storeId: types.store.StoreId;
+    channel: types.core.WsChannelName;
+    keyId: types.core.KeyId;
+    data: unknown;
+    users?: types.cloud.UserId[];
+}
+
 export interface IStoreApi {
     storeCreate(model: StoreCreateModel): Promise<StoreCreateResult>;
     storeUpdate(model: StoreUpdateModel): Promise<types.core.OK>;
@@ -276,4 +293,5 @@ export interface IStoreApi {
     storeFileDelete(model: StoreFileDeleteModel): Promise<types.core.OK>;
     storeFileDeleteMany(model: StoreFileDeleteManyModel): Promise<StoreFileDeleteManyResult>;
     storeFileDeleteOlderThan(model: StoreFileDeleteOlderThanModel): Promise<StoreFileDeleteOlderThanResult>;
+    storeSendCustomEvent(model: StoreSendCustomEventModel): Promise<types.core.OK>;
 }

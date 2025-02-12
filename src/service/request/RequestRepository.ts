@@ -25,7 +25,7 @@ export class RequestRepository {
     ) {
     }
     
-    async getWithAccessCheck(user: types.core.Username, requestId: types.request.RequestId) {
+    async getWithAccessCheck(user: types.core.Username|types.core.EccPubKey, requestId: types.request.RequestId) {
         const request = await this.repository.get(requestId);
         if (!request) {
             throw new AppException("REQUEST_DOES_NOT_EXIST");
@@ -45,22 +45,22 @@ export class RequestRepository {
             processing: false,
             files: files.map(x => {
                 const f: db.request.FileDefinition = {
-                    id: <types.request.FileId><string>this.repository.generateId(),
+                    id: <types.request.FileId><string> this.repository.generateId(),
                     seq: 0,
                     sent: 0,
                     size: x.size,
                     checksumSize: x.checksumSize,
                     checksumSent: 0,
-                    closed: false
+                    closed: false,
                 };
                 return f;
-            })
+            }),
         };
         await this.repository.insert(req);
         return req;
     }
     
-    async getReadyForUser(user: types.core.Username, requestId: types.request.RequestId) {
+    async getReadyForUser(user: types.core.Username|types.core.EccPubKey, requestId: types.request.RequestId) {
         const request = await this.getWithAccessCheck(user, requestId);
         for (const f of request.files) {
             if (!f.closed) {
@@ -100,7 +100,7 @@ export class RequestRepository {
                         checksumSize: x.checksumSize,
                         sent: x.sent + chunkLength,
                         checksumSent: x.checksumSent,
-                        closed: false
+                        closed: false,
                     };
                 }
                 return x;
@@ -126,7 +126,7 @@ export class RequestRepository {
                         checksumSize: x.checksumSize,
                         sent: x.sent,
                         checksumSent: checksumLength,
-                        closed: true
+                        closed: true,
                     };
                 }
                 return x;
@@ -149,7 +149,7 @@ export class RequestRepository {
         const minModDate = DateUtils.nowSub(maxInactiveTime);
         const requests = await this.repository.findAll(q => q.and(
             q.eq("processing", false),
-            q.lt("modified", minModDate)
+            q.lt("modified", minModDate),
         ));
         for (const request of requests) {
             await this.repository.delete(request.id);

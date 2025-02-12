@@ -56,7 +56,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
     async shouldDeleteManyStoreFiles() {
         this.helpers.authorizePlainApi();
         await this.createManyStoreFiles();
-        await this.listAllStoreFiles()
+        await this.listAllStoreFiles();
         await this.deleteManyStoreFiles();
         await this.checkIfAllStoreFilesAreDeleted();
     }
@@ -127,7 +127,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
         verifyResponseFor("listTlistStreameshreads", result, ["list", "count"]);
         assert(result.count === 1);
     }
-
+    
     private async createStoreFile() {
         const req = await this.apis.requestApi.createRequest({files: [{size: 0, checksumSize: 0}]});
         const commitResult = await this.apis.requestApi.commitFile({requestId: req.id, fileIndex: 0, seq: 0, checksum: Buffer.alloc(0)});
@@ -150,7 +150,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
         const result = await this.plainApis.storeApi.getStoreFile({
             storeFileId: this.newStoreFile,
         });
-        verifyResponseFor("getStoreFile", result, ["storeFile"])
+        verifyResponseFor("getStoreFile", result, ["storeFile"]);
     }
     
     private async deleteSingleStoreFile() {
@@ -177,9 +177,9 @@ export class ManagementStoreApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const req = await this.apis.requestApi.createRequest({files: [{size: 1024 * 1024 * 10, checksumSize: 100}]});
             const sendChunkResult1 = await this.apis.requestApi.sendChunk({requestId: req.id, fileIndex: 0, seq: 0, data: Buffer.alloc(1024 * 1024 * 5)});
-            assert(sendChunkResult1, "sendChunkResult1 unsuccessful")
+            assert(sendChunkResult1, "sendChunkResult1 unsuccessful");
             const sendChunkResult2 = await this.apis.requestApi.sendChunk({requestId: req.id, fileIndex: 0, seq: 1, data: Buffer.alloc(1024 * 1024 * 5)});
-            assert(sendChunkResult2, "sendChunkResult2 unsuccessful")
+            assert(sendChunkResult2, "sendChunkResult2 unsuccessful");
             const commitResult = await this.apis.requestApi.commitFile({requestId: req.id, fileIndex: 0, seq: 2, checksum: Buffer.alloc(100)});
             assert(commitResult === "OK", "unsuccessful file commit");
             const result = await this.apis.storeApi.storeFileCreate({
@@ -193,7 +193,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
             this.newStoreFiles.push(result.fileId);
         }
     }
-
+    
     private async listAllStoreFiles() {
         const result = await this.plainApis.storeApi.listStoreFiles({
             from: null,

@@ -38,8 +38,12 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
     streamRoomList(model: streamApi.StreamRoomListModel): Promise<streamApi.StreamRoomListResult> {
         return this.request("stream.streamRoomList", model);
     }
-
+    
     streamRoomListAll(model: streamApi.StreamRoomListAllModel): Promise<streamApi.StreamRoomListAllResult> {
         return this.request("stream.streamRoomListAll", model);
+    }
+    
+    streamRoomSendCustomEvent(model: streamApi.StreamRoomSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("stream.streamRoomSendCustomEvent", model);
     }
 }

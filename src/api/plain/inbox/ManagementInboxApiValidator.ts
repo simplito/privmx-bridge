@@ -18,7 +18,7 @@ export class ManagementInboxApiValidator extends BaseValidator {
         private tv: TypesValidator,
     ) {
         super();
-
+        
         this.registerMethod("getInbox", this.builder.createObject({
             inboxId: this.tv.inboxId,
         }));
@@ -33,7 +33,7 @@ export class ManagementInboxApiValidator extends BaseValidator {
         this.registerMethod("deleteInbox", this.builder.createObject({
             inboxId: this.tv.inboxId,
         }));
-
+        
         this.registerMethod("deleteManyInboxes", this.builder.createObject({
             inboxIds: this.builder.createListWithMaxLength(this.tv.inboxId, 128),
         }));

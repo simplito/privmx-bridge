@@ -158,7 +158,7 @@ export class RequestService {
         }
         const res: RequestX = {
             request,
-            moved: []
+            moved: [],
         };
         return res;
     }

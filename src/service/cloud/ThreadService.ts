@@ -61,7 +61,7 @@ export class ThreadService {
         const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
         return {user, threads};
     }
-
+    
     async getAllThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadListAll", []);
@@ -71,7 +71,7 @@ export class ThreadService {
         const threads = await this.repositoryFactory.createThreadRepository().getAllThreads(contextId, type, listParams, sortBy);
         return {user, threads};
     }
-
+    
     async getThreadsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.thread.ThreadId>) {
         const ctx = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!ctx) {
@@ -211,13 +211,13 @@ export class ThreadService {
         this.threadNotificationService.sendDeletedThread(result.oldThread, result.context.solution);
         return result.oldThread;
     }
-
+    
     async deleteManyThreads(executor: Executor, threadIds: types.thread.ThreadId[]) {
         const resultMap: Map<types.thread.ThreadId, "OK" | "THREAD_DOES_NOT_EXIST" | "ACCESS_DENIED" | "THREAD_BELONGS_TO_INBOX"> = new Map();
         for (const id of threadIds) {
             resultMap.set(id, "THREAD_DOES_NOT_EXIST");
         }
-
+        
         const result = await this.repositoryFactory.withTransaction(async session => {
             const threadRepository = this.repositoryFactory.createThreadRepository(session);
             const threadMessageRepository = this.repositoryFactory.createThreadMessageRepository(session);
@@ -235,7 +235,7 @@ export class ThreadService {
             const toDelete: types.thread.ThreadId[] = [];
             const toNotify: db.thread.Thread[] = [];
             for (const thread of threads) {
-                if(thread.contextId !== contextId) {
+                if (thread.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
                 if (!additionalAccessCheck(thread)) {
@@ -262,12 +262,12 @@ export class ThreadService {
                 this.threadNotificationService.sendDeletedThread(deletedThread, result.usedContext.solution);
             }
         }
-
+        
         const resultArray: types.thread.ThreadDeleteStatus[] = [];
         for (const [id, status] of resultMap) {
             resultArray.push({id, status});
         }
-
+        
         return {contextId: result.contextId, results: resultArray};
     }
     
@@ -350,13 +350,13 @@ export class ThreadService {
         }
         return {thread, message};
     }
-
+    
     async deleteManyMessages(executor: Executor, messageIds: types.thread.ThreadMessageId[], checkAccess = true) {
         const resultMap: Map<types.thread.ThreadMessageId, "OK" | "THREAD_MESSAGE_DOES_NOT_EXIST" | "ACCESS_DENIED"> = new Map();
         for (const id of messageIds) {
             resultMap.set(id, "THREAD_MESSAGE_DOES_NOT_EXIST");
         }
-
+        
         const result = await this.repositoryFactory.withTransaction(async session => {
             const threadMessageRepository = this.repositoryFactory.createThreadMessageRepository(session);
             const messages = await threadMessageRepository.getMany(messageIds);
@@ -380,7 +380,7 @@ export class ThreadService {
             const toDelete: types.thread.ThreadMessageId[] = [];
             const toNotify: db.thread.ThreadMessage[] = [];
             for (const message of messages) {
-                if(message.threadId !== threadId) {
+                if (message.threadId !== threadId) {
                     throw new AppException("MESSAGES_BELONGS_TO_DIFFERENT_THREADS");
                 }
                 if (!additionalAccessCheck(message)) {
@@ -404,15 +404,15 @@ export class ThreadService {
                 this.threadNotificationService.sendDeletedThreadMessage(result.thread, deletedMessage, result.context.solution);
             }
         }
-
+        
         const resultArray: types.thread.ThreadMessageDeleteStatus[] = [];
         for (const [id, status] of resultMap) {
             resultArray.push({id, status});
         }
-
+        
         return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
-
+    
     async deleteMessagesOlderThan(executor: Executor, threadId: types.thread.ThreadId, timestamp: types.core.Timestamp) {
         const thread = await this.repositoryFactory.createThreadRepository().get(threadId);
         if (!thread) {
@@ -424,6 +424,23 @@ export class ThreadService {
         }
         const messages = (await this.repositoryFactory.createThreadMessageRepository().getMessagesOlderThan(threadId, timestamp));
         return this.deleteManyMessages(executor, messages.map(message => message.id), false);
+    }
+    
+    async sendCustomNotification(cloudUser: CloudUser, threadId: types.thread.ThreadId, keyId: types.core.KeyId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        const thread = await this.repositoryFactory.createThreadRepository().get(threadId);
+        if (!thread) {
+            throw new AppException("THREAD_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "thread/threadSendCustomNotification", ["threadId=" + threadId]);
+        if (!this.policy.canSendCustomNotification(user, context, thread)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (users && users.some(element => !thread.users.includes(element))) {
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+        }
+        this.threadNotificationService.sendThreadCustomEvent(thread, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+        return thread;
     }
     
     private isContextId(x: unknown): x is types.context.ContextId {

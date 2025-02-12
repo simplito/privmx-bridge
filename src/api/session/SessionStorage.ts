@@ -74,7 +74,7 @@ export class SessionStorage {
         return this.repositoryFactory.createSessionRepository(session).cleanOldSessions();
     }
     
-    private async removeSessions(session: mongodb.ClientSession|undefined, query: any) {
+    private async removeSessions(session: mongodb.ClientSession|undefined, query: mongodb.Filter<any>) {
         return this.repositoryFactory.createSessionRepository(session).removeSessions(query);
     }
     

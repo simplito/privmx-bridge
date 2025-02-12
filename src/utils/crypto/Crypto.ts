@@ -71,7 +71,7 @@ export class Crypto {
     static hash160(data: Buffer): Buffer {
         return Crypto.hash("ripemd160", Crypto.sha256(data));
     }
-
+    
     static md5(data: Buffer) {
         return Crypto.hash("md5", data);
     }
@@ -230,7 +230,7 @@ export class Crypto {
         const kEM = Crypto.kdf(algo, keLen + kmLen, key, "key expansion");
         return {
             kE: kEM.slice(0, keLen),
-            kM: kEM.slice(keLen)
+            kM: kEM.slice(keLen),
         };
     }
     
@@ -262,17 +262,17 @@ export class Crypto {
         data = data.slice(16);
         return Crypto.aes256CbcPkcs7Decrypt(data, kem.kE, iv);
     }
-
+    
     static genericSign(dataToSign: Buffer, privateKey: string) {
         const privKey = crypto.createPrivateKey(privateKey);
         return crypto.sign(null, dataToSign, privKey);
     }
-
+    
     static genericVerify(dataToVerify: Buffer, publicKey: string, signature: Buffer) {
         const pubKey = crypto.createPublicKey(publicKey);
         return crypto.verify(null, dataToVerify, pubKey, signature);
     }
-
+    
     static genKeyPair() {
         const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519", {
             publicKeyEncoding: {

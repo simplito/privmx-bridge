@@ -86,13 +86,13 @@ export class ContextUserRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
                 $match: {
-                    userPubKey: userPubKey
-                }
+                    userPubKey: userPubKey,
+                },
             },
         ], listParams, sortBy);
     }
@@ -105,8 +105,8 @@ export class ContextUserRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
                 $match: {
@@ -115,7 +115,7 @@ export class ContextUserRepository {
                         {"contextObj.solution": solutionId},
                         {"contextObj.shares": solutionId},
                     ],
-                }
+                },
             },
         ], listParams, sortBy);
     }
@@ -131,6 +131,10 @@ export class ContextUserRepository {
     
     async getUsers(contextId: types.context.ContextId, users: types.cloud.UserId[]) {
         return this.repository.findAll(q => q.in("id", users.map(x => this.getUserId(contextId, x))));
+    }
+    
+    async getAllContextUsers(contextId: types.context.ContextId) {
+        return this.repository.findAll(q => q.eq("contextId", contextId));
     }
     
     async getUsersPageFromContext(contextId: types.context.ContextId, model: types.core.ListModel) {

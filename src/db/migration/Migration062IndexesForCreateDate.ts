@@ -20,9 +20,9 @@ export class Migration062IndexesForCreateDate {
         const dbManager = ioc.getMongoDbManager();
         
         const storeCollection = await dbManager.createOrGetCollection("storeFile");
-        await storeCollection.createIndex({createDate: 1})
-
+        await storeCollection.createIndex({createDate: 1});
+        
         const streamCollection = await dbManager.createOrGetCollection("threadMessage");
-        await streamCollection.createIndex({createDate: 1})
+        await streamCollection.createIndex({createDate: 1});
     }
 }

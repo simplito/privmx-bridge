@@ -25,7 +25,7 @@ export abstract class PrivmxConnectionBase {
     
     protected static dict = [
         "type", "ticket", "tickets", "ticket_id", "ticket_request",
-        "ticket_response", "ecdhe", "ecdh", "key", "count", "client_random"
+        "ticket_response", "ecdhe", "ecdh", "key", "count", "client_random",
     ];
     
     protected version: number;
@@ -91,7 +91,7 @@ export abstract class PrivmxConnectionBase {
             if (this.logger.isHandling(Logger.DEBUG)) {
                 this.logger.debug("raw frame header\n" + Utils.hexDump(frameHeader, true));
                 this.logger.debug("raw frame data\n" +
-                    (packet.length > 1024 ? Utils.hexDump(packet.slice(0, 1024)) + "..." : Utils.hexDump(packet, true))
+                    (packet.length > 1024 ? Utils.hexDump(packet.slice(0, 1024)) + "..." : Utils.hexDump(packet, true)),
                 );
             }
             frameHeader = Crypto.aes256EcbEncrypt(frameHeader, this.writeState.key);
@@ -128,7 +128,7 @@ export abstract class PrivmxConnectionBase {
         if (this.logger.isHandling(Logger.DEBUG)) {
             this.logger.debug("send frame header\n" + Utils.hexDump(frameHeader, true));
             this.logger.debug("send frame data\n" +
-                (frameData.length > 1024 ? Utils.hexDump(frameData.slice(0, 1024)) + "..." : Utils.hexDump(frameData, true))
+                (frameData.length > 1024 ? Utils.hexDump(frameData.slice(0, 1024)) + "..." : Utils.hexDump(frameData, true)),
             );
             this.logger.debug("send frame macKey\n" + Utils.hexDump(frameMac, true));
         }
@@ -138,7 +138,7 @@ export abstract class PrivmxConnectionBase {
         if (this.logger.isHandling(Logger.DEBUG)) {
             const content = input.getBuffer();
             this.logger.debug("received\n" +
-                (content.length > 1024 ? Utils.hexDump(content.slice(0, 1024)) + "..." : Utils.hexDump(content))
+                (content.length > 1024 ? Utils.hexDump(content.slice(0, 1024)) + "..." : Utils.hexDump(content)),
             );
         }
         let iv = Buffer.alloc(0);

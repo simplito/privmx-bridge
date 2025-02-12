@@ -18,7 +18,7 @@ export class MongoObjectNamedRepositoryFactory<K extends string|number, V> imple
     constructor(
         private dbManager: MongoDbManager,
         private dbType: string,
-        private idProperty: keyof V
+        private idProperty: keyof V,
     ) {
     }
     

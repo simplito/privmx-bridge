@@ -51,7 +51,7 @@ export class LoggerFactory {
     }
     
     get(value: any): Logger {
-        const name = typeof(value) == "string" ? value : typeof(value) === "function" ? value.name : value.constructor.name;
+        const name = typeof(value) == "string" ? value : typeof(value) === "function" ? value.name as string : value.constructor.name as string;
         const level = name in this.levels ? this.levels[name] : this.defaultLevel;
         return new Logger(this.context, name, level, this.appender, this.allowOut);
     }
@@ -228,7 +228,7 @@ export class LowLogger {
     constructor(
         private context: string,
         private level: number,
-        private appender: Appender
+        private appender: Appender,
     ) {
         this.startTime = MicroTimeUtils.now();
         this.logs = [];
@@ -307,6 +307,6 @@ function serialize(x: unknown, escapeString: boolean): string {
     if (typeof(x) === "string") {
         return escapeString ? `"${x}"` : x;
     }
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    
     return "" + x;
 }

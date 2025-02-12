@@ -31,7 +31,7 @@ export class WebSocketSender {
         return this.sendAtChannel("", clients, event);
     }
     
-    sendCloudEventAtChannel<T extends types.cloud.Event<any, any, any>>(clients: types.core.Client[], event: T) {
+    sendCloudEventAtChannel<T extends types.cloud.Event<string, string, any>>(clients: types.core.Client[], event: T) {
         return this.sendAtChannel(event.channel, clients, event);
     }
     

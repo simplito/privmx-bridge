@@ -12,12 +12,12 @@ limitations under the License.
 export class Raw {
     
     constructor(
-        private data: any,
-        private binary: boolean = false
+        private data: unknown,
+        private binary: boolean = false,
     ) {
     }
     
-    getData<T = any>(): T {
+    getData() {
         return this.data;
     }
     

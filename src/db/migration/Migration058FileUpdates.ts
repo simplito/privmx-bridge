@@ -19,7 +19,7 @@ export class Migration058FileUpdates {
     static async go(ioc: IOC): Promise<void> {
         const dbManager = ioc.getMongoDbManager();
         
-        const storeFileCollection = await dbManager.createOrGetCollection<any>("storeFile");
+        const storeFileCollection = await dbManager.createOrGetCollection("storeFile");
         
         for (const storeFile of await storeFileCollection.find({}).toArray()) {
             storeFile.author = storeFile.creator;

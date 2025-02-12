@@ -108,7 +108,7 @@ export class StoreService {
         this.clearFilesInStorage(result.files);
         return result.store;
     }
-
+    
     async deleteManyStores(executor: Executor, storeIds: types.store.StoreId[]) {
         const resultMap: Map<types.store.StoreId, "OK" | "STORE_DOES_NOT_EXIST" | "ACCESS_DENIED" | "STORE_BELONGS_TO_INBOX"> = new Map();
         for (const id of storeIds) {
@@ -117,7 +117,7 @@ export class StoreService {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const storeRepository = this.repositoryFactory.createStoreRepository(session);
             const storeFileRepository = this.repositoryFactory.createStoreFileRepository(session);
-
+            
             const stores = await storeRepository.getMany(storeIds);
             if (stores.length === 0) {
                 return {context: null, toNotify: [], files: []};
@@ -153,12 +153,12 @@ export class StoreService {
             }
         }
         this.clearFilesInStorage(result.files);
-
+        
         const resultArray: types.store.StoreDeleteStatus[] = [];
         for (const [id, status] of resultMap) {
             resultArray.push({id, status});
         }
-
+        
         return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
     
@@ -208,7 +208,7 @@ export class StoreService {
         const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
         return {user, stores};
     }
-
+    
     async getStoresByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.store.StoreId>) {
         const ctx = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!ctx) {
@@ -223,7 +223,7 @@ export class StoreService {
         const stores = await this.repositoryFactory.createStoreRepository().getPageByContext(contextId, listParams);
         return {stores};
     }
-
+    
     async getStoreFile(executor: Executor, fileId: types.store.StoreFileId) {
         const file = await this.repositoryFactory.createStoreFileRepository().get(fileId);
         if (!file) {
@@ -241,7 +241,7 @@ export class StoreService {
         });
         return {file, store};
     }
-  
+    
     async getStoreFileMany(executor: Executor, storeId: types.store.StoreId, fileIds: types.store.StoreFileId[], failOnError: boolean) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
@@ -263,7 +263,7 @@ export class StoreService {
                 else {
                     const fetchError: types.store.StoreFileFetchError = {
                         id: fileId,
-                        error: ERROR_CODES.STORE_FILE_DOES_NOT_EXIST
+                        error: ERROR_CODES.STORE_FILE_DOES_NOT_EXIST,
                     };
                     files.push(fetchError);
                     continue;
@@ -276,7 +276,7 @@ export class StoreService {
                 else {
                     const fetchError: types.store.StoreFileFetchError = {
                         id: fileId,
-                        error: ERROR_CODES.FILE_DOES_NOT_BELONG_TO_STORE
+                        error: ERROR_CODES.FILE_DOES_NOT_BELONG_TO_STORE,
                     };
                     files.push(fetchError);
                     continue;
@@ -316,7 +316,7 @@ export class StoreService {
         const files = await this.repositoryFactory.createStoreFileRepository().getPageByStoreAndUser(storeId, executor.getUser(store.contextId), listParams);
         return {store, files};
     }
-
+    
     async getStoreFiles2(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel2<types.store.StoreFileId>) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
@@ -342,7 +342,7 @@ export class StoreService {
             throw new AppException("INVALID_KEY");
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
-        const request = await requestRepository.getReadyForUser(cloudUser.pub as any, model.requestId);
+        const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
             throw new AppException("INVALID_FILE_INDEX");
         }
@@ -385,7 +385,7 @@ export class StoreService {
             throw new AppException("INVALID_KEY");
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
-        const request = await requestRepository.getReadyForUser(cloudUser.pub as any, model.requestId);
+        const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
             throw new AppException("INVALID_FILE_INDEX");
         }
@@ -454,13 +454,13 @@ export class StoreService {
         this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files - 1, lastFileDate: deletedAt}, usedContext.solution);
         return {file, store};
     }
-
+    
     async deleteManyStoreFiles(executor: Executor, fileIds: types.store.StoreFileId[], checkAccess = true) {
         const resultMap: Map<types.store.StoreFileId, "OK" | "STORE_FILE_DOES_NOT_EXIST" | "ACCESS_DENIED" | "STORE_DOES_NOT_EXIST"> = new Map();
         for (const id of fileIds) {
             resultMap.set(id, "STORE_FILE_DOES_NOT_EXIST");
         }
-
+        
         const result = await this.repositoryFactory.withTransaction(async session => {
             const storeFileRepository = this.repositoryFactory.createStoreFileRepository(session);
             const files = await storeFileRepository.getMany(fileIds);
@@ -484,7 +484,7 @@ export class StoreService {
             const toDelete: types.store.StoreFileId[] = [];
             const filesToDeleteData: db.store.StoreFile[] = [];
             for (const file of files) {
-                if(file.storeId !== storeId) {
+                if (file.storeId !== storeId) {
                     throw new AppException("FILES_BELONGS_TO_DIFFERENT_STORES");
                 }
                 if (!additionalAccessCheck(file)) {
@@ -510,15 +510,15 @@ export class StoreService {
                 this.storeNotificationService.sendStoreFileDeleted(result.store, deletedFile, result.context.solution);
             }
         }
-
+        
         const resultArray: types.store.StoreFileDeleteStatus[] = [];
         for (const [id, status] of resultMap) {
             resultArray.push({id, status});
         }
-
+        
         return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
-
+    
     async deleteFilesOlderThan(executor: Executor, storeId: types.store.StoreId, timestamp: types.core.Timestamp) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
@@ -557,12 +557,29 @@ export class StoreService {
         return {file, store, user, data};
     }
     
+    async sendCustomNotification(cloudUser: CloudUser, storeId: types.store.StoreId, keyId: types.core.KeyId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        const store = await this.repositoryFactory.createStoreRepository().get(storeId);
+        if (!store) {
+            throw new AppException("STORE_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, store.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "store/storeSendCustomNotification", ["storeId=" + storeId]);
+        if (!this.policy.canSendCustomNotification(user, context, store)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (users && users.some(element => !store.users.includes(element))) {
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+        }
+        this.storeNotificationService.sendStoreCustomEvent(store, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+        return store;
+    }
+    
     private getFileVersion(file: db.store.StoreFile) {
         return (file.updates || []).length + 1;
     }
     
     // ============================
-
+    
     private async getStoreAndUser(cloudUser: CloudUser, storeId: types.store.StoreId) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {

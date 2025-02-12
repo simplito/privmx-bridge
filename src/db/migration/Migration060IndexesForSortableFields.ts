@@ -20,24 +20,24 @@ export class Migration060IndexesForSortableFields {
         const dbManager = ioc.getMongoDbManager();
         
         const storeCollection = await dbManager.createOrGetCollection("store");
-        await storeCollection.createIndex({createDate: 1})
-        await storeCollection.createIndex({lastModificationDate: 1})
-        await storeCollection.createIndex({lastFileDate: 1})
-
+        await storeCollection.createIndex({createDate: 1});
+        await storeCollection.createIndex({lastModificationDate: 1});
+        await storeCollection.createIndex({lastFileDate: 1});
+        
         const streamCollection = await dbManager.createOrGetCollection("streamRoom");
-        await streamCollection.createIndex({createDate: 1})
-        await streamCollection.createIndex({lastModificationDate: 1})
-
+        await streamCollection.createIndex({createDate: 1});
+        await streamCollection.createIndex({lastModificationDate: 1});
+        
         const threadCollection = await dbManager.createOrGetCollection("thread");
-        await threadCollection.createIndex({createDate: 1})
-        await threadCollection.createIndex({lastModificationDate: 1})
-        await threadCollection.createIndex({lastMsgDate: 1})
-
+        await threadCollection.createIndex({createDate: 1});
+        await threadCollection.createIndex({lastModificationDate: 1});
+        await threadCollection.createIndex({lastMsgDate: 1});
+        
         const inboxCollection = await dbManager.createOrGetCollection("inbox");
-        await inboxCollection.createIndex({createDate: 1})
-        await inboxCollection.createIndex({lastModificationDate: 1})
-
+        await inboxCollection.createIndex({createDate: 1});
+        await inboxCollection.createIndex({lastModificationDate: 1});
+        
         const contextUserCollection = await dbManager.createOrGetCollection("contextUser");
-        await contextUserCollection.createIndex({created: 1})
+        await contextUserCollection.createIndex({created: 1});
     }
 }

@@ -130,6 +130,23 @@ export interface InboxDeletedEventData {
     type?: types.inbox.InboxType;
 }
 
+export type InboxCustomEvent = types.cloud.Event<"custom", `inbox/${types.inbox.InboxId}/${types.core.WsChannelName}`, InboxCustomEventData>;
+
+export interface InboxCustomEventData {
+    id: types.inbox.InboxId;
+    keyId: types.core.KeyId;
+    eventData: unknown;
+    author: types.cloud.UserIdentity;
+};
+
+export interface InboxSendCustomEventModel {
+    inboxId: types.inbox.InboxId;
+    channel: types.core.WsChannelName;
+    keyId: types.core.KeyId;
+    data: unknown;
+    users?: types.cloud.UserId[];
+}
+
 export interface IInboxApi {
     inboxCreate(model: InboxCreateModel): Promise<InboxCreateResult>;
     inboxUpdate(model: InboxUpdateModel): Promise<types.core.OK>;
@@ -140,4 +157,5 @@ export interface IInboxApi {
     inboxList(model: InboxListModel): Promise<InboxListResult>;
     inboxListAll(model: InboxListAllModel): Promise<InboxListAllResult>;
     inboxSend(model: InboxSendModel): Promise<types.core.OK>;
+    inboxSendCustomEvent(model: InboxSendCustomEventModel): Promise<types.core.OK>;
 }

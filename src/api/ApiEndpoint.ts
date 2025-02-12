@@ -45,7 +45,7 @@ export class ApiEndpoint {
             if (!contentType.startsWith("application/octet-stream")) {
                 this.logger.debug("Content-Type is not 'application/octet-stream', rejecting 400");
                 return this.engine.jsonResponse({
-                    msg: "Invalid transport type"
+                    msg: "Invalid transport type",
                 }, 400);
             }
         }
@@ -54,7 +54,7 @@ export class ApiEndpoint {
         try {
             this.requestInfoHolder.setData(
                 this.clientIpService.getClientIp(this.request),
-                <types.core.ServerSessionId>this.request.header("Privmx-Auth"));
+                <types.core.ServerSessionId> this.request.header("Privmx-Auth"));
         }
         catch (e) {
             if (e && (e as {message: string}).message == "INVALID_PROXY_SESSION") {
@@ -64,7 +64,7 @@ export class ApiEndpoint {
         }
         const response: EngineResponse = {};
         this.engine.setHeaders(response, "application/octet-stream");
-        response.body = await this.serverEndpoint.execute(<Buffer>this.request.body);
+        response.body = await this.serverEndpoint.execute(<Buffer> this.request.body);
         return response;
     }
 }

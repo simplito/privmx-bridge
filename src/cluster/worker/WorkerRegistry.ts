@@ -39,6 +39,7 @@ import type { NonceMap } from "../master/ipcServices/NonceMap";
 import { IpcServiceDescriptor } from "../master/Decorators";
 import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
 import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
+import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
 
 export class WorkerRegistry {
     
@@ -88,7 +89,7 @@ export class WorkerRegistry {
         }
         return this.ipRateLimiterClient;
     }
-
+    
     getWorkerPluginsManager() {
         if (this.workerPluginsManager == null) {
             this.workerPluginsManager = new WorkerPluginsManager();
@@ -99,7 +100,7 @@ export class WorkerRegistry {
     getWorkerCallbacks() {
         if (this.workerCallbacks == null) {
             this.workerCallbacks = new Callbacks(
-                this.getJobService()
+                this.getJobService(),
             );
         }
         return this.workerCallbacks;
@@ -235,7 +236,9 @@ export class WorkerRegistry {
     
     getWebSocketInnerManager() {
         if (this.webSocketInnerManager == null) {
-            this.webSocketInnerManager = new WebSocketInnerManager();
+            this.webSocketInnerManager = new WebSocketInnerManager(
+                this.getActiveUsersMap(),
+            );
         }
         return this.webSocketInnerManager;
     }
@@ -276,7 +279,7 @@ export class WorkerRegistry {
     getConfigRepository() {
         if (!this.configRepository) {
             this.configRepository = new ConfigRepository(
-                this.getMongoClient()
+                this.getMongoClient(),
             );
         }
         return this.configRepository;
@@ -328,7 +331,11 @@ export class WorkerRegistry {
     getNonceMap() {
         return this.getIpcService<NonceMap>("nonceMap");
     }
-
+    
+    getActiveUsersMap() {
+        return this.getIpcService<ActiveUsersMap>("activeUsersMap");
+    }
+    
     getMetricsContainer() {
         return this.getIpcService<MetricsContainer>("metricsContainer");
     }
@@ -340,7 +347,7 @@ export class WorkerRegistry {
         }
         return service as T;
     }
-
+    
     getSignatureVerificationService() {
         if (this.signatureVerificationService == null) {
             this.signatureVerificationService = new SignatureVerificationService(

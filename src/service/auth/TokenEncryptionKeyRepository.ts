@@ -29,7 +29,7 @@ export class TokenEncryptionKeyRepository {
     async get(id: db.auth.TokenEncryptionKeyId) {
         return this.repository.get(id);
     }
-
+    
     async getLatestKey() {
         return (await this.repository.query(q => q.empty()).sort("created", false).limit(1).array())[0];
     }
@@ -47,11 +47,11 @@ export class TokenEncryptionKeyRepository {
         await this.repository.insert(cipherKey);
         return cipherKey;
     }
-
+    
     generateId() {
         return Hex.from(Crypto.randomBytes(16)) as db.auth.TokenEncryptionKeyId;
     }
-
+    
     generateKey() {
         return Hex.from(Crypto.randomBytes(32)) as types.core.EncryptionKey;
     }

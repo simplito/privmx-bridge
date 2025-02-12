@@ -74,7 +74,7 @@ export class PrivmxExpressApp {
             res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
             next();
         });
-
+        
         const compressionMiddleware = compression();
         for (const entry of this.configService.values.server.compressedPaths) {
             this.expressApp.use(entry, compressionMiddleware);
@@ -82,27 +82,27 @@ export class PrivmxExpressApp {
         
         this.expressApp.get("/privmx-configuration.json", (req, res) => {
             this.applyResponse(this.requestContextFactory.createForRequest("raw", req, res).ioc.getEngine().jsonResponse({
-                defaultEndpoint: "//" + this.configService.values.domain
+                defaultEndpoint: "//" + this.configService.values.domain,
             }), res);
         });
         
         this.expressApp.get("/privmx/privmx-configuration.json", (req, res) => {
             this.applyResponse(this.requestContextFactory.createForRequest("raw", req, res).ioc.getEngine().jsonResponse({
-                defaultEndpoint: "//" + this.configService.values.domain
+                defaultEndpoint: "//" + this.configService.values.domain,
             }), res);
         });
-
+        
         this.expressApp.get("/metrics", (req, res) => {
             return this.onRequest("metrics", req, res, async (context): Promise<EngineResponse> => {
                 if (!this.config.metrics.enabled) {
-                    return {code: 404, body: "Not found"}
+                    return {code: 404, body: "Not found"};
                 }
                 if (!req.headers.authorization || !this.checkMetricsBasicAuthorization(req.headers.authorization)) {
                     return {code: 401, body: "Unauthorized", headers: {"WWW-Authenticate": 'Basic realm="Access to metrics"'}};
                 }
                 return {code: 200, body: await context.ioc.getMetricsContainer().getMetrics(), headers: {"Content-type": "text/plain"}};
             });
-        })
+        });
         
         this.expressApp.get("/healthcheck", (_req, res) => {
             this.applyResponse({body: JSON.stringify({status: "ok"})}, res);
@@ -247,7 +247,7 @@ export class PrivmxExpressApp {
     onApiRequest(req: express.Request, res: express.Response) {
         return this.onRequest("api", req, res, context => {
             return context.runWith(methodInfo => {
-                return context.ioc.createPlainJsonRpcServer(methodInfo).processBuffer(req.body);
+                return context.ioc.createPlainJsonRpcServer(methodInfo).processBuffer(req.body as Buffer);
             });
         });
     }
@@ -310,7 +310,7 @@ export class PrivmxExpressApp {
         }
         return Buffer.from(message).toString("utf8");
     }
-
+    
     private checkMetricsBasicAuthorization(authorizationHeader: string) {
         const credentials = this.parseAuthorizationHeader(authorizationHeader);
         return credentials && credentials.user === this.config.metrics.username && credentials.password === this.config.metrics.password;

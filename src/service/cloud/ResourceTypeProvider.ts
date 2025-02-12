@@ -83,7 +83,7 @@ export class ResourceTypeProvider {
             acl: {type: "ref", ref: threadType, propagateStats: true},
             props: {
                 meta: {type: "primitive", primitive: "string"},
-            }
+            },
         });
         // const store = this.insert({
         //     type: "store" as types.resource.ResourceType,
@@ -120,7 +120,7 @@ export class ResourceTypeProvider {
         }
         const res: ResourceTypeInfoX = {
             collectionName: this.getCollectionName(contextId, type),
-            ...entry
+            ...entry,
         };
         return res;
     }

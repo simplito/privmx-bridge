@@ -49,7 +49,7 @@ export class ThreadApiValidator extends BaseValidator {
         this.registerMethod("threadDeleteMany", this.builder.createObject({
             threadIds: this.builder.createListWithMaxLength(this.tv.threadId, 128),
         }));
-
+        
         this.registerMethod("threadGet", this.builder.createObject({
             threadId: this.tv.threadId,
             type: this.tv.optResourceType,
@@ -82,16 +82,16 @@ export class ThreadApiValidator extends BaseValidator {
         this.registerMethod("threadMessageDelete", this.builder.createObject({
             messageId: this.tv.threadMessageId,
         }));
-
+        
         this.registerMethod("threadMessageDeleteMany", this.builder.createObject({
             messageIds: this.builder.createListWithMaxLength(this.tv.threadMessageId, 128),
         }));
-
+        
         this.registerMethod("threadMessageDeleteOlderThan", this.builder.createObject({
             threadId: this.tv.threadId,
             timestamp: this.tv.timestamp,
         }));
-
+        
         this.registerMethod("threadMessageGet", this.builder.createObject({
             messageId: this.tv.threadMessageId,
         }));
@@ -99,9 +99,17 @@ export class ThreadApiValidator extends BaseValidator {
         this.registerMethod("threadMessagesGet", this.builder.addFields(this.tv.listModel, {
             threadId: this.tv.threadId,
         }));
-
+        
         this.registerMethod("threadMessagesGetMy", this.builder.addFields(this.tv.listModel, {
             threadId: this.tv.threadId,
+        }));
+        
+        this.registerMethod("threadSendCustomEvent", this.builder.createObject({
+            threadId: this.tv.threadId,
+            channel: this.tv.wsChannelName,
+            keyId: this.tv.keyId,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 128)),
         }));
     }
 }

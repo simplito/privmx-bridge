@@ -98,7 +98,7 @@ export interface SrpInitRequestPacket extends BasePacket {
     I: types.core.Username;
     host: types.core.Host;
     agent: types.core.UserAgent;
-    properties?: any;
+    properties?: types.user.LoginProperties;
 }
 
 export interface SrpInitResponsePacket extends BasePacket {
@@ -136,7 +136,7 @@ export interface KeyInitRequestPacket extends BasePacket {
     type: "key_init";
     agent?: types.core.UserAgent;
     pub: types.core.EccPubKey;
-    properties?: any;
+    properties: types.user.LoginProperties;
 }
 
 export interface KeyInitResponsePacket extends BasePacket {

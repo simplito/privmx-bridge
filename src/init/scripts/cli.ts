@@ -81,7 +81,7 @@ function extractArgs() {
 function consoleErr(str: string) {
     process.stderr.write(str + "\n");
 }
-    
+
 function isJsonRpcSuccessfullResponse(jRpc: any): boolean {
     return typeof(jRpc) == "object" && jRpc != null && jRpc.jsonrpc == "2.0" && "result" in jRpc;
 }

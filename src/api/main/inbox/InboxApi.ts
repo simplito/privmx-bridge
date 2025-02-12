@@ -64,7 +64,7 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
         }
         return {results};
     }
-   
+    
     @ApiMethod({})
     async inboxGet(model: inboxApi.InboxGetModel): Promise<inboxApi.InboxGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
@@ -102,6 +102,14 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
         const sessionUsername = this.sessionService.getSessionUser().get("username");
         const sessionSolution = this.sessionService.getSessionUser().get("solution");
         const {inbox} = await this.inboxService.send(sessionUsername, model, sessionSolution);
+        this.requestLogger.setContextId(inbox.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async inboxSendCustomEvent(model: inboxApi.InboxSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const inbox = await this.inboxService.sendCustomNotification(cloudUser, model.inboxId, model.keyId, model.data, model.channel, model.users);
         this.requestLogger.setContextId(inbox.contextId);
         return "OK";
     }

@@ -18,19 +18,19 @@ export class ManagementStreamApiClient implements streamApi.IStreamApi {
     constructor(
         private requester: Requester,
     ) {}
-
+    
     async getStreamRoom(model: streamApi.GetStreamRoomModel): Promise<streamApi.GetStreamRoomResult> {
         return await this.requester.request("stream/getStreamRoom", model);
     }
-
+    
     async listStreamRooms(model: streamApi.ListStreamRoomsModel): Promise<streamApi.ListStreamRoomsResult> {
         return await this.requester.request("stream/listStreamRooms", model);
     }
-
+    
     async deleteStreamRoom(model: streamApi.DeleteStreamRoomModel): Promise<types.core.OK> {
         return await this.requester.request("stream/deleteStreamRoom", model);
     }
-
+    
     async deleteManyStreamRooms(model: streamApi.DeleteManyStreamRoomsModel): Promise<streamApi.DeleteManyStreamRoomsResult> {
         return await this.requester.request("stream/deleteManyStreamRooms", model);
     }

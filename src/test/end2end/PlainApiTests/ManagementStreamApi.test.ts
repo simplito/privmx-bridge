@@ -60,7 +60,7 @@ export class ManagementStreamApiTest extends BaseTestSet {
                 keyId: testData.keyId,
                 data: {
                     qwe: 1,
-                    abc: {zxc: "asdd", bb: "zzwer", u: "sadsad", u1: [1, 2, {a: true}]}
+                    abc: {zxc: "asdd", bb: "zzwer", u: "sadsad", u1: [1, 2, {a: true}]},
                 } as types.stream.StreamRoomData,
                 keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
                 managers: [testData.userId],

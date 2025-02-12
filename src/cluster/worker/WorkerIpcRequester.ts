@@ -19,7 +19,7 @@ export class WorkerIpcRequester {
     
     constructor(
         map: DeferredMap,
-        private worker: Cluster.Worker
+        private worker: Cluster.Worker,
     ) {
         this.ipcRequester = new IpcRequester(map);
     }

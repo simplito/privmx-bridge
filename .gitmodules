@@ -1,0 +1,3 @@
+[submodule "modules/privmx-bridge-panel"]
+	path = modules/privmx-bridge-panel
+	url = https://github.com/simplito/privmx-bridge-panel.git

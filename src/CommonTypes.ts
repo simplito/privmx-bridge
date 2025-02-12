@@ -57,7 +57,8 @@ export interface WebSocketSession {
     wsChannelId: types.core.WsChannelId;
     addWsChannelId: boolean;
     username: types.core.Username;
-    subidentity: Subidentity
+    subidentity: Subidentity;
+    solution: types.cloud.SolutionId;
     type: types.user.SessionUserType;
     rights: types.user.UserRightsMap;
     proxy: types.core.Host;

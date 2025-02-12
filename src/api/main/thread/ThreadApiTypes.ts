@@ -185,6 +185,15 @@ export interface ThreadDeletedEventData {
     type?: types.thread.ThreadType;
 }
 
+export type ThreadCustomEvent = types.cloud.Event<"custom", `thread/${types.thread.ThreadId}/${types.core.WsChannelName}`, ThreadCustomEventData>;
+
+export interface ThreadCustomEventData {
+    id: types.thread.ThreadId;
+    keyId: types.core.KeyId;
+    eventData: unknown;
+    author: types.cloud.UserIdentity;
+};
+
 export type ThreadNewMessageEvent = types.cloud.Event<"threadNewMessage", `thread/${types.thread.ThreadId}/messages`, ThreadNewMessageEventData>;
 export type ThreadNewMessageEventData = ThreadMessage;
 
@@ -214,6 +223,14 @@ export type Thread2UpdatedMessageEvent = types.cloud.Event<"thread2UpdatedMessag
 export type Thread2DeletedMessageEvent = types.cloud.Event<"thread2DeletedMessage", `thread2/${types.thread.ThreadId}/messages`, ThreadDeletedMessageEventData>;
 export type Thread2StatsEvent = types.cloud.Event<"thread2Stats", "thread2", ThreadStatsEventData>;
 
+export interface ThreadSendCustomEventModel {
+    threadId: types.thread.ThreadId;
+    channel: types.core.WsChannelName;
+    keyId: types.core.KeyId;
+    data: unknown;
+    users?: types.cloud.UserId[];
+}
+
 export interface IThreadApi {
     threadCreate(model: ThreadCreateModel): Promise<ThreadCreateResult>;
     threadUpdate(model: ThreadUpdateModel): Promise<types.core.OK>;
@@ -230,4 +247,5 @@ export interface IThreadApi {
     threadMessageGet(model: ThreadMessageGetModel): Promise<ThreadMessageGetResult>;
     threadMessagesGet(model: ThreadMessagesGetModel): Promise<ThreadMessagesGetResult>;
     threadMessagesGetMy(model: ThreadMessagesGetMyModel): Promise<ThreadMessagesGetMyResult>;
+    threadSendCustomEvent(model: ThreadSendCustomEventModel): Promise<types.core.OK>;
 }

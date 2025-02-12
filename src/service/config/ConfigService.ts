@@ -20,7 +20,7 @@ export class ConfigService {
     
     constructor(
         private configLoader: ConfigLoaderFunc,
-        private callbacks: Callbacks
+        private callbacks: Callbacks,
     ) {
     }
     

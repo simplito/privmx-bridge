@@ -11,6 +11,7 @@ limitations under the License.
 
 import * as contextApi from "./ContextApiTypes";
 import { BaseApiClient } from "../../BaseApiClient";
+import * as types from "../../../types";
 
 export class ContextApiClient extends BaseApiClient implements contextApi.IContextApi {
     
@@ -20,5 +21,13 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     
     contextList(model: contextApi.ContextListModel): Promise<contextApi.ContextListResult> {
         return this.request("context.contextList", model);
+    }
+    
+    contextGetUsers(model: contextApi.ContextGetUsersModel): Promise<contextApi.ContextGetUserResult> {
+        return this.request("context.contextGetUsers", model);
+    }
+    
+    contextSendCustomEvent(model: contextApi.ContextSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("context.contextSendCustomEvent", model);
     }
 }

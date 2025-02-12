@@ -88,4 +88,12 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
         this.requestLogger.setContextId(model.contextId);
         return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x)), count: streamRooms.count};
     }
+    
+    @ApiMethod({})
+    async streamRoomSendCustomEvent(model: streamApi.StreamRoomSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const store = await this.streamService.sendCustomNotification(cloudUser, model.streamRoomId, model.keyId, model.data, model.channel, model.users);
+        this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
 }

@@ -112,7 +112,7 @@ export class JobManager {
                     job.func();
                 }, newTimeout);
                 job.timeout = newTimeout;
-            }
+            },
         };
         this.oneShots.set(id, job);
         return job;
@@ -127,7 +127,7 @@ export class JobManager {
             intervalId: setInterval(() => {
                 // eslint-disable-next-line @typescript-eslint/no-floating-promises
                 this.run(options);
-            }, options.interval)
+            }, options.interval),
         });
         if (options.runOnCreate) {
             // eslint-disable-next-line @typescript-eslint/no-floating-promises

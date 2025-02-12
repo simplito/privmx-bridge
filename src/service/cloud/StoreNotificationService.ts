@@ -36,20 +36,38 @@ export class StoreNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    sendStoreCustomEvent(store: db.store.Store, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        this.safe("storeCustomEvent", async () => {
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, store.users);
+            for (const user of contextUsers) {
+                this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreCustomEvent>([user.userPubKey], {
+                    channel: `store/${store.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: store.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
+                    },
+                });
+            }
+        });
+    }
+    
     sendStoreCreated(store: db.store.Store, solution: types.cloud.SolutionId) {
         this.safe("storeCreated", async () => {
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, store.users);
             const notification: managementStoreApi.StoreCreatedEvent = {
                 channel: "store",
                 type: "storeCreated",
-                data: this.managementStoreConverter.convertStore(store)
+                data: this.managementStoreConverter.convertStore(store),
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             for (const user of contextUsers) {
                 this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreCreatedEvent>([user.userPubKey], {
                     channel: "store",
                     type: "storeCreated",
-                    data: this.storeConverter.convertStore(user.userId, store)
+                    data: this.storeConverter.convertStore(user.userId, store),
                 });
             }
         });
@@ -68,7 +86,7 @@ export class StoreNotificationService {
                 this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreUpdatedEvent>([user.userPubKey], {
                     channel: "store",
                     type: "storeUpdated",
-                    data: this.storeConverter.convertStore(user.userId, store)
+                    data: this.storeConverter.convertStore(user.userId, store),
                 });
             }
         });
@@ -91,7 +109,7 @@ export class StoreNotificationService {
                 data: {
                     storeId: store.id,
                     type: store.type,
-                }
+                },
             });
         });
     }
@@ -119,7 +137,7 @@ export class StoreNotificationService {
                     type: store.type,
                     lastFileDate: store.lastFileDate,
                     files: store.files,
-                }
+                },
             });
         });
     }
@@ -130,13 +148,13 @@ export class StoreNotificationService {
             const notification: managementStoreApi.StoreFileCreatedEvent = {
                 channel: "store",
                 type: "storeFileCreated",
-                data: this.storeConverter.convertFile(store, file)
+                data: this.storeConverter.convertFile(store, file),
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreFileCreatedEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `store/${store.id}/files`,
                 type: "storeFileCreated",
-                data: this.storeConverter.convertFile(store, file)
+                data: this.storeConverter.convertFile(store, file),
             });
         });
     }
@@ -147,13 +165,13 @@ export class StoreNotificationService {
             const notification: managementStoreApi.StoreFileUpdatedEvent = {
                 channel: "store",
                 type: "storeFileUpdated",
-                data: this.storeConverter.convertFile(store, file)
+                data: this.storeConverter.convertFile(store, file),
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreFileUpdatedEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `store/${store.id}/files`,
                 type: "storeFileUpdated",
-                data: this.storeConverter.convertFile(store, file)
+                data: this.storeConverter.convertFile(store, file),
             });
         });
     }
@@ -178,7 +196,7 @@ export class StoreNotificationService {
                     id: file.id,
                     contextId: store.contextId,
                     storeId: file.storeId,
-                }
+                },
             });
         });
     }

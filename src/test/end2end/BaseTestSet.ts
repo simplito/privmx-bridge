@@ -45,6 +45,7 @@ import { ManagementSolutionApiClient } from "../../api/plain/solution/Management
 import { JsonRpcClient, JsonRpcException } from "../../utils/JsonRpcClient";
 import { ManagementStreamApiClient } from "../../api/plain/stream/ManagementStreamApiClient";
 import { testData } from "../datasets/testData";
+import * as types from "../../types";
 
 interface Collection {
     name: string;
@@ -64,6 +65,23 @@ export function Test(options?: TestOptions) {
         options =  (options) ? options : {} as TestOptions;
         target.__exportedTests.push({method: propertyKey, options});
     };
+}
+
+export async function executeWithTimeout<T>(func: () => Promise<T>, timeout: types.core.Timespan): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`Operation timed out after ${timeout}ms`));
+        }, timeout);
+        func()
+            .then((result) => {
+                clearTimeout(timer);
+                resolve(result);
+            })
+            .catch((error: Error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+    });
 }
 
 export async function shouldThrowErrorWithCode(func: () => Promise<unknown>, errorCode: ErrorCode) {
@@ -114,7 +132,7 @@ interface BaseConfig {
 }
 
 export class BaseTestSet {
-
+    
     private serverProcess: ChildProcess|null = null;
     private serverProcessDefer: Deferred<number>|null = null;
     private dbManager!: MongoDbManager;
@@ -125,22 +143,23 @@ export class BaseTestSet {
         "server": {
             "port": 3001,
             "hostname": "0.0.0.0",
-            "workers": 1
+            "workers": 1,
         },
         "db": {
             "mongo": {
                 "url": process.env.MONGO_URL || "mongodb://localhost:27017",
                 "dbName": "privmx_e2e_tests",
-            }
+            },
         },
         "request": {
             "filesDir": "/tmp/privmx-bridge-e2e-tests/files",
-            "tmpDir": "/tmp/privmx-bridge-e2e-tests/tmp"
+            "tmpDir": "/tmp/privmx-bridge-e2e-tests/tmp",
         },
         "dbMigrationId": "Migration048FixAclCache",
     };
-
+    
     protected apis!: {
+        connection: PrivmxRpc.AuthorizedConnection
         contextApi: ContextApiClient;
         threadApi: ThreadApiClient;
         storeApi: StoreApiClient;
@@ -149,7 +168,7 @@ export class BaseTestSet {
         userApi: UserApiClient;
         streamApi: StreamApiClient;
     };
-
+    
     protected plainApis!: {
         jsonRpcClient: JsonRpcClient;
         managerApi: ManagerApiClient;
@@ -160,20 +179,47 @@ export class BaseTestSet {
         inboxApi: ManagementInboxApiClient;
         streamApi: ManagementStreamApiClient;
     };
-
+    
     protected helpers = {
         /** Authorizes all plain apis with api key */
         authorizePlainApi: () => {
             this.plainApis.jsonRpcClient.setHeader("Authorization", `Basic ${btoa(`${testData.apiKeyId}:${testData.apiKeySecret}`)}`);
         },
+        
+        /** Subscribes to channel on main api */
+        subscribeToChannel: async (channel: string) => {
+            await this.apis.connection.call("subscribeToChannel", {channel}, {channelType: "websocket"});
+        },
+        
+        /** Unsubscribes from channel on main api */
+        unsubscribeToChannel: async (channel: string) => {
+            await this.apis.connection.call("unsubscribeFromChannel", {channel}, {channelType: "websocket"});
+        },
+        
+        /** Adds event listener on main api */
+        addEventListenerForNotification: (callback: (evt: PrivmxRpc.Types.NotificationEvent) => void) => {
+            this.apis.connection.addEventListener("notification", callback);
+        },
+        
+        /** Creates and returns new connection with main api */
+        createNewConnection: async (privKeyWif: string, solutionId: types.cloud.SolutionId) => {
+            const serverUrl = "http://" + this.config.server.hostname + ":" + this.config.server.port;
+            const connectionOptions: PrivmxRpc.Types.ConnectionOptions = {
+                url: serverUrl + "/api/v2.0",
+                host: "localhost",
+            };
+            const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(privKeyWif);
+            const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: solutionId}, connectionOptions);
+            return conn;
+        },
     };
-
+    
     async run(test: TestMethod, workerId?: number) {
         const startTimestamp = DateUtils.now();
         try {
             if (workerId) {
                 this.defaultConfig.server.port += workerId;
-                this.defaultConfig.db.mongo.dbName += "-" + workerId
+                this.defaultConfig.db.mongo.dbName += "-" + workerId;
                 this.configPath = "/tmp/config" + workerId + ".json";
             }
             await this.connectToMongo();
@@ -198,7 +244,7 @@ export class BaseTestSet {
             await this.cleanup();
         }
     }
-
+    
     private async testWrapper(testName: string, options: TestOptions, test: () => Promise<void>) {
         try {
             debug(testName + " Dropping database...");
@@ -244,7 +290,7 @@ export class BaseTestSet {
             }
         }
     }
-
+    
     private async executeTest(test: () => Promise<void>, testName: string) {
         try {
             await test();
@@ -257,7 +303,7 @@ export class BaseTestSet {
             return false;
         }
     }
-
+    
     private async loadApis() {
         const serverUrl = "http://" + this.config.server.hostname + ":" + this.config.server.port;
         const connectionOptions: PrivmxRpc.Types.ConnectionOptions = {
@@ -267,6 +313,7 @@ export class BaseTestSet {
         const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(testData.userPrivKey);
         const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: testData.solutionId}, connectionOptions);
         this.apis = {
+            connection: conn,
             contextApi: new ContextApiClient(conn),
             threadApi: new ThreadApiClient(conn),
             storeApi: new StoreApiClient(conn),
@@ -276,7 +323,7 @@ export class BaseTestSet {
             streamApi: new StreamApiClient(conn),
         };
         const jsonRpcClient = new JsonRpcClient(serverUrl + "/api", {
-            "Content-type": "application/json"
+            "Content-type": "application/json",
         });
         this.plainApis = {
             jsonRpcClient: jsonRpcClient,
@@ -289,7 +336,7 @@ export class BaseTestSet {
             threadApi: new ManagementThreadApiClient(jsonRpcClient),
         };
     }
-
+    
     private async performMigrations() {
         const {serverProcess} = await this.spawnServerProcess(this.configPath, {...process.env, "PMX_MIGRATION": "Migration048FixAclCache"});
         const status = await this.onServerReady(() => {
@@ -297,32 +344,32 @@ export class BaseTestSet {
                 process.kill(-serverProcess.pid, "SIGINT");
             }
         });
-        if(!status.success) {
+        if (!status.success) {
             if (serverProcess.pid) {
                 process.kill(-serverProcess.pid, "SIGINT");
             }
             throw new Error("CANNOT PERFORM MIGRATIONS");
         }
     }
-
+    
     private async startServer() {
         const {serverProcess, defer} = await this.spawnServerProcess(this.configPath, {...process.env});
         this.serverProcess = serverProcess;
         this.serverProcessDefer = defer;
         const status = await this.onServerReady();
-        if(!status.success) {
+        if (!status.success) {
             if (this.serverProcess.pid) {
                 process.kill(-this.serverProcess.pid, "SIGINT");
             }
             throw new Error("CANNOT CONNECT TO SERVER");
         }
     }
-
+    
     private readDataSet(dataSetName: string): Collection[] {
         const dataSetPath = path.resolve(__dirname, "../../../src/test/datasets/" + dataSetName);;
         const fileNames = fs.readdirSync(dataSetPath);
         const dataSet: Collection[] = [];
-
+        
         for (const fileName of fileNames) {
             const filePath = path.join(dataSetPath, fileName);
             if (path.extname(fileName) !== ".json") {
@@ -348,7 +395,7 @@ export class BaseTestSet {
             }
         }
     }
-
+    
     private async connectToMongo() {
         this.dbManager = new MongoDbManager(
             new MongoClient(this.defaultConfig.db.mongo.url),
@@ -357,7 +404,7 @@ export class BaseTestSet {
         );
         await this.dbManager.init(this.defaultConfig.db.mongo.url, this.defaultConfig.db.mongo.dbName);
     }
-
+    
     private async cleanup() {
         await this.dbManager.getDb().dropDatabase();
         await this.dbManager.close();
@@ -370,7 +417,7 @@ export class BaseTestSet {
         }
         fs.writeFileSync(this.configPath, JSON.stringify(this.config));
     }
-
+    
     private async spawnServerProcess(configPath: string, env?: NodeJS.ProcessEnv) {
         const defer = PromiseUtils.defer();
         const serverProcess = spawn("node", ["./out/index.js", configPath], {detached: true, env});
@@ -382,7 +429,7 @@ export class BaseTestSet {
         });
         return {serverProcess, defer};
     }
-
+    
     private async onServerReady(onReady?: () => void) {
         const serverUrl = "http://" + this.config.server.hostname + ":" + this.config.server.port + "/privmx-configuration.json";
         const deadline = DateUtils.nowAdd(DateUtils.seconds(30));

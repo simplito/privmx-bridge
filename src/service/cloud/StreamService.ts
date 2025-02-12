@@ -114,7 +114,7 @@ export class StreamService {
             const toDelete: types.stream.StreamRoomId[] = [];
             const toNotify: db.stream.StreamRoom[] = [];
             for (const streamRoom of streamRooms) {
-                if(streamRoom.contextId !== contextId) {
+                if (streamRoom.contextId !== contextId) {
                     throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
                 }
                 if (!additionalAccessCheck(streamRoom)) {
@@ -201,6 +201,23 @@ export class StreamService {
         });
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContext(contextId, listParams);
         return {streamRooms};
+    }
+    
+    async sendCustomNotification(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, keyId: types.core.KeyId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        const streamRoom = await this.repositoryFactory.createStreamRoomRepository().get(streamRoomId);
+        if (!streamRoom) {
+            throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "stream/streamSendCustomNotification", ["streamRoomId=" + streamRoomId]);
+        if (!this.policy.canSendCustomNotification(user, context, streamRoom)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (users && users.some(element => !streamRoom.users.includes(element))) {
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+        }
+        this.streamNotificationService.sendStreamCustomEvent(streamRoom, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+        return streamRoom;
     }
 }
 

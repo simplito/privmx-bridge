@@ -71,7 +71,7 @@ export function mockMethod<T, K extends keyof T>(object: T, methodName: K, newIm
 export class AsyncHelper<T> {
     
     constructor(
-        private func: () => Promise<T>
+        private func: () => Promise<T>,
     ) {
     }
     
@@ -89,7 +89,7 @@ export class AsyncHelper<T> {
 export class PromiseHelper<T> {
     
     constructor(
-        private promise: Promise<T>
+        private promise: Promise<T>,
     ) {
     }
     
@@ -126,7 +126,7 @@ export function expectPromise<T>(promise: Promise<T>) {
 export function toBeErrorWithMessage(e: any, message: string) {
     expect(e).toBeInstanceOf(Error);
     expect(e).objectContaining({
-        message: message
+        message: message,
     });
 }
 

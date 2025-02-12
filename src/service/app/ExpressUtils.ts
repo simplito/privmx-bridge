@@ -28,13 +28,13 @@ export class ExpressUtils {
             if (stats.error && stats.error.code === "ENOENT") {
                 return {
                     code: 404,
-                    body: "404 Not found"
+                    body: "404 Not found",
                 };
             }
             logger.error("Error during download " + errorMessage, stats.error);
             return {
                 code: 500,
-                body: "500 Internal server error"
+                body: "500 Internal server error",
             };
         }
         const theDate = date || stats.result.mtime;
@@ -45,9 +45,9 @@ export class ExpressUtils {
                 code: 304,
                 headers: {
                     "ETag": etag,
-                    "Last-Modified": lastModified
+                    "Last-Modified": lastModified,
                 },
-                body: ""
+                body: "",
             };
         }
         if (prepare) {

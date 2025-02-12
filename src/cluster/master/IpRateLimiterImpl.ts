@@ -27,7 +27,7 @@ export class IpMapEntry {
     ) {
         this.lastActivity = DateUtils.now();
     }
-
+    
     payIfPossible(cost: number) {
         if (cost > this.credits) {
             return false;
@@ -51,24 +51,24 @@ export class IpMapEntry {
 }
 
 export class IpRateLimiterImpl implements IpRateLimiter {
-
+    
     private ipMap: Map<types.core.IPAddress, IpMapEntry>;
-
+    
     constructor(
         private config: Config,
     ) {
         this.ipMap = new Map();
     }
-
+    
     @ApiMethod({})
     async canPerformRequest(ip: types.core.IPAddress): Promise<boolean> {
         return this.canPerformRequestWithCost(ip, this.config.apiRateLimit.requestCost);
     }
-
+    
     private get whitelist() {
         return this.config.apiRateLimit.whitelist;
     }
-
+    
     private canPerformRequestWithCost(ip: types.core.IPAddress, cost: number): boolean {
         if (!this.config.apiRateLimit.enabled) {
             return true;
@@ -80,7 +80,7 @@ export class IpRateLimiterImpl implements IpRateLimiter {
         const paymentPerformed = entry.payIfPossible(cost);
         return paymentPerformed;
     }
-
+    
     async addCreditsAndRemoveInactive(): Promise<void> {
         const inactive: types.core.IPAddress[] = [];
         for (const [ip, ipEntry] of this.ipMap.entries()) {
@@ -98,7 +98,7 @@ export class IpRateLimiterImpl implements IpRateLimiter {
     
     private isEntryInactive(ipEntry: IpMapEntry) {
         return ipEntry.getCredits() >= this.config.apiRateLimit.maxCredit && (ipEntry.getLastActivityTime() + this.config.apiRateLimit.inactiveTime) < DateUtils.now();
-
+        
     }
     
     private getEntry(ip: types.core.IPAddress) {

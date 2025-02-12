@@ -17,7 +17,7 @@ each<[number, number, number[]]>([
     [1, 1, [1]],
     [1, 0, []],
     [1, 2, [1, 2]],
-    [1, 5, [1, 2, 3, 4, 5]]
+    [1, 5, [1, 2, 3, 4, 5]],
 ]).it("Utils.createRange when range is from %s to %s result should be %s", ([a, b, expected]) => {
     const range = Utils.createRange(a, b);
     expect(range).toEqual(expected);

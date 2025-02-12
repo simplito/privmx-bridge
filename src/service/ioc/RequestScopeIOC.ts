@@ -50,7 +50,7 @@ export class RequestScopeIOC {
         public request: express.Request|null,
         public response: express.Response|null,
         public webSocket: WebSocketEx|null,
-        public requestLogger: RequestLogger
+        public requestLogger: RequestLogger,
     ) {
     }
     
@@ -61,7 +61,7 @@ export class RequestScopeIOC {
     getRequestInfoHolder() {
         if (this.requestInfoHolder == null) {
             this.requestInfoHolder = new RequestInfoHolder(
-                this.ioc.getServerSessionService()
+                this.ioc.getServerSessionService(),
             );
         }
         return this.requestInfoHolder;
@@ -116,7 +116,7 @@ export class RequestScopeIOC {
     getSessionHolder() {
         if (this.sessionHolder == null) {
             this.sessionHolder = new SessionHolder(
-                this.ioc.getSessionStorage()
+                this.ioc.getSessionStorage(),
             );
         }
         return this.sessionHolder;
@@ -236,7 +236,7 @@ export class RequestScopeIOC {
         }
         return this.authService;
     }
-
+    
     getMetricsContainer() {
         return this.ioc.workerRegistry.getMetricsContainer();
     }

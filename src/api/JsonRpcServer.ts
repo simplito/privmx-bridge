@@ -93,7 +93,7 @@ export class JsonRpcServer {
     private async withEngine(func: () => Promise<any>) {
         const response = await this.with(func);
         const res = {
-            body: Buffer.from(JSON.stringify(response), "utf8")
+            body: Buffer.from(JSON.stringify(response), "utf8"),
         };
         this.engine.setHeaders(res, "application/json");
         return res;
@@ -105,7 +105,7 @@ export class JsonRpcServer {
             const response: JsonRpcResponseSuccess = {
                 jsonrpc: "2.0",
                 id: this.id as JsonRpcId,
-                result: result
+                result: result,
             };
             this.reportSuccess(response);
             return response;
@@ -117,7 +117,7 @@ export class JsonRpcServer {
             const response: JsonRpcResponseError = {
                 jsonrpc: "2.0",
                 id: this.id as JsonRpcId,
-                error: error
+                error: error,
             };
             this.reportError(e, response);
             return response;

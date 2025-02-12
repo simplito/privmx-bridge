@@ -158,7 +158,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 const ticketResponse: types.packet.TicketsResponsePacket = {
                     type: "ticket_response",
                     tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
-                    ttl: Math.floor(tickets.ttl / 1000)
+                    ttl: Math.floor(tickets.ttl / 1000),
                 };
                 methodInfo.success = true;
                 methodInfo.response = {result: ticketResponse};
@@ -199,7 +199,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 if (packet.agent != null) {
                     this.clientAgent = packet.agent;
                 }
-                const response = await this.srpLoginService.init(packet.I, packet.host, properties);
+                const response = await this.srpLoginService.init(packet.I, packet.host, properties as types.user.LoginProperties);
                 const srpResponse: types.packet.SrpInitResponsePacket = {
                     type: "srp_init",
                     agent: this.getServerAgent(),
@@ -210,7 +210,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     k: response.k,
                     s: response.s,
                     B: response.B,
-                    loginData: response.loginData
+                    loginData: response.loginData,
                 };
                 methodInfo.success = true;
                 methodInfo.sessionId = response.sessionId;
@@ -218,7 +218,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.logger.debug("send srp init response", {response: srpResponse});
                 this.send(
                     this.psonHelper.pson_encode(srpResponse),
-                    ContentType.HANDSHAKE
+                    ContentType.HANDSHAKE,
                 );
             });
         }
@@ -245,14 +245,14 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     M2: response.M2,
                     additionalLoginStep: response.additionalLoginStep,
                     tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
-                    ttl: Math.floor(tickets.ttl / 1000)
+                    ttl: Math.floor(tickets.ttl / 1000),
                 };
                 methodInfo.success = true;
                 methodInfo.response = {result: srpResponse};
                 this.logger.debug("srp exchange done on server", {response: srpResponse});
                 this.send(
                     this.psonHelper.pson_encode(srpResponse),
-                    ContentType.HANDSHAKE
+                    ContentType.HANDSHAKE,
                 );
                 this.changeWriteCipherSpec();
             });
@@ -303,7 +303,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.response = {result: keyResponse};
                 this.send(
                     this.psonHelper.pson_encode(keyResponse),
-                    ContentType.HANDSHAKE
+                    ContentType.HANDSHAKE,
                 );
             });
         }
@@ -325,7 +325,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 // let params = this.validators.validateModel("keyExchange", paramsRaw);
                 const response = await this.keyLoginService.exchange(
                     methodInfo, packet.sessionId, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp),
-                    packet.signature, packet.K, true, packet.sessionKey
+                    packet.signature, packet.K, true, packet.sessionKey,
                 );
                 this.sessionId = packet.sessionId;
                 const K = Utils.fillTo32(response.K);
@@ -336,14 +336,14 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     type: "key_exchange",
                     additionalLoginStep: response.additionalLoginStep,
                     tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
-                    ttl: Math.floor(tickets.ttl / 1000)
+                    ttl: Math.floor(tickets.ttl / 1000),
                 };
                 this.logger.debug("send key exchange response", {response: keyResponse});
                 methodInfo.success = true;
                 methodInfo.response = {result: keyResponse};
                 this.send(
                     this.psonHelper.pson_encode(keyResponse),
-                    ContentType.HANDSHAKE
+                    ContentType.HANDSHAKE,
                 );
                 this.changeWriteCipherSpec();
             });
@@ -381,7 +381,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         return {
             sessionId: this.sessionId,
             agent: this.clientAgent,
-            masterSecret: this.masterSecret
+            masterSecret: this.masterSecret,
         };
     }
     
@@ -403,7 +403,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
     getFreshRWStatesFromParams(client: RWState, server: RWState) {
         return {
             readState: client,
-            writeState: server
+            writeState: server,
         };
     }
     

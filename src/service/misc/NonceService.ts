@@ -34,7 +34,7 @@ export class NonceService {
         return {
             nonce: nonce,
             timestamp: timestamp,
-            signature: this.signWithNonceCore(data, key, nonce, timestamp)
+            signature: this.signWithNonceCore(data, key, nonce, timestamp),
         };
     }
     

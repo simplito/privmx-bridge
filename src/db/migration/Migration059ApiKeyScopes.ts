@@ -35,7 +35,7 @@ export class Migration059ApiKeyScopes {
         const apiKeyArray = await apiKeyCollection.find({}).toArray();
         for (const apiKey of apiKeyArray) {
             await apiKeyCollection.updateOne({
-                _id: apiKey._id
+                _id: apiKey._id,
             },
             {
                 $set: {

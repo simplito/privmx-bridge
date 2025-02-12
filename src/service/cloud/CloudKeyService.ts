@@ -55,7 +55,7 @@ export class CloudKeyService {
         const newKeys = oldKeys.map(x => {
             const res: types.cloud.UserKeysEntry = {
                 user: x.user,
-                keys: x.keys.slice()
+                keys: x.keys.slice(),
             };
             return res;
         });

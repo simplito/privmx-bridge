@@ -29,7 +29,7 @@ export class Worker2Service implements IWorker2Service {
             return {worker, result: await this.ipcRequester.request<T>(worker, method, params)};
         }));
     }
-
+    
     @ApiMethod({})
     async sendWebsocketNotificationToPlainUsers(model: { channel: string; solution: types.cloud.SolutionId; event: PlainApiEvent}): Promise<void> {
         await this.request("sendWebsocketNotificationToPlainUsers", model);

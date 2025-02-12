@@ -19,7 +19,7 @@ async function runTests() {
         }
         return undefined;
     })();
-
+    
     const testSets = await TestScanner.scan("./out/test/end2end/", filter);
     let totalTime: number = 0;
     let totalFailed: number  = 0;
@@ -34,7 +34,7 @@ async function runTests() {
             totalFailed += (testResult.testStatus) ? 0 : 1;
         }
     }
-
+    
     console.log("\x1b[33mFINAL RESULTS:");
     console.log(`\x1b[33mTOTAL TIME: ${totalTime}s`);
     console.log(`${(totalFailed == 0) ? "\x1b[32mALL PASSED, SUCCESS" : `\x1b[31m ${totalFailed} TESTS FAILED`}`);

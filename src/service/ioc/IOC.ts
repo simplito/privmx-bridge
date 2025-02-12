@@ -109,6 +109,7 @@ import { ManagementStreamConverter } from "../../api/plain/stream/ManagementStre
 import { ManagementStoreConverter } from "../../api/plain/store/ManagementStoreConverter";
 import { ManagementInboxConverter } from "../../api/plain/inbox/ManagementInboxConverter";
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
+import { ContextNotificationService } from "../cloud/ContextNotificationService";
 export class IOC {
     
     takeMongoClientFromWorker = true;
@@ -200,6 +201,7 @@ export class IOC {
     protected managementStreamConverter?: ManagementStreamConverter;
     protected managementStoreConverter?: ManagementStoreConverter;
     protected managementInboxConverter?: ManagementInboxConverter;
+    protected contextNotificationService?: ContextNotificationService;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry, loggerFactory: LoggerFactory) {
         this.instanceHost = instanceHost;
@@ -218,7 +220,7 @@ export class IOC {
     getIpRateLimiterClient() {
         return this.workerRegistry.getIpRateLimiterClient();
     }
-
+    
     getInstanceHost() {
         return this.instanceHost;
     }
@@ -320,7 +322,7 @@ export class IOC {
         if (this.configService == null) {
             this.configService = new ConfigService(
                 this.getConfigLoaderFunc(),
-                this.getCallbacks()
+                this.getCallbacks(),
             );
         }
         return this.configService;
@@ -329,7 +331,7 @@ export class IOC {
     getConfigLoader() {
         if (this.configLoader == null) {
             this.configLoader = new ConfigLoader(
-                this.getCallbacks()
+                this.getCallbacks(),
             );
         }
         return this.configLoader;
@@ -497,7 +499,7 @@ export class IOC {
     getCallbacks() {
         if (this.callbacks == null) {
             this.callbacks = new Callbacks(
-                this.getJobService()
+                this.getJobService(),
             );
         }
         return this.callbacks;
@@ -560,7 +562,7 @@ export class IOC {
     getServerSessionService() {
         if (this.serverSessionService == null) {
             this.serverSessionService = new ServerSessionService(
-                this.getConfigService()
+                this.getConfigService(),
             );
         }
         return this.serverSessionService;
@@ -611,7 +613,7 @@ export class IOC {
         }
         return this.managementSolutionApiValidator;
     }
-
+    
     getManagementThreadApiValidator() {
         if (this.managementThreadApiValidator == null) {
             this.managementThreadApiValidator = new ManagementThreadApiValidator(
@@ -620,7 +622,7 @@ export class IOC {
         }
         return this.managementThreadApiValidator;
     }
-
+    
     getManagementInboxApiValidator() {
         if (this.managementInboxApiValidator == null) {
             this.managementInboxApiValidator = new ManagementInboxApiValidator(
@@ -629,7 +631,7 @@ export class IOC {
         }
         return this.managementInboxApiValidator;
     }
-
+    
     getManagementStreamApiValidator() {
         if (this.managementStreamApiValidator == null) {
             this.managementStreamApiValidator = new ManagementStreamApiValidator(
@@ -638,7 +640,7 @@ export class IOC {
         }
         return this.managementStreamApiValidator;
     }
-
+    
     getManagementStoreApiValidator() {
         if (this.managementStoreApiValidator == null) {
             this.managementStoreApiValidator = new ManagementStoreApiValidator(
@@ -732,6 +734,7 @@ export class IOC {
                 this.getWorker2Service(),
                 this.getConfigService(),
                 this.workerRegistry.getWebSocketInnerManager(),
+                this.workerRegistry.getActiveUsersMap(),
             );
         }
         return this.simpleWebSocketConnectionManager;
@@ -759,7 +762,7 @@ export class IOC {
     getServerAgent() {
         if (this.serverAgent == null) {
             this.serverAgent = new ServerAgent(
-                this.getConfigService()
+                this.getConfigService(),
             );
         }
         return this.serverAgent;
@@ -768,7 +771,7 @@ export class IOC {
     getClientIpService() {
         if (this.clientIpService == null) {
             this.clientIpService = new ClientIpService(
-                this.getConfigService()
+                this.getConfigService(),
             );
         }
         return this.clientIpService;
@@ -847,6 +850,16 @@ export class IOC {
         return this.metricService;
     }
     
+    getContextNotificationService() {
+        if (this.contextNotificationService == null) {
+            this.contextNotificationService = new ContextNotificationService(
+                this.getJobService(),
+                this.getWebSocketSender(),
+            );
+        }
+        return this.contextNotificationService;
+    }
+    
     getContextService() {
         if (this.contextService == null) {
             this.contextService = new ContextService(
@@ -857,6 +870,8 @@ export class IOC {
                 this.getStoreService(),
                 this.getInboxService(),
                 this.getStreamService(),
+                this.getContextNotificationService(),
+                this.workerRegistry.getActiveUsersMap(),
             );
         }
         return this.contextService;

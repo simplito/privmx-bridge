@@ -65,7 +65,7 @@ export class WebSocketClient {
                     }
                 },
                 onMessage: (data) => {
-                    const res = Utils.try(() => JSON.parse(typeof(data) === "string" ? data : Buffer.from(data).toString("utf8")));
+                    const res = Utils.try(() => JSON.parse(typeof(data) === "string" ? data : Buffer.from(data as Buffer).toString("utf8")));
                     if (res.success === false) {
                         this.logger.error("Cannot decode ws message", data.toString(), res.error);
                         return;

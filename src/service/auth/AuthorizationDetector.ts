@@ -205,7 +205,7 @@ export class AuthorizationDetector {
         }
         this.authorizationHolder.authorize(user, apiKey, null);
     }
-
+    
     private async parsePmxHmacSig(value: string) {
         const info = RequestSignature.parseHeader(value);
         if (info === false || info.version !== "1") {

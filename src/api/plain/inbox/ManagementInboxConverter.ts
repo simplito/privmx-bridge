@@ -14,7 +14,7 @@ import * as managementInboxApi from "./ManagementInboxApiTypes";
 import * as db from "../../../db/Model";
 
 export class ManagementInboxConverter {
-
+    
     convertInbox(inbox: db.inbox.Inbox) {
         const res: managementInboxApi.Inbox = {
             id: inbox.id,

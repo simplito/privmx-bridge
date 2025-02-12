@@ -25,20 +25,20 @@ describe("base58_encode", () => {
     each<[string, types.core.Base58]>([
         [
             "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58
+            "nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58,
         ],
         [
             "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "11111nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58
+            "11111nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58,
         ],
         [
             "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "6mN142AhbCSAHbRT4L9f95Tv8ggSU9b4oJ5qBggqJYQv6AA" as types.core.Base58
+            "6mN142AhbCSAHbRT4L9f95Tv8ggSU9b4oJ5qBggqJYQv6AA" as types.core.Base58,
         ],
         [
             "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "2KqceXTBCrVPjQakNzb5hpKfDRL8zYJQtMqaRt45au3TSW" as types.core.Base58
-        ]
+            "2KqceXTBCrVPjQakNzb5hpKfDRL8zYJQtMqaRt45au3TSW" as types.core.Base58,
+        ],
     ]).it("input=%s expected=%s", async ([inputHex, expected]) => {
         // Setup
         const input = Buffer.from(inputHex, "hex");
@@ -55,20 +55,20 @@ describe("base58_decode", () => {
     each<[types.core.Base58, string]>([
         [
             "nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58,
-            "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "11111nqZePEmHFJxgZdv4SAFvo9suMiFob8pA2YEdiGGQqcRt" as types.core.Base58,
-            "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "6mN142AhbCSAHbRT4L9f95Tv8ggSU9b4oJ5qBggqJYQv6AA" as types.core.Base58,
-            "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "2KqceXTBCrVPjQakNzb5hpKfDRL8zYJQtMqaRt45au3TSW" as types.core.Base58,
-            "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
-        ]
+            "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
+        ],
     ]).it("input=%s expected=%s", async ([input, expectedHex]) => {
         // Setup
         const expected = Buffer.from(expectedHex, "hex");
@@ -85,20 +85,20 @@ describe("base58_encode_with_checksum", () => {
     each<[string, types.core.Base58]>([
         [
             "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "6AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDihVsXMo" as types.core.Base58
+            "6AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDihVsXMo" as types.core.Base58,
         ],
         [
             "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "111116AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDifnLLnT" as types.core.Base58
+            "111116AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDifnLLnT" as types.core.Base58,
         ],
         [
             "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "eiwxjrNHeUeu54pXFoHaCEPXSpBMNocuKLndvs7dqzkh28SRTAm2" as types.core.Base58
+            "eiwxjrNHeUeu54pXFoHaCEPXSpBMNocuKLndvs7dqzkh28SRTAm2" as types.core.Base58,
         ],
         [
             "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
-            "9foWrqoBRwyZdTQnZ2jz2MpET9fLWkFy8ZXoV7b8TKuW3wsGmxa" as types.core.Base58
-        ]
+            "9foWrqoBRwyZdTQnZ2jz2MpET9fLWkFy8ZXoV7b8TKuW3wsGmxa" as types.core.Base58,
+        ],
     ]).it("input=%s expected=%s", async ([inputHex, expected]) => {
         // Setup
         const input = Buffer.from(inputHex, "hex");
@@ -115,20 +115,20 @@ describe("base58_decode_with_checksum", () => {
     each<[types.core.Base58, string]>([
         [
             "6AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDihVsXMo" as types.core.Base58,
-            "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "111116AwhUu1H2qb7SeEUdrBrGKz1x1W6UXogwQF2mVdyaCDifnLLnT" as types.core.Base58,
-            "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "000000000002a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "eiwxjrNHeUeu54pXFoHaCEPXSpBMNocuKLndvs7dqzkh28SRTAm2" as types.core.Base58,
-            "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
+            "FF02a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
         ],
         [
             "9foWrqoBRwyZdTQnZ2jz2MpET9fLWkFy8ZXoV7b8TKuW3wsGmxa" as types.core.Base58,
-            "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f"
-        ]
+            "0102a90eb3aa9d0ed700503ab74ef18faafe948902a1edd588e1954dbd75547b801f",
+        ],
     ]).it("input=%s expected=%s", async ([input, expectedHex]) => {
         // Setup
         const expected = Buffer.from(expectedHex, "hex");

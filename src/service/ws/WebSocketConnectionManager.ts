@@ -18,6 +18,7 @@ import { WebSocketInnerManager } from "./WebSocketInnerManager";
 import { AppException } from "../../api/AppException";
 import { Base64 } from "../../utils/Base64";
 import { Session } from "../../api/session/Session";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 
 export interface WebSocketConnectionManager {
     authorizeWebSocket(session: Session, wsEx: WebSocketEx, addWsChannelId: boolean, key: types.core.Base64): Promise<types.core.WsChannelId>;
@@ -40,6 +41,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         private workerService: IWorker2Service,
         private configService: ConfigService,
         private webSocketInnerManager: WebSocketInnerManager,
+        private activeUsersMap: ActiveUsersMap,
     ) {
     }
     
@@ -67,6 +69,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
             addWsChannelId: addWsChannelId,
             username: session.get("username"),
             subidentity: session.get("subidentity"),
+            solution: session.get("solution"),
             proxy: session.get("proxy"),
             rights: session.get("rights"),
             type: session.get("type"),
@@ -74,6 +77,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
             encryptionKey: Base64.toBuf(key),
             channels: [],
         });
+        await this.activeUsersMap.setUserAsActive({userPubkey: session.get("username") as unknown as types.core.EccPubKey, solutionId: session.get("solution")});
         return wsChannelId;
     }
     

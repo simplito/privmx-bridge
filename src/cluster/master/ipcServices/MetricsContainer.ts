@@ -35,7 +35,7 @@ export class MetricsContainer {
             void this.flush();
         }, DateUtils.minutes(1));
     }
-
+    
     @ApiMethod({})
     async addMetrics(model: Metrics) {
         const key = model.solutionId + model.contextId;
@@ -51,7 +51,7 @@ export class MetricsContainer {
             entry.requests = entry.requests + model.requests as types.core.Quantity;
         }
     }
-
+    
     @ApiMethod({})
     async getMetrics() {
         const metrics: string[] = [
@@ -61,7 +61,7 @@ export class MetricsContainer {
             "# TYPE privmx_bridge_out_traffic_gauge gauge",
             "# TYPE privmx_bridge_request_gauge gauge",
         ];
-
+        
         for (const entry of this.metrics.values()) {
             const metricLabel = `{solutionId="${entry.solutionId}",contextId="${entry.contextId}"}`;
             metrics.push(`privmx_bridge_error_gauge${metricLabel} ${entry.errors}`);
@@ -71,9 +71,9 @@ export class MetricsContainer {
             metrics.push(`privmx_bridge_request_gauge${metricLabel} ${entry.requests}`);
         }
         void this.flush();
-        return metrics.join("\n")
+        return metrics.join("\n");
     }
-
+    
     async flush() {
         clearTimeout(this.flushTimeoutHandle);
         this.flushTimeoutHandle = setTimeout(() => {

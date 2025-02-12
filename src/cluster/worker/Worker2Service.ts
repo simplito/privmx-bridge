@@ -21,17 +21,17 @@ export class Worker2Service implements IWorker2Service {
         private webSocketInnerManager: WebSocketInnerManager,
     ) {
     }
-
+    
     @ApiMethod({})
     async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         return this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
     }
-
+    
     @ApiMethod({})
     async sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId, event: PlainApiEvent}): Promise<void> {
         return this.webSocketInnerManager.sendToPlainUsers(model.solution, model.event);
     }
-
+    
     @ApiMethod({})
     async hasOpenConnectionWithUsername(model: { host: types.core.Host; username: types.core.Username; }): Promise<boolean> {
         return this.webSocketInnerManager.hasOpenConnectionWithUsername(model.host, model.username);

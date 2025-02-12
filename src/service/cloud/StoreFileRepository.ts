@@ -27,15 +27,15 @@ export class StoreFileRepository {
     async get(id: types.store.StoreFileId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.store.StoreFileId[]) {
         return this.repository.getMulti(ids);
     }
-
+    
     async getFilesOlderThan(id: types.store.StoreId, timestamp: types.core.Timestamp) {
         return this.repository.findAll(q => q.and(
             q.lt("createDate", timestamp),
-            q.eq("storeId", id)
+            q.eq("storeId", id),
         ));
     }
     
@@ -54,8 +54,8 @@ export class StoreFileRepository {
                 {
                     author: userId,
                 },
-            ]
-        }
+            ],
+        };
         return this.repository.matchX(match, listParams, sortBy);
     }
     
@@ -66,7 +66,7 @@ export class StoreFileRepository {
     async deleteFile(id: types.store.StoreFileId) {
         await this.repository.delete(id);
     }
-
+    
     async deleteManyFiles(ids: types.store.StoreFileId[]) {
         await this.repository.deleteMany(q => q.in("id", ids));
     }
@@ -85,8 +85,8 @@ export class StoreFileRepository {
             thumb: thumb ? {
                 fileId: thumb.id,
                 checksumSize: thumb.checksumSize as types.core.SizeInBytes,
-                size: thumb.sent as types.core.SizeInBytes
-            } : undefined
+                size: thumb.sent as types.core.SizeInBytes,
+            } : undefined,
         };
         await this.repository.insert(nFile);
         return nFile;
@@ -108,7 +108,7 @@ export class StoreFileRepository {
             thumb: thumb ? {
                 fileId: thumb.id,
                 checksumSize: thumb.checksumSize as types.core.SizeInBytes,
-                size: thumb.sent as types.core.SizeInBytes
+                size: thumb.sent as types.core.SizeInBytes,
             } : undefined,
             updates: updates,
         };
@@ -137,7 +137,7 @@ export class StoreFileRepository {
         await this.repository.deleteMany(q => q.eq("storeId", storeId));
         return files;
     }
-
+    
     async deleteAllFromStores(storeIds: types.store.StoreId[]) {
         const files = await this.repository.findAll(q => q.in("storeId", storeIds));
         await this.repository.deleteMany(q => q.in("storeId", storeIds));

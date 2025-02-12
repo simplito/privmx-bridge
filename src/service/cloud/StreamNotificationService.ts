@@ -35,6 +35,24 @@ export class StreamNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    sendStreamCustomEvent(streamRoom: db.stream.StreamRoom, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        this.safe("streamCustomEvent", async () => {
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
+            for (const user of contextUsers) {
+                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomCustomEvent>([user.userPubKey], {
+                    channel: `stream/${streamRoom.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: streamRoom.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
+                    },
+                });
+            }
+        });
+    }
+    
     sendStreamRoomCreated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId) {
         this.safe("streamRoomCreated", async () => {
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
@@ -48,7 +66,7 @@ export class StreamNotificationService {
                 this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomCreatedEvent>([user.userPubKey], {
                     channel: "stream",
                     type: "streamRoomCreated",
-                    data: this.streamConverter.convertStreamRoom(user.userId, streamRoom)
+                    data: this.streamConverter.convertStreamRoom(user.userId, streamRoom),
                 });
             }
         });
@@ -67,7 +85,7 @@ export class StreamNotificationService {
                 this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomUpdatedEvent>([user.userPubKey], {
                     channel: "stream",
                     type: "streamRoomUpdated",
-                    data: this.streamConverter.convertStreamRoom(user.userId, streamRoom)
+                    data: this.streamConverter.convertStreamRoom(user.userId, streamRoom),
                 });
             }
         });
@@ -80,8 +98,8 @@ export class StreamNotificationService {
                 channel: "stream",
                 type: "streamRoomDeleted",
                 data: {
-                    streamRoomId: streamRoom.id
-                }
+                    streamRoomId: streamRoom.id,
+                },
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomDeletedEvent>(contextUsers.map(x => x.userPubKey), {
@@ -90,7 +108,7 @@ export class StreamNotificationService {
                 data: {
                     streamRoomId: streamRoom.id,
                     type: streamRoom.type,
-                }
+                },
             });
         });
     }

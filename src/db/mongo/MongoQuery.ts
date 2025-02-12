@@ -26,6 +26,6 @@ export class MongoQuery<T> extends BaseQuery<T> {
     }
     
     protected create<K extends keyof T, Q>(prop: K): Query<Q> {
-        return new MongoQuery(<any>"", this.getPropName(prop));
+        return new MongoQuery("" as keyof Q, this.getPropName(prop));
     }
 }

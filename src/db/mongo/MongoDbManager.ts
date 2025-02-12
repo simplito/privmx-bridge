@@ -36,7 +36,7 @@ export class MongoDbManager {
     private mongo: MongoInstance|null;
     private indexesForSubCollections: {[collectionType: string]: string[]} = {
         "kvdbentry": ["seq"],
-        "msg": ["modSeq"]
+        "msg": ["modSeq"],
     };
     
     constructor(
@@ -70,7 +70,7 @@ export class MongoDbManager {
         const db = client.db(dbName);
         this.mongo = {
             db: db,
-            client: client
+            client: client,
         };
     }
     
@@ -189,11 +189,11 @@ export class MongoDbManager {
             }, {
                 readPreference: "primary",
                 readConcern: {
-                    level: "local"
+                    level: "local",
                 },
                 writeConcern: {
-                    w: "majority"
-                }
+                    w: "majority",
+                },
             });
             return res as T;
         }

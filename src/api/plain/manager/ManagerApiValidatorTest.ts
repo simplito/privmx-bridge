@@ -55,8 +55,8 @@ export const test = testApi("client", "manager/", ManagerApi, new ManagerApiVali
                 enabled: true,
                 name: "MyApiKey" as types.auth.ApiKeyName,
                 scope: ["apiKey", "solution", "context"] as types.auth.Scope[],
-            }
-        ]
+            },
+        ],
     });
     call("updateApiKey", api => api.updateApiKey({
         id: "hysd62jsd7823nasd03" as types.auth.ApiKeyId,

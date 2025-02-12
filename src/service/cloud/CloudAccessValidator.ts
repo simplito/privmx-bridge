@@ -63,7 +63,7 @@ export class CloudAccessValidator {
         }
         return {user, context};
     }
-
+    
     private async getContext(contextInfo: types.context.ContextId|db.context.Context) {
         if (typeof contextInfo === "string") {
             const context = await this.repositoryFactory.createContextRepository().get(contextInfo);

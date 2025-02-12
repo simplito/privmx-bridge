@@ -29,7 +29,7 @@ export class StoreRepository {
     async get(id: types.store.StoreId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.store.StoreId[]) {
         return this.repository.getMulti(ids);
     }
@@ -79,12 +79,12 @@ export class StoreRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
-                $match: match
-            }
+                $match: match,
+            },
         ], listParams, sortBy);
     }
     
@@ -169,7 +169,7 @@ export class StoreRepository {
     async deleteStore(id: types.store.StoreId) {
         await this.repository.delete(id);
     }
-
+    
     async deleteManyStores(ids: types.store.StoreId[]) {
         await this.repository.deleteMany(q => q.in("id", ids));
     }

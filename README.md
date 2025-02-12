@@ -81,6 +81,20 @@ Navigate to [http://127.0.0.1:4567](http://127.0.0.1:4567). Whenever you make an
 npm run gen-docs
 ```
 
+## Panel
+
+To use the bridge web panel, you need to clone the Git submodules:
+
+```
+git submodule update --init --recursive
+```
+
+Then, run:
+
+```
+./scripts/build-panel.sh
+```
+
 ## Testing
 
 Unit test:
@@ -102,6 +116,8 @@ It will produce a Docker image with the `privmx-bridge` tag:
 ```
 ./scripts/build-docker.sh
 ```
+
+**NOTE:** You need to initialize submodules for build-docker to succeed.
 
 ## Configuration Options
 

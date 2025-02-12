@@ -29,7 +29,7 @@ export class IpcExecutor {
         }
         catch (e) {
             this.logger.error("Error during processing request", data.id, data.method, e);
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string
+            
             const response: IpcResponseError = {id: data.id, error: "" + e};
             return response;
         }

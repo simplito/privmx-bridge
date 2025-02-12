@@ -26,7 +26,7 @@ export class InboxApiClient extends BaseApiClient implements inboxApi.IInboxApi 
     inboxDelete(model: inboxApi.InboxDeleteModel): Promise<types.core.OK> {
         return this.request("inbox.inboxDelete", model);
     }
-
+    
     inboxDeleteMany(model: inboxApi.InboxDeleteManyModel): Promise<inboxApi.InboxDeleteManyResult> {
         return this.request("inbox.inboxDeleteMany", model);
     }
@@ -42,12 +42,16 @@ export class InboxApiClient extends BaseApiClient implements inboxApi.IInboxApi 
     inboxList(model: inboxApi.InboxListModel): Promise<inboxApi.InboxListResult> {
         return this.request("inbox.inboxList", model);
     }
-
+    
     inboxListAll(model: inboxApi.InboxListAllModel): Promise<inboxApi.InboxListAllResult> {
         return this.request("inbox.inboxListAll", model);
     }
     
     inboxSend(model: inboxApi.InboxSendModel): Promise<types.core.OK> {
         return this.request("inbox.inboxSend", model);
+    }
+    
+    inboxSendCustomEvent(model: inboxApi.InboxSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("inbox.inboxSendCustomEvent", model);
     }
 }

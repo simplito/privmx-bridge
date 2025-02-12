@@ -25,7 +25,7 @@ export class AesEncryptor implements Encoder {
     
     constructor(
         private key: Buffer,
-        private useCache: boolean
+        private useCache: boolean,
     ) {
         this.cache = {};
     }

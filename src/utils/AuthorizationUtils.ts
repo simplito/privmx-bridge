@@ -28,7 +28,7 @@ export class AuthoriationUtils {
         const parsed = AuthoriationUtils.parseScope(scopes, "ignore");
         return parsed.ipAddress;
     }
-
+    
     static parseScope(scopes: types.auth.Scope[], expirationPolicy: "ignore"|"disabled"|types.core.Timespan) {
         const parsed: ParsedScope = {
             scopes: [],

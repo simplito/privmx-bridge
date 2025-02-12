@@ -304,7 +304,7 @@ export class RequestLogger {
             }
             return JSON.stringify(obj);
         }
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        
         return "" + e;
     }
 }

@@ -15,7 +15,7 @@ import * as db from "../../db/Model";
 import { EcdheDataInSession } from "../../api/session/Session";
 import { ConfigService } from "../config/ConfigService";
 import { TicketDataRepository } from "./TicketDataRepository";
-
+import * as mongodb from "mongodb";
 export class SessionRepository {
     
     static readonly COLLECTION_NAME = "session";
@@ -48,7 +48,7 @@ export class SessionRepository {
     }
     
     async cleanOldSessions() {
-        const list = <{_id: types.core.SessionId}[]>await this.repository.collection.aggregate([
+        const list = <{_id: types.core.SessionId}[]> await this.repository.collection.aggregate([
             {
                 $match: {
                     $and: [
@@ -59,40 +59,40 @@ export class SessionRepository {
                                 {
                                     $and: [
                                         {"data.state": {$ne: "init"}},
-                                        {"data.state": {$ne: "keyInit"}}
-                                    ]
+                                        {"data.state": {$ne: "keyInit"}},
+                                    ],
                                 },
-                                {"data.createdDate": {$lt: Date.now() - this.configService.values.user.session.exchangeTimeout}}
-                            ]
+                                {"data.createdDate": {$lt: Date.now() - this.configService.values.user.session.exchangeTimeout}},
+                            ],
                         },
                         // session is not long-living but if it is it has not time left
                         {
                             $or: [
                                 {"data.restoreKey": {$exists: false}},
-                                {"data.lastUsage": {$lt: Date.now() - this.configService.values.user.session.restorableSessionTTL}}
-                            ]
-                        }
-                    ]
-                }
+                                {"data.lastUsage": {$lt: Date.now() - this.configService.values.user.session.restorableSessionTTL}},
+                            ],
+                        },
+                    ],
+                },
             },
             {
                 $lookup: {
                     from: TicketDataRepository.COLLECTION_NAME,
                     localField: "_id",
                     foreignField: "sessionId",
-                    as: "tickets"
-                }
+                    as: "tickets",
+                },
             },
             {
                 $match: {
-                    tickets: {$size: 0}
-                }
+                    tickets: {$size: 0},
+                },
             },
             {
                 $project: {
-                    _id: 1
-                }
-            }
+                    _id: 1,
+                },
+            },
         ], {session: this.repository.getSession()}).toArray();
         const ids = list.map(x => x._id);
         if (ids.length > 0) {
@@ -101,9 +101,9 @@ export class SessionRepository {
         return ids;
     }
     
-    async removeSessions(query: any) {
+    async removeSessions(query: mongodb.Filter<any>) {
         const sessionCollection = this.repository.collection;
-        const list = <{_id: types.core.SessionId}[]>await sessionCollection.find(query, {session: this.repository.getSession()}).project({_id: 1}).toArray();
+        const list = <{_id: types.core.SessionId}[]> await sessionCollection.find(query, {session: this.repository.getSession()}).project({_id: 1}).toArray();
         const ids = list.map(x => x._id);
         await sessionCollection.deleteMany({_id: {$in: ids}});
         return ids;

@@ -23,7 +23,7 @@ export class HttpUtils {
         }
         return requestX.readBodyPromise = new Promise<Buffer>((resolve, reject) => {
             const chunks: Buffer[] = [];
-            request.on("data", (chunk) => {
+            request.on("data", (chunk: Buffer) => {
                 chunks.push(chunk);
             });
             request.on("error", (e) => {

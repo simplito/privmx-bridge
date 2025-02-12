@@ -104,21 +104,21 @@ export interface IInboxApi {
     * @returns Inbox's info
     */
     getInbox(model: GetInboxModel): Promise<GetInboxResult>;
-
+    
     /**
     * List Inboxes in given context
     * @param model Inbox's ID
     * @returns List of Inboxes
     */
     listInboxes(model: ListInboxesModel): Promise<ListInboxesResult>;
-
+    
     /**
     * Deletes inbox
     * @param model Context's ID, Inbox's ID
     * @returns "OK"
     */
     deleteInbox(model: DeleteInboxModel): Promise<types.core.OK>;
-
+    
     /**
     * Deletes given Inboxes, requires that they belong to the same Context
     * @param model Context's ID, List of Inbox IDs

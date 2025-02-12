@@ -140,7 +140,7 @@ const request: db.request.Request = {
             size: 1024,
             checksumSize: 100,
             checksumSent: 0,
-            closed: false
+            closed: false,
         },
         {
             id: <types.request.FileId>"file-2",
@@ -149,7 +149,7 @@ const request: db.request.Request = {
             size: 4096,
             checksumSize: 0,
             checksumSent: 0,
-            closed: false
+            closed: false,
         },
         {
             id: <types.request.FileId>"file-3",
@@ -158,9 +158,9 @@ const request: db.request.Request = {
             size: 2048,
             checksumSize: 0,
             checksumSent: 0,
-            closed: true
-        }
-    ]
+            closed: true,
+        },
+    ],
 };
 const listParams: types.core.ListModel = {
     skip: 0,
@@ -316,7 +316,7 @@ it("Should create store file", async () => {
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
+        thumbIndex: 1,
     });
     
     // Asserts
@@ -341,7 +341,7 @@ it("Should create store file without thumb", async () => {
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
-        requestId: requestId
+        requestId: requestId,
     });
     
     // Asserts
@@ -378,8 +378,8 @@ testFail("Should fails on creating file with invalid user", "ACCESS_DENIED", sto
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on creating file in not existing store", "STORE_DOES_NOT_EXIST", storeService =>
@@ -389,8 +389,8 @@ testFail("Should fails on creating file in not existing store", "STORE_DOES_NOT_
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on creating file with invalid key id", "INVALID_KEY", storeService =>
@@ -400,8 +400,8 @@ testFail("Should fails on creating file with invalid key id", "INVALID_KEY", sto
         meta: "" as types.store.StoreFileMeta,
         keyId: invalidKeyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on creating file with invalid file index", "INVALID_FILE_INDEX", storeService =>
@@ -411,8 +411,8 @@ testFail("Should fails on creating file with invalid file index", "INVALID_FILE_
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on creating file with invalid thumb index", "INVALID_FILE_INDEX", storeService =>
@@ -422,8 +422,8 @@ testFail("Should fails on creating file with invalid thumb index", "INVALID_FILE
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 5
-    })
+        thumbIndex: 5,
+    }),
 );
 
 testFail("Should fails on creating file with the same index for file and thumb", "FILE_ALREADY_USED", storeService =>
@@ -433,8 +433,8 @@ testFail("Should fails on creating file with the same index for file and thumb",
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 0
-    })
+        thumbIndex: 0,
+    }),
 );
 
 it("Should update store file", async () => {
@@ -448,7 +448,7 @@ it("Should update store file", async () => {
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
+        thumbIndex: 1,
     });
     
     // Asserts
@@ -472,7 +472,7 @@ it("Should update store file without thumb", async () => {
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
-        requestId: requestId
+        requestId: requestId,
     });
     
     // Asserts
@@ -491,8 +491,8 @@ testFail("Should fails on writing file with invalid user", "ACCESS_DENIED", stor
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on writing file to not existing file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
@@ -502,8 +502,8 @@ testFail("Should fails on writing file to not existing file", "STORE_FILE_DOES_N
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on creating file with invalid key id", "INVALID_KEY", storeService =>
@@ -513,8 +513,8 @@ testFail("Should fails on creating file with invalid key id", "INVALID_KEY", sto
         meta: "" as types.store.StoreFileMeta,
         keyId: invalidKeyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on writing file with invalid file index", "INVALID_FILE_INDEX", storeService =>
@@ -524,8 +524,8 @@ testFail("Should fails on writing file with invalid file index", "INVALID_FILE_I
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 1
-    })
+        thumbIndex: 1,
+    }),
 );
 
 testFail("Should fails on writing file with invalid thumb index", "INVALID_FILE_INDEX", storeService =>
@@ -535,8 +535,8 @@ testFail("Should fails on writing file with invalid thumb index", "INVALID_FILE_
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 5
-    })
+        thumbIndex: 5,
+    }),
 );
 
 testFail("Should fails on writing file with the same index for file and thumb", "FILE_ALREADY_USED", storeService =>
@@ -546,8 +546,8 @@ testFail("Should fails on writing file with the same index for file and thumb", 
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
         requestId: requestId,
-        thumbIndex: 0
-    })
+        thumbIndex: 0,
+    }),
 );
 
 it("Should delete store file", async () => {
@@ -585,7 +585,7 @@ it("Should delete store file without thumb", async () => {
 });
 
 testFail("Should fails on deleting not exisitng file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
-    storeService.deleteStoreFile(janekUserPubKey, notExistingStoreFileId)
+    storeService.deleteStoreFile(janekUserPubKey, notExistingStoreFileId),
 );
 
 it("Should read store file data", async () => {
@@ -615,19 +615,19 @@ it("Should read store file thumb data", async () => {
 });
 
 testFail("Should fails on reading with invalid user", "ACCESS_DENIED", storeService =>
-    storeService.readStoreFile(bobUserPubKey, storeFileId, false, undefined, {type: "all"})
+    storeService.readStoreFile(bobUserPubKey, storeFileId, false, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading with user without access", "ACCESS_DENIED", storeService =>
-    storeService.readStoreFile(aliceUserPubKey, storeFileId, false, undefined, {type: "all"})
+    storeService.readStoreFile(aliceUserPubKey, storeFileId, false, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading not exisitng file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
-    storeService.readStoreFile(janekUserPubKey, notExistingStoreFileId, false, undefined, {type: "all"})
+    storeService.readStoreFile(janekUserPubKey, notExistingStoreFileId, false, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading not exisitng thumb", "FILES_CONTAINER_FILE_HAS_NOT_THUMB", storeService =>
-    storeService.readStoreFile(janekUserPubKey, storeFileIdWithoutThumb, true, undefined, {type: "all"})
+    storeService.readStoreFile(janekUserPubKey, storeFileIdWithoutThumb, true, undefined, {type: "all"}),
 );
 
 function createStoreService() {
