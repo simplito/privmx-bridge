@@ -43,7 +43,7 @@ export class Session {
     
     constructor(
         public readonly id: types.core.SessionId,
-        public data: db.session.SessionData
+        public data: db.session.SessionData,
     ) {
         this.changes = {};
     }

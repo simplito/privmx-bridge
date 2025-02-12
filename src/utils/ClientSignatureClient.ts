@@ -55,7 +55,7 @@ export class ClientSignatureClient {
         };
         return HttpClient2.req(request);
     }
-
+    
     static async requestEddsa(clientId: string, clientPrivKey: string, options: RequestOptions) {
         const httpMethod = "POST";
         const timestamp = DateUtils.now();
@@ -108,11 +108,11 @@ export class ClientSignatureJsonRpcClient {
         }
         return ClientSignatureJsonRpcClient.requestEddsa<T>(this.clientId, this.clientSecret, {url: this.url, method, params, headers: this.headers});
     }
-
+    
     static async requestHmacFull<T>(clientId: string, clientSecret: string, options: JsonRpcRequestOptions) {
         return await ClientSignatureJsonRpcClient.requestFull<T>(clientId, clientSecret, options, ClientSignatureClient.requestHmac);
     }
-
+    
     static async requestEddsaFull<T>(clientId: string, clientPrivKey: string, options: JsonRpcRequestOptions) {
         return await ClientSignatureJsonRpcClient.requestFull<T>(clientId, clientPrivKey, options, ClientSignatureClient.requestEddsa);
     }
@@ -121,12 +121,12 @@ export class ClientSignatureJsonRpcClient {
         const payload = await ClientSignatureJsonRpcClient.requestHmacFull<T>(clientId, clientSecret, options);
         return payload.result;
     }
-
+    
     static async requestEddsa<T>(clientId: string, clientPrivKey: string, options: JsonRpcRequestOptions) {
         const payload =  await ClientSignatureJsonRpcClient.requestEddsaFull<T>(clientId, clientPrivKey, options);
         return payload.result;
     }
-
+    
     static async requestFull<T>(clientId: string, clientPrivKey: string, options: JsonRpcRequestOptions, request: (clientId: string, clientSecret: string, options: RequestOptions) => Promise<FetchResponse>) {
         const body = JsonRpcClient.createJsonRpcRequestBody(options.method, options.params);
         const httpResponse = await Utils.tryPromise(() => request(clientId, clientPrivKey, {url: options.url, body: body, headers: options.headers}));

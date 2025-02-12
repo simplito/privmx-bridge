@@ -22,6 +22,10 @@ export interface PolicyUser {
 }
 
 export const DefaultContextPolicy: types.context.ContextPolicy = {
+    context: {
+        listUsers: "all",
+        sendCustomNotification: "all",
+    },
     thread: {
         get: "user",
         listMy: "all",
@@ -34,6 +38,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
         item: {
             get: "user",
             listMy: "user",
@@ -41,7 +46,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             create: "user",
             update: "itemOwner&user,manager",
             delete: "itemOwner&user,manager",
-        }
+        },
     },
     store: {
         get: "user",
@@ -55,6 +60,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
         item: {
             get: "user",
             listMy: "user",
@@ -62,7 +68,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             create: "user",
             update: "itemOwner&user,manager",
             delete: "itemOwner&user,manager",
-        }
+        },
     },
     inbox: {
         get: "user",
@@ -76,6 +82,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
     },
     stream: {
         get: "user",
@@ -89,12 +96,16 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
     },
 };
 
 export class PolicyService {
     
     validateContextPolicy(policy: types.context.ContextPolicy) {
+        if (policy.context) {
+            this.validateInnerContextPolicy("policy.context", policy.context);
+        }
         if (policy.thread) {
             this.validateContainerPolicyForContext("policy.thread", policy.thread);
         }
@@ -106,6 +117,15 @@ export class PolicyService {
         }
         if (policy.stream) {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
+        }
+    }
+    
+    private validateInnerContextPolicy(path: string, policy: types.cloud.ContextInnerPolicy) {
+        if (policy.sendCustomNotification !== undefined) {
+            this.validatePolicyEntry(path + ".sendCustomNotification", policy.sendCustomNotification, ["default", "none", "all"], []);
+        }
+        if (policy.listUsers !== undefined) {
+            this.validatePolicyEntry(path + ".listUsers", policy.listUsers, ["default", "none", "all"], []);
         }
     }
     

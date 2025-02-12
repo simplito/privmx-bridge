@@ -99,7 +99,7 @@ export class RequestSignature {
     static createHeader(info: SignatureInfo) {
         return `${info.apiKeyId};1;${info.timestamp};${info.nonce};${info.signature}`;
     }
-
+    
     static parseHeader(value: string): false|SignatureInfo {
         const values = value.split(";");
         if (values.length !== 5) {

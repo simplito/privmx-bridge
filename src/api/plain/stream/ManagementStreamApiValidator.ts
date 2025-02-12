@@ -18,7 +18,7 @@ export class ManagementStreamApiValidator extends BaseValidator {
         private tv: TypesValidator,
     ) {
         super();
-
+        
         this.registerMethod("getStreamRoom", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
@@ -33,7 +33,7 @@ export class ManagementStreamApiValidator extends BaseValidator {
         this.registerMethod("deleteStreamRoom", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
-
+        
         this.registerMethod("deleteManyStreamRooms", this.builder.createObject({
             streamRoomIds: this.builder.createListWithMaxLength(this.tv.streamRoomId, 128),
         }));

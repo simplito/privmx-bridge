@@ -15,7 +15,7 @@ import { ConfigService } from "../service/config/ConfigService";
 export class ServerAgent {
     
     constructor(
-        private configService: ConfigService
+        private configService: ConfigService,
     ) {
     }
     

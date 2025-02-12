@@ -36,6 +36,24 @@ export class ThreadNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    sendThreadCustomEvent(thread: db.thread.Thread, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        this.safe("threadCustomEvent", async () => {
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            for (const user of contextUsers) {
+                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>([user.userPubKey], {
+                    channel: `thread/${thread.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: thread.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
+                    },
+                });
+            }
+        });
+    }
+    
     sendCreatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadCreated", async () => {
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
@@ -49,12 +67,12 @@ export class ThreadNotificationService {
                 this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCreatedEvent>([user.userPubKey], {
                     channel: "thread",
                     type: "threadCreated",
-                    data: this.threadConverter.convertThread(user.userId, thread)
+                    data: this.threadConverter.convertThread(user.userId, thread),
                 });
                 this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2CreatedEvent>([user.userPubKey], {
                     channel: "thread2",
                     type: "thread2Created",
-                    data: this.threadConverter.convertThread(user.userId, thread)
+                    data: this.threadConverter.convertThread(user.userId, thread),
                 });
             }
         });
@@ -73,12 +91,12 @@ export class ThreadNotificationService {
                 this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedEvent>([user.userPubKey], {
                     channel: "thread",
                     type: "threadUpdated",
-                    data: this.threadConverter.convertThread(user.userId, thread)
+                    data: this.threadConverter.convertThread(user.userId, thread),
                 });
                 this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2UpdatedEvent>([user.userPubKey], {
                     channel: "thread2",
                     type: "thread2Updated",
-                    data: this.threadConverter.convertThread(user.userId, thread)
+                    data: this.threadConverter.convertThread(user.userId, thread),
                 });
             }
         });
@@ -106,7 +124,7 @@ export class ThreadNotificationService {
                     type: thread.type,
                     lastMsgDate: thread.lastMsgDate,
                     messages: thread.messages,
-                }
+                },
             });
             this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2StatsEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: "thread2",
@@ -117,7 +135,7 @@ export class ThreadNotificationService {
                     type: thread.type,
                     lastMsgDate: thread.lastMsgDate,
                     messages: thread.messages,
-                }
+                },
             });
         });
     }
@@ -129,8 +147,8 @@ export class ThreadNotificationService {
                 channel: "thread",
                 type: "threadDeleted",
                 data: {
-                    threadId: thread.id
-                }
+                    threadId: thread.id,
+                },
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedEvent>(contextUsers.map(x => x.userPubKey), {
@@ -139,7 +157,7 @@ export class ThreadNotificationService {
                 data: {
                     threadId: thread.id,
                     type: thread.type,
-                }
+                },
             });
             this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2DeletedEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: "thread2",
@@ -147,7 +165,7 @@ export class ThreadNotificationService {
                 data: {
                     threadId: thread.id,
                     type: thread.type,
-                }
+                },
             });
         });
     }
@@ -164,12 +182,12 @@ export class ThreadNotificationService {
             this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadNewMessageEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `thread/${thread.id}/messages`,
                 type: "threadNewMessage",
-                data: this.threadConverter.convertMessage(thread, msg)
+                data: this.threadConverter.convertMessage(thread, msg),
             });
             this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2NewMessageEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `thread2/${thread.id}/messages`,
                 type: "thread2NewMessage",
-                data: this.threadConverter.convertMessage(thread, msg)
+                data: this.threadConverter.convertMessage(thread, msg),
             });
         });
     }
@@ -186,12 +204,12 @@ export class ThreadNotificationService {
             this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedMessageEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `thread/${thread.id}/messages`,
                 type: "threadUpdatedMessage",
-                data: this.threadConverter.convertMessage(thread, msg)
+                data: this.threadConverter.convertMessage(thread, msg),
             });
             this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2UpdatedMessageEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `thread2/${thread.id}/messages`,
                 type: "thread2UpdatedMessage",
-                data: this.threadConverter.convertMessage(thread, msg)
+                data: this.threadConverter.convertMessage(thread, msg),
             });
         });
     }
@@ -204,8 +222,8 @@ export class ThreadNotificationService {
                 type: "threadDeletedMessage",
                 data: {
                     messageId: msg.id,
-                    threadId: thread.id
-                }
+                    threadId: thread.id,
+                },
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedMessageEvent>(contextUsers.map(x => x.userPubKey), {
@@ -213,16 +231,16 @@ export class ThreadNotificationService {
                 type: "threadDeletedMessage",
                 data: {
                     messageId: msg.id,
-                    threadId: thread.id
-                }
+                    threadId: thread.id,
+                },
             });
             this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2DeletedMessageEvent>(contextUsers.map(x => x.userPubKey), {
                 channel: `thread2/${thread.id}/messages`,
                 type: "thread2DeletedMessage",
                 data: {
                     messageId: msg.id,
-                    threadId: thread.id
-                }
+                    threadId: thread.id,
+                },
             });
         });
     }

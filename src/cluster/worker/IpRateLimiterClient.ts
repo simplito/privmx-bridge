@@ -14,11 +14,11 @@ import * as types from "../../types";
 import { IpRateLimiter } from "../common/IpRateLimiter";
 
 export class IpRateLimiterClient implements IpRateLimiter {
-
+    
     constructor(
         private ipcRequester: WorkerIpcRequester,
     ) {}
-
+    
     canPerformRequest(ip: types.core.IPAddress): Promise<boolean> {
         return this.ipcRequester.request("canPerformRequest", ip);
     }

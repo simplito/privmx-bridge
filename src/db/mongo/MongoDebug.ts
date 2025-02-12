@@ -22,8 +22,8 @@ export class MongoDebug {
             return client;
         }
         (client as any).__debugDecorated = true;
-        const orgDbFunc = client.db.bind(client) as any;
-        client.db = (...args: any) => {
+        const orgDbFunc = client.db.bind(client) as (...args: unknown[]) => mongodb.Db;
+        client.db = (...args: unknown[]) => {
             // if (MongoDebug.DEBUG) {
             //     console.log("MONGO db " + args[0]);
             // }
@@ -37,8 +37,8 @@ export class MongoDebug {
             return db;
         }
         (db as any).__debugDecorated = true;
-        const orgCollectionFuc = db.collection.bind(db) as any;
-        db.collection = (...args: any) => {
+        const orgCollectionFuc = db.collection.bind(db) as <T extends mongodb.Document>(...args: unknown[]) => mongodb.Collection<T>;
+        db.collection = (...args: unknown[]) => {
             // if (MongoDebug.DEBUG) {
             //     console.log("MONGO collection " + db.databaseName + "." + args[0]);
             // }
@@ -57,11 +57,11 @@ export class MongoDebug {
             collectionName: collection.collectionName,
         };
         const decorateFunc = (funcName: string) => {
-            col[funcName] = (...args: any[]) => {
+            col[funcName] = (...args: unknown[]) => {
                 const start = Date.now();
                 const result = (collection as any)[funcName](...args);
                 if (result.then) {
-                    result.then(() => console.log("MONGO", funcName, colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && x.session ? {...x, session: x.session.constructor.name} : x)));
+                    result.then(() => console.log("MONGO", funcName, colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && typeof x === "object" && "session" in x && x.session ? {...x, session: x.session.constructor.name} : x)));
                 }
                 else {
                     if (funcName === "find" || funcName === "aggregate") {
@@ -71,7 +71,7 @@ export class MongoDebug {
                             const res = orgToArray(...nArgs);
                             if (res.then) {
                                 called = true;
-                                res.then(() => console.log("MONGO", funcName + ".toArray", colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && x.session ? {...x, session: x.session.constructor.name} : x)));
+                                res.then(() => console.log("MONGO", funcName + ".toArray", colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && typeof x === "object" && "session" in x && x.session ? {...x, session: x.session.constructor.name} : x)));
                             }
                             return res;
                         };
@@ -81,19 +81,19 @@ export class MongoDebug {
                                 const res = orgCount(...nArgs);
                                 if (res.then) {
                                     called = true;
-                                    res.then(() => console.log("MONGO", funcName + ".count", colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && x.session ? {...x, session: x.session.constructor.name} : x)));
+                                    res.then(() => console.log("MONGO", funcName + ".count", colName, Date.now() - start + "ms", ...args.map((x, i) => i === args.length - 1 && x && typeof x === "object" && "session" in x  && x.session ? {...x, session: x.session.constructor.name} : x)));
                                 }
                                 return res;
                             };
                         }
                         setTimeout(() => {
                             if (!called) {
-                                console.log("MONGO", funcName, colName, "?? ms", ...args.map((x, i) => i === args.length - 1 && x && x.session ? {...x, session: x.session.constructor.name} : x));
+                                console.log("MONGO", funcName, colName, "?? ms", ...args.map((x, i) => i === args.length - 1 && x && typeof x === "object" && "session" in x  && x.session ? {...x, session: x.session.constructor.name} : x));
                             }
                         }, 1);
                     }
                     else {
-                        console.log("MONGO", funcName, colName, "?? ms", ...args.map((x, i) => i === args.length - 1 && x && x.session ? {...x, session: x.session.constructor.name} : x));
+                        console.log("MONGO", funcName, colName, "?? ms", ...args.map((x, i) => i === args.length - 1 && x && typeof x === "object" && "session" in x && x.session ? {...x, session: x.session.constructor.name} : x));
                     }
                 }
                 return result;

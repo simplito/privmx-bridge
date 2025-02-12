@@ -27,15 +27,15 @@ export class ThreadMessageRepository {
     async get(id: types.thread.ThreadMessageId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.thread.ThreadMessageId[]) {
         return this.repository.getMulti(ids);
     }
-
+    
     async getMessagesOlderThan(id: types.thread.ThreadId, timestamp: types.core.Timestamp) {
         return this.repository.findAll(q => q.and(
             q.lt("createDate", timestamp),
-            q.eq("threadId", id)
+            q.eq("threadId", id),
         ));
     }
     
@@ -49,8 +49,8 @@ export class ThreadMessageRepository {
                 {
                     author: userId,
                 },
-            ]
-        }
+            ],
+        };
         return this.repository.matchX(match, listParams, sortBy);
     }
     
@@ -93,7 +93,7 @@ export class ThreadMessageRepository {
             author: oldMessage.author,
             data: data,
             keyId: keyId,
-            updates: updates
+            updates: updates,
         };
         await this.repository.update(message);
         return message;
@@ -102,7 +102,7 @@ export class ThreadMessageRepository {
     async deleteAllFromThread(threadId: types.thread.ThreadId) {
         await this.repository.deleteMany(q => q.eq("threadId", threadId));
     }
-
+    
     async deleteAllFromThreads(threadIds: types.thread.ThreadId[]) {
         await this.repository.deleteMany(q => q.in("threadId", threadIds));
     }
@@ -114,7 +114,7 @@ export class ThreadMessageRepository {
     async deleteManyMessages(ids: types.thread.ThreadMessageId[]) {
         return this.repository.deleteMany(q => q.in("id", ids));
     }
-
+    
     async getLastMessageDate(threadId: types.thread.ThreadId) {
         const list = await this.repository.query(q => q.eq("threadId", threadId)).props("createDate").sort("createDate", false).limit(1).array();
         return list.length === 0 ? null : list[0].createDate;

@@ -16,7 +16,7 @@ export class MongoBinaryRepositoryFactory<K extends string> implements IBinaryRe
     
     constructor(
         private mongoDbManager: MongoDbManager,
-        private dbName: string
+        private dbName: string,
     ) {
     }
     

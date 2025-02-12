@@ -16,12 +16,12 @@ import { ApiMethod } from "./Decorators";
 export class BaseApi {
     
     constructor(
-        protected paramsValidator: AdvValidator.Types.PerNameValidator
+        protected paramsValidator: AdvValidator.Types.PerNameValidator,
     ) {
     }
     
     async execute(method: string, params: any): Promise<any> {
-        const m = (<any>this)[method];
+        const m = (<any> this)[method];
         if (!ApiMethod.getExportedMethod(this.constructor, method) || typeof(m) != "function") {
             throw new AppException("METHOD_NOT_FOUND");
         }

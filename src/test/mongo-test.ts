@@ -51,11 +51,11 @@ async function go() {
             }, {
                 readPreference: "primary",
                 readConcern: {
-                    level: "local"
+                    level: "local",
                 },
                 writeConcern: {
-                    w: "majority"
-                }
+                    w: "majority",
+                },
             });
         }
         catch (e) {

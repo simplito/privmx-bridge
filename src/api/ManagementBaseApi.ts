@@ -26,7 +26,7 @@ export class ManagementBaseApi extends BaseApi {
     ) {
         super(paramsValidator);
     }
-
+    
     async validateAccess() {
         await this.authorizationDetector.authorizeByRequest();
         if (!this.authorizationHolder.isAuthorized()) {

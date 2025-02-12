@@ -15,7 +15,7 @@ import { MethodInfo } from "../service/log/RequestLogger";
 export class RequestContext {
     
     constructor(
-        public ioc: RequestScopeIOC
+        public ioc: RequestScopeIOC,
     ) {
     }
     

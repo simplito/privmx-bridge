@@ -18,19 +18,19 @@ export class ClientIpService {
     private clientIp?: ClientIP;
     
     constructor(
-        private configService: ConfigService
+        private configService: ConfigService,
     ) {
     }
     
     getClientIp(req: RequestLike) {
-        return <types.core.IPAddress>this.getClientIpResolver().getClientIP(req);
+        return <types.core.IPAddress> this.getClientIpResolver().getClientIP(req);
     }
     
     private getClientIpResolver() {
         if (this.clientIp == null) {
             this.clientIp = new ClientIP({
                 allowedRemotes: this.configService.values.server.proxy.allowedRemotes,
-                allowedHeaders: this.configService.values.server.proxy.allowedHeaders
+                allowedHeaders: this.configService.values.server.proxy.allowedHeaders,
             });
         }
         return this.clientIp;

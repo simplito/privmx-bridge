@@ -44,7 +44,7 @@ export class JsonDocsGenerator {
         this.program = ts.createProgram([initFileName], tsOptions.options);
         this.typeChecker = this.program.getTypeChecker();
     }
-
+    
     getDocsFromProject(): types.JsonDocs {
         const result = {
             errorsWithDescription: this.getErrorsWithDescription(),
@@ -52,39 +52,15 @@ export class JsonDocsGenerator {
             httpErrorCodes: this.getHttpErrorCodes(),
             jsonRpcErrors: ERROR_CODES,
             aclGroups: this.loadAclGroups(),
-            policy: this.findPolicyType(),
         };
         return result;
     }
-
+    
     private loadAclGroups() {
         const content = fs.readFileSync(path.resolve(__dirname, "../../src/docs/acl.json"));
         return JSON.parse(content.toString()) as types.AclGroups;
     }
     
-    private findPolicyType() {
-        const filePath = path.resolve(this.baseDir, "src/types/context.ts");
-        const theFile = this.program.getSourceFiles().find(sourceFile => sourceFile.fileName === filePath);
-        if (!theFile) {
-            throw new Error(`Cannot find file '${filePath}' with ContextPolicy type`);
-        }
-        for (const statement of theFile.statements) {
-            if (ts.isInterfaceDeclaration(statement)) {
-                const interfaceName = statement.name.escapedText.toString();
-                if (interfaceName === "ContextPolicy") {
-                    const tmp = this.notExpandableTypes;
-                    this.notExpandableTypes = [];
-                    const type = this.readTheType(this.typeChecker.getTypeAtLocation(statement));
-                    this.notExpandableTypes = tmp;
-                    if (type.kind === "object") {
-                        return type;
-                    }
-                }
-            }
-        }
-        throw new Error("Cannot find 'ContextPolicy' type in source file");
-    }
-
     private findApis() {
         const result: {[name: string]: types.Api} = {};
         const apiDir = path.resolve(this.baseDir, "src/api/plain");
@@ -137,7 +113,7 @@ export class JsonDocsGenerator {
         }
         onApi(api);
     }
-
+    
     private validateAndEnrichTypeInfo(parameter: ts.ParameterDeclaration, validator: Validator) {
         const propertyTypes = parameter.type ? this.readType(parameter.type) : {kind: "primitive", type: "unknown"} as types.PrimitiveType;
         if (propertyTypes.kind === "object") {
@@ -252,7 +228,7 @@ export class JsonDocsGenerator {
         });
         return method;
     }
-
+    
     private tryReadComment(node: ts.Node) {
         const comments = ts.getLeadingCommentRanges(node.getSourceFile().getFullText(), node.getFullStart());
         if (!comments) {
@@ -284,6 +260,11 @@ export class JsonDocsGenerator {
     
     private readType(type: ts.TypeNode): types.Type {
         if (ts.isTypeReferenceNode(type)) {
+            if (ts.isIdentifier(type.typeName) && typeof type.typeName.escapedText === "string") {
+                if ((type.typeName.escapedText as string) === "Query") {
+                    return {kind: "object", name: "Query", description: "query", properties: {}};
+                }
+            }
             const theType = this.typeChecker.getTypeFromTypeNode(type);
             return this.readTheType(theType);
         }
@@ -436,7 +417,7 @@ export class JsonDocsGenerator {
         }
         return union;
     }
-
+    
     private parseComment(comment: string) {
         if (!comment.startsWith("/**") || !comment.endsWith("*/")) {
             return null;
@@ -451,11 +432,11 @@ export class JsonDocsGenerator {
         const doctype = lines.find(x => x.startsWith("@doctype "))?.slice(9);
         return {description, params, returns, doctype};
     }
-
+    
     private isApiInterfaceName(interfaceName: string) {
         return interfaceName.startsWith("I") && interfaceName.endsWith("Api");
     }
-
+    
     private getErrorsWithDescription() {
         return [
             {name: "ACCESS_DENIED", description: "You don't have access to requested resource."},

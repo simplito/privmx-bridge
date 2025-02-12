@@ -13,15 +13,15 @@ import { JobService } from "../job/JobService";
 
 export class Callbacks {
     
-    callbacks: {[name: string]: ((...args: any[]) => any)[]};
+    callbacks: {[name: string]: ((...args: unknown[]) => unknown)[]};
     
     constructor(
-        private jobService: JobService
+        private jobService: JobService,
     ) {
         this.callbacks = {};
     }
     
-    add(name: string, callback: (...args: any[]) => any): void {
+    add(name: string, callback: (...args: any[]) => unknown): void {
         if (!(name in this.callbacks)) {
             this.callbacks[name] = [];
         }
@@ -32,48 +32,48 @@ export class Callbacks {
         return name in this.callbacks && this.callbacks[name].length > 0;
     }
     
-    triggerSync<T = any>(name: string, args: any[]): T[] {
+    triggerSync<T = any>(name: string, args: unknown[]): T[] {
         if (!(name in this.callbacks)) {
             return [];
         }
         const res: T[] = [];
         for (const callback of this.callbacks[name]) {
             const value = callback(...args);
-            if (value && typeof(value.then) == "function") {
+            if (value && typeof value === "object" && "then" in value && typeof value.then === "function") {
                 throw new Error("Callback returns promise in triggerSync event '" + name + "'");
             }
-            res.push(value);
+            res.push(value as T);
         }
         return res;
     }
     
-    triggerZ(name: string, args: any[]): void {
+    triggerZ(name: string, args: unknown[]): void {
         if (!(name in this.callbacks)) {
             return;
         }
         for (const callback of this.callbacks[name]) {
-            this.jobService.addJob(callback(...args), "Error during calling callback '" + name + "'");
+            this.jobService.addJob(() => callback(...args), "Error during calling callback '" + name + "'");
         }
     }
     
-    async trigger<T = any>(name: string, args: any[]): Promise<T[]> {
+    async trigger<T = any>(name: string, args: unknown[]): Promise<T[]> {
         if (!(name in this.callbacks)) {
             return [];
         }
         const res: T[] = [];
         for (const callback of this.callbacks[name]) {
-            res.push(await callback(...args));
+            res.push(await callback(...args) as T);
         }
         return res;
     }
     
-    async triggerForResult<T = unknown>(name: string, args: any[]): Promise<T|null> {
+    async triggerForResult<T = unknown>(name: string, args: unknown[]): Promise<T|null> {
         if (!(name in this.callbacks)) {
             return null;
         }
         const callbacks = this.callbacks[name];
         for (const callback of callbacks) {
-            const res = await callback(...args);
+            const res = await callback(...args) as T;
             if (res) {
                 return res;
             }

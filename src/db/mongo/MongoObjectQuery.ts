@@ -25,7 +25,7 @@ export class MongoObjectQuery<T> implements ObjectQuery<T> {
     omittedProps: string[] = [];
     
     constructor(
-        private collection: mongodb.Collection,
+        private collection: mongodb.Collection<any>,
         private query: QueryResult,
         private convertFromDb: (x: T) => T,
         private session: mongodb.ClientSession|undefined,
@@ -53,7 +53,7 @@ export class MongoObjectQuery<T> implements ObjectQuery<T> {
             for (const entry of this.omittedProps) {
                 obj[entry == this.idProperty ? "_id" : entry] = 0;
             }
-            cursor = cursor.project(obj);
+            cursor = cursor.project(obj as mongodb.FindCursor<mongodb.WithId<mongodb.BSON.Document>>);
         }
         if (this.limitValue != null) {
             cursor = cursor.limit(this.limitValue);
@@ -66,7 +66,7 @@ export class MongoObjectQuery<T> implements ObjectQuery<T> {
             for (const entry of this.sorts) {
                 obj[entry.field == this.idProperty ? "_id" : entry.field] = entry.asc ? 1 : -1;
             }
-            cursor = cursor.sort(obj);
+            cursor = cursor.sort(obj as mongodb.Sort);
         }
         return cursor;
     }

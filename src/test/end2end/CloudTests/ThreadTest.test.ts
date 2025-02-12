@@ -18,7 +18,7 @@ export class ThreadTests extends BaseTestSet {
     
     private messageIds: types.thread.ThreadMessageId[] = [];
     private threadId?: types.thread.ThreadId;
-
+    
     @Test()
     async shouldDeleteManyThreadMessages() {
         await this.createNewThread();
@@ -27,7 +27,7 @@ export class ThreadTests extends BaseTestSet {
         await this.deleteAllSendMessages();
         await this.fetchMessagesAndCheckIfEmpty();
     }
-
+    
     private async createNewThread() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
@@ -37,10 +37,10 @@ export class ThreadTests extends BaseTestSet {
             managers: [testData.userId],
             users: [testData.userId],
         });
-
+        
         this.threadId = newThread.threadId;
     }
-
+    
     private async sendHundredMessages() {
         if (!this.threadId) {
             throw new Error("threadId not initialized yet");
@@ -54,7 +54,7 @@ export class ThreadTests extends BaseTestSet {
             this.messageIds.push(res.messageId);
         }
     }
-
+    
     private async fetchMessagesAndCheckTheirCount() {
         if (!this.threadId) {
             throw new Error("threadId not initialized yet");
@@ -67,17 +67,17 @@ export class ThreadTests extends BaseTestSet {
         });
         assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
     }
-
+    
     private async deleteAllSendMessages() {
         const res = await this.apis.threadApi.threadMessageDeleteMany({
             messageIds: this.messageIds,
         });
-
-        for(const result of res.results) {
+        
+        for (const result of res.results) {
             assert(result.status === "OK", `Deletion failed!: ${JSON.stringify(result)}`);
         }
     }
-
+    
     private async fetchMessagesAndCheckIfEmpty() {
         if (!this.threadId) {
             throw new Error("threadId not initialized yet");

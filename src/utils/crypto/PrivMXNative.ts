@@ -32,7 +32,7 @@ export function init(logger: Logger) {
         (<any>bs58).encode = PrivmxNative.base58_encode;
         (<any>bs58check).decode = PrivmxNative.base58check_decode;
         (<any>bs58check).encode = PrivmxNative.base58check_encode;
-            
+        
         // =====================
         //         ECC
         // =====================
@@ -86,7 +86,7 @@ export function init(logger: Logger) {
         const orgKeyPairDerive = KeyPair.prototype.derive;
         KeyPair.prototype.derive = function(this: typeof emptyKeyPair, pub: elliptic.curve.base.BasePoint): BN {
             if (this.ec.curve == secp256k1.curve && pub) {
-                const bn = PrivmxNative.derivePrivAndPub(serializePriv(this), serializePubPoint(pub));
+                const bn = PrivmxNative.derivePrivAndPub(serializePriv(this), serializePubPoint(pub)) as number;
                 return new BN(bn, "be");
             }
             return orgKeyPairDerive.call(this, pub);
@@ -95,17 +95,17 @@ export function init(logger: Logger) {
         const orgKeyPairSign = KeyPair.prototype.sign;
         KeyPair.prototype.sign = function(this: typeof emptyKeyPair, msg: BN.ConvertibleToBN, enc?: string, options?: elliptic.ec.SignOptions): elliptic.ec.Signature {
             if (this.ec.curve == secp256k1.curve && Buffer.isBuffer(msg) && !enc && !options) {
-                const signature = PrivmxNative.sign(msg, serializePriv(this));
+                const signature = PrivmxNative.sign(msg, serializePriv(this)) as Buffer;
                 return {
-                    r: new BN(signature.slice(1, 33), "be"),
-                    s: new BN(signature.slice(33), "be")
+                    r: new BN(signature.subarray(1, 33), "be"),
+                    s: new BN(signature.subarray(33), "be"),
                 };
             }
             return orgKeyPairSign.call(this, msg, enc, options);
         };
         
         function isValidBNBuffer(data: BN.ConvertibleToBN): data is Buffer|string|BN {
-            return Buffer.isBuffer(data) || typeof(data) == "string" || BN.isBN(<any>data);
+            return Buffer.isBuffer(data) || typeof(data) == "string" || BN.isBN(data as unknown as BN);
         }
         
         function getBufferFromBN(data: Buffer|string|BN) {

@@ -46,7 +46,7 @@ async function go() {
     const user = await apiUserRepository.create();
     const apiKeyRepository = repositoryFactory.createApiKeyRepository();
     const apiKey = await apiKeyRepository.create(user.id, "MainKey" as types.auth.ApiKeyName, [
-        "context", "apiKey", "solution", "solution:*", "inbox", "store", "thread", "stream"
+        "context", "apiKey", "solution", "solution:*", "inbox", "store", "thread", "stream",
     ] as types.auth.Scope[], true, undefined);
     console.log(`API_KEY_ID=${apiKey.id}`);
     console.log(`API_KEY_SECRET=${apiKey.secret}`);

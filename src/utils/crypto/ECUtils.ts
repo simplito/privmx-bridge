@@ -138,10 +138,10 @@ export class ECUtils {
         const ec = elliptic.ec(curve);
         const sig = {
             r: signature.slice(1, 33).toString("hex"),
-            s: signature.slice(33).toString("hex")
+            s: signature.slice(33).toString("hex"),
         };
         const recoveryParam = ECUtils.getRecoveryParam(signature[0]);
-        const pubPoint = (<any>ec).recoverPubKey(message, sig, recoveryParam);
+        const pubPoint = (<any>ec).recoverPubKey(message, sig, recoveryParam) as Buffer;
         return ec.keyFromPublic(pubPoint);
     }
     

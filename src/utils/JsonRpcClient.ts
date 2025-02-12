@@ -80,10 +80,10 @@ export class JsonRpcClient {
     
     constructor(
         private url: string,
-        private headers: {[name: string]: string}
+        private headers: {[name: string]: string},
     ) {
     }
-
+    
     async request<T = unknown>(method: string, params: unknown) {
         return JsonRpcClient.request<T>({url: this.url, method, params, headers: this.headers});
     }
@@ -100,7 +100,7 @@ export class JsonRpcClient {
             this.headers[header] = value;
         }
     }
-
+    
     static async requestFull<T = unknown>(options: JsonRpcRequestOptions) {
         const body = JsonRpcClient.createJsonRpcRequestBody(options.method, options.params);
         const requestResult = await Utils.tryPromise(() => HttpClient2.req({

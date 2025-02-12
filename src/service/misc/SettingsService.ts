@@ -17,7 +17,7 @@ export type LangSetting<T> = {langs: {[lang: string]: T}, defaultLang: string};
 export class SettingsService {
     
     constructor(
-        private repositoryFactory: RepositoryFactory
+        private repositoryFactory: RepositoryFactory,
     ) {
     }
     

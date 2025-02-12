@@ -35,7 +35,7 @@ export class HttpHandler {
     private interceptors: Interceptor[] = [];
     private singleMode?: Promise<App>;
     private hostContextProvider: HostContextProvider = {
-        createHostContext: () => this.createHostContext()
+        createHostContext: () => this.createHostContext(),
     };
     
     constructor(

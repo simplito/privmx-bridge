@@ -98,15 +98,15 @@ export class ServerStatsWorkerService {
         const collection = hostDb.collection(ServerStatsRepository.COLLECTION_NAME);
         await collection.updateOne(
             {
-                _id: statsEntry.id
+                _id: statsEntry.id,
             },
             {
                 $inc: {requests: statsEntry.requests, errors: statsEntry.errors, executionTime: statsEntry.executionTime},
-                $max: {maxTime: statsEntry.executionTime}, $min: {minTime: statsEntry.executionTime}
+                $max: {maxTime: statsEntry.executionTime}, $min: {minTime: statsEntry.executionTime},
             },
             {
-                upsert: true
-            }
+                upsert: true,
+            },
         );
     }
 }

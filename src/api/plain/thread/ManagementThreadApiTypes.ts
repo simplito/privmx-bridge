@@ -212,7 +212,7 @@ export interface IThreadApi {
     * @returns Thread's info
     */
     getThread(model: GetThreadModel): Promise<GetThreadResult>;
-
+    
     /**
     * List Threads in given Context
     * @param model Context's ID
@@ -247,21 +247,21 @@ export interface IThreadApi {
     * @returns List of messages
     */
     listThreadMessages(model: ListThreadMessagesModel): Promise<ListThreadMessagesResult>;
-
+    
     /**
     * Deletes Thread message
     * @param model Context's ID, message's ID
     * @returns "OK"
     */
     deleteThreadMessage(model: DeleteThreadMessageModel): Promise<types.core.OK>;
-
+    
     /**
     * Deletes given messages, requires that they belong to the same Thread
     * @param model Context's ID, List of messages ids
     * @returns List of ID and status for every deletion attempt
     */
     deleteManyThreadMessages(model: DeleteManyThreadMessagesModel): Promise<DeleteManyThreadMessagesResult>;
-
+    
     /**
     * Deletes all messages older than given timestamp
     * @param model Context's ID, Thread's ID, timestamp

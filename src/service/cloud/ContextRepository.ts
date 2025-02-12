@@ -82,7 +82,7 @@ export class ContextRepository {
             $or: [
                 {solution: {$in: solutions}},
                 {shares: {$in: solutions}},
-            ]
+            ],
         }, model, "created");
     }
 }

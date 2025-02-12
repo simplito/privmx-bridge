@@ -21,7 +21,7 @@ export class WebSocketPlainSender {
         private jobService: JobService,
     ) {
     }
-
+    
     sendToPlainUsers(solution: types.cloud.SolutionId, event: PlainApiEvent) {
         this.jobService.addJob(async () => {
             await this.workerService.sendWebsocketNotificationToPlainUsers({solution, event});

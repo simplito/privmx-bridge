@@ -86,7 +86,7 @@ export class AuthService {
         }
         return this.prepareTokenPair(key, session, tokenData.connectionId, tokenData.accessTokenTTL);
     }
-
+    
     async authByApiKeySignature(apiKeyId: types.auth.ApiKeyId, scope: types.auth.Scope[]|undefined, timestamp: types.core.Timestamp, nonce: string, signature: types.core.Base64, data: string) {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(apiKeyId);
         if (!apiKey || !apiKey.enabled) {

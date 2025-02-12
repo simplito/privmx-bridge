@@ -164,4 +164,12 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
             count: messages.count,
         };
     }
+    
+    @ApiMethod({})
+    async threadSendCustomEvent(model: threadApi.ThreadSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const thread = await this.threadService.sendCustomNotification(cloudUser, model.threadId, model.keyId, model.data, model.channel, model.users);
+        this.requestLogger.setContextId(thread.contextId);
+        return "OK";
+    }
 }

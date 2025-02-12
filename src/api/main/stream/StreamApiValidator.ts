@@ -45,9 +45,9 @@ export class StreamApiValidator extends BaseValidator {
         this.registerMethod("streamRoomDelete", this.builder.createObject({
             id: this.tv.streamRoomId,
         }));
-
+        
         this.registerMethod("streamRoomDeleteMany", this.builder.createObject({
-            ids: this.builder.createListWithMaxLength(this.tv.streamRoomId, 128)
+            ids: this.builder.createListWithMaxLength(this.tv.streamRoomId, 128),
         }));
         
         this.registerMethod("streamRoomGet", this.builder.createObject({
@@ -65,6 +65,14 @@ export class StreamApiValidator extends BaseValidator {
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+        }));
+        
+        this.registerMethod("streamRoomSendCustomEvent", this.builder.createObject({
+            streamRoomId: this.tv.streamRoomId,
+            channel: this.tv.wsChannelName,
+            keyId: this.tv.keyId,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 128)),
         }));
     }
 }

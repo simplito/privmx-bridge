@@ -20,7 +20,7 @@ export class SessionCleaner {
     constructor(
         private ticketsDb: TicketsDb,
         private sessionStorage: SessionStorage,
-        private webSocketConnectionManager: WebSocketConnectionManager
+        private webSocketConnectionManager: WebSocketConnectionManager,
     ) {
     }
     

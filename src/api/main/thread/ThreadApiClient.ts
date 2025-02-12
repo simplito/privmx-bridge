@@ -34,7 +34,7 @@ export class ThreadApiClient extends BaseApiClient implements threadApi.IThreadA
     threadList(model: threadApi.ThreadListModel): Promise<threadApi.ThreadListResult> {
         return this.request("thread.threadList", model);
     }
-
+    
     threadListAll(model: threadApi.ThreadListAllModel): Promise<threadApi.ThreadListAllResult> {
         return this.request("thread.threadListAll", model);
     }
@@ -58,21 +58,24 @@ export class ThreadApiClient extends BaseApiClient implements threadApi.IThreadA
     threadMessagesGet(model: threadApi.ThreadMessagesGetModel): Promise<threadApi.ThreadMessagesGetResult> {
         return this.request("thread.threadMessagesGet", model);
     }
-
+    
     threadMessagesGetMy(model: threadApi.ThreadMessagesGetMyModel): Promise<threadApi.ThreadMessagesGetMyResult> {
         return this.request("thread.threadMessagesGetMy", model);
     }
-
+    
     threadDeleteMany(model: threadApi.ThreadDeleteManyModel): Promise<threadApi.ThreadDeleteManyResult> {
         return this.request("thread.threadDeleteMany", model);
     }
-
+    
     threadMessageDeleteMany(model: threadApi.ThreadMessageDeleteManyModel): Promise<threadApi.ThreadMessageDeleteManyResult> {
         return this.request("thread.threadMessageDeleteMany", model);
     }
-
+    
     threadMessageDeleteOlderThan(model: threadApi.ThreadMessageDeleteOlderThanModel): Promise<threadApi.ThreadMessageDeleteOlderThanResult> {
         return this.request("thread.threadMessageDeleteOlderThan", model);
     }
     
+    threadSendCustomEvent(model: threadApi.ThreadSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("thread.threadSendCustomEvent", model);
+    }
 }

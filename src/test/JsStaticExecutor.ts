@@ -42,7 +42,7 @@ export class TsProject {
     
     constructor() {
         this.baseDir = path.resolve(__dirname, "../../");
-        const tsConfig = JSON.parse(fs.readFileSync(path.resolve(this.baseDir, "tsconfig.json"), "utf8"));
+        const tsConfig = JSON.parse(fs.readFileSync(path.resolve(this.baseDir, "tsconfig.json"), "utf8")) as {compilerOptions: ts.CompilerOptions};
         const initFileName = path.resolve(this.baseDir, "src/init/init.ts");
         
         this.program = ts.createProgram([initFileName], tsConfig.compilerOptions);
@@ -85,7 +85,7 @@ export class ApiMethodFinder {
             if (!decorators) {
                 return false;
             }
-            return decorators.some(x => ts.isIdentifier(x.expression) && x.expression.escapedText === "ApiMethod");
+            return decorators.some(x => ts.isIdentifier(x.expression) && (x.expression.escapedText as string) === "ApiMethod");
         });
     }
 }
@@ -138,9 +138,9 @@ export interface ArrowFunction {
 export class CallStack {
     
     constructor(
-        public stack: ts.MethodDeclaration[],
+        public stack: (ts.MethodDeclaration|Record<string, unknown>)[],
         public variables: {varName: ts.BindingName, value: ArrowFunction}[],
-        public transaction: boolean
+        public transaction: boolean,
     ) {
     }
     
@@ -191,7 +191,7 @@ export class JsStaticExecutor {
         return new JsStaticExecutor(this.project, this.callStack.copy());
     }
     
-    newCall(variables: {varName: ts.BindingName, value: ArrowFunction}[], dec?: ts.MethodDeclaration) {
+    newCall(variables: {varName: ts.BindingName, value: ArrowFunction}[], dec?: ts.MethodDeclaration|Record<string, unknown>) {
         const callStack = this.callStack.copy();
         for (const v of variables) {
             callStack.addVariable(v.varName, v.value);
@@ -315,7 +315,7 @@ export class JsStaticExecutor {
                 variables.push({varName: x.name, value: a});
             }
         });
-        const newCall = this.newCall([], {} as any);
+        const newCall = this.newCall([], {});
         newCall.callStack.variables = [...arrow.executor.callStack.variables, ...variables];
         if (ts.isBlock(arrow.value.body)) {
             newCall.executeStatement(arrow.value.body);
@@ -364,7 +364,7 @@ export class JsStaticExecutor {
                         methodName.startsWith("PrivmxClientEx.callCore")
                     ) {
                         debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}${methodName} {`);
-                        const newCall = this.newCall([], {} as any);
+                        const newCall = this.newCall([], {});
                         args.forEach(x => x && newCall.executeArrow(x, []));
                         debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}}`);
                         return;
@@ -394,7 +394,7 @@ export class JsStaticExecutor {
                     }
                     else {
                         debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}(variable)${Helper.getName(dec.name)} {`);
-                        const newCall = this.newCall([], {} as any);
+                        const newCall = this.newCall([], {});
                         args.forEach(x => x && newCall.executeArrow(x, []));
                         debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}}`);
                     }
@@ -416,7 +416,7 @@ export class JsStaticExecutor {
                         }
                     }
                     debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}${methodName} {`);
-                    const newCall = this.newCall([], {} as any);
+                    const newCall = this.newCall([], {});
                     args.forEach(x => x && newCall.executeArrow(x, []));
                     debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}}`);
                     if (isTransaction) {
@@ -430,8 +430,9 @@ export class JsStaticExecutor {
                     }
                 }
                 else {
-                    debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}(${dec.kind})${(dec as any).name ? Helper.getName((dec as any).name) : "<unknown>"} {`);
-                    const newCall = this.newCall([], {} as any);
+                    const decName = "name" in dec ? Helper.getName(dec.name as ts.Node) : "<unknown>";
+                    debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}(${dec.kind})${decName} {`);
+                    const newCall = this.newCall([], {});
                     args.forEach(x => x && newCall.executeArrow(x, []));
                     debugLog(`${Helper.getIdent(this.callStack.stack.length + 1)}}`);
                 }
@@ -467,7 +468,7 @@ export class JsStaticExecutor {
             this.executeExpression(expression.expression);
             for (const x of expression.arguments || []) {
                 if (ts.isArrowFunction(x)) {
-                    if (ts.isIdentifier(expression.expression) && expression.expression.escapedText === "Promise") {
+                    if (ts.isIdentifier(expression.expression) && (expression.expression.escapedText as string) === "Promise") {
                         this.executeArrow({executor: this, value: x}, []);
                     }
                     else {

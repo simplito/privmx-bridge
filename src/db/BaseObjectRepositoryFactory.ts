@@ -19,7 +19,7 @@ export class BaseObjectRepositoryFactory<K extends string|number, V> implements 
     constructor(
         private dbManager: DbManager,
         dbName: string,
-        idProperty: keyof V
+        idProperty: keyof V,
     ) {
         this.repositoryFactory = this.dbManager.createObjectRepositoryFactory(dbName, idProperty);
     }

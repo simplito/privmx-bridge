@@ -13,6 +13,11 @@ import * as types from "../../types";
 import { AppException } from "../../api/AppException";
 
 export type AclFunctionNameX =
+    | "context/contextGetUsers"
+    | "context/contextSendCustomNotification"
+    | "context/READ"
+    | "context/WRITE"
+    | "context/ALL"
     | "thread/threadGet"
     | "thread/threadList"
     | "thread/threadListAll"
@@ -29,6 +34,7 @@ export type AclFunctionNameX =
     | "thread/threadMessageDelete"
     | "thread/threadMessageDeleteMany"
     | "thread/threadMessageDeleteOlderThan"
+    | "thread/threadSendCustomNotification"
     | "thread/WRITE"
     | "thread/ALL"
     | "store/storeGet"
@@ -50,6 +56,7 @@ export type AclFunctionNameX =
     | "store/storeFileDelete"
     | "store/storeFileDeleteMany"
     | "store/storeFileDeleteOlderThan"
+    | "store/storeSendCustomNotification"
     | "store/WRITE"
     | "store/ALL"
     | "inbox/inboxGet"
@@ -60,6 +67,7 @@ export type AclFunctionNameX =
     | "inbox/inboxUpdate"
     | "inbox/inboxDelete"
     | "inbox/inboxDeleteMany"
+    | "inbox/inboxSendCustomNotification"
     | "inbox/WRITE"
     | "inbox/ALL"
     | "stream/streamRoomGet"
@@ -70,6 +78,7 @@ export type AclFunctionNameX =
     | "stream/streamRoomUpdate"
     | "stream/streamRoomDelete"
     | "stream/streamRoomDeleteMany"
+    | "stream/streamSendCustomNotification"
     | "stream/WRITE"
     | "stream/ALL"
     | "READ"
@@ -82,6 +91,21 @@ export class CloudAclChecker {
     private groups = new Map<types.cloud.AclGroupName, types.cloud.AclFunctions>();
     
     constructor() {
+        // ===================
+        //        CONTEXT
+        // ===================
+        
+        const contextRead = {
+            "context/contextGetUsers": ["contextId"],
+        } as types.cloud.AclFunctions;
+        this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
+        const contextWrite = {
+            "context/contextSendCustomNotification": ["contextId"],
+        } as types.cloud.AclFunctions;
+        this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
+        const contextAll = {...contextRead, ...contextWrite};
+        this.groups.set("context/ALL" as types.cloud.AclGroupName, contextAll);
+        
         // ===================
         //        THREAD
         // ===================
@@ -104,6 +128,7 @@ export class CloudAclChecker {
             "thread/threadMessageDelete": ["threadId", "messageId"],
             "thread/threadMessageDeleteMany": ["threadId"],
             "thread/threadMessageDeleteOlderThan": ["threadId"],
+            "thread/threadSendCustomNotification": ["threadId"],
         } as types.cloud.AclFunctions;
         this.groups.set("thread/WRITE" as types.cloud.AclGroupName, threadWrite);
         const threadAll = {...threadRead, ...threadWrite};
@@ -134,6 +159,7 @@ export class CloudAclChecker {
             "store/storeFileDelete": ["storeId", "fileId"],
             "store/storeFileDeleteMany": ["storeId"],
             "store/storeFileDeleteOlderThan": ["storeId"],
+            "store/storeSendCustomNotification": ["storeId"],
         } as types.cloud.AclFunctions;
         this.groups.set("store/WRITE" as types.cloud.AclGroupName, storeWrite);
         const storeAll = {...storeRead, ...storeWrite};
@@ -153,6 +179,7 @@ export class CloudAclChecker {
             "inbox/inboxUpdate": ["inboxId"],
             "inbox/inboxDelete": ["inboxId"],
             "inbox/inboxDeleteMany": [],
+            "inbox/inboxSendCustomNotification": ["inboxId"],
         } as types.cloud.AclFunctions;
         this.groups.set("inbox/WRITE" as types.cloud.AclGroupName, inboxWrite);
         const inboxAll = {...inboxRead, ...inboxWrite};
@@ -172,6 +199,7 @@ export class CloudAclChecker {
             "stream/streamRoomUpdate": ["streamRoomId"],
             "stream/streamRoomDelete": ["streamRoomId"],
             "stream/streamRoomDeleteMany": [],
+            "stream/streamSendCustomNotification": ["streamRoomId"],
         } as types.cloud.AclFunctions;
         this.groups.set("stream/WRITE" as types.cloud.AclGroupName, streamWrite);
         const streamAll = {...streamRead, ...streamWrite};
@@ -180,11 +208,11 @@ export class CloudAclChecker {
         // ===================
         //         ALL
         // ===================
-        const allRead = {...storeRead, ...threadRead, ...inboxRead, ...streamRead};
+        const allRead = {...storeRead, ...threadRead, ...inboxRead, ...streamRead, ...contextRead};
         this.groups.set("READ" as types.cloud.AclGroupName, allRead);
-        const allWrite = {...storeWrite, ...threadRead, ...inboxRead, ...streamRead};
+        const allWrite = {...storeWrite, ...threadRead, ...inboxRead, ...streamRead, ...contextWrite};
         this.groups.set("WRITE" as types.cloud.AclGroupName, allWrite);
-        const allAll = {...storeAll, ...threadAll, ...inboxAll, ...streamAll};
+        const allAll = {...storeAll, ...threadAll, ...inboxAll, ...streamAll, ...contextAll};
         this.groups.set("ALL" as types.cloud.AclGroupName, allAll);
         
         this.functions = allAll;

@@ -3,6 +3,7 @@ stages:
 
 variables:
   DOCKER_TLS_CERTDIR: ""
+  GIT_SUBMODULE_STRATEGY: recursive
 
 build:
   stage: build

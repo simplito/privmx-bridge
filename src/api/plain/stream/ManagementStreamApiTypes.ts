@@ -103,21 +103,21 @@ export interface IStreamApi {
     * @returns stream room's info
     */
     getStreamRoom(model: GetStreamRoomModel): Promise<GetStreamRoomResult>;
-
+    
     /**
      * List stream rooms in given Context
      * @param model stream rooms's ID
      * @returns List of stream rooms
      */
     listStreamRooms(model: ListStreamRoomsModel): Promise<ListStreamRoomsResult>;
-
+    
     /**
      * Deletes stream room
      * @param model Context's ID, stream room's ID
      * @returns "OK"
      */
     deleteStreamRoom(model: DeleteStreamRoomModel): Promise<types.core.OK>;
-
+    
     /**
      * Deletes given stream rooms, requires that they belong to the same Context
      * @param model Context's ID, List of stream rooms IDs

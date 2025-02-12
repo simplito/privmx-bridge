@@ -116,13 +116,13 @@ export class InboxService {
         this.inboxNotificationService.sendInboxDeleted(rInbox, usedContext.solution);
         return rInbox;
     }
-
+    
     async deleteManyInboxes(executor: Executor, inboxIds: types.inbox.InboxId[]) {
         const resultMap: Map<types.inbox.InboxId, "OK" | "INBOX_DOES_NOT_EXIST" | "ACCESS_DENIED"> = new Map();
         for (const id of inboxIds) {
             resultMap.set(id, "INBOX_DOES_NOT_EXIST");
         }
-
+        
         const result = await this.repositoryFactory.withTransaction(async session => {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);
             const inboxes = await inboxRepository.getMany(inboxIds);
@@ -158,12 +158,12 @@ export class InboxService {
                 this.inboxNotificationService.sendInboxDeleted(deletedInbox, result.context.solution);
             }
         }
-
+        
         const resultArray: types.inbox.InboxDeleteStatus[] = [];
         for (const [id, status] of resultMap) {
             resultArray.push({id, status});
         }
-
+        
         return {contextId: result.context ? result.context.id : null, results: resultArray};
     }
     
@@ -202,7 +202,7 @@ export class InboxService {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
         }
         if (context.solution !== solutionId && !context.shares.includes(solutionId)) {
-            throw new AppException("INBOX_DOES_NOT_EXIST")
+            throw new AppException("INBOX_DOES_NOT_EXIST");
         }
         return inbox;
     }
@@ -216,7 +216,7 @@ export class InboxService {
         const inboxes = await this.repositoryFactory.createInboxRepository().getAllInboxes(contextId, type, listParams, sortBy);
         return {user, inboxes};
     }
-   
+    
     async getMyInboxes(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxList", []);
@@ -241,7 +241,7 @@ export class InboxService {
         const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContext(contextId, listParams);
         return {inboxes};
     }
-
+    
     async send(username: types.core.Username, model: inboxApi.InboxSendModel, solutionId?: types.cloud.SolutionId) {
         const inbox = await this.repositoryFactory.createInboxRepository().get(model.inboxId);
         if (!inbox) {
@@ -300,6 +300,23 @@ export class InboxService {
         
         this.threadNotificationService.sendNewThreadMessage(thread, message, solutionForNotification);
         return {inbox, thread, message};
+    }
+    
+    async sendCustomNotification(cloudUser: CloudUser, inboxId: types.inbox.InboxId, keyId: types.core.KeyId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        const inbox = await this.repositoryFactory.createInboxRepository().get(inboxId);
+        if (!inbox) {
+            throw new AppException("INBOX_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, inbox.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxSendCustomNotification", ["inboxId=" + inboxId]);
+        if (!this.policy.canSendCustomNotification(user, context, inbox)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (users && users.some(element => !inbox.users.includes(element))) {
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+        }
+        this.inboxNotificationService.sendInboxCustomEvent(inbox, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+        return inbox;
     }
     
     // ============================

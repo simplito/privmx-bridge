@@ -26,14 +26,14 @@ export abstract class BaseQuery<T> implements Query<T> {
         for (const key in query) {
             if (key == "$and") {
                 const res2 = [];
-                for (const x of query[key]) {
+                for (const x of query[key] || []) {
                     res2.push(this.not(x));
                 }
                 res.$or = res2;
             }
             else if (key == "$or") {
                 const res2 = [];
-                for (const x of query[key]) {
+                for (const x of query[key] || []) {
                     res2.push(this.not(x));
                 }
                 res.$and = res2;
@@ -45,14 +45,14 @@ export abstract class BaseQuery<T> implements Query<T> {
         return res;
     }
     
-    private tryNegate(query: any) {
-        if (typeof(query) == "object") {
+    private tryNegate(query: unknown) {
+        if (typeof(query) == "object" && query !== null) {
             const keys = Object.keys(query);
             if (keys.length != 1) {
                 throw new Error("Cannot negate multi expression");
             }
             const key = keys[0];
-            const value = query[key];
+            const value = (query as Record<string, unknown>)[key];
             if (key == "$ne") {
                 return value;
             }

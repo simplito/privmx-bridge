@@ -60,7 +60,7 @@ export class SessionService {
         this.logger.debug("No session established");
         return new Session("" as types.core.SessionId, {
             username: "" as types.core.Username,
-            type: "guest"
+            type: "guest",
         });
     }
     

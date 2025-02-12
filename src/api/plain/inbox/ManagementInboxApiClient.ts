@@ -14,23 +14,23 @@ import * as types from "../../../types";
 import * as inboxApi from "./ManagementInboxApiTypes";
 
 export class ManagementInboxApiClient implements inboxApi.IInboxApi {
-
+    
     constructor(
         private requester: Requester,
     ) {}
-
+    
     async getInbox(model: inboxApi.GetInboxModel): Promise<inboxApi.GetInboxResult> {
         return await this.requester.request("inbox/getInbox", model);
     }
-
+    
     async listInboxes(model: inboxApi.ListInboxesModel): Promise<inboxApi.ListInboxesResult> {
         return await this.requester.request("inbox/listInboxes", model);
     }
-
+    
     async deleteInbox(model: inboxApi.DeleteInboxModel): Promise<types.core.OK> {
         return await this.requester.request("inbox/deleteInbox", model);
     }
-
+    
     async deleteManyInboxes(model: inboxApi.DeleteManyInboxesModel): Promise<inboxApi.DeleteManyInboxesResult> {
         return await this.requester.request("inbox/deleteManyInboxes", model);
     }

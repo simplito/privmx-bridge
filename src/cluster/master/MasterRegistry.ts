@@ -28,6 +28,7 @@ import { IpcRegistryService } from "./ipcServices/IpcRegistryService";
 import { MasterPlugin } from "../../service/plugin/Plugin";
 import { Callbacks } from "../../service/event/Callbacks";
 import { MetricsContainer } from "./ipcServices/MetricsContainer";
+import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
 
 export class MasterRegistry {
     
@@ -44,7 +45,8 @@ export class MasterRegistry {
     private ipRateLimiter?: IpRateLimiterImpl;
     private jobService?: JobService;
     private nonceMap?: NonceMap;
-    private metricsContainer?: MetricsContainer
+    private activeUsersMap?: ActiveUsersMap;
+    private metricsContainer?: MetricsContainer;
     private ipcRegistryService?: IpcRegistryService;
     private callbacks?: Callbacks;
     private plugins: MasterPlugin[] = [];
@@ -96,7 +98,7 @@ export class MasterRegistry {
         }
         return this.methodExecutor;
     }
-
+    
     getIpRateLimiter() {
         if (!this.ipRateLimiter) {
             this.ipRateLimiter = new IpRateLimiterImpl(this.getConfig());
@@ -111,6 +113,7 @@ export class MasterRegistry {
         methodExecutor.register(this.getNonceMap());
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
+        methodExecutor.register(this.getActiveUsersMap());
         this.getCallbacks().triggerSync("registerIpcServices", []);
     }
     
@@ -190,7 +193,7 @@ export class MasterRegistry {
     getCallbacks() {
         if (this.callbacks == null) {
             this.callbacks = new Callbacks(
-                this.getJobService()
+                this.getJobService(),
             );
         }
         return this.callbacks;
@@ -204,7 +207,14 @@ export class MasterRegistry {
         }
         return this.nonceMap;
     }
-
+    
+    getActiveUsersMap() {
+        if (this.activeUsersMap == null) {
+            this.activeUsersMap = new ActiveUsersMap();
+        }
+        return this.activeUsersMap;
+    }
+    
     getMetricContainer() {
         if (this.metricsContainer == null) {
             this.metricsContainer = new MetricsContainer();

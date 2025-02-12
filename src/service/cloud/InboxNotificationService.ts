@@ -36,6 +36,24 @@ export class InboxNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    sendInboxCustomEvent(inbox: db.inbox.Inbox, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        this.safe("inboxCustomEvent", async () => {
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, inbox.users);
+            for (const user of contextUsers) {
+                this.webSocketSender.sendCloudEventAtChannel<inboxApi.InboxCustomEvent>([user.userPubKey], {
+                    channel: `inbox/${inbox.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: inbox.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
+                    },
+                });
+            }
+        });
+    }
+    
     sendInboxCreated(inbox: db.inbox.Inbox, solution: types.cloud.SolutionId) {
         this.safe("inboxCreated", async () => {
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, inbox.users);
@@ -81,8 +99,8 @@ export class InboxNotificationService {
                 channel: "inbox",
                 type: "inboxDeleted",
                 data: {
-                    inboxId: inbox.id
-                }
+                    inboxId: inbox.id,
+                },
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             this.webSocketSender.sendCloudEventAtChannel<inboxApi.InboxDeletedEvent>(contextUsers.map(x => x.userPubKey), {
@@ -91,7 +109,7 @@ export class InboxNotificationService {
                 data: {
                     inboxId: inbox.id,
                     type: inbox.type,
-                }
+                },
             });
         });
     }

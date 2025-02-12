@@ -144,7 +144,7 @@ export class DateUtils {
     }
     
     static getTimestampFrom64BEBuffer(buffer: Buffer): types.core.Timestamp {
-        return <types.core.Timestamp>new Uint64BE(buffer.slice(0, 8)).toNumber();
+        return <types.core.Timestamp> new Uint64BE(buffer.slice(0, 8)).toNumber();
     }
     
     static getUtcDateStr(date: Date): string {

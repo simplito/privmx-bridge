@@ -16,7 +16,7 @@ import { ContextApiValidator } from "./ContextApiValidator";
 import { BaseApi } from "../../BaseApi";
 import * as db from "../../../db/Model";
 import * as contextApi from "./ContextApiTypes";
-
+import * as types from "../../../types";
 export class ContextApi extends BaseApi implements contextApi.IContextApi {
     
     constructor(
@@ -41,12 +41,35 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         return {contexts: entries.list.map(x => this.convertContext(x, x.contextObj)), count: entries.count};
     }
     
+    @ApiMethod({})
+    async contextGetUsers(model: contextApi.ContextGetUsersModel): Promise<contextApi.ContextGetUserResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const users = await this.contextService.getAllContextUsers(cloudUser, model.contextId);
+        return {users: users.map(user => this.convertUser(user))};
+    }
+    
+    @ApiMethod({})
+    async contextSendCustomEvent(model: contextApi.ContextSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        await this.contextService.sendCustomNotification(cloudUser, model.contextId, model.data, model.channel, model.users);
+        return "OK";
+    }
+    
     private convertContext(x: db.context.ContextUser, context: db.context.Context) {
         const res: contextApi.ContextInfo = {
             contextId: x.contextId,
             userId: x.userId,
             acl: x.acl,
             policy: context.policy || {},
+        };
+        return res;
+    }
+    
+    private convertUser(x: db.context.ContextUserWithStatus): types.cloud.UserIdentityWithStatus {
+        const res: types.cloud.UserIdentityWithStatus = {
+            id: x.userId,
+            pub: x.userPubKey,
+            status: x.status,
         };
         return res;
     }

@@ -34,7 +34,7 @@ describe("CloudAclChecker.verifyAccess", () => {
         [[
             "ALLOW ALL",
             "DENY stream/streamRoomDeleteMany",
-            "ALLOW ALL"
+            "ALLOW ALL",
         ], "stream/streamRoomDeleteMany", [], true],
         [[
             "ALLOW store/storeFileList",
@@ -54,7 +54,7 @@ describe("CloudAclChecker.verifyAccess", () => {
         ], "store/storeGet", ["storeId=qwe"], false],
         [[
             "ALLOW ALL",
-            "DENY thread/threadMessageGet"
+            "DENY thread/threadMessageGet",
         ], "thread/threadMessageGet", [], false],
         [[
             "DENY ALL",
@@ -93,12 +93,12 @@ describe("CloudAclChecker.validateAcl", () => {
         ["qwerty", false],
         [[
             "ALLOW ALL",
-            "qwerty"
+            "qwerty",
         ], false],
         [[
             "ALLOW ALL",
             "DENY stream/streamRoomDeleteMany",
-            "ALLOW ALL"
+            "ALLOW ALL",
         ], true],
         [[
             "ALLOW store/storeFileList",
@@ -110,7 +110,7 @@ describe("CloudAclChecker.validateAcl", () => {
         ], true],
         [[
             "ALLOW ALL",
-            "DENY thread/threadMessageGet"
+            "DENY thread/threadMessageGet",
         ], true],
         [[
             "DENY ALL",

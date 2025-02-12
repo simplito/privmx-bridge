@@ -98,7 +98,15 @@ export class ServerEndpoint {
             if (result instanceof Raw) {
                 const data = result.getData();
                 const binary = result.isBinary();
-                response.result = binary ? data : JSON.parse(data);
+                if (binary) {
+                    response.result = data;
+                }
+                else if (typeof data === "string") {
+                    response.result = JSON.parse(data);
+                }
+                else {
+                    throw new Error("Data is not a string or binary");
+                }
             }
             else {
                 response.result = result;
@@ -113,10 +121,10 @@ export class ServerEndpoint {
                     data: {
                         error: {
                             code: e.getCode(),
-                            data: e.getData()
-                        }
+                            data: e.getData(),
+                        },
                     },
-                    msg: e.message || "<unknown>"
+                    msg: e.message || "<unknown>",
                 };
                 response.result = null;
             }
@@ -124,10 +132,10 @@ export class ServerEndpoint {
                 response.error = {
                     data: {
                         error: {
-                            code: ERROR_CODES.INTERNAL_ERROR.code
-                        }
+                            code: ERROR_CODES.INTERNAL_ERROR.code,
+                        },
                     },
-                    msg: e.message + " for method '" + frame.method + "'"
+                    msg: e.message + " for method '" + frame.method + "'",
                 };
                 response.result = null;
             }
@@ -135,10 +143,10 @@ export class ServerEndpoint {
                 response.error = {
                     data: {
                         error: {
-                            code: ERROR_CODES.INTERNAL_ERROR.code
-                        }
+                            code: ERROR_CODES.INTERNAL_ERROR.code,
+                        },
                     },
-                    msg: this.getInternalServerErrorMessage(e)
+                    msg: this.getInternalServerErrorMessage(e),
                 };
                 response.result = null;
             }
@@ -147,7 +155,7 @@ export class ServerEndpoint {
         return {
             response: response,
             success: success,
-            error: error
+            error: error,
         };
     }
     

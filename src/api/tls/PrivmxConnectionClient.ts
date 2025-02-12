@@ -12,7 +12,7 @@ limitations under the License.
 import { ConnectionType } from "./ConnectionType";
 import { RWState } from "./RWState";
 import { Session } from "./Session";
-import { PasswordMixer } from "../../utils/crypto/PasswordMixer";
+import { Options, PasswordMixer } from "../../utils/crypto/PasswordMixer";
 import { ContentType } from "./ContentType";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { Utils } from "../../utils/Utils";
@@ -41,7 +41,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     
     constructor(
         logger: Logger,
-        private connectionType: number = ConnectionType.ONE_SHOT
+        private connectionType: number = ConnectionType.ONE_SHOT,
     ) {
         super(false, logger);
         this.session = new Session();
@@ -92,7 +92,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             this.logger.debug("srp exchange request", {request: exchange});
             this.send(
                 this.psonHelper.pson_encode(exchange),
-                ContentType.HANDSHAKE
+                ContentType.HANDSHAKE,
             );
         }
         else if (raw.type == "srp_exchange") {
@@ -122,7 +122,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const packet: types.packet.EcdheRequestPacket = {
             type: "ecdhe",
             key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
-            agent: this.getClientAgent()
+            agent: this.getClientAgent(),
         };
         const pson = this.psonHelper.pson_encode(packet);
         this.send(pson, ContentType.HANDSHAKE);
@@ -131,7 +131,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             pub: ecKey.getPublic("hex"),
             pubEnc: "hex",
             priv: ecKey.getPrivate("hex"),
-            privEnc: "hex"
+            privEnc: "hex",
         });
     }
     
@@ -144,7 +144,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             type: "ecdhef",
             key_id: ByteBuffer.wrap(key.getKeyId()),
             key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
-            agent: this.getClientAgent()
+            agent: this.getClientAgent(),
         };
         const pson = this.psonHelper.pson_encode(packet);
         
@@ -169,7 +169,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             type: "srp_init",
             I: username,
             host: host,
-            agent: this.getClientAgent()
+            agent: this.getClientAgent(),
         };
         const pson = this.psonHelper.pson_encode(packet);
         this.send(pson, ContentType.HANDSHAKE);
@@ -203,7 +203,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const packet: types.packet.TicketPacket = {
             type: "ticket",
             ticket_id: ByteBuffer.wrap(ticket.id),
-            client_random: ByteBuffer.wrap(clientRandom)
+            client_random: ByteBuffer.wrap(clientRandom),
         };
         const pson = this.psonHelper.pson_encode(packet);
         this.logger.debug("send ticket handshake");
@@ -215,7 +215,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     ticketRequest(n: number = 1): void {
         const packet: types.packet.TicketsRequestPacket = {
             type: "ticket_request",
-            count: n
+            count: n,
         };
         this.send(this.psonHelper.pson_encode(packet), ContentType.HANDSHAKE);
     }
@@ -224,7 +224,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         for (const ticketId of tickets) {
             this.tickets[Hex.from(ticketId)] = {
                 id: ticketId,
-                master_secret: this.masterSecret
+                master_secret: this.masterSecret,
             };
         }
     }
@@ -247,7 +247,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     getFreshRWStatesFromParams(client: RWState, server: RWState) {
         return {
             readState: server,
-            writeState: client
+            writeState: client,
         };
     }
     
@@ -265,7 +265,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const N = Hex.toBN(frame.N);
         const g = Hex.toBN(frame.g);
         const k = Hex.toBN(frame.k);
-        const loginData = JSON.parse(frame.loginData);
+        const loginData = JSON.parse(frame.loginData) as Options;
         
         if (!SrpLogic.valid_B(B, N)) {
             throw new Error("Invalid B - " + frame.B + ", N: " + frame.N);
@@ -283,7 +283,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             A: Hex.fromBN(A),
             B: Hex.fromBN(B),
             S: Hex.fromBN(S),
-            N: Hex.fromBN(N)
+            N: Hex.fromBN(N),
         });
         
         const M2 = SrpLogic.get_M2(A, M1, S, N);
@@ -295,7 +295,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             A: Hex.fromBN(A),
             M1: Hex.fromBN(M1),
             sessionId: frame.sessionId,
-            tickets: tickets
+            tickets: tickets,
         };
     }
     

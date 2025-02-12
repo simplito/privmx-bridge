@@ -29,7 +29,7 @@ export class InboxRepository {
     async get(id: types.inbox.InboxId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.inbox.InboxId[]) {
         return this.repository.getMulti(ids);
     }
@@ -89,12 +89,12 @@ export class InboxRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
-                $match: match
-            }
+                $match: match,
+            },
         ], listParams, sortBy);
     }
     

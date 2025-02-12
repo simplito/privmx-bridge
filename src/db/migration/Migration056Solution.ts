@@ -30,9 +30,9 @@ export class Migration056Solution {
         };
         
         for (const context of await contextCollection.find({}).toArray()) {
-            await checkSolution(context.solution, context.created);
+            await checkSolution(context.solution as string, context.created);
             for (const solution of context.shares) {
-                await checkSolution(solution, context.created);
+                await checkSolution(solution as string, context.created);
             }
         }
     }

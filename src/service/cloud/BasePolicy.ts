@@ -64,6 +64,10 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
         return this.isContainerPolicMet(user, context, container, p => p?.delete);
     }
     
+    canSendCustomNotification(user: db.context.ContextUser, context: db.context.Context, container: T) {
+        return this.isContainerPolicMet(user, context, container, p => p?.sendCustomNotification);
+    }
+    
     canReadContainer(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.get);
     }
@@ -83,7 +87,7 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
     canListAllItems(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.item?.listAll);
     }
-
+    
     canListMyItems(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.item?.listMy);
     }

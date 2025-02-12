@@ -119,7 +119,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             url: {
                 baseUrl: process.env.PRIVMX_BASE_URL || "http://localhost",
                 useBaseUrl: process.env.PRIVMX_USE_BASE_URL === "true",
-            }
+            },
         },
         db: {
             mongo: {
@@ -164,7 +164,7 @@ function mergeValues<T>(a: T, b: Partial<T>) {
     const res: any = {...a};
     for (const x in b) {
         if (x in a || x === "configDirectory" || x === "dbName") {
-            res[x] = x in res ? mergeValues(a[x] as any, b[x] as any) : b[x];
+            res[x] = x in res ? mergeValues(a[x] as Record<string, unknown>, b[x] as Record<string, unknown>) : b[x];
         }
         if (x === "configTemplate") {
             res[x] = b[x];

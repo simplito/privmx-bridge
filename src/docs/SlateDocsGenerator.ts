@@ -14,7 +14,6 @@ import * as path from "path";
 import * as fs from "fs";
 import * as types from "./docsGeneratorTypes";
 import { Validator } from "adv-validator/out/Types";
-import { DefaultContextPolicy } from "../service/cloud/PolicyService";
 import { ApiVersion } from "../api/Version";
 
 export class SlateDocsGenerator {
@@ -33,7 +32,7 @@ export class SlateDocsGenerator {
         }
         return array;
     }
-
+    
     async generateMarkdownFromJson(jsonDocs: types.JsonDocs) {
         const forbiddenApis = ["MailApi", "ManagementApi", "NotificationApi", "ManagementDeveloperApi", "ManagementContextApi", "ManagementOrganizationApi", "ManagementSolutionApi", "ManagementInstanceApi", "LicenseApi"];
         const apisArray = this.createArrayFromMap(jsonDocs.apis).sort((a, b) => a.name.localeCompare(b.name));
@@ -56,9 +55,6 @@ export class SlateDocsGenerator {
         await this.generateAclGroupsSection(jsonDocs.aclGroups, files);
         console.log("ACL Section generated");
         
-        await this.generatePolicySection(jsonDocs.policy, files);
-        console.log("Policy section generated");
-        
         await this.changeIncludesInIndex(files);
     }
     
@@ -74,7 +70,7 @@ export class SlateDocsGenerator {
         const header = `
 Function | parameters
 -------- | -------`;
-
+        
         const markdownAclGroups: string[] = ["# ACL Groups and functions"];
         for (const groupName in aclGroups.groups) {
             const groupFunctions = aclGroups.groups[groupName];
@@ -90,7 +86,7 @@ Function | parameters
         await fs.promises.mkdir(path.dirname(filePath), {recursive: true});
         await fs.promises.writeFile(filePath, markdownAclGroups.join("\n"));
     }
-
+    
     async generateNotificationSection(files: string[], apis: types.Api[]) {
         const fileName = "notifications";
         const filePath = path.resolve(this.slateDir, `includes/_${fileName}.md`);
@@ -111,7 +107,7 @@ Function | parameters
             }
             events.push(type.properties.event.type as types.ObjectType);
         }
-
+        
         const notificationMarkdowns: string[] = [];
         for (const event of events) {
             notificationMarkdowns.push(this.generateAndCollectMarkdownForObjectType(0, event));
@@ -129,44 +125,6 @@ ${notificationMarkdowns.join("")}
         files.push(`_${fileName}.md`);
     }
     
-    async generatePolicySection(policyType: types.ObjectType, files: string[]) {
-        const markdown = `
-# Policy
-
-Policies determine who is allowed to perform specific actions.
-You can define your policy on two levels: for a Context or for a Container (Thread, Store etc).
-Setting a policy in the Container overwrites the policy from the Context.
-Some of the Containers (Threads, Stores) can include items (Messages, Files), which have their own policy.
-The property of the policy can be set to one of the following values:
-
-- "default" - takes the default value
-- "inherit" - takes value from the Context (can be used only in the Container policy)
-- "none" - no one can perform this action
-- "all" - all Context users can perform this action
-- "user" - all Container users can perform this action
-- "manager" - all Container managers can perform this action
-- "owner" - only Container owner can perform this action
-- "itemOwner" - only item owner can perform this action (can be used only in the item policy)
-
-You can also combine the values listed above. If you want to allow item updates to be executed only by the item owner,
-with the additional assumption that they must be an active user of the Container, you can write \`itemOwner&user\`.
-But if you want to allow the Container managers to also update the item, you can write \`itemOwner&user,manager\`.
-In the policy entry, the \`&\` character means 'and', and the coma \`,\` means 'or'.
-
-> Default policy:
-
-\`\`\`
-${JSON.stringify(DefaultContextPolicy, null, 2)}
-\`\`\`
-
-${this.generateAndCollectMarkdownForObjectType(0, policyType)}`;
-        const fileName = "Policy";
-        files.push(`_${fileName}.md`);
-        const filePath = path.resolve(this.slateDir, `includes/_${fileName}.md`);
-        await fs.promises.mkdir(path.dirname(filePath), {recursive: true});
-        await fs.promises.writeFile(filePath, markdown);
-    }
-
     async changeIncludesInIndex(files: string[]) {
         const indexFile = path.resolve(this.slateDir, "includes/index.md.erb");
         await fs.promises.mkdir(path.dirname(indexFile), {recursive: true});
@@ -185,12 +143,12 @@ ${this.generateAndCollectMarkdownForObjectType(0, policyType)}`;
             await this.generateMarkdownFromApiMethod(files, api, method);
         }
     }
-
+    
     generateUnionDescription(type: types.UnionType) {
         const namesAndValues = type.types.map(element => (element.kind === "literal") ? "\"" + element.value + "\"" : (element.kind === "object") ? element.name : "");
         return `one of the following: ${namesAndValues.join(", ")}\n`;
     }
-
+    
     async generateMarkdownFromApiMethod(files: string[], api: types.Api, method: types.ApiMethod) {
         const methodParametersArray = this.createArrayFromMap(method.parameters);
         const parameters = (() => {
@@ -248,7 +206,7 @@ ${errorCodes.map(x => (this.jsonRpcErrorCodes) ? `${this.jsonRpcErrorCodes[x].co
         const commandExample = "```shell\n" + `${this.getCurlCommand(method)}` + "\n```";
         return commandExample;
     }
-
+    
     generateCodeExamplesForMethod(method: types.ApiMethod) {
         const payload = JSON.stringify({jsonrpc: "2.0", id: 128, method: method.fullName, params: method.exampleParameters}, null, 4).split("\n").map(e => "    " + e).join("\n").trimStart();
         const codeExample =
@@ -262,13 +220,13 @@ ${errorCodes.map(x => (this.jsonRpcErrorCodes) ? `${this.jsonRpcErrorCodes[x].co
 });` + "\n```";
         return codeExample;
     }
-
+    
     generateAndCollectMarkdownForObjectType(ident: number, object: types.ObjectType | types.UnionType) {
         const additionalTypesList: string[] = [];
         const objectString = this.generateMarkdownForObjectType(ident, object, additionalTypesList);
         return `${objectString ? objectString + " " : ""}${additionalTypesList.join("\n")}`;
     }
-
+    
     generateMarkdownForObjectType(ident: number, object: types.ObjectType | types.UnionType, additionalTypesList: string[]): string {
         if (object.kind === "object") {
             const header = `
@@ -374,7 +332,7 @@ Parameter | Type | Enum | Description
             },
         };
     }
-
+    
     getMethodInfoForCurl(method: types.ApiMethod) {
         const headerName = (method.fullName.startsWith("manager/auth")) ? "" : "Authorization";
         const value = (method.fullName.startsWith("manager/auth")) ? "" : "Bearer TOKEN";
@@ -383,7 +341,7 @@ Parameter | Type | Enum | Description
         const payload = JSON.stringify({jsonrpc: "2.0", id: 128, method: method.fullName, params: params}, null, 4);
         return {endpoint, method, params, tokenValue: value, tokenHeader: headerName, payload};
     }
-
+    
     getCurlCommand(method: types.ApiMethod) {
         const callInfo = this.getMethodInfoForCurl(method);
         const jsonRpcRequest = callInfo.payload.split("\n").map(e => "    " + e).join("\n").trimStart();
@@ -395,7 +353,7 @@ Parameter | Type | Enum | Description
         const exampleResposne = "> The command above returns JSON structured like this:\n\n" + "```json\n" + `${JSON.stringify({jsonrpc: "2.0", id: 128, result: method.exampleResult}, null, 4)}` + "\n```";
         return exampleResposne;
     }
-
+    
     async generatePreamble(files: string[]) {
         const fileName = "preamble";
         files.push(`_${fileName}.md`);

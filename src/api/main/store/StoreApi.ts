@@ -188,4 +188,12 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
         }
         return {results};
     }
+    
+    @ApiMethod({})
+    async storeSendCustomEvent(model: storeApi.StoreSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const store = await this.storeService.sendCustomNotification(cloudUser, model.storeId, model.keyId, model.data, model.channel, model.users);
+        this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
 }

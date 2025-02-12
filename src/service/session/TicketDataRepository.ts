@@ -42,16 +42,16 @@ export class TicketDataRepository {
             {
                 $match: {
                     _id: id,
-                }
+                },
             },
             {
                 $lookup: {
                     from: SessionRepository.COLLECTION_NAME,
                     localField: "sessionId",
                     foreignField: "_id",
-                    as: "sessions"
-                }
-            }
+                    as: "sessions",
+                },
+            },
         ]).toArray()) as any[];
         const rawTicketData = array[0];
         if (!rawTicketData) {

@@ -54,8 +54,27 @@ export type SizeInBytes = number&{__sizeInBytes: never};
 export type UserKeyData = Base64&{__userKeyData: never};
 export type EncryptionKey = Hex&{__encryptionKey: never};
 export type WsConnectionId = string&{__wsConnectionId: never};
-export type WsChannelName = "thread"|"store"|"stream"|"inbox";
 export type Quantity = number&{__quantity: never};
+export type WsChannelName = string&{__customChannelName: never};
+export type Query = {$and: Query[]} | {$or: Query[]} | PropertiesQuery;
+
+export type PropertiesQuery = Record<string, PropertyQuery>;
+
+export type PropertyQuery = Value | {
+    $gt?: number;
+    $gte?: number;
+    $lt?: number;
+    $lte?: number;
+    $exists?: boolean;
+    $eq?: Value;
+    $ne?: Value;
+    $in?: Value[];
+    $startsWith?: string;
+    $endsWith?: string;
+    $contains?: string;
+};
+
+export type Value = string|number|boolean|null;
 
 export interface ApiError {
     msg: string;
@@ -76,6 +95,7 @@ export interface ListModel {
     limit: number;
     sortOrder: SortOrder;
     lastId?: string;
+    query?: Query;
 }
 
 export interface ListModel2<T> {

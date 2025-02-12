@@ -51,7 +51,7 @@ export class TicketsDb {
         if (count === 0) {
             return {
                 ids: [],
-                ttl: this.getTicketsTTL()
+                ttl: this.getTicketsTTL(),
             };
         }
         const ticketDataId = Crypto.randomBytes(16);
@@ -72,7 +72,7 @@ export class TicketsDb {
         await this.repositoryFactory.createTicketDataRepository(session).insert(dbTicketData);
         return {
             ids: ticketsIds,
-            ttl: this.getTicketsTTL()
+            ttl: this.getTicketsTTL(),
         };
     }
     

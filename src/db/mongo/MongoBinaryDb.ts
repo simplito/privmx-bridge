@@ -20,7 +20,7 @@ export class MongoBinaryDb<K extends string> implements BinaryRepository2<K> {
     constructor(
         private collection: mongodb.Collection<{_id: string, data: Binary}>,
         private session: mongodb.ClientSession|undefined,
-        private logger: Logger
+        private logger: Logger,
     ) {
     }
     

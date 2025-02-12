@@ -20,9 +20,9 @@ export class Migration061IndexesForAuthorField {
         const dbManager = ioc.getMongoDbManager();
         
         const storeCollection = await dbManager.createOrGetCollection("storeFile");
-        await storeCollection.createIndex({author: 1})
-
+        await storeCollection.createIndex({author: 1});
+        
         const streamCollection = await dbManager.createOrGetCollection("threadMessage");
-        await streamCollection.createIndex({author: 1})
+        await streamCollection.createIndex({author: 1});
     }
 }

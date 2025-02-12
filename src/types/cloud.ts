@@ -24,6 +24,17 @@ export type AclGroups =  Record<AclGroupName, AclFunctions>;
 export type AppPubKey = types.core.EccPubKey;
 export type UserPubKey = types.core.EccPubKey;
 
+export interface UserIdentity {
+    id: UserId;
+    pub: UserPubKey;
+}
+
+export interface UserIdentityWithStatus {
+    id: UserId;
+    pub: UserPubKey;
+    status: "active"|"inactive";
+}
+
 export interface UserKeysEntry {
     user: UserId;
     keys: types.core.KeyEntry[];
@@ -64,11 +75,20 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     ownerCanBeRemovedFromManagers?: PolicyBooleanEntry;
     /** Determines whether the policy can be overwritten in container */
     canOverwriteContextPolicy?: PolicyBooleanEntry;
+    /** Determines who can send custom notifications */
+    sendCustomNotification?: PolicyEntry;
 }
 
 export interface ContainerPolicy extends ContainerWithoutItemPolicy {
     /** Item policy */
     item?: ItemPolicy;
+}
+
+export interface ContextInnerPolicy {
+    /** Determines who can list users of this context */
+    listUsers?: PolicyEntry;
+    /** Determines who can send custom notifications */
+    sendCustomNotification?: PolicyEntry;
 }
 
 /** @doctype string */

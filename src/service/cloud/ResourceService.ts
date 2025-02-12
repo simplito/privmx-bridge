@@ -54,7 +54,7 @@ export class ResourceService {
                 props: newProps,
             },
             history: [],
-            stats: {}
+            stats: {},
         };
         for (const stat of resInfo.stats || []) {
             resource.stats[stat] = {count: 0, lastDate: now};
@@ -333,7 +333,7 @@ export class ResourceService {
     }
     
     private async checkAndCommitBigBuffersAndReturnsNewProps(user: db.context.ContextUser, requestId: types.request.RequestId|undefined, type: ResourceTypeInfo, props: ResourceProps) {
-        const request = requestId ? await this.repositoryFactory.createRequestRepository().getWithAccessCheck(user.userPubKey as any, requestId) : null;
+        const request = requestId ? await this.repositoryFactory.createRequestRepository().getWithAccessCheck(user.userPubKey, requestId) : null;
         this.checkBigBuffers(request, {type: "object", props: type.props}, props);
         const newProps = await this.commitBigBuffersAndReturnsNewProps(request, {type: "object", props: type.props}, props);
         return newProps as ResourceProps;
@@ -473,7 +473,7 @@ export class ResourceService {
         if (type.type === "primitive") {
             if (type.primitive === "bigbuffer") {
                 if (value) {
-                    await this.storageService.delete((value as any).fileId);
+                    await this.storageService.delete((value as {fileId: types.request.FileId}).fileId);
                 }
             }
         }

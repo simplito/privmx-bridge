@@ -228,56 +228,56 @@ export interface IStoreApi {
     * @returns Store's info
     */
     getStore(model: GetStoreModel): Promise<GetStoreResult>;
-
+    
     /**
     * List stores in given context
     * @param model Context's ID
     * @returns List of stores
     */
     listStores(model: ListStoresModel): Promise<ListStoresResult>;
-
+    
     /**
     * Deletes store
     * @param model Context's ID, Store's ID
     * @returns "OK"
     */
     deleteStore(model: DeleteStoreModel): Promise<types.core.OK>;
-
+    
     /**
     * Deletes given Stores, requires that they belong to the same context
     * @param model Context's ID, List of stores ids
     * @returns List of ID and status for every deletion attempt
     */
     deleteManyStores(model: DeleteManyStoresModel): Promise<DeleteManyStoresResult>;
-
+    
     /**
     * Fetches file with given ID
     * @param model Context's ID, file's ID
     * @returns file's info
     */
     getStoreFile(model: GetStoreFileModel): Promise<GetStoreFileResult>;
-
+    
     /**
     * List files in given Store
     * @param model Context's ID
     * @returns List of files
     */
     listStoreFiles(model: ListStoreFilesModel): Promise<ListStoreFilesResult>;
-
+    
     /**
     * Deletes file
     * @param model Context's ID, file's ID
     * @returns "OK"
     */
     deleteStoreFile(model: DeleteStoreFileModel): Promise<types.core.OK>
-
+    
     /**
     * Deletes given files, requires that they belong to the same store
     * @param model Context's ID, List of files IDs
     * @returns List of ID and status for every deletion attempt
     */
     deleteManyStoreFiles(model: DeleteManyStoreFilesModel): Promise<DeleteManyStoreFilesResult>;
-
+    
     /**
     * Deletes all files older than given timestamp
     * @param model Context's ID, Store's ID, timestamp

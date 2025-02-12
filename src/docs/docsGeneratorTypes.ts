@@ -127,7 +127,6 @@ export interface JsonDocs {
     httpErrorCodes: HttpErrorCode[],
     jsonRpcErrors: JsonRpcErrorCodes,
     aclGroups: AclGroups,
-    policy: ObjectType;
 }
 export type AclRecord = Record<string, string[]>;
 export type AclGroup = {[key: string]: AclRecord};

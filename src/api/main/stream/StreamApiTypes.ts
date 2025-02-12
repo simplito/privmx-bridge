@@ -107,6 +107,23 @@ export interface StreamRoomDeletedEventData {
     type?: types.stream.StreamRoomType;
 }
 
+export type StreamRoomCustomEvent = types.cloud.Event<"custom", `stream/${types.stream.StreamRoomId}/${types.core.WsChannelName}`, StreamRoomCustomEventData>;
+
+export interface StreamRoomCustomEventData {
+    id: types.stream.StreamRoomId;
+    keyId: types.core.KeyId;
+    eventData: unknown;
+    author: types.cloud.UserIdentity;
+}
+
+export interface StreamRoomSendCustomEventModel {
+    streamRoomId: types.stream.StreamRoomId;
+    channel: types.core.WsChannelName;
+    keyId: types.core.KeyId;
+    data: unknown;
+    users?: types.cloud.UserId[];
+}
+
 export interface IStreamApi {
     streamRoomCreate(model: StreamRoomCreateModel): Promise<StreamRoomCreateResult>;
     streamRoomUpdate(model: StreamRoomUpdateModel): Promise<types.core.OK>;
@@ -115,4 +132,5 @@ export interface IStreamApi {
     streamRoomGet(model: StreamRoomGetModel): Promise<StreamRoomGetResult>;
     streamRoomList(model: StreamRoomListModel): Promise<StreamRoomListResult>;
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
+    streamRoomSendCustomEvent(model: StreamRoomSendCustomEventModel): Promise<types.core.OK>;
 }

@@ -29,7 +29,7 @@ export class ThreadRepository {
     async get(id: types.thread.ThreadId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.thread.ThreadId[]) {
         return this.repository.getMulti(ids);
     }
@@ -79,19 +79,19 @@ export class ThreadRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
-                $match: match
-            }
+                $match: match,
+            },
         ], listParams, sortBy);
     }
     
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel2<types.thread.ThreadId>) {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
-
+    
     async getAllThreads(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
         const match: Record<string, unknown> = {
             contextId: contextId,
@@ -169,7 +169,7 @@ export class ThreadRepository {
     async deleteThread(id: types.thread.ThreadId) {
         return this.repository.delete(id);
     }
-
+    
     async deleteManyThreads(ids: types.thread.ThreadId[]) {
         return this.repository.deleteMany(q => q.in("id", ids));
     }

@@ -94,6 +94,7 @@ export const API_ERROR_CODES = {
     "CANNOT_UNASSIGN_CONTEXT_FROM_ITS_PARENT": {code: 0x6134, message: "Cannot unassign context from its parent"},
     "CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE": {code: 0x6135, message: "Cannot switch connected context to private"},
     "METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"   : {code: 0x6136, message: "Method is callable with websocket only"},
+    "USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER": {code: 0x6137, message: "User does not have access to container"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

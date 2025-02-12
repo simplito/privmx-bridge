@@ -93,7 +93,7 @@ export type ConfigChanger = (values: ConfigValues) => ConfigValues;
 export class ConfigLoader {
     
     constructor(
-        private callbacks: Callbacks
+        private callbacks: Callbacks,
     ) {
     }
     
@@ -120,7 +120,7 @@ export class ConfigLoader {
                 },
                 proxy: {
                     allowedRemotes: "loopback",
-                    allowedHeaders: ["forwarded-for"]
+                    allowedHeaders: ["forwarded-for"],
                 },
             },
             application: {
@@ -143,7 +143,7 @@ export class ConfigLoader {
                 clearInterval: DateUtils.minutes(10),
                 maxInactiveTime: DateUtils.minutes(10),
                 tmpDir: NodePath.join(baseDir, "storage/tmp"),
-                filesDir: NodePath.join(baseDir, "storage/files")
+                filesDir: NodePath.join(baseDir, "storage/files"),
             },
             misc: {
                 maxTimestampDifference: DateUtils.hours(1),
@@ -154,7 +154,7 @@ export class ConfigLoader {
                 session: {
                     ticketsTTL: DateUtils.minutes(15),
                     restorableSessionTTL: DateUtils.days(5),
-                    exchangeTimeout: DateUtils.minutes(2)
+                    exchangeTimeout: DateUtils.minutes(2),
                 },
             },
             proxy: {

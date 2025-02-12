@@ -17,6 +17,8 @@ export type ContextDescription = string&{__contextDescription: never};
 export type ContextScope = "public"|"private";
 
 export interface ContextPolicy {
+    /** Policy for container unrelated actions in this context */
+    context?: types.cloud.ContextInnerPolicy
     /** Policy for threads in this context */
     thread?: types.cloud.ContainerPolicy;
     /** Policy for stores in this context */

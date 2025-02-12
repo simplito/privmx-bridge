@@ -67,7 +67,7 @@ export class KeyLoginService {
         session.set("properties", properties);
         session.set("keyLogin", {
             pub: user.pub,
-            priv: ECUtils.toWIF(priv)
+            priv: ECUtils.toWIF(priv),
         });
         session.set("username", user.I);
         session.set("primaryKey", user.primaryKey);
@@ -82,7 +82,7 @@ export class KeyLoginService {
         return {
             sessionId: session.id,
             I: user.I,
-            pub: ECUtils.publicToBase58DER(priv)
+            pub: ECUtils.publicToBase58DER(priv),
         };
     }
     

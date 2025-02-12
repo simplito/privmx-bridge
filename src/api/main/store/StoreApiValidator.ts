@@ -44,7 +44,7 @@ export class StoreApiValidator extends BaseValidator {
             storeId: this.tv.storeId,
         }));
         this.registerMethod("storeDeleteMany", this.builder.createObject({
-            storeIds: this.builder.createListWithMaxLength(this.tv.storeId, 128)
+            storeIds: this.builder.createListWithMaxLength(this.tv.storeId, 128),
         }));
         this.registerMethod("storeGet", this.builder.createObject({
             storeId: this.tv.storeId,
@@ -105,11 +105,18 @@ export class StoreApiValidator extends BaseValidator {
             fileId: this.tv.storeFileId,
         }));
         this.registerMethod("storeFileDeleteMany", this.builder.createObject({
-            fileIds: this.builder.createListWithMaxLength(this.tv.storeFileId, 128)
+            fileIds: this.builder.createListWithMaxLength(this.tv.storeFileId, 128),
         }));
         this.registerMethod("storeFileDeleteOlderThan", this.builder.createObject({
             storeId: this.tv.storeId,
             timestamp: this.tv.timestamp,
+        }));
+        this.registerMethod("storeSendCustomEvent", this.builder.createObject({
+            storeId: this.tv.storeId,
+            channel: this.tv.wsChannelName,
+            keyId: this.tv.keyId,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 128)),
         }));
     }
 }

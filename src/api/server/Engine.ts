@@ -52,7 +52,7 @@ export class Engine {
     
     optionsResponse(): EngineResponse {
         const response: EngineResponse = {
-            code: 200
+            code: 200,
         };
         this.addCrossDomainHeaders(response, true);
         return response;
@@ -86,7 +86,7 @@ export class Engine {
         return this.jsonResponse({
             jsonrpc: "2.0",
             id: id,
-            result: result
+            result: result,
         }, responseCode);
     }
     
@@ -97,16 +97,16 @@ export class Engine {
             id: id,
             error: {
                 code: error.code,
-                message: error.message
-            }
+                message: error.message,
+            },
         }, responseCode);
     }
     
     redirect(url: string): EngineResponse {
         return {
             headers: {
-                "Location": url
-            }
+                "Location": url,
+            },
         };
     }
     
@@ -120,7 +120,7 @@ export class Engine {
     static jsonResponse(data: any): EngineResponse {
         return {
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
         };
     }
 }

@@ -29,7 +29,7 @@ export class StreamRoomRepository {
     async get(id: types.stream.StreamRoomId) {
         return this.repository.get(id);
     }
-
+    
     async getMany(ids: types.stream.StreamRoomId[]) {
         return this.repository.getMulti(ids);
     }
@@ -89,12 +89,12 @@ export class StreamRoomRepository {
                     from: ContextRepository.COLLECTION_NAME,
                     localField: "contextId",
                     foreignField: "_id",
-                    as: "contextObj"
-                }
+                    as: "contextObj",
+                },
             },
             {
-                $match: match
-            }
+                $match: match,
+            },
         ], listParams, sortBy);
     }
     
@@ -164,7 +164,7 @@ export class StreamRoomRepository {
     async deleteStreamRoom(id: types.stream.StreamRoomId) {
         await this.repository.delete(id);
     }
-
+    
     async deleteManyStreamRooms(ids: types.stream.StreamRoomId[]) {
         await this.repository.deleteMany(q => q.in("id", ids));
     }

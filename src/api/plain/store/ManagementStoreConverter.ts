@@ -48,7 +48,7 @@ export class ManagementStoreConverter {
             keyId: file.keyId,
             thumb: file.thumb ? {
                 size: file.thumb.size,
-            } : undefined
+            } : undefined,
         };
         return res;
     }

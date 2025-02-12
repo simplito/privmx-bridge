@@ -17,7 +17,7 @@ import * as mkdrip from "mkdirp";
 import { Crypto } from "../utils/crypto/Crypto";
 import { MongoDbManager } from "./mongo/MongoDbManager";
 import { IStorageService, FileId } from "../service/misc/StorageService";
-
+import * as mongodb from "mongodb";
 export class Importer {
     
     constructor(
@@ -58,7 +58,7 @@ export class Importer {
             for (const index of indexes[collectionName] || []) {
                 await collection.createIndex(index);
             }
-            const dbData = <any[]>JSON.parse(await FsPromise.readFileEnc(filePath, "utf8"));
+            const dbData = JSON.parse(await FsPromise.readFileEnc(filePath, "utf8")) as mongodb.Document[];
             this.logger.notice("Importing " + ((i + 1) + "/" + files.length) + " " + file + " " + dbData.length);
             for (const entry of dbData) {
                 await collection.insertOne(entry);

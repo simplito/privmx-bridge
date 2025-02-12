@@ -19,6 +19,7 @@ import { MetricService } from "../../service/misc/MetricService";
 import * as types from "../../types";
 import { ListWithCount } from "../../CommonTypes";
 import { AppException } from "../../api/AppException";
+import { MongoQueryConverter } from "./MongoQueryConverter";
 
 export class MongoObjectRepository<K extends string|number, V> implements ObjectRepository<K, V> {
     
@@ -75,7 +76,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {
-            const x = await this.collection.findOne({_id: key}, this.getOptions());
+            const x = await this.collection.findOne<V>({_id: key}, this.getOptions());
             return x ? this.convertFromDbObj(x) : null;
         }
         finally {
@@ -91,11 +92,11 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
                 return [];
             }
             if (keys.length === 1) {
-                const x = await this.collection.findOne({_id: keys[0]}, this.getOptions());
+                const x = await this.collection.findOne<V>({_id: keys[0]}, this.getOptions());
                 return x ? [this.convertFromDbObj(x)] : [];
             }
             const list = await this.collection.find({_id: {$in: keys}}, this.getOptions()).toArray();
-            return list.map(x => this.convertFromDbObj(x));
+            return list.map(x => this.convertFromDbObj(x as V));
         }
         finally {
             this.logger.time(startTime, "Mongo getMulti", this.collection.collectionName, keys);
@@ -106,7 +107,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();
         try {
-            const x = await this.collection.findOne({_id: key}, this.getOptions());
+            const x = await this.collection.findOne<V>({_id: key}, this.getOptions());
             return x ? this.convertFromDbObj(x) : def;
         }
         finally {
@@ -119,7 +120,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         this.metricService.addDbRequest();
         try {
             const list = await this.collection.find({}, this.getOptions()).toArray();
-            return list.map(x => this.convertFromDbObj(x));
+            return list.map(x => this.convertFromDbObj(x as V));
         }
         finally {
             this.logger.time(startTime, "Mongo getAll", this.collection.collectionName);
@@ -143,7 +144,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         this.metricService.addDbRequest();
         const query = f(new MongoQuery(this.idProperty));
         try {
-            const x = await this.collection.findOne(query, this.getOptions());
+            const x = await this.collection.findOne<V>(query, this.getOptions());
             return x ? this.convertFromDbObj(x) : null;
         }
         finally {
@@ -157,7 +158,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         const query = f(new MongoQuery(this.idProperty));
         try {
             const list = await this.collection.find(query, this.getOptions()).toArray();
-            return list.map(x => this.convertFromDbObj(x));
+            return list.map(x => this.convertFromDbObj(x as V));
         }
         finally {
             this.logger.time(startTime, "Mongo findAll", this.collection.collectionName, JSON.stringify(query));
@@ -235,12 +236,13 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     query(f: (q: Query<V>) => QueryResult): ObjectQuery<V> {
-        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), x => this.convertFromDbObj(x), this.session, <string>this.idProperty, this.logger, this.metricService);
+        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), x => this.convertFromDbObj(x), this.session, <string> this.idProperty, this.logger, this.metricService);
     }
     
     /** Perform find with sort, skip and limit and returns list of found elements and count of all matched elements */
     async matchX(match: any, listParams: types.core.ListModel, sortBy: keyof V) {
-        return this.getMatchingPage([{$match: match}], listParams, sortBy);
+        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
+        return this.getMatchingPage([{$match: match}, ...mongoQueries], listParams, sortBy);
     }
     
     async getMatchingPage<X = V>(stages: any[], listParams: types.core.ListModel, sortBy: keyof V) {
@@ -250,17 +252,17 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
                 skip: (listParams.skip > 0) ? listParams.skip - 1 : 0,
                 sortOrder: listParams.sortOrder,
             };
-
+            
             const page = await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
             const firstRecord = page.list[0] as {id?: unknown};
             if (page.count > 1 && "id" in firstRecord && firstRecord.id === listParams.lastId) {
                 page.list.shift();
                 return page;
             }
-
+            
             temporaryListProperties.limit = listParams.limit;
             temporaryListProperties.skip = 0;
-
+            
             const lastObject = (await this.get(listParams.lastId as K)) as V;
             if (!lastObject) {
                 throw new AppException("NO_MATCH_FOR_LAST_ID");
@@ -268,16 +270,16 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
             const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
             const additionalCriteria = {
                 $match: {
-                    [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gt" : "$lt"]: lastObject[sortBy] }
-                }
+                    [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gt" : "$lt"]: lastObject[sortBy] },
+                },
             };
             stages.push(additionalCriteria);
-
+            
             return await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
         }
         return this.aggregationX<X>(stages, listParams, sortBy);
     }
-
+    
     /** Perform given stages with sort, skip and limit and returns list of found elements and count of all matched elements */
     async aggregationX<X = V>(stages: any[], listParams: types.core.ListModel, sortBy: keyof V): Promise<ListWithCount<X>> {
         const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
@@ -285,17 +287,17 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
             ...stages,
             {
                 $sort: {
-                    [theSortBy]: listParams.sortOrder === "asc" ? 1 : -1
-                }
+                    [theSortBy]: listParams.sortOrder === "asc" ? 1 : -1,
+                },
             },
             {
                 $facet: {
                     totalData: [{$skip: listParams.skip}, {$limit: listParams.limit}],
-                    totalCount: [{$count: "count"}]
-                }
-            }
+                    totalCount: [{$count: "count"}],
+                },
+            },
         ];
-        const result = <{totalData: X[], totalCount: {count: number}[]}[]>await this.collection.aggregate(pipeline).toArray();
+        const result = <{totalData: X[], totalCount: {count: number}[]}[]> await this.collection.aggregate(pipeline).toArray();
         return {list: result[0].totalData.map(x => this.convertFromDbObjEx(x)), count: result[0].totalCount.length === 0 ? 0 : result[0].totalCount[0].count};
     }
     
@@ -305,21 +307,21 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         }
         const pipeline = [
             {
-                $match: match
+                $match: match,
             },
             {
                 $sort: {
-                    _id: listParams.sortOrder === "asc" ? 1 : -1
-                }
+                    _id: listParams.sortOrder === "asc" ? 1 : -1,
+                },
             },
             {
                 $facet: {
                     totalData: [{$limit: listParams.limit}],
-                    totalCount: [{$count: "count"}]
-                }
-            }
+                    totalCount: [{$count: "count"}],
+                },
+            },
         ];
-        const result = <{totalData: V[], totalCount: {count: number}[]}[]>await this.collection.aggregate(pipeline).toArray();
+        const result = <{totalData: V[], totalCount: {count: number}[]}[]> await this.collection.aggregate(pipeline).toArray();
         return {list: result[0].totalData.map(x => this.convertFromDbObjEx(x)), count: result[0].totalCount.length === 0 ? 0 : result[0].totalCount[0].count};
     }
     

@@ -38,7 +38,7 @@ it("Should create request", async () => {
     
     // Act
     const req = await requestService.createRequest(janek, {
-        files: [{size: 1000, checksumSize: 0}, {size: 2000, checksumSize: 0}]
+        files: [{size: 1000, checksumSize: 0}, {size: 2000, checksumSize: 0}],
     });
     
     // Asserts
@@ -54,7 +54,7 @@ it("Should fails during creating request with file size exceeded", async () => {
     // Act & Assert
     try {
         await requestService.createRequest(janek, {
-            files: [{size: 5000001, checksumSize: 0}]
+            files: [{size: 5000001, checksumSize: 0}],
         });
     }
     catch (e) {
@@ -72,7 +72,7 @@ it("Should fails during creating request which has too many files", async () => 
     // Act & Assert
     try {
         await requestService.createRequest(janek, {
-            files: [{size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}]
+            files: [{size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}, {size: 1000, checksumSize: 0}],
         });
     }
     catch (e) {
@@ -90,7 +90,7 @@ it("Should fails during creating request which size is exceeded", async () => {
     // Act & Assert
     try {
         await requestService.createRequest(janek, {
-            files: [{size: 400000, checksumSize: 0}, {size: 400000, checksumSize: 0}, {size: 400000, checksumSize: 0}]
+            files: [{size: 400000, checksumSize: 0}, {size: 400000, checksumSize: 0}, {size: 400000, checksumSize: 0}],
         });
     }
     catch (e) {
@@ -140,7 +140,7 @@ it("Should send chunk to request", async () => {
         requestId: requestId,
         seq: 0,
         data: data,
-        fileIndex: 0
+        fileIndex: 0,
     });
     
     // Asserts
@@ -161,7 +161,7 @@ it("Should commit file", async () => {
         requestId: requestId,
         seq: 0,
         checksum: checksum,
-        fileIndex: 0
+        fileIndex: 0,
     });
     
     // Asserts
@@ -183,7 +183,7 @@ it("Should fails during sending chunk to notexistent request", async () => {
             requestId: notExistentRequestId,
             seq: 0,
             data: Buffer.alloc(100),
-            fileIndex: 0
+            fileIndex: 0,
         });
     }
     catch (e) {
@@ -205,7 +205,7 @@ it("Should fails during sending chunk to not mine request", async () => {
             requestId: notExistentRequestId,
             seq: 0,
             data: Buffer.alloc(100),
-            fileIndex: 0
+            fileIndex: 0,
         });
     }
     catch (e) {
@@ -227,7 +227,7 @@ it("Should fails during sending chunk to notexistent file", async () => {
             requestId: requestId,
             seq: 0,
             data: Buffer.alloc(100),
-            fileIndex: 123
+            fileIndex: 123,
         });
     }
     catch (e) {
@@ -249,7 +249,7 @@ it("Should fails during sending chunk to closed file", async () => {
             requestId: requestId,
             seq: 0,
             data: Buffer.alloc(100),
-            fileIndex: 2
+            fileIndex: 2,
         });
     }
     catch (e) {
@@ -271,7 +271,7 @@ it("Should fails during sending chunk and exceeded file size", async () => {
             requestId: requestId,
             seq: 0,
             data: Buffer.alloc(10000),
-            fileIndex: 0
+            fileIndex: 0,
         });
     }
     catch (e) {
@@ -293,7 +293,7 @@ it("Should fails during sending chunk with invalid seq", async () => {
             requestId: requestId,
             seq: 66,
             data: Buffer.alloc(100),
-            fileIndex: 0
+            fileIndex: 0,
         });
     }
     catch (e) {
@@ -320,7 +320,7 @@ function createRequestService() {
                 size: 1024,
                 checksumSize: 100,
                 checksumSent: 0,
-                closed: false
+                closed: false,
             },
             {
                 id: <types.request.FileId>"file-2",
@@ -329,7 +329,7 @@ function createRequestService() {
                 size: 4096,
                 checksumSize: 0,
                 checksumSent: 0,
-                closed: false
+                closed: false,
             },
             {
                 id: <types.request.FileId>"file-3",
@@ -338,9 +338,9 @@ function createRequestService() {
                 size: 2048,
                 checksumSize: 0,
                 checksumSent: 0,
-                closed: true
-            }
-        ]
+                closed: true,
+            },
+        ],
     };
     const repository = createMock<MongoObjectRepository<types.request.RequestId, db.request.Request>>({});
     mock(repository, "generateId");
@@ -358,7 +358,7 @@ function createRequestService() {
         clearInterval: DateUtils.minutes(10),
         maxInactiveTime: DateUtils.minutes(10),
         tmpDir: "/tmp",
-        filesDir: "/storage"
+        filesDir: "/storage",
     }})});
     const fileSystemService = createMock<IStorageService>({});
     mock(fileSystemService, "create");
@@ -370,6 +370,6 @@ function createRequestService() {
         repositoryFactory,
         configService,
         fileSystemService,
-        requestService
+        requestService,
     };
 }

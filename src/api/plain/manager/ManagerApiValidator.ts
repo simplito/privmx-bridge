@@ -67,13 +67,13 @@ export class ManagerApiValidator extends BaseValidator {
         this.registerMethod("bindAccessToken", this.builder.createObject({
             accessToken: this.tv.apiAccessToken,
         }));
-
+        
         this.registerMethod("subscribeToChannel", this.builder.createObject({
-            channels: this.builder.createListWithMaxLength(this.tv.wsChannelName, 16),
+            channels: this.builder.createListWithMaxLength(this.tv.plainApiWsChannelName, 16),
         }));
-
+        
         this.registerMethod("unsubscribeFromChannel", this.builder.createObject({
-            channels: this.builder.createListWithMaxLength(this.tv.wsChannelName, 16),
+            channels: this.builder.createListWithMaxLength(this.tv.plainApiWsChannelName, 16),
         }));
     }
 }

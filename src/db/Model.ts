@@ -129,6 +129,8 @@ export namespace context {
         userPubKey: types.cloud.UserPubKey;
         acl: types.cloud.ContextAcl;
     }
+    
+    export type ContextUserWithStatus = ContextUser&{status: "active"|"inactive"};
 }
 
 export namespace solution {

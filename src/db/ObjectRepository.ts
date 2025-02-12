@@ -13,7 +13,9 @@ import * as types from "../types";
 import { Immutable } from "../CommonTypes";
 
 export interface QueryResult {
-    [key: string]: any;
+    [key: string]: unknown;
+    $and?: QueryResult[];
+    $or?: QueryResult[];
     __queryResult: never;
 }
 

@@ -30,7 +30,7 @@ export const test = testApi("client", "solution/", ManagementSolutionApi, new Ma
             id: "65fd820f0758a54a68558d7c" as types.cloud.SolutionId,
             created: 1726652150623 as types.core.Timestamp,
             name: "My Solution" as types.cloud.SolutionName,
-        }]
+        }],
     });
     call("createSolution", api => api.createSolution({
         name: "New solution" as types.cloud.SolutionName,
@@ -44,5 +44,5 @@ export const test = testApi("client", "solution/", ManagementSolutionApi, new Ma
     call("deleteSolution", api => api.deleteSolution({
         id: "2v36hhQQjXH74kGHyS7gxcEwWp4C" as types.cloud.SolutionId,
     })).setResult("OK");
-
+    
 });

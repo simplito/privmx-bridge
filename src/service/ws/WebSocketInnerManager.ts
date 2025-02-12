@@ -15,13 +15,16 @@ import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { PsonHelperEx } from "../../utils/PsonHelperEx";
 import { PlainApiEvent } from "../../api/plain/Types";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 
 export class WebSocketInnerManager {
     
     private servers: WebSocket.Server[];
     private psonHelper: PsonHelperEx;
     
-    constructor() {
+    constructor(
+        private activeUsers: ActiveUsersMap,
+    ) {
         this.servers = [];
         this.psonHelper = new PsonHelperEx([]);
     }
@@ -29,7 +32,7 @@ export class WebSocketInnerManager {
     registerServer(server: WebSocket.Server) {
         this.servers.push(server);
     }
-
+    
     sendToPlainUsers(solution: types.cloud.SolutionId, event: PlainApiEvent) {
         for (const server of this.servers) {
             for (const client of server.clients) {
@@ -138,6 +141,7 @@ export class WebSocketInnerManager {
     onClose(wsEx: WebSocketEx) {
         for (const session of wsEx.ex.sessions) {
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
+            void this.activeUsers.setUserAsInactive({userPubkey: session.username as unknown as types.core.EccPubKey, solutionId: session.solution});
         }
     }
     

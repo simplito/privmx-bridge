@@ -35,7 +35,7 @@ export class HttpClient2 {
     static post(url: string, headers: {[name: string]: string}, body: Buffer): Promise<Buffer> {
         return HttpClient2.request("POST", url, headers, body);
     }
-
+    
     static get(url: string, headers: {[name: string]: string}): Promise<Buffer> {
         return HttpClient2.request("GET", url, headers, Buffer.from(""));
     }
@@ -59,7 +59,7 @@ export class HttpClient2 {
                 path: parsedUrl.path,
                 method: opts.method || "GET",
                 headers: opts.headers || {},
-                agent: opts.agent
+                agent: opts.agent,
             };
             const callback = (msg: http.IncomingMessage) => {
                 defer.resolve({

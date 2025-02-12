@@ -104,7 +104,7 @@ export class SrpLoginService {
             k: this.serializeBigInteger(k),
             v: this.serializeBigInteger(v),
             b: this.serializeBigInteger(b),
-            B: this.serializeBigInteger(bigB)
+            B: this.serializeBigInteger(bigB),
         });
         session.set("username", user.username);
         session.set("primaryKey", user.primaryKey);
@@ -122,7 +122,7 @@ export class SrpLoginService {
             k: Hex.fromBN(k),
             s: Hex.from(user.s),
             B: Hex.fromBN(bigB),
-            loginData: user.loginData
+            loginData: user.loginData,
         };
         return res;
     }
@@ -172,7 +172,7 @@ export class SrpLoginService {
             B: Hex.fromBN(bigB),
             S: Hex.fromBN(S),
             N: Hex.fromBN(N),
-            M1: Hex.fromBN(serverM1)
+            M1: Hex.fromBN(serverM1),
         });
         
         if (serverM1.cmp(clientM1) != 0) {
@@ -190,7 +190,7 @@ export class SrpLoginService {
         }
         
         const result = <SrpExchangeResult>{
-            M2: Hex.fromBN(M2)
+            M2: Hex.fromBN(M2),
         };
         
         if (sessionKey) {

@@ -30,7 +30,7 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
     storeGet(model: storeApi.StoreGetModel): Promise<storeApi.StoreGetResult> {
         return this.request("store.storeGet", model);
     }
-
+    
     storeListAll(model: storeApi.StoreListAllModel): Promise<storeApi.StoreListAllResult> {
         return this.request("store.storeListAll", model);
     }
@@ -50,7 +50,7 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
     storeFileList(model: storeApi.StoreFileListModel): Promise<storeApi.StoreFileListResult> {
         return this.request("store.storeFileList", model);
     }
-
+    
     storeFileListMy(model: storeApi.StoreFileListMyModel): Promise<storeApi.StoreFileListMyResult> {
         return this.request("store.storeFileListMy", model);
     }
@@ -74,16 +74,20 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
     storeFileDelete(model: storeApi.StoreFileDeleteModel): Promise<types.core.OK> {
         return this.request("store.storeFileDelete", model);
     }
-
+    
     storeDeleteMany(model: storeApi.StoreDeleteManyModel): Promise<storeApi.StoreDeleteManyResult> {
         return this.request("store.storeDeleteMany", model);
     }
-
+    
     storeFileDeleteMany(model: storeApi.StoreFileDeleteManyModel): Promise<storeApi.StoreFileDeleteManyResult> {
         return this.request("store.storeFileDeleteMany", model);
     }
-
+    
     storeFileDeleteOlderThan(model: storeApi.StoreFileDeleteOlderThanModel): Promise<storeApi.StoreFileDeleteOlderThanResult> {
         return this.request("store.storeFileDeleteOlderThan", model);
+    }
+    
+    storeSendCustomEvent(model: storeApi.StoreSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("store.storeSendCustomEvent", model);
     }
 }

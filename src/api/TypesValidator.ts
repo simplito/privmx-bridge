@@ -91,7 +91,12 @@ export class TypesValidator {
     itemPolicy: Validator;
     sortOrder: Validator;
     limit: Validator;
+    plainApiWsChannelName: Validator;
     wsChannelName: Validator;
+    dbQuery: Validator;
+    queryPropertiesMap: Validator;
+    queryProperty: Validator;
+    queryValue: Validator;
     
     constructor() {
         this.builder = new AdvValidator.ValidatorBuilder();
@@ -179,7 +184,7 @@ export class TypesValidator {
             deviceName: this.builder.optional(this.loginProperty),
             osName: this.builder.optional(this.loginProperty),
             deviceToken: this.loginProperty,
-            unregisteredSession: this.builder.optional(this.builder.maxLength(this.builder.string, 1024))
+            unregisteredSession: this.builder.optional(this.builder.maxLength(this.builder.string, 1024)),
         });
         
         this.keyId = this.builder.rangeLength(this.builder.string, 1, 128);
@@ -220,12 +225,37 @@ export class TypesValidator {
         this.storeData = this.unknown4Kb;
         this.storeFileId = id;
         this.storeFileMeta = this.unknown4Kb;
-        
+        this.queryValue = this.builder.createOneOf([this.builder.int, this.builder.string, this.builder.bool, this.builder.nullValue]);
+        this.queryProperty = this.builder.createOneOf([this.queryValue, this.builder.createObject({
+            $gt: this.builder.optional(this.builder.int),
+            $gte: this.builder.optional(this.builder.int),
+            $lt: this.builder.optional(this.builder.int),
+            $lte: this.builder.optional(this.builder.int),
+            $exists: this.builder.optional(this.builder.bool),
+            $eq: this.builder.optional(this.queryValue),
+            $ne: this.builder.optional(this.queryValue),
+            $in: this.builder.optional(this.builder.createList(this.queryValue)),
+            $startsWith: this.builder.optional(this.builder.string),
+            $endsWith: this.builder.optional(this.builder.string),
+            $contains: this.builder.optional(this.builder.string),
+        })]);
+        this.queryPropertiesMap = this.builder.createMap(this.builder.string, this.queryProperty);
+        const dbQueryValidators = [] as Validator[];
+        this.dbQuery = this.builder.createOneOf(dbQueryValidators);
+        dbQueryValidators.push(this.builder.createObject({
+            $and: this.builder.createList(this.dbQuery),
+        }));
+        dbQueryValidators.push(this.builder.createObject({
+            $or: this.builder.createList(this.queryPropertiesMap),
+        }));
+        dbQueryValidators.push(this.queryPropertiesMap);
         this.listModel = this.builder.createObject({
             skip: this.intNonNegative,
             limit: this.builder.range(this.builder.int, 1, 100),
             sortOrder: this.builder.createEnum(["asc", "desc"]),
             lastId: this.builder.optional(this.id),
+            query: this.builder.optional(this.dbQuery),
+            
         });
         this.inboxId = id;
         this.inboxData = this.builder.createObject({
@@ -290,14 +320,27 @@ export class TypesValidator {
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
-        this.wsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox"]);
+        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox"]);
+        this.wsChannelName = this.builder.createCustom((value) => {
+            const alphaNumericalRegex = /^[a-zA-Z0-9]*$/;
+            
+            if (typeof value !== "string") {
+                throw new Error("Expected string");
+            }
+            if (!alphaNumericalRegex.test(value)) {
+                throw new Error("Value has to be alphanumerical string");
+            }
+            if (value.length > 32) {
+                throw new Error("Max value length: 32");
+            }
+        });
     }
     
     createAcl(entryType: Validator, aclType: Validator, propertyType: Validator, maxEntryLength: number, maxAclLength: number, maxAclListLength: number) {
         const acls = this.builder.createListWithMaxLength(this.builder.createObject({
             type: this.builder.createEnum([0, 1, 2, 3]),
             property: propertyType,
-            list: this.builder.createListWithMaxLength(aclType, maxAclListLength)
+            list: this.builder.createListWithMaxLength(aclType, maxAclListLength),
         }), maxAclLength);
         return this.builder.createObject({
             defaultAcls: this.builder.optional(acls),
@@ -305,9 +348,9 @@ export class TypesValidator {
                 entryType,
                 this.builder.createObject({
                     value: entryType,
-                    acls: acls
-                })
-            ]), maxEntryLength)
+                    acls: acls,
+                }),
+            ]), maxEntryLength),
         });
     }
     

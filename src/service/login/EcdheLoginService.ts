@@ -54,7 +54,7 @@ export class EcdheLoginService {
             private_section_allowed: false,
             usergroup_sections_manager: false,
             regular_sections_manager: false,
-            all_users_lookup: false
+            all_users_lookup: false,
         });
         if (solution) {
             session.set("solution", solution);
@@ -103,7 +103,7 @@ export class EcdheLoginService {
             private_section_allowed: false,
             usergroup_sections_manager: false,
             regular_sections_manager: false,
-            all_users_lookup: false
+            all_users_lookup: false,
         });
         if (solutionId) {
             session.set("solution", solutionId);

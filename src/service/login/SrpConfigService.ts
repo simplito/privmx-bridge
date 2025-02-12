@@ -16,14 +16,14 @@ import { Hex } from "../../utils/Hex";
 export class SrpConfigService {
     
     constructor(
-        public config: SrpConfig
+        public config: SrpConfig,
     ) {
     }
     
     getInfo(): types.user.SrpInfo {
         return {
             N: Hex.fromBN(this.config.N),
-            g: Hex.fromBN(this.config.g)
+            g: Hex.fromBN(this.config.g),
         };
     }
 }

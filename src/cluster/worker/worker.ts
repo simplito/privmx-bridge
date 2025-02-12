@@ -93,7 +93,7 @@ async function initWorker(worker: Cluster.Worker) {
     if (config.server.ssl.enabled) {
         const httpsServer = registry.registerHttpsServer(https.createServer({
             key: fs.readFileSync(config.server.ssl.privKeyPath, "utf8"),
-            cert: fs.readFileSync(config.server.ssl.certificatePath, "utf8")
+            cert: fs.readFileSync(config.server.ssl.certificatePath, "utf8"),
         }, onRequest));
         setupServer(registry, httpsServer);
         httpsServer.listen(config.server.ssl.port, config.server.hostname, () => {
@@ -127,7 +127,7 @@ function setupServer(registry: WorkerRegistry, server: http.Server|https.Server)
                 ws.ping();
             });
         },
-        runOnCreate: false
+        runOnCreate: false,
     });
     return server;
 }
@@ -140,7 +140,7 @@ function setUpTerminus(registry: WorkerRegistry, server: http.Server|https.Serve
         healthChecks: {
             "/healthcheck": async () => {
                 return;
-            }
+            },
         },
         beforeShutdown: async () => {
             logger.out(`Shuting down - waiting max ${shutdownTimeout}ms to finish requests...`);
@@ -150,7 +150,7 @@ function setUpTerminus(registry: WorkerRegistry, server: http.Server|https.Serve
         },
         onShutdown: async () => {
             logger.out("Server gracefully turned off!");
-        }
+        },
     });
 }
 

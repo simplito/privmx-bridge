@@ -1,5 +1,6 @@
 import typescriptEslint from "@typescript-eslint/eslint-plugin";
 import stylisticJs from "@stylistic/eslint-plugin-js";
+import indentEmptyLines from "eslint-plugin-indent-empty-lines";
 import globals from "globals";
 import tsParser from "@typescript-eslint/parser";
 import path from "node:path";
@@ -22,10 +23,9 @@ export default [...compat.extends(
     plugins: {
         "@typescript-eslint": typescriptEslint,
         "@stylistic/js": stylisticJs,
+        "indent-empty-lines": indentEmptyLines,
     },
-    
-    ignores: ["scripts/*"],
-
+    files: ["**/*.ts"],
     languageOptions: {
         globals: {
             ...globals.node,
@@ -41,6 +41,11 @@ export default [...compat.extends(
     },
 
     rules: {
+        "@stylistic/js/keyword-spacing": ["error", {
+            before: true,
+            after: true,
+        }],
+
         "@stylistic/js/no-multiple-empty-lines": ["error", {
             max: 1,
             maxEOF: 1,
@@ -57,8 +62,15 @@ export default [...compat.extends(
         "@stylistic/js/space-infix-ops": ["error"],
         "@stylistic/js/brace-style": ["error", "stroustrup"],
         "@stylistic/js/key-spacing": ["error"],
-        "@typescript-eslint/no-unsafe-argument": "off",
-        "@typescript-eslint/no-unsafe-enum-comparison": "off",
+
+        "@stylistic/js/comma-dangle": ["error", {
+            arrays: "always-multiline",
+            objects: "always-multiline",
+            imports: "always-multiline",
+            exports: "always-multiline",
+            functions: "always-multiline",
+        }],
+
         "@typescript-eslint/adjacent-overload-signatures": "error",
 
         "@typescript-eslint/array-type": ["error", {
@@ -103,11 +115,11 @@ export default [...compat.extends(
         "@typescript-eslint/prefer-function-type": "error",
         "@typescript-eslint/prefer-namespace-keyword": "error",
 
-        // "@typescript-eslint/quotes": ["error", "double", {
-        //     avoidEscape: true,
-        // }],
+        "@/quotes": ["error", "double", {
+            avoidEscape: true,
+        }],
 
-        // "@typescript-eslint/semi": ["error", "always"],
+        "@/semi": ["error", "always"],
 
         "@typescript-eslint/triple-slash-reference": ["error", {
             path: "always",
@@ -195,5 +207,7 @@ export default [...compat.extends(
 
         "@typescript-eslint/prefer-regexp-exec": "off",
         "@typescript-eslint/no-unnecessary-type-assertion": "off",
+
+        "indent-empty-lines/indent-empty-lines": [ "error", 4],
     },
 }];

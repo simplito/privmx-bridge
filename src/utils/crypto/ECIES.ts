@@ -27,7 +27,7 @@ export class ECIES {
     constructor(
         public privateKey: elliptic.ec.KeyPair,
         public publicKey: elliptic.ec.KeyPair,
-        public opts: Options = {noKey: true, shortTag: true}
+        public opts: Options = {noKey: true, shortTag: true},
     ) {
         this.privateKey = privateKey;
         this.publicKey = publicKey;

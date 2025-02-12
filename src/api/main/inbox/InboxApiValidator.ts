@@ -74,5 +74,12 @@ export class InboxApiValidator extends BaseValidator {
             }), 128),
             version: this.builder.int,
         }));
+        this.registerMethod("inboxSendCustomEvent", this.builder.createObject({
+            inboxId: this.tv.inboxId,
+            channel: this.tv.wsChannelName,
+            keyId: this.tv.keyId,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 128)),
+        }));
     }
 }

@@ -70,7 +70,7 @@ export class MigrationManager {
         Migration059ApiKeyScopes,
         Migration060IndexesForSortableFields,
         Migration061IndexesForAuthorField,
-        Migration062IndexesForCreateDate
+        Migration062IndexesForCreateDate,
     ];
     static DB_VERSION: string|null = null;
     
@@ -110,7 +110,7 @@ export class MigrationManager {
                     id: migration.id,
                     startDate: DateUtils.now(),
                     endDate: null,
-                    status: "PERFORMING"
+                    status: "PERFORMING",
                 };
                 await repo.insert(model);
                 try {

@@ -176,7 +176,7 @@ export class Utils {
         return {
             hashmail: hashmail,
             user: parts[0],
-            domain: parts[1]
+            domain: parts[1],
         };
     }
     
