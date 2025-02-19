@@ -14,7 +14,6 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { AppException } from "../../api/AppException";
-import { ContextRepository } from "./ContextRepository";
 
 export class ContextUserRepository {
     
@@ -76,48 +75,6 @@ export class ContextUserRepository {
     
     async getAllByUserPubKey(userPubKey: types.cloud.UserPubKey) {
         return this.repository.findAll(q => q.eq("userPubKey", userPubKey));
-    }
-    
-    async getPageByUserPubKey(userPubKey: types.cloud.UserPubKey, listParams: types.core.ListModel) {
-        const sortBy = "created";
-        return this.repository.getMatchingPage<db.context.ContextUser&{contextObj: db.context.Context}>([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: {
-                    userPubKey: userPubKey,
-                },
-            },
-        ], listParams, sortBy);
-    }
-    
-    async getPageByUserPubKeyAndSolution(userPubKey: types.cloud.UserPubKey, solutionId: types.cloud.SolutionId, listParams: types.core.ListModel) {
-        const sortBy = "created";
-        return this.repository.getMatchingPage<db.context.ContextUser&{contextObj: db.context.Context}>([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: {
-                    userPubKey: userPubKey,
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            },
-        ], listParams, sortBy);
     }
     
     async userPubKeyExists(userPubKey: types.cloud.UserPubKey) {

@@ -14,5 +14,37 @@
     "contextId": "662115304034ea5684acac8c",
     "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
     "acl": "ALLOW ALL"
+  },
+  {
+    "_id": "662115304034ea5684acac8e-janek",
+    "created": 1718703806794,
+    "userId": "janek",
+    "contextId": "662115304034ea5684acac8e",
+    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "acl": "ALLOW ALL"
+  },
+  {
+    "_id": "662115304034ea5684acac8f-janek",
+    "created": 1718703806794,
+    "userId": "janek",
+    "contextId": "662115304034ea5684acac8f",
+    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "acl": "ALLOW ALL"
+  },
+  {
+    "_id": "662115304034ea5684acac8c-zbychu",
+    "created": 1718703806794,
+    "userId": "zbychu",
+    "contextId": "662115304034ea5684acac8c",
+    "userPubKey": "8eZUpoKPVMPKG7GCWb4xozavyTyn6oJ32Zmw5mEhXGSxRjScT9",
+    "acl": "ALLOW ALL"
+  },
+  {
+    "_id": "662115304034ea5684acac8d-zbychu",
+    "created": 1718703806794,
+    "userId": "zbychu",
+    "contextId": "662115304034ea5684acac8d",
+    "userPubKey": "8eZUpoKPVMPKG7GCWb4xozavyTyn6oJ32Zmw5mEhXGSxRjScT9",
+    "acl": "ALLOW ALL"
   }
 ]

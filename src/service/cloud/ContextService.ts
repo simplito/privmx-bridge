@@ -164,8 +164,8 @@ export class ContextService {
     
     async getAllForUser(cloudUser: CloudUser, listParams: types.core.ListModel) {
         return cloudUser.solutionId ?
-            this.repositoryFactory.createContextUserRepository().getPageByUserPubKeyAndSolution(cloudUser.pub, cloudUser.solutionId, listParams) :
-            this.repositoryFactory.createContextUserRepository().getPageByUserPubKey(cloudUser.pub, listParams);
+            this.repositoryFactory.createContextRepository().getPageByUserPubKeyAndSolution(cloudUser.pub, cloudUser.solutionId, listParams) :
+            this.repositoryFactory.createContextRepository().getPageByUserPubKey(cloudUser.pub, listParams);
     }
     
     async getContextWithCheckingExistance(contextId: types.context.ContextId) {
