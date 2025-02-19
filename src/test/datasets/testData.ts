@@ -15,6 +15,7 @@ export const testData = {
     userInnerId: "662115304034ea5684acac8b-janek",
     userId: "janek" as types.cloud.UserId,
     contextId: "662115304034ea5684acac8b" as types.context.ContextId,
+    contextId2: "662115304034ea5684acac8c" as types.context.ContextId,
     userPubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.core.EccPubKey,
     userPrivKey: "L3ZcrvuPSYaWUnb4sfhxz3bDfvTEQ6Zmntt2BjaWDnfc1mBAhKMV",
     solutionId: "G7J8Pm4op76xCcv9gNVqsQkmFcJ" as types.cloud.SolutionId,

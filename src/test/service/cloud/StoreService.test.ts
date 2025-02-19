@@ -90,6 +90,7 @@ const store: db.store.Store = {
     lastModificationDate: DateUtils.now(),
     lastModifier: janek,
     keyId: keyId,
+    data: "" as types.store.StoreData,
     allTimeUsers: [janek],
     users: [janek],
     managers: [janek],

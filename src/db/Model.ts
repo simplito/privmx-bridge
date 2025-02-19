@@ -152,6 +152,7 @@ export namespace thread {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        data: types.thread.ThreadData;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
@@ -194,6 +195,7 @@ export namespace store {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        data: types.store.StoreData;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
@@ -259,6 +261,7 @@ export namespace inbox {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        data: types.inbox.InboxMeta;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
@@ -288,6 +291,7 @@ export namespace stream {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        data: types.stream.StreamRoomData;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];

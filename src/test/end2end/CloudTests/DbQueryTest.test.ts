@@ -14,6 +14,7 @@ import * as types from "../../../types";
 import { testData } from "../../datasets/testData";
 import { BaseTestSet, executeWithTimeout, Test } from "../BaseTestSet";
 import { DateUtils } from "../../../utils/DateUtils";
+import { expect } from "../AssertUtils";
 
 interface DataObject {
     publicMetaObject: {
@@ -27,6 +28,30 @@ interface DataObject {
 export class DbQueryTest extends BaseTestSet {
     
     private threadId?: types.thread.ThreadId;
+    
+    @Test()
+    async searchThreadsForExactMatchTest() {
+        await this.createThreads();
+        await this.searchThreadsForExactMatch();
+    }
+    
+    @Test()
+    async searchStoresForExactMatchTest() {
+        await this.createStores();
+        await this.searchStoresForExactMatch();
+    }
+    
+    @Test()
+    async searchInboxesForExactMatchTest() {
+        await this.createInboxes();
+        await this.searchInboxesForExactMatch();
+    }
+    
+    @Test()
+    async searchStreamRoomsForExactMatchTest() {
+        await this.createStreamRooms();
+        await this.searchStreamRoomsForExactMatch();
+    }
     
     @Test()
     async searchForExactMatchTest() {
@@ -396,5 +421,172 @@ export class DbQueryTest extends BaseTestSet {
             },
         });
         assert(!!res && res.count === 0);
+    }
+    
+    private async createThreads() {
+        for (let i = 0; i < 10; i++ ) {
+            await this.apis.threadApi.threadCreate({
+                contextId: testData.contextId2,
+                data: {
+                    publicMetaObject: {
+                        field1: `AAAA${i % 2}`,
+                        field2: `AAAA${i % 3}`,
+                        field3: i * 2,
+                        field4: false,
+                    },
+                    encryptedData: "CCCC",
+                },
+                keyId: testData.keyId,
+                keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+                managers: [testData.userId],
+                users: [testData.userId],
+            });
+        }
+    }
+    
+    private async searchThreadsForExactMatch() {
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                field1: "AAAA0",
+            },
+        });
+        expect(res.count).toBe(5);
+        res.threads.forEach((v, i) => expect((v.data[v.data.length - 1].data as DataObject).publicMetaObject.field1).withContext(`for index ${i}`).toBe("AAAA0"));
+    }
+    
+    private async createStores() {
+        for (let i = 0; i < 10; i++ ) {
+            await this.apis.storeApi.storeCreate({
+                contextId: testData.contextId2,
+                data: {
+                    publicMetaObject: {
+                        field1: `AAAA${i % 2}`,
+                        field2: `AAAA${i % 3}`,
+                        field3: i * 2,
+                        field4: false,
+                    },
+                    encryptedData: "CCCC",
+                },
+                keyId: testData.keyId,
+                keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+                managers: [testData.userId],
+                users: [testData.userId],
+            });
+        }
+    }
+    
+    private async searchStoresForExactMatch() {
+        const res = await this.apis.storeApi.storeList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                field1: "AAAA0",
+            },
+        });
+        expect(res.count).toBe(5);
+        res.stores.forEach((v, i) => expect((v.data[v.data.length - 1].data as DataObject).publicMetaObject.field1).withContext(`for index ${i}`).toBe("AAAA0"));
+    }
+    
+    private async createStreamRooms() {
+        for (let i = 0; i < 10; i++ ) {
+            await this.apis.streamApi.streamRoomCreate({
+                contextId: testData.contextId2,
+                data: {
+                    publicMetaObject: {
+                        field1: `AAAA${i % 2}`,
+                        field2: `AAAA${i % 3}`,
+                        field3: i * 2,
+                        field4: false,
+                    },
+                    encryptedData: "CCCC",
+                },
+                keyId: testData.keyId,
+                keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+                managers: [testData.userId],
+                users: [testData.userId],
+            });
+        }
+    }
+    
+    private async searchStreamRoomsForExactMatch() {
+        const res = await this.apis.streamApi.streamRoomList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                field1: "AAAA0",
+            },
+        });
+        expect(res.count).toBe(5);
+        res.list.forEach((v, i) => expect((v.data[v.data.length - 1].data as DataObject).publicMetaObject.field1).withContext(`for index ${i}`).toBe("AAAA0"));
+    }
+    
+    private async createInboxes() {
+        const threadRes = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId2,
+            data: "AAAA",
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+        });
+        const storeRes = await this.apis.storeApi.storeCreate({
+            contextId: testData.contextId2,
+            data: "AAAA",
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+        });
+        for (let i = 0; i < 10; i++ ) {
+            await this.apis.inboxApi.inboxCreate({
+                contextId: testData.contextId2,
+                data: {
+                    threadId: threadRes.threadId,
+                    storeId: storeRes.storeId,
+                    fileConfig: {
+                        minCount: 0,
+                        maxCount: 2,
+                        maxFileSize: 999,
+                        maxWholeUploadSize: 999,
+                    },
+                    meta: {
+                        publicMetaObject: {
+                            field1: `AAAA${i % 2}`,
+                            field2: `AAAA${i % 3}`,
+                            field3: i * 2,
+                            field4: false,
+                        },
+                        encryptedData: "CCCC",
+                    },
+                    publicData: "hahahah",
+                },
+                keyId: testData.keyId,
+                keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+                managers: [testData.userId],
+                users: [testData.userId],
+            });
+        }
+    }
+    
+    private async searchInboxesForExactMatch() {
+        const res = await this.apis.inboxApi.inboxList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                field1: "AAAA0",
+            },
+        });
+        expect(res.count).toBe(5);
+        res.inboxes.forEach((v, i) => expect((v.data[v.data.length - 1].data.meta as DataObject).publicMetaObject.field1).withContext(`for index ${i}`).toBe("AAAA0"));
     }
 }

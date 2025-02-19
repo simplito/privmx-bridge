@@ -6,5 +6,13 @@
     "contextId": "662115304034ea5684acac8b",
     "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
     "acl": "ALLOW ALL"
+  },
+  {
+    "_id": "662115304034ea5684acac8c-janek",
+    "created": 1718703806794,
+    "userId": "janek",
+    "contextId": "662115304034ea5684acac8c",
+    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "acl": "ALLOW ALL"
   }
 ]

@@ -7,6 +7,21 @@
     "lastModifier": "janek",
     "lastModificationDate": 1729683689193,
     "keyId": "my-key",
+    "data": {
+      "qwe": 1,
+      "abc": {
+        "zxc": "asdd",
+        "bb": "zzwer",
+        "u": "sadsad",
+        "u1": [
+          1,
+          2,
+          {
+            "a": true
+          }
+        ]
+      }
+    },
     "users": [
       "janek"
     ],

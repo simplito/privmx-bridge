@@ -15,6 +15,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class ThreadRepository {
     
@@ -51,6 +52,7 @@ export class ThreadRepository {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
+        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -85,6 +87,7 @@ export class ThreadRepository {
             {
                 $match: match,
             },
+            ...mongoQueries,
         ], listParams, sortBy);
     }
     
@@ -121,6 +124,7 @@ export class ThreadRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            data: entry.data,
             users: entry.users,
             managers: entry.managers,
             keys: keys,
@@ -153,6 +157,7 @@ export class ThreadRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            data: entry.data,
             users: entry.users,
             managers: entry.managers,
             keys: keys,

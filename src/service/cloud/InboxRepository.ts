@@ -15,6 +15,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class InboxRepository {
     
@@ -61,6 +62,7 @@ export class InboxRepository {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
+        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -95,6 +97,7 @@ export class InboxRepository {
             {
                 $match: match,
             },
+            ...mongoQueries,
         ], listParams, sortBy);
     }
     
@@ -120,6 +123,7 @@ export class InboxRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            data: entry.data.meta,
             users: entry.users,
             managers: entry.managers,
             keys: keys,
@@ -149,6 +153,7 @@ export class InboxRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            data: entry.data.meta,
             users: entry.users,
             managers: entry.managers,
             keys: keys,
