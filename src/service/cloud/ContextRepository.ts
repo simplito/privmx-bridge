@@ -14,6 +14,7 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Crypto } from "../../utils/crypto/Crypto";
+import { ContextUserRepository } from "./ContextUserRepository";
 
 export class ContextRepository {
     
@@ -84,5 +85,65 @@ export class ContextRepository {
                 {shares: {$in: solutions}},
             ],
         }, model, "created");
+    }
+    
+    async getPageByUserPubKey(userPubKey: types.cloud.UserPubKey, listParams: types.core.ListModel) {
+        const sortBy = "created";
+        return this.repository.getMatchingPage<db.context.Context&{users: db.context.ContextUser[]}>([
+            {
+                $lookup: {
+                    from: ContextUserRepository.COLLECTION_NAME,
+                    let: {ctxId: "$_id"},
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $eq: [ "$contextId", "$$ctxId" ],
+                                },
+                                userPubKey: userPubKey,
+                            },
+                        },
+                    ],
+                    as: "users",
+                },
+            },
+            {
+                $match: {
+                    "users.userPubKey": userPubKey,
+                },
+            },
+        ], listParams, sortBy);
+    }
+    
+    async getPageByUserPubKeyAndSolution(userPubKey: types.cloud.UserPubKey, solutionId: types.cloud.SolutionId, listParams: types.core.ListModel) {
+        const sortBy = "created";
+        return this.repository.getMatchingPage<db.context.Context&{users: db.context.ContextUser[]}>([
+            {
+                $lookup: {
+                    from: ContextUserRepository.COLLECTION_NAME,
+                    let: {ctxId: "$_id"},
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $eq: [ "$contextId", "$$ctxId" ],
+                                },
+                                userPubKey: userPubKey,
+                            },
+                        },
+                    ],
+                    as: "users",
+                },
+            },
+            {
+                $match: {
+                    "users.userPubKey": userPubKey,
+                    $or: [
+                        {solution: solutionId},
+                        {shares: solutionId},
+                    ],
+                },
+            },
+        ], listParams, sortBy);
     }
 }

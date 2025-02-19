@@ -15,6 +15,7 @@ import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import * as PrivmxRpc from "privmx-rpc";
 import * as assert from "assert";
+import { expect } from "../AssertUtils";
 
 export class MainContextApiTests extends BaseTestSet {
     
@@ -31,6 +32,20 @@ export class MainContextApiTests extends BaseTestSet {
         await this.fetchUsersAndCheckIfNewUserIsActive();
         await this.closeNewUserConnection();
         await this.fetchUsersAndCheckIfNewUserIsInactive();
+    }
+    
+    @Test()
+    async shouldListContext() {
+        const res = await this.apis.contextApi.contextList({
+            limit: 2,
+            skip: 0,
+            sortOrder: "desc",
+            lastId: "662115304034ea5684acac8b" as types.context.ContextId,
+        });
+        expect(res.count).toBe(4);
+        expect(res.contexts.length).toBe(2);
+        expect(res.contexts[0].contextId).toBe("662115304034ea5684acac8c" as types.context.ContextId);
+        expect(res.contexts[1].contextId).toBe("662115304034ea5684acac8e" as types.context.ContextId);
     }
     
     private async createNewUser() {

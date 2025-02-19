@@ -38,7 +38,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     async contextList(model: contextApi.ContextListModel): Promise<contextApi.ContextListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const entries = await this.contextService.getAllForUser(cloudUser, model);
-        return {contexts: entries.list.map(x => this.convertContext(x, x.contextObj)), count: entries.count};
+        return {contexts: entries.list.map(x => this.convertContextUser(x)), count: entries.count};
     }
     
     @ApiMethod({})
@@ -56,6 +56,17 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     private convertContext(x: db.context.ContextUser, context: db.context.Context) {
+        const res: contextApi.ContextInfo = {
+            contextId: x.contextId,
+            userId: x.userId,
+            acl: x.acl,
+            policy: context.policy || {},
+        };
+        return res;
+    }
+    
+    private convertContextUser(context: db.context.Context&{users: db.context.ContextUser[]}) {
+        const x = context.users[0];
         const res: contextApi.ContextInfo = {
             contextId: x.contextId,
             userId: x.userId,
