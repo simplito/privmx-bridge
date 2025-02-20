@@ -402,7 +402,7 @@ export class BaseTestSet {
             new Logger("Tests", "TestLogger", 0, new ConsoleAppender(), true),
             new MetricService(),
         );
-        await this.dbManager.init(this.defaultConfig.db.mongo.url, this.defaultConfig.db.mongo.dbName);
+        this.dbManager.init(this.defaultConfig.db.mongo.dbName);
     }
     
     private async cleanup() {

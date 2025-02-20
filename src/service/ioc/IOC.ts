@@ -332,6 +332,7 @@ export class IOC {
         if (this.configLoader == null) {
             this.configLoader = new ConfigLoader(
                 this.getCallbacks(),
+                this.workerRegistry.getConfig(),
             );
         }
         return this.configLoader;

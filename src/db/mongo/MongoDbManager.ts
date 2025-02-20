@@ -62,15 +62,17 @@ export class MongoDbManager {
         return this.getDb().databaseName;
     }
     
-    async init(mongoUrl: string, dbName: string): Promise<void> {
+    init(dbName: string) {
         if (this.mongo) {
             throw new Error("Already initialized");
         }
-        const client = this.client ? this.client : await mongodb.MongoClient.connect(mongoUrl, {minPoolSize: 5, maxPoolSize: 5});
-        const db = client.db(dbName);
+        if (!this.client) {
+            throw new Error("Client is not present");
+        }
+        const db = this.client.db(dbName);
         this.mongo = {
             db: db,
-            client: client,
+            client: this.client,
         };
     }
     

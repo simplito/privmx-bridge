@@ -15,8 +15,6 @@ import { MongoBinaryRepositoryFactory } from "../../db/mongo/MongoBinaryReposito
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import * as pki from "privmx-pki2";
 import { ConfigChanger } from "../config/ConfigLoader";
-import { MongoDbManager } from "../../db/mongo/MongoDbManager";
-import { PromiseUtils } from "../../utils/PromiseUtils";
 import { MigrationManager } from "../../db/migration/MigrationManager";
 import { Crypto } from "../../utils/crypto/Crypto";
 import * as types from "../../types";
@@ -73,40 +71,10 @@ export class App {
         return {pem, keystore};
     }
     
-    private async initMongoDb(mongoDbManager: MongoDbManager, tryManyTimes: boolean) {
-        const configService = this.ioc.getConfigService();
-        const mongoConfig = configService.values.db.mongo;
-        let i = 0;
-        const sleeps = [2, 3, 5, 10, 30, 60];
-        while (true) {
-            try {
-                await mongoDbManager.init(mongoConfig.url, mongoConfig.dbName);
-                // this.logger.notice("Connected to mongodb");
-                return;
-            }
-            catch (e) {
-                if (tryManyTimes) {
-                    if (i < sleeps.length) {
-                        const sleep = sleeps[i];
-                        this.logger.error("Cannot connect to mongodb, attempt " + (i + 1) + "/" + (sleeps.length + 1) + " failed, sleep for " + sleep + " seconds", e);
-                        i++;
-                        await PromiseUtils.wait(sleep * 1000);
-                    }
-                    else {
-                        this.logger.error("Cannot connect to mongodb, attempt " + (i + 1) + "/" + (sleeps.length + 1) + " failed, quitting", e);
-                        throw new Error("Cannot connect to mongodb");
-                    }
-                }
-                else {
-                    throw e;
-                }
-            }
-        }
-    }
-    
-    async initDb(options: {tryManyTimes?: boolean, /* loadSessionsAndTickets?: boolean */}) {
+    initDb() {
         const mongoDbManager = this.ioc.getMongoDbManager();
-        await this.initMongoDb(mongoDbManager, !!options.tryManyTimes);
+        const configService = this.ioc.getConfigService();
+        mongoDbManager.init(configService.values.db.mongo.dbName);
         this.ioc.registerBinaryRepositoryFactory("mongo", dbName => new MongoBinaryRepositoryFactory(mongoDbManager, dbName));
     }
     
@@ -159,7 +127,7 @@ export class App {
     // Init helpers
     
     async init4(info: InitInfo) {
-        await this.initDb({});
+        this.initDb();
         await this.checkState(info, true);
         const privmxExpressApp = this.ioc.getPrivmxExpressApp();
         privmxExpressApp.registerRoutes();

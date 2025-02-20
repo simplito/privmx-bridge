@@ -16,6 +16,7 @@ import { Callbacks } from "../event/Callbacks";
 import { DateUtils } from "../../utils/DateUtils";
 import { DeepPartial } from "../../CommonTypes";
 import { VersionDetector } from "./VersionDetector";
+import { Config } from "../../cluster/common/ConfigUtils";
 
 export type ConfigLoaderFunc = () => ConfigValues;
 
@@ -50,7 +51,6 @@ export interface ConfigValues {
     };
     db: {
         mongo: {
-            url: string;
             dbName: string;
         };
         storageProviderName: string;
@@ -94,6 +94,7 @@ export class ConfigLoader {
     
     constructor(
         private callbacks: Callbacks,
+        private config: Config,
     ) {
     }
     
@@ -130,7 +131,6 @@ export class ConfigLoader {
             },
             db: {
                 mongo: {
-                    url: "mongodb://localhost:27017",
                     dbName: undefined as unknown as string,
                 },
                 storageProviderName: "fs",
@@ -197,7 +197,13 @@ export class ConfigLoader {
             values.hosts = [<types.core.Host>values.domain];
         }
         if (values.db.mongo.dbName == undefined) {
-            values.db.mongo.dbName = "privmx_" + values.domain.replace(/\./g, "_");
+            const mongoUrl = new URL(this.config.db.mongo.url);
+            if (mongoUrl.pathname && mongoUrl.pathname !== "/") {
+                values.db.mongo.dbName = mongoUrl.pathname.substring(1).split("/")[0];
+            }
+            else {
+                values.db.mongo.dbName = "privmx_" + values.domain.replace(/\./g, "_");
+            }
         }
         this.callbacks.triggerSync("finishConfigLoad", [values]);
         // this.logger.debug("Current config", JSON.stringify(values, null, 2));
@@ -230,7 +236,7 @@ export class ConfigLoader {
     
     getFileLoader(configPath: string): ConfigLoaderFunc {
         return () => {
-            const loader = new ConfigLoader(this.callbacks);
+            const loader = new ConfigLoader(this.callbacks, this.config);
             let values = loader.getDefaultValues();
             values = loader.applyConfigFile(values, configPath);
             values = loader.finishConfigLoad(values);
@@ -241,7 +247,7 @@ export class ConfigLoader {
     getConfigChangerLoader(configChanger: ConfigChanger, finisher: ConfigChanger): ConfigLoaderFunc {
         return () => {
             // logMicro("getConfigChangerLoader 01");
-            const loader = new ConfigLoader(this.callbacks);
+            const loader = new ConfigLoader(this.callbacks, this.config);
             // logMicro("getConfigChangerLoader 02");
             let values = loader.getDefaultValues();
             // logMicro("getConfigChangerLoader 03");

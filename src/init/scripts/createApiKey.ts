@@ -11,7 +11,7 @@ limitations under the License.
 
 /* eslint-disable no-console */
 
-import { loadConfig } from "../../cluster/common/ConfigUtils";
+import { Config, loadConfig } from "../../cluster/common/ConfigUtils";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
 import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
 import * as mongodb from "mongodb";
@@ -33,14 +33,14 @@ async function go() {
     if (config.server.mode.type !== "single") {
         throw new Error("Only single mode is supported");
     }
-    const {fullConfig} = loadConfigFromFile(config.server.mode.configPath);
+    const {fullConfig} = loadConfigFromFile(config.server.mode.configPath, config);
     const mongoClient = await mongodb.MongoClient.connect(config.db.mongo.url, {minPoolSize: 5, maxPoolSize: 5});
     const mongoDbManager = new MongoDbManager(
         mongoClient,
         loggerFactory.get(MongoDbManager),
         new MetricService(),
     );
-    await mongoDbManager.init(fullConfig.db.mongo.url, fullConfig.db.mongo.dbName);
+    mongoDbManager.init(fullConfig.db.mongo.dbName);
     const repositoryFactory = new RepositoryFactory(mongoDbManager, null as unknown as ConfigService);
     const apiUserRepository = repositoryFactory.createApiUserRepository();
     const user = await apiUserRepository.create();
@@ -53,9 +53,9 @@ async function go() {
     await mongoDbManager.close();
 }
 
-function loadConfigFromFile(filePath: string) {
+function loadConfigFromFile(filePath: string, baseConfig: Config) {
     const config = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, "utf8")) as InitConfigValues : {};
-    const fullConfig = new ConfigLoader(new Callbacks(new JobService(logger))).getFileLoader(filePath)();
+    const fullConfig = new ConfigLoader(new Callbacks(new JobService(logger)), baseConfig).getFileLoader(filePath)();
     return {config, fullConfig};
 }
 
