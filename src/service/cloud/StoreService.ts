@@ -384,6 +384,10 @@ export class StoreService {
         if (model.keyId !== store.keyId) {
             throw new AppException("INVALID_KEY");
         }
+        const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
+        if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
+            throw new AppException("ACCESS_DENIED", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
+        }
         const requestRepository = this.repositoryFactory.createRequestRepository();
         const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
@@ -425,6 +429,10 @@ export class StoreService {
         }
         if (model.keyId !== store.keyId) {
             throw new AppException("INVALID_KEY");
+        }
+        const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
+        if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
+            throw new AppException("ACCESS_DENIED", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
         }
         const file = await this.repositoryFactory.createStoreFileRepository().updateMeta(oldFile, user.userId, model.meta, model.keyId);
         this.storeNotificationService.sendStoreFileUpdated(store, file, context.solution);

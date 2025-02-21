@@ -120,6 +120,8 @@ export interface ThreadMessageUpdateModel {
     messageId: types.thread.ThreadMessageId;
     data: types.thread.ThreadMessageData;
     keyId: types.core.KeyId;
+    version?: types.thread.ThreadMessageVersion;
+    force?: boolean;
 }
 
 export interface ThreadMessageDeleteModel {

@@ -100,7 +100,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadMessageUpdate(model: threadApi.ThreadMessageUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {thread} = await this.threadService.updateMessage(cloudUser, model.messageId, model.data, model.keyId);
+        const {thread} = await this.threadService.updateMessage(cloudUser, model.messageId, model.data, model.keyId, model.version, model.force);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }

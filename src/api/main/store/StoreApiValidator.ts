@@ -95,11 +95,15 @@ export class StoreApiValidator extends BaseValidator {
             meta: this.tv.storeFileMeta,
             keyId: this.tv.keyId,
             thumbIndex: this.builder.optional(this.builder.int),
+            version: this.builder.optional(this.tv.intNonNegative),
+            force: this.builder.optional(this.builder.bool),
         }));
         this.registerMethod("storeFileUpdate", this.builder.createObject({
             fileId: this.tv.storeFileId,
             meta: this.tv.storeFileMeta,
             keyId: this.tv.keyId,
+            version: this.builder.optional(this.tv.intNonNegative),
+            force: this.builder.optional(this.builder.bool),
         }));
         this.registerMethod("storeFileDelete", this.builder.createObject({
             fileId: this.tv.storeFileId,

@@ -303,7 +303,7 @@ export class ThreadService {
         return {thread, message};
     }
     
-    async updateMessage(cloudUser: CloudUser, messageId: types.thread.ThreadMessageId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId) {
+    async updateMessage(cloudUser: CloudUser, messageId: types.thread.ThreadMessageId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, version: types.thread.ThreadMessageVersion|undefined, force: boolean|undefined) {
         const message = await this.repositoryFactory.createThreadMessageRepository().get(messageId);
         if (!message) {
             throw new AppException("THREAD_MESSAGE_DOES_NOT_EXIST");
@@ -319,6 +319,10 @@ export class ThreadService {
         }
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
+        }
+        const currentVersion = ((message.updates || []).length + 1) as types.thread.ThreadMessageVersion;
+        if (typeof(version) === "number" && currentVersion !== version && force !== true) {
+            throw new AppException("ACCESS_DENIED", `version does not match, get: ${version}, expected: ${currentVersion}`);
         }
         const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId);
         this.threadNotificationService.sendUpdatedThreadMessage(thread, newMessage, context.solution);

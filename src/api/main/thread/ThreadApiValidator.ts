@@ -77,6 +77,8 @@ export class ThreadApiValidator extends BaseValidator {
             messageId: this.tv.threadMessageId,
             data: this.tv.threadMessageData,
             keyId: this.tv.keyId,
+            version: this.builder.optional(this.tv.intNonNegative),
+            force: this.builder.optional(this.builder.bool),
         }));
         
         this.registerMethod("threadMessageDelete", this.builder.createObject({

@@ -241,12 +241,16 @@ export interface StoreFileWriteModel {
     meta: types.store.StoreFileMeta;
     keyId: types.core.KeyId;
     thumbIndex?: number;
+    version?: types.store.StoreFileVersion;
+    force?: boolean;
 }
 
 export interface StoreFileUpdateModel {
     fileId: types.store.StoreFileId;
     meta: types.store.StoreFileMeta;
     keyId: types.core.KeyId;
+    version?: types.store.StoreFileVersion;
+    force?: boolean;
 }
 
 export interface StoreFileDeleteModel {

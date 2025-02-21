@@ -90,8 +90,25 @@ export async function shouldThrowErrorWithCode(func: () => Promise<unknown>, err
         assert(false, "Executed function did not throw specified errorCode");
     }
     catch (e) {
-        assert(JsonRpcException.isJsonRpcError(e, ERROR_CODES[errorCode].code), "Error code does not match");
+        const error = JsonRpcException.getJsonRpcError(e);
+        assert(error !== null, "Error is not JsonRpcError");
+        assert(ERROR_CODES[errorCode].code === error.code, `Error code does not match, expected ${ERROR_CODES[errorCode].code} (${errorCode}), given ${error.code}`);
     }
+}
+
+export async function shouldThrowErrorWithCode2(func: () => Promise<unknown>, errorCode: ErrorCode) {
+    try {
+        await func();
+        assert(false, "Executed function did not throw specified errorCode");
+    }
+    catch (e) {
+        assert(isRpcError(e), "Error is not JsonRpcError");
+        assert(ERROR_CODES[errorCode].code === e.data.error.code, `Error code does not match, expected ${ERROR_CODES[errorCode].code} (${errorCode}), given ${e.data.error.code}`);
+    }
+}
+
+export function isRpcError(e: unknown): e is {data: {error: {code: number, data: string}}, msg: string} {
+    return typeof(e) === "object" && e !== null && "data" in e && typeof(e.data) === "object" && e.data !== null && "error" in e.data && typeof(e.data.error) === "object" && e.data.error !== null && "code" in e.data.error && typeof(e.data.error.code) === "number";
 }
 
 export function verifyResponseFor(apiMethodName: string, response: unknown, requiredFields: string[]) {
