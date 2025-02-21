@@ -128,6 +128,7 @@ The table below outlines the primary configuration options available for this ap
 | server.port                      | PRIVMX_PORT                        | 3000                                   | Server's port |
 | server.hostname                  | PRIVMX_HOSTNAME                    | "0.0.0.0"                              | The interface on which server will listen |
 | server.workers                   | PRIVMX_WORKERS                     | Number of cpu cores (threads)          | Number of threads that will process requests |
+| server.cors.enabled              | PRIVMX_CORS_ENABLED                | false                                  | Enable CORS |
 | server.ssl.enabled               | PRIVMX_SSL_ENABLED                 | false                                  | Enables SSL for the server |
 | server.ssl.port                  | PRIVMX_SSL_PORT                    | 3443                                   | SSL port number |
 | server.ssl.privKeyPath           | PRIVMX_SSL_PRIV_KEY_PATH           | "privkey.pem"                          | Path to SSL private key file |
