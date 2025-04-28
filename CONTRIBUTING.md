@@ -67,12 +67,12 @@ Submitting Pull Requests to SIMPLITO's repositories is the only way of publishin
 - **Minor Changes (B)**: Increment `B` for small features, replace older functionality, and mark deprecated functions.
 - **Major Changes (A)**: Increment `A` for introducing major changes or features.
 
-Read more about versioning in PrivMX in [our docs](https://docs.privmx.dev/start/versioning/).
+Read more about versioning in PrivMX in [our docs](https://docs.privmx.dev/docs/latest/start/versioning).
 
 ## Additional Resources
 
 - [PrivMX Documentation](https://docs.privmx.dev/)
-- [Project map](https://docs.privmx.dev/start/project-map)
+- [API Reference](https://docs.privmx.dev/docs/latest/start/api-reference)
 
 ## Questions?
 
