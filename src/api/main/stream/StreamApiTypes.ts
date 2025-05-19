@@ -13,6 +13,7 @@ import * as types from "../../../types";
 
 export interface StreamRoom {
     id: types.stream.StreamRoomId
+    resourceId?: types.core.ClientResourceId;
     contextId: types.context.ContextId;
     createDate: types.core.Timestamp;
     creator: types.cloud.UserId;
@@ -30,6 +31,7 @@ export interface StreamRoom {
 
 export interface StreamRoomCreateModel {
     contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
     type?: types.stream.StreamRoomType;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
@@ -45,6 +47,7 @@ export interface StreamRoomCreateResult {
 
 export interface StreamRoomUpdateModel {
     id: types.stream.StreamRoomId;
+    resourceId?: types.core.ClientResourceId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     data: types.stream.StreamRoomData;

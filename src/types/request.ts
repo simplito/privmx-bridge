@@ -15,6 +15,7 @@ export type FileId = string&{__fileId: never};
 export interface FileDefinition {
     size: number;
     checksumSize: number;
+    randomWrite?: boolean;
 }
 
 export interface RequestConfig {

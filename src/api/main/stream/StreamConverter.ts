@@ -32,6 +32,9 @@ export class StreamConverter {
             type: stream.type,
             policy: stream.policy || {},
         };
+        if (stream.clientResourceId) {
+            res.resourceId = stream.clientResourceId;
+        }
         return res;
     }
 }

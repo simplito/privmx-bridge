@@ -68,8 +68,12 @@ export class CloudKeyService {
                 userEntry = {user: insert.user, keys: []};
                 newKeys.push(userEntry);
             }
-            if (!userEntry.keys.some(x => x.keyId === insert.keyId)) {
+            const keyEntry = userEntry.keys.find(x => x.keyId === insert.keyId);
+            if (!keyEntry) {
                 userEntry.keys.push({keyId: insert.keyId, data: insert.data});
+            }
+            else {
+                keyEntry.data = insert.data;
             }
         }
         return newKeys;

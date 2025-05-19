@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import * as storeApi from "../../api/main/store/StoreApiTypes";
 import { ERROR_CODES, AppException } from "../../api/AppException";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
-import { IStorageService } from "../misc/StorageService";
 import { CloudKeyService } from "./CloudKeyService";
 import { StoreNotificationService } from "./StoreNotificationService";
 import { DateUtils } from "../../utils/DateUtils";
@@ -27,41 +26,58 @@ import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
 import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
+import { StorageServiceProvider } from "./StorageServiceProvider";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { LockHelper } from "../misc/LockHelper";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { BaseContainerService } from "./BaseContainerService";
 
-export class StoreService {
+export class StoreService extends BaseContainerService {
     
     private policy: StorePolicy;
     
     constructor(
-        private repositoryFactory: RepositoryFactory,
+        repositoryFactory: RepositoryFactory,
+        host: types.core.Host,
+        activeUsersMap: ActiveUsersMap,
         private cloudKeyService: CloudKeyService,
         private storeNotificationService: StoreNotificationService,
-        private storageService: IStorageService,
+        private storageService: StorageServiceProvider,
         private jobService: JobService,
         private logger: Logger,
         private cloudAclChecker: CloudAclChecker,
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
+        private lockHelper: LockHelper,
     ) {
+        super(repositoryFactory, activeUsersMap, host);
         this.policy = new StorePolicy(this.policyService);
     }
     
-    async createStore(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const store = await this.repositoryFactory.createStoreRepository().createStore(contextId, type, user.userId, managers, users, data, keyId, newKeys, policy);
-        this.storeNotificationService.sendStoreCreated(store, context.solution);
-        return store;
+        try {
+            const store = await this.repositoryFactory.createStoreRepository().createStore(resourceId, contextId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            this.storeNotificationService.sendStoreCreated(store, context.solution);
+            return store;
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
-    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined) {
+    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
-        const {store: rStore, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+        const {store: rStore, context: usedContext, oldStore: old} = await this.repositoryFactory.withTransaction(async session => {
             const storeRepository = this.repositoryFactory.createStoreRepository(session);
             const oldStore = await storeRepository.get(id);
             if (!oldStore) {
@@ -75,10 +91,24 @@ export class StoreService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, [...oldStore.history.map(x => x.keyId), keyId], oldStore.keys, keys, keyId, users, managers);
-            const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy);
-            return {store, context};
+            if (oldStore.clientResourceId && resourceId && oldStore.clientResourceId !== resourceId) {
+                throw new AppException("RESOURCE_ID_MISSMATCH");
+            }
+            try {
+                const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                return {store, context, oldStore};
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
         });
-        this.storeNotificationService.sendStoreUpdated(rStore, usedContext.solution);
+        const updatedStoreUsers = rStore.managers.concat(rStore.users);
+        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedStoreUsers.includes(u));
+        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
+        this.storeNotificationService.sendStoreUpdated(rStore, usedContext.solution, additionalUsersToNotify);
         return rStore;
     }
     
@@ -357,21 +387,29 @@ export class StoreService {
         const uploadedFile = request.files[model.fileIndex];
         const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
         
-        await this.storageService.commit(uploadedFile.id);
+        await this.storageService.getStorageService(uploadedFile.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedFile.id);
         if (uploadedThumb) {
-            await this.storageService.commit(uploadedThumb.id);
+            await this.storageService.getStorageService(uploadedThumb.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedThumb.id);
         }
-        const file = await this.repositoryFactory.createStoreFileRepository().create(model.storeId, user.userId, model.meta, model.keyId, uploadedFile, uploadedThumb);
-        await this.repositoryFactory.createStoreRepository().increaseFilesCounter(store.id, file.createDate);
-        if (request) {
-            await this.repositoryFactory.createRequestRepository().delete(request.id);
+        try {
+            const file = await this.repositoryFactory.createStoreFileRepository().create(model.storeId, model.resourceId || null, user.userId, model.meta, model.keyId, uploadedFile, uploadedThumb);
+            await this.repositoryFactory.createStoreRepository().increaseFilesCounter(store.id, file.createDate);
+            if (request) {
+                await this.repositoryFactory.createRequestRepository().delete(request.id);
+            }
+            this.storeNotificationService.sendStoreFileCreated(store, file, context.solution);
+            this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files + 1, lastFileDate: file.createDate}, context.solution);
+            return {file, store, user};
         }
-        this.storeNotificationService.sendStoreFileCreated(store, file, context.solution);
-        this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files + 1, lastFileDate: file.createDate}, context.solution);
-        return {file, store, user};
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
-    async writeStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileWriteModel) {
+    async writeStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileWriteModelByRequest) {
         const oldFile = await this.repositoryFactory.createStoreFileRepository().get(model.fileId);
         if (!oldFile) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
@@ -386,7 +424,7 @@ export class StoreService {
         }
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
-            throw new AppException("ACCESS_DENIED", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
+            throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
         const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
@@ -404,17 +442,49 @@ export class StoreService {
         const uploadedFile = request.files[model.fileIndex];
         const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
         
-        await this.storageService.commit(uploadedFile.id);
+        await this.storageService.getStorageService(oldFile.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedFile.id);
         if (uploadedThumb) {
-            await this.storageService.commit(uploadedThumb.id);
+            await this.storageService.getStorageService(oldFile.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedThumb.id);
         }
         const file = await this.repositoryFactory.createStoreFileRepository().update(oldFile, user.userId, model.meta, model.keyId, uploadedFile, uploadedThumb);
         await this.removeFileFromStorage(oldFile);
         if (request) {
             await this.repositoryFactory.createRequestRepository().delete(request.id);
         }
-        this.storeNotificationService.sendStoreFileUpdated(store, file, context.solution);
+        this.storeNotificationService.sendStoreFileUpdated(store, file, context.solution, null);
         return {file, store, user};
+    }
+    
+    async randomWrite(cloudUser: CloudUser, model: storeApi.StoreFileWriteModelByOperations) {
+        const {file: rFile, store: rStore, user: rUser, context: rContext} = await this.lockHelper.withLock(`random-write-${model.fileId}`, async () => {
+            const oldFile = await this.repositoryFactory.createStoreFileRepository().get(model.fileId);
+            if (!oldFile) {
+                throw new AppException("STORE_FILE_DOES_NOT_EXIST");
+            }
+            const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
+            this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
+            if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            if (model.keyId !== store.keyId) {
+                throw new AppException("INVALID_KEY");
+            }
+            if (!oldFile.supportsRandomWrite) {
+                throw new AppException("UNSUPPORTED_OPERATION", "Random write can be only executed on files supporting this operation");
+            }
+            const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
+            if (currentVersion !== model.version && model.force !== true) {
+                throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
+            }
+            const randomWriteContext = await this.storageService.getStorageService(oldFile.supportsRandomWrite ? "randomWrite" : "regular").randomWritePrepare(oldFile.fileId, model.operations);
+            return await this.repositoryFactory.withTransaction(async (session) => {
+                const {newFileSize, newChecksumSize} = await this.storageService.getStorageService(oldFile.supportsRandomWrite ? "randomWrite" : "regular").randomWriteCommit(randomWriteContext, session);
+                const file = await this.repositoryFactory.createStoreFileRepository(session).updateMetaWithSize(oldFile, user.userId, model.meta, model.keyId, {newFileSize, newChecksumSize});
+                return {file, store, user, context};
+            });
+        });
+        this.storeNotificationService.sendStoreFileUpdated(rStore, rFile, rContext.solution, model.operations);
+        return {file: rFile, store: rStore, user: rUser};
     }
     
     async updateStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileUpdateModel) {
@@ -432,11 +502,22 @@ export class StoreService {
         }
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
-            throw new AppException("ACCESS_DENIED", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
+            throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
         }
-        const file = await this.repositoryFactory.createStoreFileRepository().updateMeta(oldFile, user.userId, model.meta, model.keyId);
-        this.storeNotificationService.sendStoreFileUpdated(store, file, context.solution);
-        return {file, store, user};
+        if (oldFile.clientResourceId && model.resourceId && oldFile.clientResourceId !== model.resourceId) {
+            throw new AppException("RESOURCE_ID_MISSMATCH");
+        }
+        try {
+            const file = await this.repositoryFactory.createStoreFileRepository().updateMeta(oldFile, user.userId, model.meta, model.keyId, model.resourceId || null);
+            this.storeNotificationService.sendStoreFileUpdated(store, file, context.solution, null);
+            return {file, store, user};
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
     async deleteStoreFile(executor: Executor, fileId: types.store.StoreFileId) {
@@ -561,7 +642,7 @@ export class StoreService {
             }
             return file.fileId;
         })();
-        const data = await this.storageService.read(fileIdToRead, range);
+        const data = await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").read(fileIdToRead, range);
         return {file, store, user, data};
     }
     
@@ -598,9 +679,9 @@ export class StoreService {
     }
     
     private async removeFileFromStorage(file: db.store.StoreFile) {
-        await this.storageService.delete(file.fileId);
+        await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").delete(file.fileId);
         if (file.thumb) {
-            await this.storageService.delete(file.thumb.fileId);
+            await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").delete(file.thumb.fileId);
         }
     }
     

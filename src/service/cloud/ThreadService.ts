@@ -22,19 +22,25 @@ import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
 import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { BaseContainerService } from "./BaseContainerService";
 
-export class ThreadService {
+export class ThreadService extends BaseContainerService {
     
     private policy: ThreadPolicy;
     
     constructor(
-        private repositoryFactory: RepositoryFactory,
+        repositoryFactory: RepositoryFactory,
+        activeUsersMap: ActiveUsersMap,
+        host: types.core.Host,
         private cloudKeyService: CloudKeyService,
         private threadNotificationService: ThreadNotificationService,
         private cloudAclChecker: CloudAclChecker,
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
     ) {
+        super(repositoryFactory, activeUsersMap, host);
         this.policy = new ThreadPolicy(this.policyService);
     }
     
@@ -150,22 +156,30 @@ export class ThreadService {
         return {thread, messages};
     }
     
-    async createThread(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, type, user.userId, managers, users, data, keyId, newKeys, policy);
-        this.threadNotificationService.sendCreatedThread(thread, context.solution);
-        return thread;
+        try {
+            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            this.threadNotificationService.sendCreatedThread(thread, context.solution);
+            return thread;
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
-    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined) {
+    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
-        const {thread: rThread, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+        const {thread: rThread, context: usedContext, oldThread: old} = await this.repositoryFactory.withTransaction(async session => {
             const threadRepository = this.repositoryFactory.createThreadRepository(session);
             const oldThread = await threadRepository.get(id);
             if (!oldThread) {
@@ -179,10 +193,24 @@ export class ThreadService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, [...oldThread.history.map(x => x.keyId), keyId], oldThread.keys, keys, keyId, users, managers);
-            const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy);
-            return {thread, context};
+            if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
+                throw new AppException("RESOURCE_ID_MISSMATCH");
+            }
+            try {
+                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                return {thread, context, oldThread};
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
         });
-        this.threadNotificationService.sendUpdatedThread(rThread, usedContext.solution);
+        const updatedThreadUsers = rThread.managers.concat(rThread.users);
+        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedThreadUsers.includes(u));
+        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
+        this.threadNotificationService.sendUpdatedThread(rThread, usedContext.solution, additionalUsersToNotify);
         return rThread;
     }
     
@@ -280,7 +308,7 @@ export class ThreadService {
         });
     }
     
-    async sendMessage(cloudUser: CloudUser, threadId: types.thread.ThreadId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId) {
+    async sendMessage(cloudUser: CloudUser, threadId: types.thread.ThreadId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null) {
         const thread = await this.repositoryFactory.createThreadRepository().get(threadId);
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
@@ -293,17 +321,25 @@ export class ThreadService {
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
         }
-        const message = await this.repositoryFactory.createThreadMessageRepository().createMessage(null, user.userId, threadId, data, keyId);
-        await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
-        this.threadNotificationService.sendNewThreadMessage(thread, message, context.solution);
-        const threadStats = await this.repositoryFactory.createThreadRepository().getThreadStats(thread.id);
-        if (threadStats) {
-            this.threadNotificationService.sendThreadStats({...thread, ...threadStats}, context.solution);
+        try {
+            const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
+            await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
+            this.threadNotificationService.sendNewThreadMessage(thread, message, context.solution);
+            const threadStats = await this.repositoryFactory.createThreadRepository().getThreadStats(thread.id);
+            if (threadStats) {
+                this.threadNotificationService.sendThreadStats({...thread, ...threadStats}, context.solution);
+            }
+            return {thread, message};
         }
-        return {thread, message};
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
-    async updateMessage(cloudUser: CloudUser, messageId: types.thread.ThreadMessageId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, version: types.thread.ThreadMessageVersion|undefined, force: boolean|undefined) {
+    async updateMessage(cloudUser: CloudUser, messageId: types.thread.ThreadMessageId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, version: types.thread.ThreadMessageVersion|undefined, force: boolean|undefined, resourceId: types.core.ClientResourceId|null) {
         const message = await this.repositoryFactory.createThreadMessageRepository().get(messageId);
         if (!message) {
             throw new AppException("THREAD_MESSAGE_DOES_NOT_EXIST");
@@ -322,11 +358,22 @@ export class ThreadService {
         }
         const currentVersion = ((message.updates || []).length + 1) as types.thread.ThreadMessageVersion;
         if (typeof(version) === "number" && currentVersion !== version && force !== true) {
-            throw new AppException("ACCESS_DENIED", `version does not match, get: ${version}, expected: ${currentVersion}`);
+            throw new AppException("INVALID_VERSION", `version does not match, get: ${version}, expected: ${currentVersion}`);
         }
-        const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId);
-        this.threadNotificationService.sendUpdatedThreadMessage(thread, newMessage, context.solution);
-        return {thread, message: newMessage};
+        if (message.clientResourceId && resourceId && message.clientResourceId !== resourceId) {
+            throw new AppException("RESOURCE_ID_MISSMATCH");
+        }
+        try {
+              const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId, resourceId);
+              this.threadNotificationService.sendUpdatedThreadMessage(thread, newMessage, context.solution);
+              return {thread, message: newMessage};
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
     async deleteMessage(executor: Executor, messageId: types.thread.ThreadMessageId) {
@@ -462,3 +509,4 @@ class ThreadPolicy extends BasePolicy<db.thread.Thread, db.thread.ThreadMessage>
         return policy?.thread || {};
     }
 }
+

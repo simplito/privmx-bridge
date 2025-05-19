@@ -33,7 +33,7 @@ export class ContextUserRepository {
         return this.repository.exists(this.getUserId(contextId, userId));
     }
     
-    async insertOrUpdate(contextId: types.context.ContextId, userId: types.cloud.UserId, userPubKey: types.cloud.UserPubKey, acl:  types.cloud.ContextAcl) {
+    async insertOrUpdate(contextId: types.context.ContextId, userId: types.cloud.UserId, userPubKey: types.cloud.UserPubKey, acl: types.cloud.ContextAcl) {
         const oldUser = await this.getUserFromContext(userPubKey, contextId);
         if (oldUser) {
             if (oldUser.userId === userId) {

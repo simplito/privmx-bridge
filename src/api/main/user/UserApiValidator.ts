@@ -29,13 +29,18 @@ export class UserApiValidator extends BaseValidator {
         this.registerMethod("unauthorizeWebSocket", this.builder.empty);
         
         this.registerMethod("subscribeToChannel", this.builder.createObject({
-            channel: this.tv.wsChannel,
+            channel: this.tv.wsChannelName,
         }));
         
         this.registerMethod("unsubscribeFromChannel", this.builder.createObject({
-            channel: this.tv.wsChannel,
+            channel: this.tv.wsChannelName,
         }));
-        
+        this.registerMethod("subscribeToChannels", this.builder.createObject({
+            channels: this.builder.createListWithMaxLength(this.tv.wsChannelName, 128),
+        }));
+        this.registerMethod("unsubscribeFromChannels", this.builder.createObject({
+            subscriptionsIds: this.builder.createListWithMaxLength(this.tv.subscriptionId, 128),
+        }));
         this.registerMethod("logout", this.builder.empty);
     }
 }

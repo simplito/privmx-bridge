@@ -16,6 +16,10 @@ import { Crypto } from "../../utils/crypto/Crypto";
 import { PsonHelperEx } from "../../utils/PsonHelperEx";
 import { PlainApiEvent } from "../../api/plain/Types";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { Callbacks } from "../event/Callbacks";
+import { TargetChannel } from "./WebSocketConnectionManager";
+import { Config } from "../../cluster/common/ConfigUtils";
+import { AppException } from "../../api/AppException";
 
 export class WebSocketInnerManager {
     
@@ -24,6 +28,8 @@ export class WebSocketInnerManager {
     
     constructor(
         private activeUsers: ActiveUsersMap,
+        private callbacks: Callbacks,
+        private config: Config,
     ) {
         this.servers = [];
         this.psonHelper = new PsonHelperEx([]);
@@ -47,24 +53,58 @@ export class WebSocketInnerManager {
         }
     }
     
-    send<T extends types.core.Event<any, any>>(host: types.core.Host, channel: string, clients: types.core.Client[]|null, event: T) {
+    send<T extends types.core.Event<any, any>>(host: types.core.Host, channel: TargetChannel, clients: types.core.Client[]|null, event: T) {
         if (clients != null && clients.length == 0) {
             return;
         }
-        return this.sendBuffer(host, channel, clients, this.serializeEvent(event));
-    }
-    
-    private sendBuffer(host: types.core.Host, channel: string, clients: types.core.Client[]|null, message: Buffer) {
         for (const server of this.servers) {
             for (const client of server.clients) {
                 const ws = <WebSocketEx>client;
                 for (const session of ws.ex.sessions) {
-                    if (session.host === host && (clients == null || clients.includes(session.username)) && (channel === "" || session.channels.includes(channel))) {
-                        this.sendToWsSession(ws, session, message);
+                    const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(channel, session.channels);
+                    if (session.host === host && (clients == null || clients.includes(session.username)) && matchingSubscriptions.length !== 0) {
+                        event.subscriptions = matchingSubscriptions;
+                        event.version = options.version;
+                        this.sendToWsSession(ws, session, this.serializeEvent(options.version === 1 ? event : this.removeChannel(event)));
                     }
                 }
             }
         }
+    }
+    
+    private getMatchingsubscriptionsAndOptions(targetChannel: TargetChannel, userChannels: types.cloud.ChannelScheme[]) {
+        const matchingSubscriptions = [];
+        const options = {
+            version: 2,
+        };
+        for (const userChannel of userChannels) {
+            if (userChannel.version < options.version) {
+                options.version = userChannel.version;
+            }
+            if (userChannel.limitedBy === "containerId" && targetChannel.containerId && (userChannel.objectId !== targetChannel.containerId)) {
+                continue;
+            }
+            if (userChannel.limitedBy === "contextId" && (userChannel.objectId !== targetChannel.contextId)) {
+                continue;
+            }
+            if (userChannel.limitedBy === "itemId" && targetChannel.itemId && (userChannel.objectId !== targetChannel.itemId)) {
+                continue;
+            }
+            if (!this.isPathPrefix(userChannel.path, targetChannel.channel)) {
+                continue;
+            }
+            matchingSubscriptions.push(userChannel.subscriptionId);
+        }
+        return {matchingSubscriptions, options};
+    }
+    
+    private isPathPrefix(parent: string, child: string): boolean {
+        const parentParts = parent.split("/").filter(segment => segment.length > 0);
+        const childParts = child.split("/").filter(segment => segment.length > 0);
+        if (parentParts.length > childParts.length) {
+          return false;
+        }
+        return parentParts.every((part, index) => part === childParts[index]);
     }
     
     private sendToWsSession(ws: WebSocketEx, session: WebSocketSession, message: Buffer) {
@@ -127,6 +167,7 @@ export class WebSocketInnerManager {
                     if (session.host === host && func(session)) {
                         this.sendToWsSession(ws, session, this.serializeEvent({type: "disconnected"}));
                         usersToCheck.add(session.username);
+                        this.setUserAsDisconnected(session);
                         return false;
                     }
                     return true;
@@ -141,7 +182,7 @@ export class WebSocketInnerManager {
     onClose(wsEx: WebSocketEx) {
         for (const session of wsEx.ex.sessions) {
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
-            void this.activeUsers.setUserAsInactive({userPubkey: session.username as unknown as types.core.EccPubKey, solutionId: session.solution});
+            this.setUserAsDisconnected(session);
         }
     }
     
@@ -154,26 +195,55 @@ export class WebSocketInnerManager {
         const index = wsEx.ex.sessions.findIndex(x => x.wsId == wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
+            this.setUserAsDisconnected(session);
             wsEx.ex.sessions.splice(index, 1);
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
         }
     }
     
-    subscribeToChannel(wsEx: WebSocketEx, wsId: types.core.WsId, channel: string) {
+    subscribeToChannel(wsEx: WebSocketEx, wsId: types.core.WsId, channel: types.cloud.ChannelScheme) {
         const wsSession = wsEx.ex.sessions.find(x => x.wsId == wsId);
-        if (wsSession && !wsSession.channels.includes(channel)) {
-            wsSession.channels.push(channel);
+        if (!wsSession) {
+            throw new AppException("WS_SESSION_DOES_NOT_EXISTS");
         }
+        if (wsSession.channels.length >= this.config.maximumChannelsPerSession) {
+            throw new AppException("TOO_MANY_CHANNELS_IN_SESSION");
+        }
+        wsSession.channels.push(channel);
     }
     
-    unsubscribeFromChannel(wsEx: WebSocketEx, wsId: types.core.WsId, channel: string) {
+    unsubscribeFromChannels(wsEx: WebSocketEx, wsId: types.core.WsId, subscriptionIds: types.core.SubscriptionId[]) {
         const wsSession = wsEx.ex.sessions.find(x => x.wsId == wsId);
-        if (wsSession && wsSession.channels.includes(channel)) {
-            wsSession.channels = wsSession.channels.filter(x => x !== channel);
+        if (!wsSession) {
+            throw new AppException("WS_SESSION_DOES_NOT_EXISTS");
         }
+        const removeSet = new Set(subscriptionIds);
+        wsSession.channels =  wsSession.channels.filter(channel => !removeSet.has(channel.subscriptionId));
+    }
+    
+    unsubscribeFromChannelsByOrgChannel(wsEx: WebSocketEx, wsId: types.core.WsId, orginalChannelPath: string) {
+        const wsSession = wsEx.ex.sessions.find(x => x.wsId == wsId);
+        if (!wsSession) {
+            return;
+        }
+        wsSession.channels =  wsSession.channels.filter(channel => channel.orgChannel !== orginalChannelPath);
     }
     
     private refreshHasOpenedWebSocketsForUser(_host: types.core.Host, _username: types.core.Username) {
         // Do nothing
+    }
+    
+    private setUserAsDisconnected(session: WebSocketSession) {
+        void this.activeUsers.setUserAsInactive({host: session.instanceHost, userPubkey: session.username as unknown as types.core.EccPubKey, solutionId: session.solution});
+        this.callbacks.triggerZ("userDisconnected", [session.username, session.solution]);
+    }
+    
+    private removeChannel<T extends string, D>(event: types.core.Event<T, D>) {
+        if ("channel" in event) {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const {channel, ...eventWithoutChannel } = event;
+            return eventWithoutChannel;
+        }
+        return event;
     }
 }

@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "./";
 
 export interface ServerConfig {
+    serverVersion: types.core.Version;
     requestChunkSize: number;
 }
 
@@ -24,6 +25,7 @@ export interface EcdheRequestPacket extends BasePacket {
     key: ByteBuffer;
     agent: types.core.UserAgent;
     solution?: types.cloud.SolutionId;
+    challenge?: types.core.Nonce;
 }
 
 export interface EcdheResponsePacket extends BasePacket {
@@ -31,6 +33,10 @@ export interface EcdheResponsePacket extends BasePacket {
     agent: types.core.UserAgent;
     config: ServerConfig;
     key: ByteBuffer;
+    signature?: {
+        challenge: string;
+        timestamp: types.core.Timestamp;
+    }
 }
 
 export interface EcdhexRequestPacket extends BasePacket {
@@ -42,6 +48,7 @@ export interface EcdhexRequestPacket extends BasePacket {
     agent: types.core.UserAgent;
     solution?: types.cloud.SolutionId;
     plain?: boolean;
+    challenge?: types.core.Nonce;
 }
 
 export interface EcdhexResponsePacket extends BasePacket {
@@ -50,6 +57,10 @@ export interface EcdhexResponsePacket extends BasePacket {
     config: ServerConfig;
     key: ByteBuffer;
     host: types.core.Host;
+    signature?: {
+        challenge: string;
+        timestamp: types.core.Timestamp;
+    }
 }
 
 export interface SessionRequestPacket extends BasePacket {

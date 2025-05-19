@@ -38,6 +38,7 @@ import { PkiFactory } from "../service/pki/PkiFactory";
 import { PacketValidator } from "./tls/PacketValidator";
 import { MicroTimeUtils } from "../utils/MicroTimeUtils";
 import { ApiResolver } from "./ApiResolver";
+import { ServerSignatureService } from "../service/cloud/ServerSignatureService";
 
 export interface Context {
     ioc: RequestScopeIOC;
@@ -71,9 +72,10 @@ export class ServerEndpoint {
         private serverAgent: ServerAgent,
         private logger: Logger,
         private loggerFactory: LoggerFactory,
+        private serverSignatureService: ServerSignatureService,
     ) {
         this.connection = new PrivmxConnectionServer(this.requestLogger, this.ticketsDb, this.serverAgent, this.packetValidator, this.srpLoginService, this.keyLoginService,
-            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.sessionValidator.bind(this), this.loggerFactory.get(PrivmxConnectionServer));
+            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.sessionValidator.bind(this), this.serverSignatureService, this.loggerFactory.get(PrivmxConnectionServer));
         this.connection.setOutputStream(new OutputBufferStream());
         this.connection.setAppFrameHandler(this.__invoke.bind(this));
     }

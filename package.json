@@ -1,6 +1,6 @@
 {
   "name": "privmx-bridge",
-  "version": "1.0.0",
+  "version": "2.30.1",
   "description": "Zero-knowledge server for secure storage and transfer of E2E encrypted data.",
   "scripts": {
     "types-gen": "rm -rf out && tsc --emitDeclarationOnly --declaration && touch out/index.d.ts && ~/scripts/types.sh",
@@ -16,7 +16,8 @@
     "e2e-tests": "node ./out/test/end2end/runMulti.js",
     "gen-json-docs": "node ./out/docs/scripts/gen_json_docs.js",
     "gen-slate-from-json": "node ./out/docs/scripts/gen_slate_from_json.js",
-    "create-api-key": "node ./out/init/scripts/createApiKey.js"
+    "create-api-key": "node ./out/init/scripts/createApiKey.js",
+    "get-public-key": "node ./out/init/scripts/getPublicKey.js"
   },
   "jest": {
     "roots": [

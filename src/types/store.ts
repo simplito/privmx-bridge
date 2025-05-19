@@ -44,6 +44,13 @@ export type BufferReadRange = {
     type: "checksum";
 };
 
+export interface StoreFileRandomWriteOperation {
+    type: "file"|"checksum";
+    pos: number;
+    data: Buffer;
+    truncate: boolean;
+}
+
 export interface StoreFileFetchError {
     id: types.store.StoreFileId;
     error: {code: number; message: string;};

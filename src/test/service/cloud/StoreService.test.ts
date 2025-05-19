@@ -34,12 +34,16 @@ import { PolicyService } from "../../../service/cloud/PolicyService";
 import { ContextRepository } from "../../../service/cloud/ContextRepository";
 import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
+import { StorageServiceProvider } from "../../../service/cloud/StorageServiceProvider";
+import { LockHelper } from "../../../service/misc/LockHelper";
+import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 
 const requestId = "req-1" as types.request.RequestId;
 const solutionId = "MySolutionId" as types.cloud.SolutionId;
 const contextId = "MyContextId" as types.context.ContextId;
 const notExistingContextId = "NotExistingContextId" as types.context.ContextId;
 const storeId = "MyStoreId" as types.store.StoreId;
+const resourceId = "MyStoreResourceId" as types.core.ClientResourceId;
 const notExistingStoreId = "NotExistingStoreId" as types.store.StoreId;
 const janek = "janek" as types.cloud.UserId;
 const janekUserPubKey = new CloudUser("SomeUserPubKey" as types.core.EccPubKey);
@@ -84,6 +88,7 @@ const aliceUser: db.context.ContextUser = {
 };
 const store: db.store.Store = {
     id: storeId,
+    clientResourceId: resourceId,
     contextId: contextId,
     createDate: DateUtils.now(),
     creator: janek,
@@ -103,6 +108,7 @@ const store: db.store.Store = {
 const storeFile: db.store.StoreFile = {
     id: storeFileId,
     fileId: "zxc" as types.request.FileId,
+    clientResourceId: resourceId,
     storeId: storeId,
     author: janek,
     createDate: DateUtils.now(),
@@ -115,9 +121,11 @@ const storeFile: db.store.StoreFile = {
         size: 1024 as types.core.SizeInBytes,
         checksumSize: 128 as types.core.SizeInBytes,
     },
+    supportsRandomWrite: false,
 };
 const storeFileWithoutThumb: db.store.StoreFile = {
     id: storeFileIdWithoutThumb,
+    clientResourceId: resourceId,
     fileId: "zxc" as types.request.FileId,
     storeId: storeId,
     author: janek,
@@ -126,6 +134,7 @@ const storeFileWithoutThumb: db.store.StoreFile = {
     size: 1024 as types.core.SizeInBytes,
     checksumSize: 128 as types.core.SizeInBytes,
     keyId: keyId,
+    supportsRandomWrite: false,
 };
 const request: db.request.Request = {
     id: requestId,
@@ -174,7 +183,7 @@ it("Should create store", async () => {
     const {storeService, storeRepository, storeNotificationService} = createStoreService();
     
     // Act
-    const res = await storeService.createStore(janekUserPubKey, contextId, undefined, users, managers, data, keyId, keys, {});
+    const res = await storeService.createStore(janekUserPubKey, resourceId, contextId, undefined, users, managers, data, keyId, keys, {});
     
     // Asserts
     expect(res).not.toBeNull();
@@ -188,7 +197,7 @@ it("Should fails on creating store using invalid user", async () => {
     
     // Act & Assert
     try {
-        await storeService.createStore(bobUserPubKey, contextId, undefined, users, managers, data, keyId, keys, {});
+        await storeService.createStore(bobUserPubKey, resourceId, contextId, undefined, users, managers, data, keyId, keys, {});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -313,6 +322,7 @@ it("Should create store file", async () => {
     // Act
     const res = await storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -339,6 +349,7 @@ it("Should create store file without thumb", async () => {
     // Act
     const res = await storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -375,6 +386,7 @@ function testFail(message: string, error: ErrorCode, func: (storeService: StoreS
 testFail("Should fails on creating file with invalid user", "ACCESS_DENIED", storeService =>
     storeService.createStoreFile(bobUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -386,6 +398,7 @@ testFail("Should fails on creating file with invalid user", "ACCESS_DENIED", sto
 testFail("Should fails on creating file in not existing store", "STORE_DOES_NOT_EXIST", storeService =>
     storeService.createStoreFile(janekUserPubKey, {
         storeId: notExistingStoreId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -397,6 +410,7 @@ testFail("Should fails on creating file in not existing store", "STORE_DOES_NOT_
 testFail("Should fails on creating file with invalid key id", "INVALID_KEY", storeService =>
     storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: invalidKeyId,
@@ -408,6 +422,7 @@ testFail("Should fails on creating file with invalid key id", "INVALID_KEY", sto
 testFail("Should fails on creating file with invalid file index", "INVALID_FILE_INDEX", storeService =>
     storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 5,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -419,6 +434,7 @@ testFail("Should fails on creating file with invalid file index", "INVALID_FILE_
 testFail("Should fails on creating file with invalid thumb index", "INVALID_FILE_INDEX", storeService =>
     storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -430,6 +446,7 @@ testFail("Should fails on creating file with invalid thumb index", "INVALID_FILE
 testFail("Should fails on creating file with the same index for file and thumb", "FILE_ALREADY_USED", storeService =>
     storeService.createStoreFile(janekUserPubKey, {
         storeId: storeId,
+        resourceId: resourceId,
         fileIndex: 0,
         meta: "" as types.store.StoreFileMeta,
         keyId: keyId,
@@ -635,6 +652,7 @@ function createStoreService() {
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const storeNotificationService = createMock<StoreNotificationService>({});
+    const storageServiceProvider = createMock<StorageServiceProvider>({});
     const storageService = createMock<IStorageService>({});
     const storeRepository = createMock<StoreRepository>({});
     const storeFileRepository = createMock<StoreFileRepository>({});
@@ -646,7 +664,14 @@ function createStoreService() {
     const cloudAclChecker = new CloudAclChecker();
     const policyService = new PolicyService();
     const cloudAccessValidator = createMock<CloudAccessValidator>({});
-    const storeService = new StoreService(repositoryFactory, cloudKeyService, storeNotificationService, storageService, jobService, logger, cloudAclChecker, policyService, cloudAccessValidator);
+    const lockHelper = createMock<LockHelper>({});
+    const host = createMock<types.core.Host>({});
+    const activeUsersMap = createMock<ActiveUsersMap>({});
+    const storeService = new StoreService(repositoryFactory, host, activeUsersMap, cloudKeyService, storeNotificationService, storageServiceProvider, jobService, logger, cloudAclChecker, policyService, cloudAccessValidator, lockHelper);
+    
+    mock(storageServiceProvider, "getStorageService", () => {
+        return storageService;
+    });
     
     mock(storageService, "commit", async () => {});
     mock(storageService, "delete", async () => {});

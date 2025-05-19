@@ -28,6 +28,14 @@ export interface UserIdentity {
     id: UserId;
     pub: UserPubKey;
 }
+export interface ChannelScheme {
+    subscriptionId: types.core.SubscriptionId;
+    orgChannel: string;
+    path: string;
+    limitedBy: "containerId"|"itemId"|"contextId"|"none";
+    objectId: string;
+    version: number;
+}
 
 export interface UserIdentityWithStatus {
     id: UserId;
@@ -50,6 +58,7 @@ export interface Event<T extends string, C extends string, D> {
     type: T;
     channel: C;
     data: D;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ContainerWithoutItemPolicy extends ItemPolicy {

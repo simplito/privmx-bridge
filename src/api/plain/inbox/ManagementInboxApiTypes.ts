@@ -80,18 +80,21 @@ export interface InboxCreatedEvent {
     channel: "inbox";
     type: "inboxCreated";
     data: Inbox;
+    timestamp: types.core.Timestamp;
 }
 
 export interface InboxUpdatedEvent {
     channel: "inbox";
     type: "inboxUpdated";
     data: Inbox;
+    timestamp: types.core.Timestamp;
 }
 
 export interface InboxDeletedEvent {
     channel: "inbox";
     type: "inboxDeleted";
     data: InboxDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type InboxEvent = InboxCreatedEvent|InboxUpdatedEvent|InboxDeletedEvent;

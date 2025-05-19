@@ -34,6 +34,9 @@ export class StoreConverter {
             type: store.type,
             policy: store.policy || {},
         };
+        if (store.clientResourceId) {
+            res.resourceId = store.clientResourceId;
+        }
         return res;
     }
     
@@ -60,6 +63,9 @@ export class StoreConverter {
             lastModifier: lastUpdate.author,
             lastModificationDate: lastUpdate.createDate,
         };
+        if (file.clientResourceId) {
+            res.resourceId = file.clientResourceId;
+        }
         return res;
     }
 }

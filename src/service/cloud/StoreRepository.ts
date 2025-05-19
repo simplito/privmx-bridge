@@ -105,7 +105,7 @@ export class StoreRepository {
         return await this.repository.getMatchingPage<db.store.Store>([{$match: match}], listParams, sortBy);
     }
     
-    async createStore(contextId: types.context.ContextId, type: types.store.StoreType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+    async createStore(resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
@@ -134,12 +134,15 @@ export class StoreRepository {
             files: 0,
             policy: policy,
         };
+        if (resourceId) {
+            store.clientResourceId = resourceId;
+        }
         await this.repository.insert(store);
         return store;
     }
     
     async updateStore(oldStore: db.store.Store, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined) {
+        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -167,6 +170,12 @@ export class StoreRepository {
             files: oldStore.files,
             policy: policy === undefined ? oldStore.policy : policy,
         };
+        if (resourceId && !oldStore.clientResourceId) {
+            updatedStore.clientResourceId = resourceId;
+        }
+        else if (oldStore.clientResourceId) {
+            updatedStore.clientResourceId = oldStore.clientResourceId;
+        }
         await this.repository.update(updatedStore);
         return updatedStore;
     }

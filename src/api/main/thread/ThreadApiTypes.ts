@@ -13,6 +13,7 @@ import * as types from "../../../types";
 
 export interface ThreadCreateModel {
     contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
     type?: types.thread.ThreadType;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
@@ -24,6 +25,7 @@ export interface ThreadCreateModel {
 
 export interface ThreadUpdateModel {
     id: types.thread.ThreadId;
+    resourceId?: types.core.ClientResourceId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     data: types.thread.ThreadData;
@@ -89,6 +91,7 @@ export type ThreadListAllResult = ThreadListResult;
 export interface ThreadInfo {
     id: types.thread.ThreadId;
     contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
     createDate: types.core.Timestamp;
     creator: types.cloud.UserId;
     lastModificationDate: types.core.Timestamp;
@@ -112,12 +115,14 @@ export interface ThreadDataEntry {
 
 export interface ThreadMessageSendModel {
     threadId: types.thread.ThreadId;
+    resourceId?: types.core.ClientResourceId;
     data: types.thread.ThreadMessageData;
     keyId: types.core.KeyId;
 }
 
 export interface ThreadMessageUpdateModel {
     messageId: types.thread.ThreadMessageId;
+    resourceId?: types.core.ClientResourceId;
     data: types.thread.ThreadMessageData;
     keyId: types.core.KeyId;
     version?: types.thread.ThreadMessageVersion;
@@ -165,6 +170,7 @@ export type ThreadMessagesGetMyResult = ThreadMessagesGetResult
 
 export interface ThreadMessage {
     id: types.thread.ThreadMessageId;
+    resourceId?: types.core.ClientResourceId;
     version: types.thread.ThreadMessageVersion;
     contextId: types.context.ContextId;
     threadId: types.thread.ThreadId;

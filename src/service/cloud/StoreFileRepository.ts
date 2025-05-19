@@ -71,7 +71,7 @@ export class StoreFileRepository {
         await this.repository.deleteMany(q => q.in("id", ids));
     }
     
-    async create(storeId: types.store.StoreId, author: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, file: db.request.FileDefinition, thumb: db.request.FileDefinition|undefined) {
+    async create(storeId: types.store.StoreId, resourceId: types.core.ClientResourceId|null, author: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, file: db.request.FileDefinition, thumb: db.request.FileDefinition|undefined) {
         const nFile: db.store.StoreFile = {
             id: this.repository.generateId(),
             storeId: storeId,
@@ -86,8 +86,13 @@ export class StoreFileRepository {
                 fileId: thumb.id,
                 checksumSize: thumb.checksumSize as types.core.SizeInBytes,
                 size: thumb.sent as types.core.SizeInBytes,
+                supportsRandomWrite: thumb.supportsRandomWrite,
             } : undefined,
+            supportsRandomWrite: file.supportsRandomWrite,
         };
+        if (resourceId) {
+            nFile.clientResourceId = resourceId;
+        }
         await this.repository.insert(nFile);
         return nFile;
     }
@@ -109,14 +114,16 @@ export class StoreFileRepository {
                 fileId: thumb.id,
                 checksumSize: thumb.checksumSize as types.core.SizeInBytes,
                 size: thumb.sent as types.core.SizeInBytes,
+                supportsRandomWrite: thumb.supportsRandomWrite,
             } : undefined,
             updates: updates,
+            supportsRandomWrite: file.supportsRandomWrite,
         };
         await this.repository.update(nFile);
         return nFile;
     }
     
-    async updateMeta(oldFile: db.store.StoreFile, modifier: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId) {
+    async updateMeta(oldFile: db.store.StoreFile, modifier: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null) {
         const updates = oldFile.updates || [];
         updates.push({
             createDate: DateUtils.now(),
@@ -126,6 +133,33 @@ export class StoreFileRepository {
             ...oldFile,
             meta: meta,
             keyId: keyId,
+            updates: updates,
+        };
+        if (resourceId && !oldFile.clientResourceId) {
+            nFile.clientResourceId = resourceId;
+        }
+        else if (oldFile.clientResourceId) {
+            nFile.clientResourceId = oldFile.clientResourceId;
+        }
+        await this.repository.update(nFile);
+        return nFile;
+    }
+    
+    async updateMetaWithSize(oldFile: db.store.StoreFile, modifier: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, size: {
+        newFileSize?: number,
+        newChecksumSize?: number;
+    }) {
+        const updates = oldFile.updates || [];
+        updates.push({
+            createDate: DateUtils.now(),
+            author: modifier,
+        });
+        const nFile: db.store.StoreFile = {
+            ...oldFile,
+            meta: meta,
+            keyId: keyId,
+            size: size.newFileSize as types.core.SizeInBytes,
+            checksumSize: size.newChecksumSize as types.core.SizeInBytes,
             updates: updates,
         };
         await this.repository.update(nFile);

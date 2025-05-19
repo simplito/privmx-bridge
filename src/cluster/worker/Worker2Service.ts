@@ -14,6 +14,7 @@ import { IWorker2Service } from "../common/Worker2Service";
 import { ApiMethod } from "../../api/Decorators";
 import { WebSocketInnerManager } from "../../service/ws/WebSocketInnerManager";
 import { PlainApiEvent } from "../../api/plain/Types";
+import { TargetChannel } from "../../service/ws/WebSocketConnectionManager";
 
 export class Worker2Service implements IWorker2Service {
     
@@ -23,7 +24,7 @@ export class Worker2Service implements IWorker2Service {
     }
     
     @ApiMethod({})
-    async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
+    async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         return this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
     }
     
@@ -62,3 +63,4 @@ export class Worker2Service implements IWorker2Service {
         return this.webSocketInnerManager.disconnectWebSocketsBySubidentityGroup(model.host, model.groupId);
     }
 }
+

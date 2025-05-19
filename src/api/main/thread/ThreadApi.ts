@@ -34,7 +34,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadCreate(model: threadApi.ThreadCreateModel): Promise<threadApi.ThreadCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.createThread(cloudUser, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const thread = await this.threadService.createThread(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
         this.requestLogger.setContextId(thread.contextId);
         return {threadId: thread.id};
     }
@@ -42,7 +42,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadUpdate(model: threadApi.ThreadUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy);
+        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }
@@ -92,7 +92,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadMessageSend(model: threadApi.ThreadMessageSendModel): Promise<threadApi.ThreadMessageSendResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {thread, message} = await this.threadService.sendMessage(cloudUser, model.threadId, model.data, model.keyId);
+        const {thread, message} = await this.threadService.sendMessage(cloudUser, model.threadId, model.data, model.keyId, model.resourceId || null);
         this.requestLogger.setContextId(thread.contextId);
         return {messageId: message.id};
     }
@@ -100,7 +100,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadMessageUpdate(model: threadApi.ThreadMessageUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {thread} = await this.threadService.updateMessage(cloudUser, model.messageId, model.data, model.keyId, model.version, model.force);
+        const {thread} = await this.threadService.updateMessage(cloudUser, model.messageId, model.data, model.keyId, model.version, model.force, model.resourceId || null);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }

@@ -14,13 +14,21 @@ import * as types from "../../types";
 import * as fs from "fs";
 
 export class VersionDetector {
+    private static _version: types.core.Version|null;
+    
+    static get version(): types.core.Version|null {
+        return this._version;
+    }
     
     static detectBaseDir() {
         return NodePath.resolve(__dirname, "../../../");
     }
     
     static detectServerVersion() {
-        const serverVersionFile = NodePath.resolve(this.detectBaseDir(), "version");
-        return <types.core.Version>(fs.existsSync(serverVersionFile) ? fs.readFileSync(serverVersionFile, "utf8").trim() : "1.0.0-dev");
+        if (!this._version) {
+            const pkg = JSON.parse(fs.readFileSync(`${VersionDetector.detectBaseDir()}/package.json`, "utf8"));
+            this._version = pkg.version as types.core.Version;
+        }
+        return this._version;
     }
 }

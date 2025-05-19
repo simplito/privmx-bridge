@@ -38,12 +38,14 @@ export interface Config {
             baseUrl: string;
             useBaseUrl: boolean;
         };
+        initializationToken: string|null;
     };
     db: {
         mongo: {
             url: string;
         };
         storageProviderName: string;
+        randomWriteStorageProviderName: string;
     };
     metrics: {
         enabled: boolean;
@@ -64,6 +66,7 @@ export interface Config {
         inactiveTime: number;
         whitelist: types.core.IPAddress[];
     };
+    maximumChannelsPerSession: number,
 }
 
 export interface SingleServerMode {
@@ -120,12 +123,14 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
                 baseUrl: process.env.PRIVMX_BASE_URL || "http://localhost",
                 useBaseUrl: process.env.PRIVMX_USE_BASE_URL === "true",
             },
+            initializationToken: process.env.PRIVMX_INITIALIZATION_TOKEN || null,
         },
         db: {
             mongo: {
                 url: process.env.PRIVMX_MONGO_URL || "mongodb://localhost:27017/",
             },
             storageProviderName: process.env.PRIVMX_STORAGE_PROVIDER_NAME || "fs",
+            randomWriteStorageProviderName: process.env.PRIVMX_RANDOM_WRITE_STORAGE_PROVIDER_NAME || "fs",
         },
         metrics: {
             enabled: process.env.PRIVMX_METRICS_ENABLED === "true",
@@ -146,6 +151,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             inactiveTime: parseInt(process.env.PMX_LIMITER_INACTIVE_TIME || "", 10) ||  2 * 60 * 1000,
             whitelist: process.env.PMX_LIMITER_WHITELIST ? process.env.PMX_LIMITER_WHITELIST.split(",") as types.core.IPAddress[] : [],
         },
+        maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 100,
     };
     if (callbacks) {
         callbacks.triggerSync("applyDefaultConfig", [defaultConfig]);

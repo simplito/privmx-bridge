@@ -149,6 +149,7 @@ export class ManagerApiTests extends BaseTestSet {
     async createNewThread() {
         await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],

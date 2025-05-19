@@ -14,7 +14,8 @@ limitations under the License.
 import * as types from "../types";
 import { EcdheDataInSession, KeyDataInSession, SessionState, SrpDataInSession } from "../api/session/Session";
 import { Subidentity } from "../service/login/UserLoginService";
-
+import type * as mongo from "mongodb";
+import { TargetChannel } from "../service/ws/WebSocketConnectionManager";
 export namespace request {
     
     export interface Request {
@@ -34,6 +35,7 @@ export namespace request {
         checksumSize: number;
         checksumSent: number;
         closed: boolean;
+        supportsRandomWrite?: boolean;
     }
 }
 
@@ -145,6 +147,7 @@ export namespace thread {
     
     export interface Thread {
         id: types.thread.ThreadId;
+        clientResourceId?: types.core.ClientResourceId;
         contextId: types.context.ContextId;
         type?: types.thread.ThreadType;
         createDate: types.core.Timestamp;
@@ -175,6 +178,7 @@ export namespace thread {
     
     export interface ThreadMessage {
         id: types.thread.ThreadMessageId;
+        clientResourceId?: types.core.ClientResourceId;
         threadId: types.thread.ThreadId;
         createDate: types.core.Timestamp;
         author: types.cloud.UserId;
@@ -188,6 +192,7 @@ export namespace store {
     
     export interface Store {
         id: types.store.StoreId;
+        clientResourceId?: types.core.ClientResourceId;
         contextId: types.context.ContextId;
         type?: types.store.StoreType;
         createDate: types.core.Timestamp;
@@ -218,6 +223,7 @@ export namespace store {
     
     export interface StoreFile {
         id: types.store.StoreFileId;
+        clientResourceId?: types.core.ClientResourceId;
         fileId: types.request.FileId;
         storeId: types.store.StoreId;
         createDate: types.core.Timestamp;
@@ -230,8 +236,10 @@ export namespace store {
             fileId: types.request.FileId;
             size: types.core.SizeInBytes;
             checksumSize: types.core.SizeInBytes;
+            supportsRandomWrite?: boolean;
         };
         updates?: types.store.StoreFileUpdate[];
+        supportsRandomWrite?: boolean;
     }
 }
 
@@ -254,6 +262,7 @@ export namespace inbox {
     
     export interface Inbox {
         id: types.inbox.InboxId;
+        clientResourceId?: types.core.ClientResourceId,
         contextId: types.context.ContextId;
         type?: types.inbox.InboxType;
         createDate: types.core.Timestamp;
@@ -284,6 +293,7 @@ export namespace stream {
     
     export interface StreamRoom {
         id: types.stream.StreamRoomId;
+        clientResourceId?: types.core.ClientResourceId;
         contextId: types.context.ContextId;
         type?: types.stream.StreamRoomType;
         createDate: types.core.Timestamp;
@@ -376,5 +386,83 @@ export namespace auth {
         usageExpiryDate: types.core.Timestamp;
         expiryDate: types.core.Timestamp;
         refreshTokenTTL: types.core.Timespan;
+    }
+}
+
+export namespace MongoFileStorage {
+    export type ChunkId = string&{__chunkId: never};
+    
+    export interface Chunk {
+        _id: ChunkId;
+        fileMetaData: types.request.FileId;
+        index: number;
+        binary: mongo.Binary;
+    }
+    
+    export interface FileMetaData {
+        _id: types.request.FileId;
+        chunks: number;
+        lastChunkSize: number;
+        seq: number;
+        isTemporary: boolean;
+        checksumSize: number;
+        checksumChunks: number;
+    }
+}
+
+export namespace kvdb {
+    
+    export interface Kvdb {
+        id: types.kvdb.KvdbId;
+        clientResourceId: types.core.ClientResourceId;
+        contextId: types.context.ContextId;
+        type?: types.kvdb.KvdbType;
+        createDate: types.core.Timestamp;
+        creator: types.cloud.UserId;
+        lastModificationDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        keyId: types.core.KeyId;
+        data: types.kvdb.KvdbData;
+        allTimeUsers: types.cloud.UserId[];
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        keys: types.cloud.UserKeysEntry[];
+        history: KvdbHistoryEntry[];
+        entries: number;
+        lastEntryDate: types.core.Timestamp;
+        policy?: types.cloud.ContainerPolicy;
+    }
+    
+    export interface KvdbHistoryEntry {
+        keyId: types.core.KeyId;
+        data: types.stream.StreamRoomData;
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        created: types.core.Timestamp;
+        author: types.cloud.UserId;
+    }
+    
+    export interface KvdbEntry {
+        id: types.kvdb.KvdbEntryId;
+        kvdbId: types.kvdb.KvdbId;
+        createDate: types.core.Timestamp;
+        author: types.cloud.UserId;
+        entryKey: types.kvdb.KvdbEntryKey
+        entryValue: types.kvdb.KvdbEntryValue;
+        keyId: types.core.KeyId;
+        lastModificationDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        version: types.kvdb.KvdbEntryVersion;
+    }
+}
+
+export namespace notification {
+    export type NotificationId = string&{__notificationId: never};
+    
+    export interface Notification {
+        id: NotificationId;
+        channel: TargetChannel;
+        userPubKey: types.cloud.UserPubKey;
+        event: types.cloud.Event<string, string, unknown>;
     }
 }

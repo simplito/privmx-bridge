@@ -14,6 +14,7 @@ import * as path from "path";
 import { Logger } from "../log/LoggerFactory";
 import * as types from "../../types";
 import { ConfigService } from "../config/ConfigService";
+import { FileId } from "../misc/StorageService";
 
 export class FileSystemService {
     
@@ -99,6 +100,28 @@ export class FileSystemService {
             return fs.promises.readFile(filePath);
         }
         throw new Error("Unsupported range type");
+    }
+    
+    async randomWrite(id: FileId, operations: types.store.StoreFileRandomWriteOperation[]) {
+        const filePath = this.getStorageFilePath(id);
+        const checksumPath = this.getStorageFileChecksumPath(id);
+        const file = await fs.promises.open(filePath, "r+");
+        const checksum = await fs.promises.open(checksumPath, "r+");
+        for (const operation of operations) {
+            const target = operation.type === "file" ? file : checksum;
+            const position = operation.pos === -1 ? (await target.stat()).size : operation.pos;
+            await target.write(operation.data, 0, operation.data.length, position);
+            if (operation.truncate) {
+                await target.truncate(operation.data.length + position);
+            }
+        }
+        const fileStat = await file.stat();
+        const newFileSize = fileStat.size;
+        const checksumStat = await checksum.stat();
+        const newChecksumSize = checksumStat.size;
+        await file.close();
+        await checksum.close();
+        return {newFileSize, newChecksumSize};
     }
     
     async copyFile(srcId: types.request.FileId, dstId: types.request.FileId) {

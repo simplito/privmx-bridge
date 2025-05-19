@@ -34,6 +34,10 @@ import { Migration060IndexesForSortableFields } from "./Migration060IndexesForSo
 import { Migration061IndexesForAuthorField } from "./Migration061IndexesForAuthorField";
 import { Migration062IndexesForCreateDate } from "./Migration062IndexesForCreateDate";
 import { Migration063AddDataToContainers } from "./Migration063AddDataToContainers";
+import { Migration064ResourceId } from "./Migration064ResourceId";
+import { Migration065AddKvdbCollections } from "./Migration065AddKvdbCollections";
+import { Migration066MongoStorage } from "./Migration066MongoStorage";
+import { Migration067AddNotificationCollection } from "./Migration067AddNotificationCollection";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -73,6 +77,10 @@ export class MigrationManager {
         Migration061IndexesForAuthorField,
         Migration062IndexesForCreateDate,
         Migration063AddDataToContainers,
+        Migration064ResourceId,
+        Migration065AddKvdbCollections,
+        Migration066MongoStorage,
+        Migration067AddNotificationCollection,
     ];
     static DB_VERSION: string|null = null;
     

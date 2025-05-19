@@ -95,6 +95,14 @@ export const API_ERROR_CODES = {
     "CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE": {code: 0x6135, message: "Cannot switch connected context to private"},
     "METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"   : {code: 0x6136, message: "Method is callable with websocket only"},
     "USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER": {code: 0x6137, message: "User does not have access to container"},
+    "DUPLICATE_RESOURCE_ID"                   : {code: 0x6138, message: "Provided ID is already in use"},
+    "TOO_MANY_CHANNELS_IN_SESSION"          : {code: 0x6139, message: "Too many channels in this websocket session"},
+    "WS_SESSION_DOES_NOT_EXISTS"            : {code: 0x613A, message: "Websocket session does not exists"},
+    "RESOURCE_ID_MISSMATCH"                 : {code: 0x613B, message: "Provided resource ID missmatch object resource ID"},
+    "KVDB_DOES_NOT_EXIST"                   : {code: 0x613C, message: "Kvdb does not exist"},
+    "KVDB_ENTRY_DOES_NOT_EXIST"              : {code: 0x613D, message: "Kvdb item does not exist"},
+    "FIRST_API_KEY_ALREADY_EXISTS"          : {code: 0x613E, message: "First api key was already created"},
+    "INITIALIZATION_TOKEN_MISSMATCH"        : {code: 0x613F, message: "Initialization token is invalid or not set"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

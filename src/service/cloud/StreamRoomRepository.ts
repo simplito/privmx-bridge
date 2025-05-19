@@ -105,7 +105,7 @@ export class StreamRoomRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async createStreamRoom(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -131,12 +131,15 @@ export class StreamRoomRepository {
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
         };
+        if (resourceId) {
+            streamRoom.clientResourceId = resourceId;
+        }
         await this.repository.insert(streamRoom);
         return streamRoom;
     }
     
-    async updateStreamRoom(oldStore: db.stream.StreamRoom, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined) {
+    async updateStreamRoom(oldStreamRoom: db.stream.StreamRoom, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+        data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -146,11 +149,11 @@ export class StreamRoomRepository {
             managers: managers,
         };
         const updatedStreamRoom: db.stream.StreamRoom = {
-            id: oldStore.id,
-            contextId: oldStore.contextId,
-            type: oldStore.type,
-            creator: oldStore.creator,
-            createDate: oldStore.createDate,
+            id: oldStreamRoom.id,
+            contextId: oldStreamRoom.contextId,
+            type: oldStreamRoom.type,
+            creator: oldStreamRoom.creator,
+            createDate: oldStreamRoom.createDate,
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
@@ -158,10 +161,16 @@ export class StreamRoomRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
-            history: [...oldStore.history, entry],
-            allTimeUsers: Utils.uniqueFromArrays(oldStore.allTimeUsers, entry.users, entry.managers),
-            policy: policy === undefined ? oldStore.policy : policy,
+            history: [...oldStreamRoom.history, entry],
+            allTimeUsers: Utils.uniqueFromArrays(oldStreamRoom.allTimeUsers, entry.users, entry.managers),
+            policy: policy === undefined ? oldStreamRoom.policy : policy,
         };
+        if (resourceId && !oldStreamRoom.clientResourceId) {
+            updatedStreamRoom.clientResourceId = resourceId;
+        }
+        else if (oldStreamRoom.clientResourceId) {
+            updatedStreamRoom.clientResourceId = oldStreamRoom.clientResourceId;
+        }
         await this.repository.update(updatedStreamRoom);
         return updatedStreamRoom;
     }

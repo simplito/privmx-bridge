@@ -29,6 +29,7 @@ import { MasterPlugin } from "../../service/plugin/Plugin";
 import { Callbacks } from "../../service/event/Callbacks";
 import { MetricsContainer } from "./ipcServices/MetricsContainer";
 import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
+import { LockService } from "./ipcServices/LockService";
 
 export class MasterRegistry {
     
@@ -50,6 +51,7 @@ export class MasterRegistry {
     private ipcRegistryService?: IpcRegistryService;
     private callbacks?: Callbacks;
     private plugins: MasterPlugin[] = [];
+    private lockService?: LockService;
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -114,6 +116,7 @@ export class MasterRegistry {
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
         methodExecutor.register(this.getActiveUsersMap());
+        methodExecutor.register(this.getLockService());
         this.getCallbacks().triggerSync("registerIpcServices", []);
     }
     
@@ -206,6 +209,13 @@ export class MasterRegistry {
             );
         }
         return this.nonceMap;
+    }
+    
+    getLockService() {
+        if (this.lockService == null) {
+            this.lockService = new LockService();
+        }
+        return this.lockService;
     }
     
     getActiveUsersMap() {

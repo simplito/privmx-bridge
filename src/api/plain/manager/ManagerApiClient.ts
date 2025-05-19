@@ -19,6 +19,10 @@ export class ManagerApiClient implements managerApi.IManagerApi {
         private requester: Requester,
     ) {}
     
+    async createFirstApiKey(model: managerApi.CreateFirstApiKeyModel): Promise<managerApi.CreateFirstApiKeyResult> {
+        return await this.requester.request("manager/createFirstApiKey", model);
+    }
+    
     async auth(model: managerApi.AuthModel): Promise<managerApi.AuthResult> {
         return await this.requester.request("manager/auth", model);
     }

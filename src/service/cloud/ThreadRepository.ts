@@ -105,7 +105,7 @@ export class ThreadRepository {
         return await this.repository.getMatchingPage<db.thread.Thread>([{$match: match}], listParams, sortBy);
     }
     
-    async createThread(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+    async createThread(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
@@ -134,12 +134,15 @@ export class ThreadRepository {
             messages: 0,
             policy: policy,
         };
+        if (resourceId) {
+            thread.clientResourceId = resourceId;
+        }
         await this.repository.insert(thread);
         return thread;
     }
     
     async updateThread(oldThread: db.thread.Thread, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined) {
+        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -167,6 +170,12 @@ export class ThreadRepository {
             messages: oldThread.messages,
             policy: policy === undefined ? oldThread.policy : policy,
         };
+        if (resourceId && !oldThread.clientResourceId) {
+            updatedThread.clientResourceId = resourceId;
+        }
+        else if (oldThread.clientResourceId) {
+            updatedThread.clientResourceId = oldThread.clientResourceId;
+        }
         await this.repository.update(updatedThread);
         return updatedThread;
     }

@@ -21,6 +21,7 @@ export class InboxApiValidator extends BaseValidator {
         
         this.registerMethod("inboxCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             type: this.tv.optResourceType,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
@@ -31,6 +32,7 @@ export class InboxApiValidator extends BaseValidator {
         }));
         this.registerMethod("inboxUpdate", this.builder.createObject({
             id: this.tv.inboxId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             data: this.tv.inboxData,
@@ -65,12 +67,14 @@ export class InboxApiValidator extends BaseValidator {
         }));
         this.registerMethod("inboxSend", this.builder.createObject({
             inboxId: this.tv.inboxId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             message: this.tv.threadMessageData,
             requestId: this.builder.optional(this.tv.requestId),
             files: this.builder.createListWithMaxLength(this.builder.createObject({
                 fileIndex: this.builder.int,
                 thumbIndex: this.builder.optional(this.builder.int),
                 meta: this.tv.storeFileMeta,
+                resourceId: this.builder.optional(this.tv.uuidv4),
             }), 128),
             version: this.builder.int,
         }));

@@ -64,7 +64,8 @@ export interface WebSocketSession {
     proxy: types.core.Host;
     encryptionKey: Buffer;
     deviceId: types.core.DeviceId|null;
-    channels: string[];
+    channels: types.cloud.ChannelScheme[];
+    instanceHost: types.core.Host;
 }
 
 export type SubscribedChannels = Map<WsChannelName, Set<types.cloud.SolutionId>>;

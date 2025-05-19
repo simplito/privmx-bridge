@@ -40,7 +40,8 @@ import { IpcServiceDescriptor } from "../master/Decorators";
 import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
 import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
-
+import { HostList } from "./HostList";
+import { LockService } from "../master/ipcServices/LockService";
 export class WorkerRegistry {
     
     private worker?: Cluster.Worker;
@@ -69,6 +70,7 @@ export class WorkerRegistry {
     protected signatureVerificationService?: SignatureVerificationService;
     private ipRateLimiterClient?: IpRateLimiterClient;
     private ipcServices = new Map<string, any>();
+    protected hostList?: HostList;
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -77,6 +79,13 @@ export class WorkerRegistry {
     
     getLoggerFactory() {
         return this.loggerFactory;
+    }
+    
+    getHostList() {
+        if (this.hostList == null) {
+            this.hostList = new HostList();
+        }
+        return this.hostList;
     }
     
     async createMongoClient(mongoUrl: string) {
@@ -238,6 +247,8 @@ export class WorkerRegistry {
         if (this.webSocketInnerManager == null) {
             this.webSocketInnerManager = new WebSocketInnerManager(
                 this.getActiveUsersMap(),
+                this.getWorkerCallbacks(),
+                this.getConfig(),
             );
         }
         return this.webSocketInnerManager;
@@ -253,6 +264,7 @@ export class WorkerRegistry {
     registerIpcServices() {
         const methodExecutor = this.getMethodExecutor();
         methodExecutor.register(this.getWorker2Service());
+        this.getWorkerCallbacks().triggerSync("registerIpcServices", []);
     }
     
     getIpcExecutor() {
@@ -340,6 +352,10 @@ export class WorkerRegistry {
         return this.getIpcService<MetricsContainer>("metricsContainer");
     }
     
+    getLockService() {
+        return this.getIpcService<LockService>("lockService");
+    }
+    
     getIpcService<T>(serviceName: string) {
         const service = this.ipcServices.get(serviceName);
         if (!service) {
@@ -371,5 +387,9 @@ export class WorkerRegistry {
             }
             this.ipcServices.set(ipcService.classNameLower, service);
         }
+    }
+    
+    registerIpcService(ipcServiceClassNameLower: string, service: Record<string, any>) {
+        this.ipcServices.set(ipcServiceClassNameLower, service);
     }
 }

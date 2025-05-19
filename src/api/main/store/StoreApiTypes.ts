@@ -13,6 +13,7 @@ import * as types from "../../../types";
 
 export interface StoreCreateModel {
     contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
     type?: types.store.StoreType;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
@@ -24,6 +25,7 @@ export interface StoreCreateModel {
 
 export interface StoreUpdateModel {
     id: types.store.StoreId;
+    resourceId?: types.core.ClientResourceId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     data: types.store.StoreData;
@@ -70,6 +72,7 @@ export interface StoreFileDeleteOlderThanResult {
 
 export interface Store {
     id: types.store.StoreId;
+    resourceId?: types.core.ClientResourceId;
     contextId: types.context.ContextId;
     createDate: types.core.Timestamp;
     creator: types.cloud.UserId;
@@ -152,6 +155,7 @@ export interface StoreStatsChangedEventData {
 
 export interface StoreFile {
     id: types.store.StoreFileId;
+    resourceId?: types.core.ClientResourceId;
     version: types.store.StoreFileVersion;
     contextId: types.context.ContextId;
     storeId: types.store.StoreId;
@@ -212,6 +216,7 @@ export type StoreFileListMyResult = StoreFileListResult
 
 export interface StoreFileCreateModel {
     storeId: types.store.StoreId;
+    resourceId?: types.core.ClientResourceId;
     requestId: types.request.RequestId;
     fileIndex: number;
     meta: types.store.StoreFileMeta;
@@ -234,7 +239,9 @@ export interface StoreFileReadResult {
     data: Buffer;
 }
 
-export interface StoreFileWriteModel {
+export type StoreFileWriteModel = StoreFileWriteModelByRequest|StoreFileWriteModelByOperations;
+
+export interface StoreFileWriteModelByRequest {
     fileId: types.store.StoreFileId;
     requestId: types.request.RequestId;
     fileIndex: number;
@@ -245,8 +252,18 @@ export interface StoreFileWriteModel {
     force?: boolean;
 }
 
+export interface StoreFileWriteModelByOperations {
+    fileId: types.store.StoreFileId;
+    operations: types.store.StoreFileRandomWriteOperation[];
+    meta: types.store.StoreFileMeta;
+    keyId: types.core.KeyId;
+    version: types.store.StoreFileVersion;
+    force: boolean;
+}
+
 export interface StoreFileUpdateModel {
     fileId: types.store.StoreFileId;
+    resourceId?: types.core.ClientResourceId;
     meta: types.store.StoreFileMeta;
     keyId: types.core.KeyId;
     version?: types.store.StoreFileVersion;
@@ -261,7 +278,14 @@ export type StoreFileCreatedEvent = types.cloud.Event<"storeFileCreated", `store
 export type StoreFileCreatedEventData = StoreFile;
 
 export type StoreFileUpdatedEvent = types.cloud.Event<"storeFileUpdated", `store/${types.store.StoreId}/files`, StoreFileUpdatedEventData>;
-export type StoreFileUpdatedEventData = StoreFile;
+export type StoreFileUpdatedEventData = StoreFile&{
+    changes?: {
+        type: "file"|"checksum";
+        pos: number;
+        length: number;
+        truncate: boolean;
+    }[];
+};
 
 export type StoreFileDeletedEvent = types.cloud.Event<"storeFileDeleted", `store/${types.store.StoreId}/files`, StoreFileDeletedEventData>;
 export interface StoreFileDeletedEventData {

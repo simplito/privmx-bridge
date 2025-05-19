@@ -67,7 +67,6 @@ export class TypesValidator {
     listModel: ObjectValidator;
     inboxId: Validator;
     inboxData: Validator;
-    wsChannel: Validator;
     streamRoomId: Validator;
     streamRoomData: Validator;
     unknown4Kb: Validator;
@@ -92,11 +91,17 @@ export class TypesValidator {
     sortOrder: Validator;
     limit: Validator;
     plainApiWsChannelName: Validator;
-    wsChannelName: Validator;
     dbQuery: Validator;
     queryPropertiesMap: Validator;
     queryProperty: Validator;
     queryValue: Validator;
+    objectId: Validator;
+    wsChannelName: Validator;
+    subscriptionId: Validator;
+    kvdbId: Validator;
+    kvdbData: Validator;
+    kvdbEntryKey: Validator;
+    uuidv4: Validator;
     
     constructor() {
         this.builder = new AdvValidator.ValidatorBuilder();
@@ -188,7 +193,7 @@ export class TypesValidator {
         });
         
         this.keyId = this.builder.rangeLength(this.builder.string, 1, 128);
-        this.userKeyData = this.builder.rangeLength(this.base64, 1, 4096);
+        this.userKeyData = this.unknown4Kb;
         this.requestId = this.builder.rangeLength(this.builder.string, 1, 60);
         
         this.bufferReadRange = this.builder.createOneOf([
@@ -214,7 +219,9 @@ export class TypesValidator {
         this.cloudUserPubKey = this.eccPub;
         this.threadId = id;
         this.threadMessageId = id;
+        this.kvdbEntryKey = id;
         this.threadData = this.unknown4Kb;
+        this.kvdbData = this.unknown4Kb;
         this.threadMessageData = this.unknown16Kb;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
@@ -253,7 +260,7 @@ export class TypesValidator {
             skip: this.intNonNegative,
             limit: this.builder.range(this.builder.int, 1, 100),
             sortOrder: this.builder.createEnum(["asc", "desc"]),
-            lastId: this.builder.optional(this.id),
+            lastId: this.builder.optional(id),
             query: this.builder.optional(this.dbQuery),
             
         });
@@ -270,7 +277,6 @@ export class TypesValidator {
             meta: this.unknown4Kb,
             publicData: this.unknown4Kb,
         });
-        this.wsChannel = this.builder.maxLength(this.builder.string, 256);
         this.streamRoomId = id;
         this.streamRoomData = this.unknown4Kb;
         this.resourceType = this.builder.rangeLength(this.builder.string, 1, 128);
@@ -315,23 +321,36 @@ export class TypesValidator {
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),
             store: this.builder.optional(this.containerPolicy),
+            kvdb: this.builder.optional(this.containerPolicy),
             inbox: this.builder.optional(this.containerWithoutItemPolicy),
             stream: this.builder.optional(this.containerWithoutItemPolicy),
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
-        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox"]);
+        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb"]);
         this.wsChannelName = this.builder.createCustom((value) => {
-            const alphaNumericalRegex = /^[a-zA-Z0-9]*$/;
-            
+            const alphaNumericalRegex = /^[a-zA-Z0-9/_|=:-]*$/;
             if (typeof value !== "string") {
                 throw new Error("Expected string");
             }
             if (!alphaNumericalRegex.test(value)) {
-                throw new Error("Value has to be alphanumerical string");
+                throw new Error("Value has to be alphanumerical string with '/', '|', '=', `:`, '-' and '_' special characters only");
             }
-            if (value.length > 32) {
-                throw new Error("Max value length: 32");
+            if (value.length > 512) {
+                throw new Error("Max value length: 512");
+            }
+        });
+        this.objectId = this.builder.rangeLength(this.builder.string, 3, 128);
+        this.subscriptionId = id;
+        this.kvdbId = id;
+        this.kvdbEntryKey = this.builder.rangeLength(this.builder.string, 1, 256);
+        this.uuidv4 = this.builder.createCustom((value) => {
+            const uuidv4Regex = /^[0-9A-F]{8}-[0-9A-F]{4}-[4][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i;
+            if (typeof value !== "string") {
+                throw new Error("Expected string");
+            }
+            if (!uuidv4Regex.test(value)) {
+                throw new Error("Value has to be uuid v4");
             }
         });
     }

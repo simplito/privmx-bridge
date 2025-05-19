@@ -36,6 +36,7 @@ export class PacketValidator extends BaseValidator {
             key: this.builder.maxLength(this.tv.byteBuffer, 100),
             agent: this.tv.userAgentOpt,
             solution: this.builder.optional(this.tv.cloudSolutionId),
+            challenge: this.builder.optional(this.builder.rangeLength(this.builder.string, 64, 128)),
         }));
         
         this.registerMethod("handshake_ecdhex", this.builder.createObject({
@@ -47,6 +48,7 @@ export class PacketValidator extends BaseValidator {
             agent: this.tv.userAgentOpt,
             solution: this.builder.optional(this.tv.cloudSolutionId),
             plain: this.builder.optional(this.builder.bool),
+            challenge: this.builder.optional(this.builder.rangeLength(this.builder.string, 64, 128)),
         }));
         
         this.registerMethod("handshake_frame_session", this.builder.createObject({

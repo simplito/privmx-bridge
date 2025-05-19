@@ -15,6 +15,7 @@ import { IpcRequester } from "../common/IpcRequester";
 import { WorkersHolder } from "./WorkersHolder";
 import { ApiMethod } from "../../api/Decorators";
 import { PlainApiEvent } from "../../api/plain/Types";
+import { TargetChannel } from "../../service/ws/WebSocketConnectionManager";
 
 export class Worker2Service implements IWorker2Service {
     
@@ -36,7 +37,7 @@ export class Worker2Service implements IWorker2Service {
     }
     
     @ApiMethod({})
-    async sendWebsocketNotification<T = unknown>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
+    async sendWebsocketNotification<T = unknown>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         await this.request("sendWebsocketNotification", model);
     }
     

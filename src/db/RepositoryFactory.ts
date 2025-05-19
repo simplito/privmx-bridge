@@ -36,6 +36,11 @@ import { ApiUserRepository } from "../service/auth/ApiUserRepository";
 import { TokenSessionRepository } from "../service/auth/TokenSessionRepository";
 import { TokenEncryptionKeyRepository } from "../service/auth/TokenEncryptionKeyRepository";
 import { SolutionRepository } from "../service/cloud/SolutionRepository";
+import { KvdbRepository } from "../service/cloud/KvdbRepository";
+import { KvdbEntryRepository } from "../service/cloud/KvdbEntryRepository";
+import { ChunkRepository } from "../service/cloud/ChunkRepository";
+import { FileMetaDataRepository } from "../service/cloud/FileMetaDataRepository";
+import { NotificationRepository } from "../service/cloud/NotificationRepository";
 
 export class RepositoryFactory {
     
@@ -152,5 +157,25 @@ export class RepositoryFactory {
     
     createSolutionRepository(session?: mongodb.ClientSession) {
         return new SolutionRepository(this.createObjectRepositoryFor(SolutionRepository, session));
+    }
+    
+    createKvdbRepository(session?: mongodb.ClientSession) {
+        return new KvdbRepository(this.createObjectRepositoryFor(KvdbRepository, session));
+    }
+    
+    createKvdbEntryRepository(session?: mongodb.ClientSession) {
+        return new KvdbEntryRepository(this.createObjectRepositoryFor(KvdbEntryRepository, session));
+    }
+    
+    createChunkRepository(session?: mongodb.ClientSession) {
+        return new ChunkRepository(this.createObjectRepositoryFor(ChunkRepository, session));
+    }
+    
+    createFileMetaDataRepository(session?: mongodb.ClientSession) {
+        return new FileMetaDataRepository(this.createObjectRepositoryFor(FileMetaDataRepository, session));
+    }
+    
+    createNotificationRepository(session?: mongodb.ClientSession) {
+        return new NotificationRepository(this.createObjectRepositoryFor(NotificationRepository, session));
     }
 }

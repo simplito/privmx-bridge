@@ -25,6 +25,7 @@ export class RequestApiValidator extends BaseValidator {
             files: this.builder.createList(this.builder.createObject({
                 size: this.tv.intNonNegative,
                 checksumSize: this.tv.intNonNegative,
+                randomWrite: this.builder.optional(this.builder.bool),
             })),
         }));
         

@@ -21,6 +21,7 @@ export class StreamApiValidator extends BaseValidator {
         
         this.registerMethod("streamRoomCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             type: this.tv.optResourceType,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
@@ -32,6 +33,7 @@ export class StreamApiValidator extends BaseValidator {
         
         this.registerMethod("streamRoomUpdate", this.builder.createObject({
             id: this.tv.streamRoomId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             data: this.tv.streamRoomData,

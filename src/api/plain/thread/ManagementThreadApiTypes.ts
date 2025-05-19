@@ -164,42 +164,49 @@ export interface ThreadCreatedEvent {
     channel: "thread";
     type: "threadCreated";
     data: Thread;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadUpdatedEvent {
     channel: "thread";
     type: "threadUpdated";
     data: Thread;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadDeletedEvent {
     channel: "thread";
     type: "threadDeleted";
     data: ThreadDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadStatsEvent {
     channel: "thread";
     type: "threadStats";
     data: ThreadStatsData;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadNewMessageEvent {
     channel: "thread";
     type: "threadNewMessage";
     data: ThreadMessage;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadUpdatedMessageEvent {
     channel: "thread";
     type: "threadUpdatedMessage";
     data: ThreadMessage;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ThreadDeletedMessageEvent {
     channel: "thread";
     type: "threadDeletedMessage";
     data: ThreadMessageDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type ThreadNotifyEvent = ThreadCreatedEvent|ThreadUpdatedEvent|ThreadDeletedEvent|ThreadStatsEvent|ThreadNewMessageEvent|ThreadUpdatedMessageEvent|ThreadDeletedMessageEvent;

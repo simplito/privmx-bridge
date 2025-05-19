@@ -29,7 +29,6 @@ import { LoginLogService } from "../login/LoginLogService";
 import { JobManager } from "../job/JobManager";
 import { JobService } from "../job/JobService";
 import { IBinaryRepositoryFactory } from "../../db/BinaryRepository";
-import { Importer } from "../../db/Importer";
 import { PluginsManager } from "../plugin/PluginsManager";
 import { App } from "../app/App";
 import { PrivmxExpressApp } from "../app/PrivmxExpressApp";
@@ -110,6 +109,18 @@ import { ManagementStoreConverter } from "../../api/plain/store/ManagementStoreC
 import { ManagementInboxConverter } from "../../api/plain/inbox/ManagementInboxConverter";
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { ContextNotificationService } from "../cloud/ContextNotificationService";
+import { StorageServiceProvider } from "../cloud/StorageServiceProvider";
+import { ManagementKvdbApi } from "../../api/plain/kvdb/ManagementKvdbApi";
+import { ManagementKvdbApiValidator } from "../../api/plain/kvdb/ManagementKvdbApiValidator";
+import { KvdbService } from "../cloud/KvdbService";
+import { KvdbNotificationService } from "../cloud/KvdbNotificationService";
+import { KvdbConverter } from "../../api/main/kvdb/KvdbConverter";
+import { ManagementKvdbConverter } from "../../api/plain/kvdb/ManagementKvdbConverter";
+import { KvdbApi } from "../../api/main/kvdb/KvdbApi";
+import { KvdbApiValidator } from "../../api/main/kvdb/KvdbApiValidator";
+import { ServerSignatureService } from "../cloud/ServerSignatureService";
+import { MongoStorageService } from "../cloud/MongoStorageService";
+import { LockHelper } from "../misc/LockHelper";
 export class IOC {
     
     takeMongoClientFromWorker = true;
@@ -125,6 +136,7 @@ export class IOC {
     protected requestService?: RequestService;
     protected fileSystemService?: FileSystemService;
     protected storageService?: IStorageService;
+    protected randomWriteStorageService?: IStorageService;
     protected fileSystemStorageService?: FileSystemStorageService;
     protected userLoginService?: UserLoginService;
     protected sessionCleaner?: SessionCleaner;
@@ -132,7 +144,6 @@ export class IOC {
     protected srpConfigService?: SrpConfigService;
     protected sessionStorage?: SessionStorage;
     protected ticketsDb?: TicketsDb;
-    protected importer?: Importer;
     protected mongoDbManager?: MongoDbManager;
     protected serverSessionService?: ServerSessionService;
     protected serverStatsService?: ServerStatsService;
@@ -149,6 +160,7 @@ export class IOC {
     protected jobService?: JobService;
     protected binaryRepositoryFactoriesMap: {[name: string]: BinaryRepositoryFactoryFunc};
     protected storageProvidersMap: {[name: string]: () => IStorageService};
+    protected storageServiceProvider?: StorageServiceProvider;
     protected pluginsManager?: PluginsManager;
     protected app?: App;
     protected privmxExpressApp?: PrivmxExpressApp;
@@ -202,6 +214,15 @@ export class IOC {
     protected managementStoreConverter?: ManagementStoreConverter;
     protected managementInboxConverter?: ManagementInboxConverter;
     protected contextNotificationService?: ContextNotificationService;
+    protected managementKvdbApiValidator?: ManagementKvdbApiValidator;
+    protected kvdbService?: KvdbService;
+    protected kvdbNotificationService?: KvdbNotificationService;
+    protected kvdbConverter?: KvdbConverter;
+    protected managementKvdbConverter?: ManagementKvdbConverter;
+    protected kvdbApiValidator?: KvdbApiValidator;
+    protected serverSignatureService?: ServerSignatureService;
+    protected mongoStorageService?: MongoStorageService;
+    protected lockHelper?: LockHelper;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry, loggerFactory: LoggerFactory) {
         this.instanceHost = instanceHost;
@@ -210,11 +231,23 @@ export class IOC {
         this.binaryRepositoryFactoriesMap = {};
         this.storageProvidersMap = {};
         this.registerStorageProviderFactory("fs", () => this.getFileSystemStorageService());
+        this.registerStorageProviderFactory("mongo", () => this.getMongoStorageService());
         this.getCallbacks().add("applyDefaultConfig", (values: ConfigValues) => {
             const config = this.workerRegistry.getConfig();
             values.db.storageProviderName = config.db.storageProviderName;
+            values.db.randomWriteStorageProviderName = config.db.randomWriteStorageProviderName;
             values.request.chunkSize = config.request.chunkSize;
         });
+    }
+    
+    getServerSignatureService() {
+        if (!this.serverSignatureService) {
+            this.serverSignatureService = new ServerSignatureService(
+                this.workerRegistry.getNonceMap(),
+                this.getPkiFactory(),
+            );
+        }
+        return this.serverSignatureService;
     }
     
     getIpRateLimiterClient() {
@@ -345,17 +378,6 @@ export class IOC {
         return this.maintenanceService;
     }
     
-    getImporter() {
-        if (this.importer == null) {
-            this.importer = new Importer(
-                this.getMongoDbManager(),
-                this.getLoggerFactory().get(Importer),
-                this.getStorageService(),
-            );
-        }
-        return this.importer;
-    }
-    
     getMongoDbManager() {
         if (this.mongoDbManager == null) {
             this.mongoDbManager = new MongoDbManager(
@@ -407,7 +429,7 @@ export class IOC {
         if (this.requestService == null) {
             this.requestService = new RequestService(
                 this.getConfigService(),
-                this.getStorageService(),
+                this.getStorageServiceProvider(),
                 this.getRepositoryFactory(),
                 this.getLoggerFactory().get(RequestService),
             );
@@ -433,12 +455,39 @@ export class IOC {
         return this.storageService;
     }
     
+    getRandomWriteStorageService() {
+        if (this.randomWriteStorageService == null) {
+            const randomWriteStorageProviderName = this.getConfigService().values.db.randomWriteStorageProviderName;
+            this.randomWriteStorageService = this.resolveStorageProviderFactory(randomWriteStorageProviderName)();
+        }
+        return this.randomWriteStorageService;
+    }
+    
+    getStorageServiceProvider() {
+        if (this.storageServiceProvider == null) {
+            this.storageServiceProvider = new StorageServiceProvider(
+                this.getStorageService(),
+                this.getRandomWriteStorageService(),
+            );
+        }
+        return this.storageServiceProvider;
+    }
+    
     resolveStorageProviderFactory(providerName: string) {
         const factory = this.storageProvidersMap[providerName];
         if (!factory) {
             throw new Error(`Storage provider factory with name '${providerName}' not registered`);
         }
         return factory;
+    }
+    
+    getMongoStorageService() {
+        if (this.mongoStorageService == null) {
+            this.mongoStorageService = new MongoStorageService(
+                this.getRepositoryFactory(),
+            );
+        }
+        return this.mongoStorageService;
     }
     
     getFileSystemStorageService() {
@@ -533,6 +582,7 @@ export class IOC {
             this.mainApiRsolver.registerApiWithPrefix("store.", StoreApi, ({ioc: e, sessionService: s}) => new StoreApi(e.ioc.getStoreApiValidator(), s, e.ioc.getStoreService(), e.ioc.getStoreConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("inbox.", InboxApi, ({ioc: e, sessionService: s}) => new InboxApi(e.ioc.getInboxApiValidator(), s, e.ioc.getInboxService(), e.ioc.getInboxConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger()));
+            this.mainApiRsolver.registerApiWithPrefix("kvdb.", KvdbApi, ({ioc: e, sessionService: s}) => new KvdbApi(e.ioc.getKvdbApiValidator(), s, e.ioc.getKvdbService(), e.ioc.getKvdbConverter(), e.getRequestLogger()));
             
             this.getPluginsManager().registerEndpoint(this.mainApiRsolver);
         }
@@ -651,6 +701,15 @@ export class IOC {
         return this.managementStoreApiValidator;
     }
     
+    getManagementKvdbApiValidator() {
+        if (this.managementKvdbApiValidator == null) {
+            this.managementKvdbApiValidator = new ManagementKvdbApiValidator(
+                this.getTypesValidator(),
+            );
+        }
+        return this.managementKvdbApiValidator;
+    }
+    
     getPlainApiResolver() {
         if (this.plainApiResolver == null) {
             this.plainApiResolver = new ApiResolver();
@@ -705,6 +764,13 @@ export class IOC {
                 e.getAuthorizationHolder(),
                 e.ioc.getManagementInboxConverter(),
             ));
+            this.plainApiResolver.registerApiWithPrefix("kvdb/", ManagementKvdbApi, e => new ManagementKvdbApi(
+                e.ioc.getManagementKvdbApiValidator(),
+                e.getAuthorizationDetector(),
+                e.getAuthorizationHolder(),
+                e.ioc.getKvdbService(),
+                e.ioc.getManagementKvdbConverter(),
+            ));
             this.getPluginsManager().registerJsonRpcEndpoint(this.plainApiResolver);
         }
         return this.plainApiResolver;
@@ -736,6 +802,9 @@ export class IOC {
                 this.getConfigService(),
                 this.workerRegistry.getWebSocketInnerManager(),
                 this.workerRegistry.getActiveUsersMap(),
+                this.workerRegistry.getWorkerCallbacks(),
+                this.getInstanceHost(),
+                this.getRepositoryFactory(),
             );
         }
         return this.simpleWebSocketConnectionManager;
@@ -873,6 +942,8 @@ export class IOC {
                 this.getStreamService(),
                 this.getContextNotificationService(),
                 this.workerRegistry.getActiveUsersMap(),
+                this.getInstanceHost(),
+                this.workerRegistry.getWorkerCallbacks(),
             );
         }
         return this.contextService;
@@ -899,6 +970,8 @@ export class IOC {
         if (this.threadService == null) {
             this.threadService = new ThreadService(
                 this.getRepositoryFactory(),
+                this.workerRegistry.getActiveUsersMap(),
+                this.getInstanceHost(),
                 this.getCloudKeyService(),
                 this.getThreadNotificationService(),
                 this.workerRegistry.getCloudAclChecker(),
@@ -907,6 +980,50 @@ export class IOC {
             );
         }
         return this.threadService;
+    }
+    
+    getKvdbService() {
+        if (this.kvdbService == null) {
+            this.kvdbService = new KvdbService(
+                this.getRepositoryFactory(),
+                this.getInstanceHost(),
+                this.workerRegistry.getActiveUsersMap(),
+                this.getCloudKeyService(),
+                this.getKvdbNotificationService(),
+                this.workerRegistry.getCloudAclChecker(),
+                this.getPolicyService(),
+                this.getCloudAccessValidator(),
+            );
+        }
+        return this.kvdbService;
+    }
+    
+    getKvdbNotificationService() {
+        if (this.kvdbNotificationService == null) {
+            this.kvdbNotificationService = new KvdbNotificationService(
+                this.getJobService(),
+                this.getWebSocketSender(),
+                this.getWebSocketPlainSender(),
+                this.getKvdbConverter(),
+                this.getRepositoryFactory(),
+                this.getManagementKvdbConverter(),
+            );
+        }
+        return this.kvdbNotificationService;
+    }
+    
+    getKvdbConverter() {
+        if (this.kvdbConverter == null) {
+            this.kvdbConverter = new KvdbConverter();
+        }
+        return this.kvdbConverter;
+    }
+    
+    getManagementKvdbConverter() {
+        if (this.managementKvdbConverter == null) {
+            this.managementKvdbConverter = new ManagementKvdbConverter();
+        }
+        return this.managementKvdbConverter;
     }
     
     getThreadConverter() {
@@ -948,18 +1065,30 @@ export class IOC {
         return this.storeApiValidator;
     }
     
+    getLockHelper() {
+        if (this.lockHelper == null) {
+            this.lockHelper = new LockHelper(
+                this.workerRegistry.getLockService(),
+            );
+        }
+        return this.lockHelper;
+    }
+    
     getStoreService() {
         if (this.storeService == null) {
             this.storeService = new StoreService(
                 this.getRepositoryFactory(),
+                this.getInstanceHost(),
+                this.workerRegistry.getActiveUsersMap(),
                 this.getCloudKeyService(),
                 this.getStoreNotificationService(),
-                this.getStorageService(),
+                this.getStorageServiceProvider(),
                 this.getJobService(),
                 this.getLoggerFactory().get(StoreService),
                 this.workerRegistry.getCloudAclChecker(),
                 this.getPolicyService(),
                 this.getCloudAccessValidator(),
+                this.getLockHelper(),
             );
         }
         
@@ -1012,9 +1141,11 @@ export class IOC {
         if (this.inboxService == null) {
             this.inboxService = new InboxService(
                 this.getRepositoryFactory(),
+                this.workerRegistry.getActiveUsersMap(),
+                this.getInstanceHost(),
                 this.getCloudKeyService(),
                 this.getInboxNotificationService(),
-                this.getStorageService(),
+                this.getStorageServiceProvider(),
                 this.getStoreNotificationService(),
                 this.getThreadNotificationService(),
                 this.workerRegistry.getCloudAclChecker(),
@@ -1059,6 +1190,8 @@ export class IOC {
         if (this.streamService == null) {
             this.streamService = new StreamService(
                 this.getRepositoryFactory(),
+                this.getInstanceHost(),
+                this.workerRegistry.getActiveUsersMap(),
                 this.getCloudKeyService(),
                 this.getStreamNotificationService(),
                 this.workerRegistry.getCloudAclChecker(),
@@ -1087,6 +1220,15 @@ export class IOC {
         return this.streamApiValidator;
     }
     
+    getKvdbApiValidator() {
+        if (this.kvdbApiValidator == null) {
+            this.kvdbApiValidator = new KvdbApiValidator(
+                this.getTypesValidator(),
+            );
+        }
+        return this.kvdbApiValidator;
+    }
+    
     getTokenEncryptionService() {
         if (this.tokenEncryptionService == null) {
             this.tokenEncryptionService = new TokenEncryptionService(
@@ -1110,6 +1252,8 @@ export class IOC {
         if (this.apiKeyService == null) {
             this.apiKeyService = new ApiKeyService(
                 this.getRepositoryFactory(),
+                this.getLockHelper(),
+                this.workerRegistry.getConfig(),
             );
         }
         return this.apiKeyService;

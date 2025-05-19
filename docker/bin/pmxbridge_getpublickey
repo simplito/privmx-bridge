@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd /work/privmx-bridge
+node out/init/scripts/getPublicKey.js

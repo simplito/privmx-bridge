@@ -29,4 +29,6 @@ export const testData = {
     inboxId: "6718ca647117eb03ed335dd0" as types.inbox.InboxId,
     storeId: "6718ca61234548e1928939bf" as types.store.StoreId,
     streamRoomId: "6718e0e99e4e4e36fc5bbcfa" as types.stream.StreamRoomId,
+    kvdbId: "67ed23fe1208279fd57b5b1d" as types.kvdb.KvdbId,
+    kvdbEntryKey: "jodsajdoisajodisajoidjsa" as types.kvdb.KvdbEntryKey,
 };

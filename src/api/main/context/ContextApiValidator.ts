@@ -19,7 +19,7 @@ export class ContextApiValidator extends BaseValidator {
     ) {
         super();
         
-        this.registerMethod("contxtGet", this.builder.addFields(this.tv.listModel, {
+        this.registerMethod("contextGet", this.builder.createObject({
             id: this.tv.cloudContextId,
         }));
         this.registerMethod("contextList", this.builder.addFields(this.tv.listModel, {

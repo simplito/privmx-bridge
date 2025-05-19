@@ -20,6 +20,7 @@ import * as types from "../../types";
 import { ListWithCount } from "../../CommonTypes";
 import { AppException } from "../../api/AppException";
 import { MongoQueryConverter } from "./MongoQueryConverter";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 
 export class MongoObjectRepository<K extends string|number, V> implements ObjectRepository<K, V> {
     
@@ -176,6 +177,12 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
             await this.collection.insertOne(this.convertToDbObj(value), this.getOptions());
             return;
         }
+        catch (error) {
+            if (this.isMongoDuplicateError(error)) {
+                throw new DbDuplicateError();
+            }
+            throw error;
+        }
         finally {
             this.logger.time(startTime, "Mongo insert", this.collection.collectionName, value[this.idProperty]);
         }
@@ -199,6 +206,12 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         try {
             await this.collection.replaceOne({_id: value[this.idProperty]}, this.withoutId(this.convertToDbObj(value)), this.getOptions<mongodb.ReplaceOptions>({upsert: true}));
             return;
+        }
+        catch (error) {
+            if (this.isMongoDuplicateError(error)) {
+                throw new DbDuplicateError();
+            }
+            throw error;
         }
         finally {
             this.logger.time(startTime, "Mongo update", this.collection.collectionName, value[this.idProperty]);
@@ -328,5 +341,9 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     private withoutId<Q>(obj: Q): Omit<Q, "_id"> {
         delete (obj as any)._id;
         return obj;
+    }
+    
+    isMongoDuplicateError(e: unknown): boolean {
+        return (e !== null && typeof(e) === "object") && "code" in e && e.code === 11000;
     }
 }

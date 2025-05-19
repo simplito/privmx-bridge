@@ -57,6 +57,7 @@ export class ManagementStreamApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const newStream = await this.apis.streamApi.streamRoomCreate({
                 contextId: testData.contextId,
+                resourceId: this.helpers.generateResourceId(),
                 keyId: testData.keyId,
                 data: {
                     qwe: 1,

@@ -101,6 +101,7 @@ async function initWorker(worker: Cluster.Worker) {
         });
     }
     registry.getWorkerCallbacks().triggerSync("workerLoaded", []);
+    registry.getWorkerCallbacks().triggerZ("workerLoadedAsync", []);
 }
 
 function setupServer(registry: WorkerRegistry, server: http.Server|https.Server) {

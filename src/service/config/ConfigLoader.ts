@@ -54,6 +54,7 @@ export interface ConfigValues {
             dbName: string;
         };
         storageProviderName: string;
+        randomWriteStorageProviderName: string;
     };
     request: {
         chunkSize: number;
@@ -134,6 +135,7 @@ export class ConfigLoader {
                     dbName: undefined as unknown as string,
                 },
                 storageProviderName: "fs",
+                randomWriteStorageProviderName: "fs",
             },
             request: {
                 chunkSize: 5 * 1024 * 1024,

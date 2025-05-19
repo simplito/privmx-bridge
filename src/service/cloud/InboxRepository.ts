@@ -105,7 +105,7 @@ export class InboxRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async createInbox(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async createInbox(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -131,11 +131,14 @@ export class InboxRepository {
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
         };
+        if (resourceId) {
+            inbox.clientResourceId = resourceId;
+        }
         await this.repository.insert(inbox);
         return inbox;
     }
     
-    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined) {
+    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -161,6 +164,12 @@ export class InboxRepository {
             allTimeUsers: Utils.uniqueFromArrays(oldInbox.allTimeUsers, entry.users, entry.managers),
             policy: policy === undefined ? oldInbox.policy : policy,
         };
+        if (resourceId && !oldInbox.clientResourceId) {
+            updatedInbox.clientResourceId = resourceId;
+        }
+        else if (oldInbox.clientResourceId) {
+            updatedInbox.clientResourceId = oldInbox.clientResourceId;
+        }
         await this.repository.update(updatedInbox);
         return updatedInbox;
     }

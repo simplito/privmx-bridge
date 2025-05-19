@@ -13,6 +13,7 @@ import { WorkerIpcRequester } from "./WorkerIpcRequester";
 import { IWorker2Service } from "../common/Worker2Service";
 import * as types from "../../types";
 import { PlainApiEvent } from "../../api/plain/Types";
+import { TargetChannel } from "../../service/ws/WebSocketConnectionManager";
 
 export class Worker2ServiceClient implements IWorker2Service {
     
@@ -25,7 +26,7 @@ export class Worker2ServiceClient implements IWorker2Service {
         return this.ipcRequester.request("sendWebsocketNotificationToPlainUsers", model);
     }
     
-    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
+    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
         return this.ipcRequester.request("sendWebsocketNotification", model);
     }
     

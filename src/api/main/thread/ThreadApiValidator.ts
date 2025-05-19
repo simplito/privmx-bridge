@@ -20,6 +20,7 @@ export class ThreadApiValidator extends BaseValidator {
         super();
         
         this.registerMethod("threadCreate", this.builder.createObject({
+            resourceId: this.builder.optional(this.tv.uuidv4),
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
@@ -32,6 +33,7 @@ export class ThreadApiValidator extends BaseValidator {
         
         this.registerMethod("threadUpdate", this.builder.createObject({
             id: this.tv.threadId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             data: this.tv.threadData,
@@ -69,12 +71,14 @@ export class ThreadApiValidator extends BaseValidator {
         
         this.registerMethod("threadMessageSend", this.builder.createObject({
             threadId: this.tv.threadId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             data: this.tv.threadMessageData,
             keyId: this.tv.keyId,
         }));
         
         this.registerMethod("threadMessageUpdate", this.builder.createObject({
             messageId: this.tv.threadMessageId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             data: this.tv.threadMessageData,
             keyId: this.tv.keyId,
             version: this.builder.optional(this.tv.intNonNegative),

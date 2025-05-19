@@ -34,7 +34,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomCreate(model: streamApi.StreamRoomCreateModel): Promise<streamApi.StreamRoomCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
         this.requestLogger.setContextId(streamRoom.contextId);
         return {streamRoomId: streamRoom.id};
     }
@@ -42,7 +42,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomUpdate(model: streamApi.StreamRoomUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const streamRoom = await this.streamService.updateStreamRoom(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy);
+        const streamRoom = await this.streamService.updateStreamRoom(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
         this.requestLogger.setContextId(streamRoom.contextId);
         return "OK";
     }

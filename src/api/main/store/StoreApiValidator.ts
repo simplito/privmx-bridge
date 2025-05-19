@@ -21,6 +21,7 @@ export class StoreApiValidator extends BaseValidator {
         
         this.registerMethod("storeCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             type: this.tv.optResourceType,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
@@ -32,6 +33,7 @@ export class StoreApiValidator extends BaseValidator {
         this.registerMethod("storeUpdate", this.builder.createObject({
             id: this.tv.storeId,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
+            resourceId: this.builder.optional(this.tv.uuidv4),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
             data: this.tv.storeData,
             keyId: this.tv.keyId,
@@ -76,6 +78,7 @@ export class StoreApiValidator extends BaseValidator {
         }));
         this.registerMethod("storeFileCreate", this.builder.createObject({
             storeId: this.tv.storeId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             requestId: this.tv.requestId,
             fileIndex: this.builder.int,
             meta: this.tv.storeFileMeta,
@@ -88,18 +91,34 @@ export class StoreApiValidator extends BaseValidator {
             version: this.builder.optional(this.tv.intNonNegative),
             range: this.tv.bufferReadRange,
         }));
-        this.registerMethod("storeFileWrite", this.builder.createObject({
-            fileId: this.tv.storeFileId,
-            requestId: this.tv.requestId,
-            fileIndex: this.builder.int,
-            meta: this.tv.storeFileMeta,
-            keyId: this.tv.keyId,
-            thumbIndex: this.builder.optional(this.builder.int),
-            version: this.builder.optional(this.tv.intNonNegative),
-            force: this.builder.optional(this.builder.bool),
-        }));
+        this.registerMethod("storeFileWrite", this.builder.createOneOf([
+            this.builder.createObject({
+                fileId: this.tv.storeFileId,
+                requestId: this.tv.requestId,
+                fileIndex: this.builder.int,
+                meta: this.tv.storeFileMeta,
+                keyId: this.tv.keyId,
+                thumbIndex: this.builder.optional(this.builder.int),
+                version: this.builder.optional(this.tv.intNonNegative),
+                force: this.builder.optional(this.builder.bool),
+            }),
+            this.builder.createObject({
+                fileId: this.tv.storeFileId,
+                meta: this.tv.storeFileMeta,
+                operations: this.builder.createListWithRangeLength(this.builder.createObject({
+                    type: this.builder.createEnum(["file", "checksum"]),
+                    pos: this.builder.min(this.builder.int, -1),
+                    data: this.builder.maxLength(this.tv.byteBuffer, 524288),
+                    truncate: this.builder.bool,
+                }), 1, 4),
+                keyId: this.tv.keyId,
+                version: this.tv.intNonNegative,
+                force: this.builder.bool,
+            }),
+        ]));
         this.registerMethod("storeFileUpdate", this.builder.createObject({
             fileId: this.tv.storeFileId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             meta: this.tv.storeFileMeta,
             keyId: this.tv.keyId,
             version: this.builder.optional(this.tv.intNonNegative),

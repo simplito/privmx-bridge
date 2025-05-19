@@ -196,6 +196,7 @@ export class RequestScopeIOC {
                 this.ioc.getServerAgent(),
                 this.ioc.getLoggerFactory().get(ServerEndpoint),
                 this.ioc.getLoggerFactory(),
+                this.ioc.getServerSignatureService(),
             );
         }
         return this.serverEndpoint;

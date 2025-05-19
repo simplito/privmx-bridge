@@ -88,6 +88,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const newStore = await this.apis.storeApi.storeCreate({
                 contextId: testData.contextId,
+                resourceId: this.helpers.generateResourceId(),
                 keyId: testData.keyId,
                 data: "aaaa" as types.store.StoreData,
                 keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -134,6 +135,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
         verifyResponseIsOK("commitFile", commitResult);
         const result = await this.apis.storeApi.storeFileCreate({
             storeId: testData.storeId,
+            resourceId: this.helpers.generateResourceId(),
             fileIndex: 0,
             requestId: req.id,
             keyId: testData.keyId,
@@ -184,6 +186,7 @@ export class ManagementStoreApiTest extends BaseTestSet {
             assert(commitResult === "OK", "unsuccessful file commit");
             const result = await this.apis.storeApi.storeFileCreate({
                 storeId: testData.storeId,
+                resourceId: this.helpers.generateResourceId(),
                 fileIndex: 0,
                 requestId: req.id,
                 keyId: testData.keyId,

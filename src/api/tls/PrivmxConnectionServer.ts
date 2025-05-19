@@ -33,6 +33,8 @@ import { ConfigService } from "../../service/config/ConfigService";
 import { DateUtils } from "../../utils/DateUtils";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { Logger } from "../../service/log/LoggerFactory";
+import { ServerSignatureService } from "../../service/cloud/ServerSignatureService";
+import { VersionDetector } from "../../service/config/VersionDetector";
 
 export class PrivmxConnectionServer extends PrivmxConnectionBase {
     
@@ -51,6 +53,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         private serverKeystoreProvider: () => Promise<pki.common.Types.keystore.IKeyStore2>,
         private configService: ConfigService,
         private sessionValidator: (sessionId: types.core.SessionId|undefined) => Whenable<boolean>,
+        private serverSignatureService: ServerSignatureService,
         logger: Logger,
     ) {
         super(!configService.values.application.allowUnauthorized, logger);
@@ -59,6 +62,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
     private getServerConfig() {
         const config: types.packet.ServerConfig = {
             requestChunkSize: this.configService.values.request.chunkSize,
+            serverVersion: VersionDetector.detectServerVersion(),
         };
         return config;
     }
@@ -75,6 +79,9 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 agent: this.getServerAgent(),
                 config: this.getServerConfig(),
             };
+            if (packet.challenge) {
+                response.signature = await this.serverSignatureService.signChallenge(packet.challenge);
+            }
             const pson = this.psonHelper.pson_encode(response);
             this.send(pson, ContentType.HANDSHAKE);
             if (packet.agent != null) {
@@ -100,6 +107,9 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 config: this.getServerConfig(),
                 host: this.configService.getMainHost(),
             };
+            if (packet.challenge) {
+                response.signature = await this.serverSignatureService.signChallenge(packet.challenge);
+            }
             const pson = this.psonHelper.pson_encode(response);
             this.send(pson, ContentType.HANDSHAKE);
             if (packet.agent != null) {

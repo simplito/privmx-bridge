@@ -81,6 +81,23 @@ export type AclFunctionNameX =
     | "stream/streamSendCustomNotification"
     | "stream/WRITE"
     | "stream/ALL"
+    | "kvdb/kvdbGet"
+    | "kvdb/kvdbList"
+    | "kvdb/kvdbListAll"
+    | "kvdb/kvdbListKeys"
+    | "kvdb/getKvdbEntries"
+    | "kvdb/READ"
+    | "kvdb/kvdbCreate"
+    | "kvdb/kvdbUpdate"
+    | "kvdb/kvdbDelete"
+    | "kvdb/kvdbDeleteMany"
+    | "kvdb/kvdbSendCustomNotification"
+    | "kvdb/kvdbEntrySet"
+    | "kvdb/kvdbEntryGet"
+    | "kvdb/kvdbEntryDelete"
+    | "kvdb/kvdbEntryDeleteMany"
+    | "kvdb/WRITE"
+    | "kvdb/ALL"
     | "READ"
     | "WRITE"
     | "ALL";
@@ -206,13 +223,41 @@ export class CloudAclChecker {
         this.groups.set("stream/ALL" as types.cloud.AclGroupName, streamAll);
         
         // ===================
+        //    KVDB
+        // ===================
+        
+        const kvdbRead = {
+            "kvdb/kvdbGet": ["kvdbId"],
+            "kvdb/kvdbList": [],
+            "kvdb/kvdbListAll": [],
+            "kvdb/kvdbEntryGet": ["kvdbId", "entryKey"],
+            "kvdb/kvdbListKeys": ["kvdbId"],
+            "kvdb/getKvdbEntries": ["kvdbId"],
+        } as types.cloud.AclFunctions;
+        this.groups.set("kvdb/READ" as types.cloud.AclGroupName, kvdbRead);
+        const kvdbWrite = {
+            "kvdb/kvdbCreate": [],
+            "kvdb/kvdbUpdate": ["kvdbId"],
+            "kvdb/kvdbDelete": ["kvdbId"],
+            "kvdb/kvdbDeleteMany": [],
+            "kvdb/kvdbSendCustomNotification": ["kvdbId"],
+            "kvdb/kvdbEntrySet": ["kvdbId"],
+            "kvdb/kvdbEntryDelete": ["kvdbId", "entryKey"],
+            "kvdb/kvdbEntryDeleteMany": ["kvdbId"],
+        } as types.cloud.AclFunctions;
+        this.groups.set("kvdb/WRITE" as types.cloud.AclGroupName, kvdbWrite);
+        const kvdbAll = {...kvdbRead, ...kvdbWrite};
+        this.groups.set("kvdb/ALL" as types.cloud.AclGroupName, kvdbAll);
+        
+        // ===================
         //         ALL
         // ===================
-        const allRead = {...storeRead, ...threadRead, ...inboxRead, ...streamRead, ...contextRead};
+        
+        const allRead = {...storeRead, ...threadRead, ...inboxRead, ...streamRead, ...contextRead, ...kvdbRead};
         this.groups.set("READ" as types.cloud.AclGroupName, allRead);
-        const allWrite = {...storeWrite, ...threadRead, ...inboxRead, ...streamRead, ...contextWrite};
+        const allWrite = {...storeWrite, ...threadRead, ...inboxRead, ...streamRead, ...contextWrite, ...kvdbWrite};
         this.groups.set("WRITE" as types.cloud.AclGroupName, allWrite);
-        const allAll = {...storeAll, ...threadAll, ...inboxAll, ...streamAll, ...contextAll};
+        const allAll = {...storeAll, ...threadAll, ...inboxAll, ...streamAll, ...contextAll, ...kvdbAll};
         this.groups.set("ALL" as types.cloud.AclGroupName, allAll);
         
         this.functions = allAll;

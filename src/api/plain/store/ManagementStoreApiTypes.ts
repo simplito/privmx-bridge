@@ -180,42 +180,49 @@ export interface StoreCreatedEvent {
     channel: "store";
     type: "storeCreated";
     data: Store;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreUpdatedEvent {
     channel: "store";
     type: "storeUpdated";
     data: Store;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreDeletedEvent {
     channel: "store";
     type: "storeDeleted";
     data: StoreDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreStatsChangedEvent {
     channel: "store";
     type: "storeStatsChanged";
     data: StoreStatsChangedData;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreFileCreatedEvent {
     channel: "store";
     type: "storeFileCreated";
     data: StoreFile;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreFileUpdatedEvent {
     channel: "store";
     type: "storeFileUpdated";
     data: StoreFile;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StoreFileDeletedEvent {
     channel: "store";
     type: "storeFileDeleted";
     data: StoreFileDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type StoreNotifyEvent = StoreCreatedEvent|StoreUpdatedEvent|StoreDeletedEvent|StoreStatsChangedEvent|StoreFileCreatedEvent|StoreFileUpdatedEvent|StoreFileDeletedEvent;

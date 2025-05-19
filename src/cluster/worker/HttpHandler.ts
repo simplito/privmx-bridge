@@ -29,6 +29,7 @@ export type Interceptor = (req: http.IncomingMessage, res: http.ServerResponse, 
 
 export interface HostContextProvider {
     createHostContext(req: http.IncomingMessage): Promise<IOC>;
+    createContextWithHost(host: types.core.Host): Promise<IOC>;
 }
 export class HttpHandler {
     
@@ -36,6 +37,7 @@ export class HttpHandler {
     private singleMode?: Promise<App>;
     private hostContextProvider: HostContextProvider = {
         createHostContext: () => this.createHostContext(),
+        createContextWithHost: () => this.createHostContext(),
     };
     
     constructor(
@@ -133,6 +135,10 @@ export class HttpHandler {
             void app.tryRunJobs();
             return app.ioc;
         }
+    }
+    
+    async createContextWithHost(host: types.core.Host) {
+        return this.hostContextProvider.createContextWithHost(host);
     }
     
     onWebSocketConnection(ws: WebSocketEx, req: http.IncomingMessage) {

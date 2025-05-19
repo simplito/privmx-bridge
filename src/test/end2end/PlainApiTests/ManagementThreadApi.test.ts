@@ -104,6 +104,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const newThread = await this.apis.threadApi.threadCreate({
                 contextId: testData.contextId,
+                resourceId: this.helpers.generateResourceId(),
                 data: "AAAA" as types.thread.ThreadData,
                 keyId: testData.keyId,
                 keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -155,6 +156,7 @@ export class ManagementThreadApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const result = await this.apis.threadApi.threadMessageSend({
                 data: "New Data!",
+                resourceId: this.helpers.generateResourceId(),
                 keyId: testData.keyId,
                 threadId: testData.threadId,
             });

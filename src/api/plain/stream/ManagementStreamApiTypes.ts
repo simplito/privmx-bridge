@@ -80,18 +80,21 @@ export interface StreamRoomCreatedEvent {
     channel: "stream";
     type: "streamRoomCreated";
     data: StreamRoom;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StreamRoomUpdatedEvent {
     channel: "stream";
     type: "streamRoomUpdated";
     data: StreamRoom;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StreamRoomDeletedEvent {
     channel: "stream";
     type: "streamRoomDeleted";
     data: StreamRoomDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type StreamNotifyEvent = StreamRoomCreatedEvent|StreamRoomUpdatedEvent|StreamRoomDeletedEvent;

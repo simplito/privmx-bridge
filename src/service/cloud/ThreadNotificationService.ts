@@ -19,6 +19,8 @@ import * as managementThreadApi from "../../api/plain/thread/ManagementThreadApi
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ManagementThreadConverter } from "../../api/plain/thread/ManagementThreadConverter";
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
+import { DateUtils } from "../../utils/DateUtils";
+import { TargetChannel } from "../ws/WebSocketConnectionManager";
 
 export class ThreadNotificationService {
     
@@ -38,73 +40,116 @@ export class ThreadNotificationService {
     
     sendThreadCustomEvent(thread: db.thread.Thread, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
         this.safe("threadCustomEvent", async () => {
-            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>([user.userPubKey], {
-                    channel: `thread/${thread.id}/${customChannelName}`,
-                    type: "custom",
-                    data: {
-                        id: thread.id,
-                        author: author,
-                        keyId: keyId,
-                        eventData: eventData,
+                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>(
+                    [user.userPubKey],
+                    {
+                        contextId: thread.contextId,
+                        containerId: thread.id,
+                        channel: `thread/custom/${customChannelName}` as types.core.WsChannelName,
                     },
-                });
+                    {
+                        channel: `thread/${thread.id}/${customChannelName}`,
+                        type: "custom",
+                        data: {
+                            id: thread.id,
+                            author: author,
+                            keyId: keyId,
+                            eventData: eventData,
+                        },
+                        timestamp: now,
+                    },
+                );
             }
         });
     }
     
     sendCreatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadCreated", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadCreatedEvent = {
                 channel: "thread",
                 type: "threadCreated",
                 data: this.managementThreadConverter.convertThread(thread),
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCreatedEvent>([user.userPubKey], {
-                    channel: "thread",
-                    type: "threadCreated",
-                    data: this.threadConverter.convertThread(user.userId, thread),
-                });
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2CreatedEvent>([user.userPubKey], {
-                    channel: "thread2",
-                    type: "thread2Created",
-                    data: this.threadConverter.convertThread(user.userId, thread),
-                });
+                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCreatedEvent>(
+                    [user.userPubKey],
+                    {
+                        contextId: thread.contextId,
+                        containerId: thread.id,
+                        channel: "thread/create" as types.core.WsChannelName,
+                    },
+                    {
+                        channel: "thread",
+                        type: "threadCreated",
+                        data: this.threadConverter.convertThread(user.userId, thread),
+                        timestamp: now,
+                    },
+                );
             }
         });
     }
     
-    sendUpdatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
+    sendUpdatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId, additionalUsers: types.cloud.UserIdentityWithStatus[]) {
         this.safe("threadUpdated", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadUpdatedEvent = {
                 channel: "thread",
                 type: "threadUpdated",
                 data: this.managementThreadConverter.convertThread(thread),
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
+            const targetChannel: TargetChannel = {
+                contextId: thread.contextId,
+                containerId: thread.id,
+                channel: "thread/update" as types.core.WsChannelName,
+            };
             for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedEvent>([user.userPubKey], {
+                const userNotification: threadApi.ThreadUpdatedEvent = {
                     channel: "thread",
                     type: "threadUpdated",
                     data: this.threadConverter.convertThread(user.userId, thread),
-                });
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2UpdatedEvent>([user.userPubKey], {
-                    channel: "thread2",
-                    type: "thread2Updated",
-                    data: this.threadConverter.convertThread(user.userId, thread),
-                });
+                    timestamp: now,
+                };
+                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedEvent>(
+                    [user.userPubKey],
+                    targetChannel,
+                    userNotification,
+                );
+            }
+            for (const user of additionalUsers) {
+                const userNotification: threadApi.ThreadUpdatedEvent = {
+                    channel: "thread",
+                    type: "threadUpdated",
+                    data: this.threadConverter.convertThread(user.id, thread),
+                    timestamp: now,
+                };
+                if (user.status === "inactive") {
+                    await this.repositoryFactory.createNotificationRepository().insert(user.pub, targetChannel, userNotification);
+                }
+                else {
+                    this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedEvent>(
+                        [user.pub],
+                        targetChannel,
+                        userNotification,
+                    );
+                }
             }
         });
     }
     
     sendThreadStats(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadStats", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadStatsEvent = {
                 channel: "thread",
                 type: "threadStats",
@@ -113,110 +158,125 @@ export class ThreadNotificationService {
                     lastMsgDate: thread.lastMsgDate,
                     messages: thread.messages,
                 },
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadStatsEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: "thread",
-                type: "threadStats",
-                data: {
-                    threadId: thread.id,
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadStatsEvent>(
+                contextUsers.map(x => x.userPubKey),
+                {
                     contextId: thread.contextId,
-                    type: thread.type,
-                    lastMsgDate: thread.lastMsgDate,
-                    messages: thread.messages,
+                    containerId: thread.id,
+                    channel: "thread/stats" as types.core.WsChannelName,
                 },
-            });
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2StatsEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: "thread2",
-                type: "thread2Stats",
-                data: {
-                    threadId: thread.id,
-                    contextId: thread.contextId,
-                    type: thread.type,
-                    lastMsgDate: thread.lastMsgDate,
-                    messages: thread.messages,
+                {
+                    channel: "thread",
+                    type: "threadStats",
+                    data: {
+                        threadId: thread.id,
+                        contextId: thread.contextId,
+                        type: thread.type,
+                        lastMsgDate: thread.lastMsgDate,
+                        messages: thread.messages,
+                    },
+                    timestamp: now,
                 },
-            });
+            );
         });
     }
     
     sendDeletedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadDeleted", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadDeletedEvent = {
                 channel: "thread",
                 type: "threadDeleted",
                 data: {
                     threadId: thread.id,
                 },
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: "thread",
-                type: "threadDeleted",
-                data: {
-                    threadId: thread.id,
-                    type: thread.type,
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedEvent>(
+                contextUsers.map(x => x.userPubKey),
+                {
+                    contextId: thread.contextId,
+                    containerId: thread.id,
+                    channel: "thread/delete" as types.core.WsChannelName,
                 },
-            });
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2DeletedEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: "thread2",
-                type: "thread2Deleted",
-                data: {
-                    threadId: thread.id,
-                    type: thread.type,
+                {
+                    channel: "thread",
+                    type: "threadDeleted",
+                    data: {
+                        threadId: thread.id,
+                        type: thread.type,
+                    },
+                    timestamp: now,
                 },
-            });
+            );
         });
     }
     
     sendNewThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadNewMessage", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadNewMessageEvent = {
                 channel: "thread",
                 type: "threadNewMessage",
                 data: this.managementThreadConverter.convertThreadMessage(thread, msg),
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadNewMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread/${thread.id}/messages`,
-                type: "threadNewMessage",
-                data: this.threadConverter.convertMessage(thread, msg),
-            });
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2NewMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread2/${thread.id}/messages`,
-                type: "thread2NewMessage",
-                data: this.threadConverter.convertMessage(thread, msg),
-            });
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadNewMessageEvent>(
+                contextUsers.map(x => x.userPubKey),
+                {
+                    contextId: thread.contextId,
+                    containerId: thread.id,
+                    channel: "thread/messages/create" as types.core.WsChannelName,
+                },
+                {
+                    channel: `thread/${thread.id}/messages`,
+                    type: "threadNewMessage",
+                    data: this.threadConverter.convertMessage(thread, msg),
+                    timestamp: now,
+                },
+            );
         });
     }
     
     sendUpdatedThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadUpdatedMessage", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadUpdatedMessageEvent = {
                 channel: "thread",
                 type: "threadUpdatedMessage",
                 data: this.managementThreadConverter.convertThreadMessage(thread, msg),
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread/${thread.id}/messages`,
-                type: "threadUpdatedMessage",
-                data: this.threadConverter.convertMessage(thread, msg),
-            });
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2UpdatedMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread2/${thread.id}/messages`,
-                type: "thread2UpdatedMessage",
-                data: this.threadConverter.convertMessage(thread, msg),
-            });
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedMessageEvent>(
+                contextUsers.map(x => x.userPubKey),
+                {
+                    contextId: thread.contextId,
+                    containerId: thread.id,
+                    channel: "thread/messages/update" as types.core.WsChannelName,
+                },
+                {
+                    channel: `thread/${thread.id}/messages`,
+                    type: "threadUpdatedMessage",
+                    data: this.threadConverter.convertMessage(thread, msg),
+                    timestamp: now,
+                },
+            );
         });
     }
     
     sendDeletedThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadDeletedMessage", async () => {
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, thread.users);
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
             const notification: managementThreadApi.ThreadDeletedMessageEvent = {
                 channel: "thread",
                 type: "threadDeletedMessage",
@@ -224,24 +284,26 @@ export class ThreadNotificationService {
                     messageId: msg.id,
                     threadId: thread.id,
                 },
+                timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread/${thread.id}/messages`,
-                type: "threadDeletedMessage",
-                data: {
-                    messageId: msg.id,
-                    threadId: thread.id,
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadDeletedMessageEvent>(
+                contextUsers.map(x => x.userPubKey),
+                {
+                    contextId: thread.contextId,
+                    containerId: thread.id,
+                    channel: "thread/messages/delete" as types.core.WsChannelName,
                 },
-            });
-            this.webSocketSender.sendCloudEventAtChannel<threadApi.Thread2DeletedMessageEvent>(contextUsers.map(x => x.userPubKey), {
-                channel: `thread2/${thread.id}/messages`,
-                type: "thread2DeletedMessage",
-                data: {
-                    messageId: msg.id,
-                    threadId: thread.id,
+                {
+                    channel: `thread/${thread.id}/messages`,
+                    type: "threadDeletedMessage",
+                    data: {
+                        messageId: msg.id,
+                        threadId: thread.id,
+                    },
+                    timestamp: now,
                 },
-            });
+            );
         });
     }
 }

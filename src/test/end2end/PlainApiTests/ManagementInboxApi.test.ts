@@ -57,6 +57,7 @@ export class ManagementInboxApiTest extends BaseTestSet {
         for (let i = 0; i < 5; i++) {
             const newInbox = await this.apis.inboxApi.inboxCreate({
                 contextId: testData.contextId,
+                resourceId: this.helpers.generateResourceId(),
                 keyId: testData.keyId,
                 data: {
                     threadId: testData.threadId,

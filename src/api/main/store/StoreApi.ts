@@ -34,7 +34,7 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeCreate(model: storeApi.StoreCreateModel): Promise<storeApi.StoreCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const store = await this.storeService.createStore(cloudUser, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const store = await this.storeService.createStore(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
         this.requestLogger.setContextId(store.contextId);
         return {storeId: store.id};
     }
@@ -42,7 +42,7 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeUpdate(model: storeApi.StoreUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const store = await this.storeService.updateStore(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy);
+        const store = await this.storeService.updateStore(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
         this.requestLogger.setContextId(store.contextId);
         return "OK";
     }
@@ -148,7 +148,9 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeFileWrite(model: storeApi.StoreFileWriteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store} = await this.storeService.writeStoreFile(cloudUser, model);
+        const {store} = "requestId" in model ?
+            await this.storeService.writeStoreFile(cloudUser, model) :
+            await this.storeService.randomWrite(cloudUser, model);
         this.requestLogger.setContextId(store.contextId);
         return "OK";
     }

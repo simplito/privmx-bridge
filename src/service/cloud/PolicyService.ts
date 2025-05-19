@@ -98,6 +98,28 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
     },
+    kvdb: {
+        get: "user",
+        listMy: "all",
+        listAll: "none",
+        create: "all",
+        update: "manager",
+        delete: "manager",
+        updatePolicy: "manager",
+        creatorHasToBeManager: "yes",
+        updaterCanBeRemovedFromManagers: "no",
+        ownerCanBeRemovedFromManagers: "yes",
+        canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
+        item: {
+            get: "user",
+            listMy: "user",
+            listAll: "user",
+            create: "user",
+            update: "itemOwner&user,manager",
+            delete: "itemOwner&user,manager",
+        },
+    },
 };
 
 export class PolicyService {

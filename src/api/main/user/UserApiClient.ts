@@ -19,6 +19,14 @@ export class UserApiClient extends BaseApiClient implements userApi.IUserApi {
         return this.request("ping", {});
     }
     
+    subscribeToChannels(model: userApi.SubscribeToChannelsModel): Promise<userApi.SubscribeToChannelsResult> {
+        return this.request("subscribeToChannels", model);
+    }
+    
+    unsubscribeFromChannels(model: userApi.UnsubscribeFromChannelsModel): Promise<types.core.OK> {
+        return this.request("unsubscribeFromChannels", model);
+    }
+    
     authorizeWebSocket(model: { key: types.core.Base64; addWsChannelId: boolean; }): Promise<{ wsChannelId: types.core.WsChannelId; }> {
         return this.request("authorizeWebSocket", model);
     }
@@ -27,7 +35,7 @@ export class UserApiClient extends BaseApiClient implements userApi.IUserApi {
         return this.request("unauthorizeWebSocket", {});
     }
     
-    subscribeToChannel(model: { channel: string; }): Promise<types.core.OK> {
+    subscribeToChannel(model: { channel: string; }): Promise<userApi.SubscribeToChannelResult> {
         return this.request("subscribeToChannel", model);
     }
     

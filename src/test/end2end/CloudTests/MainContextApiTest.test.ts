@@ -48,6 +48,18 @@ export class MainContextApiTests extends BaseTestSet {
         expect(res.contexts[1].contextId).toBe("662115304034ea5684acac8e" as types.context.ContextId);
     }
     
+    @Test()
+    async shouldFetchContext() {
+        await this.fetchContext();
+    }
+    
+    private async fetchContext() {
+        const res = await this.apis.contextApi.contextGet({
+            id: testData.contextId,
+        });
+        assert(!!res && "context" in res, "Unexpected response from contextGet(");
+    }
+    
     private async createNewUser() {
         const keys = ECUtils.generateKeyPair();
         this.newUserPubkey = ECUtils.publicToBase58DER(keys.keyPair);

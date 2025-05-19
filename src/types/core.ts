@@ -57,6 +57,8 @@ export type WsConnectionId = string&{__wsConnectionId: never};
 export type Quantity = number&{__quantity: never};
 export type WsChannelName = string&{__customChannelName: never};
 export type Query = {$and: Query[]} | {$or: Query[]} | PropertiesQuery;
+export type SubscriptionId = string&{__subscriptionId: never};
+export type ClientResourceId = string&{__clientResourceId: never};
 
 export type PropertiesQuery = Record<string, PropertyQuery>;
 
@@ -103,8 +105,13 @@ export interface ListModel2<T> {
     limit: number;
     sortOrder: SortOrder;
 }
-
+export interface Subscription {
+    subscriptionId: SubscriptionId;
+    channel: WsChannelName;
+}
 export interface Event<T extends string, D> {
     type: T;
     data: D;
+    subscriptions?: SubscriptionId[];
+    version?: number;
 }

@@ -40,6 +40,13 @@ export const test = testApi("client", "manager/", ManagerApi, new ManagerApiVali
         tokenType: "Bearer",
         scope: ["apiKey", "solution", "context"] as types.auth.Scope[],
     });
+    call("createFirstApiKey", api => api.createFirstApiKey({
+        initializationToken: "89nn65k42kf8vmaD" as types.auth.InitializationToken,
+        name: "myApiKey" as types.auth.ApiKeyName,
+    })).setResult({
+        id: "hysd62jsd7823nasd03" as types.auth.ApiKeyId,
+        secret: "759a1d8edba555badf1216b0f381b94950141" as types.auth.ApiKeySecret,
+    });
     call("createApiKey", api => api.createApiKey({
         name: "myApiKey" as types.auth.ApiKeyName,
         scope: ["apiKey", "solution", "context"] as types.auth.Scope[],

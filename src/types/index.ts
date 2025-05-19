@@ -21,3 +21,4 @@ export * as store from "./store";
 export * as stream from "./stream";
 export * as thread from "./thread";
 export * as user from "./user";
+export * as kvdb from "./kvdb";

@@ -25,6 +25,7 @@ import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 import * as db from "../../db/Model";
 import { ContextNotificationService } from "./ContextNotificationService";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { Callbacks } from "../event/Callbacks";
 export class ContextService {
     
     private policy: ContextPolicy;
@@ -39,6 +40,8 @@ export class ContextService {
         private streamService: StreamService,
         private contextNotificationService: ContextNotificationService,
         private activeUsersMap: ActiveUsersMap,
+        private host: types.core.Host,
+        private callback: Callbacks,
     ) {
         this.policy = new ContextPolicy(this.policyService);
     }
@@ -62,7 +65,9 @@ export class ContextService {
             throw new AppException("SOLUTION_DOES_NOT_EXIST");
         }
         this.policyService.validateContextPolicy(policy);
-        return this.repositoryFactory.createContextRepository().create(solutionId, contextName, description, scope, policy);
+        const context = await this.repositoryFactory.createContextRepository().create(solutionId, contextName, description, scope, policy);
+        this.callback.triggerZ("contextCreated", [context.id]);
+        return context;
     }
     
     async updateContext(model: managementContextApi.UpdateContextModel) {
@@ -247,7 +252,7 @@ export class ContextService {
             }
         }
         const users = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
-        const usersState = await this.activeUsersMap.getUsersState({userPubkeys: users.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
+        const usersState = await this.activeUsersMap.getUsersState({host: this.host, userPubkeys: users.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
         return users.map((contextUser, index) => ({ ...contextUser, ...usersState[index] })) as db.context.ContextUserWithStatus[];
     }
     

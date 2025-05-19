@@ -11,7 +11,8 @@
       "inbox",
       "store",
       "thread",
-      "stream"
+      "stream",
+      "kvdb"
     ],
     "enabled": true,
     "secret": "e4c21122523e8d8a6643c35b41440e61",

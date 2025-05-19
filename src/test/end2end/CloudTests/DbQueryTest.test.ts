@@ -130,6 +130,7 @@ export class DbQueryTest extends BaseTestSet {
     private async createThreadAndPopulateDataWithMaliciousInput() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -140,6 +141,7 @@ export class DbQueryTest extends BaseTestSet {
         this.threadId = newThread.threadId;
         await this.apis.threadApi.threadMessageSend({
             threadId: this.threadId,
+            resourceId: this.helpers.generateResourceId(),
             data: {
                 publicMetaObject: {
                     field1: "a".repeat(10000) + "!",
@@ -174,6 +176,7 @@ export class DbQueryTest extends BaseTestSet {
     private async createThreadAndPopulateData() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -186,6 +189,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -199,6 +203,7 @@ export class DbQueryTest extends BaseTestSet {
             });
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `BBBB${i % 2}`,
@@ -211,6 +216,7 @@ export class DbQueryTest extends BaseTestSet {
             });
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: "CCCC" as types.thread.ThreadMessageData,
                 keyId: testData.keyId,
             });
@@ -427,6 +433,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.threadApi.threadCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -462,6 +469,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.storeApi.storeCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -497,6 +505,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.streamApi.streamRoomCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -531,6 +540,7 @@ export class DbQueryTest extends BaseTestSet {
     private async createInboxes() {
         const threadRes = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId2,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA",
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -539,6 +549,7 @@ export class DbQueryTest extends BaseTestSet {
         });
         const storeRes = await this.apis.storeApi.storeCreate({
             contextId: testData.contextId2,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA",
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -548,6 +559,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.inboxApi.inboxCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     threadId: threadRes.threadId,
                     storeId: storeRes.storeId,

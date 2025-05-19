@@ -18,7 +18,6 @@ import { CloudUser, Executor } from "../../CommonTypes";
 import { AppException } from "../../api/AppException";
 import { CloudKeyService } from "./CloudKeyService";
 import { InboxNotificationService } from "./InboxNotificationService";
-import { IStorageService } from "../misc/StorageService";
 import { StoreNotificationService } from "./StoreNotificationService";
 import { ThreadNotificationService } from "./ThreadNotificationService";
 import { CloudAclChecker } from "./CloudAclChecker";
@@ -26,28 +25,36 @@ import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
 import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
-
+import { StorageServiceProvider } from "./StorageServiceProvider";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
+import type * as mongodb from "mongodb";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { BaseContainerService } from "./BaseContainerService";
 export interface FileDefinition {
     meta: types.store.StoreFileMeta;
     file: db.request.FileDefinition;
     thumb: db.request.FileDefinition|undefined;
+    resourceId: types.core.ClientResourceId|null;
 }
 
-export class InboxService {
+export class InboxService extends BaseContainerService {
     
     private policy: InboxPolicy;
     
     constructor(
-        private repositoryFactory: RepositoryFactory,
+        repositoryFactory: RepositoryFactory,
+        activeUsersMap: ActiveUsersMap,
+        host: types.core.Host,
         private cloudKeyService: CloudKeyService,
         private inboxNotificationService: InboxNotificationService,
-        private storageService: IStorageService,
+        private storageService: StorageServiceProvider,
         private storeNotificationService: StoreNotificationService,
         private threadNotificationService: ThreadNotificationService,
         private cloudAclChecker: CloudAclChecker,
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
     ) {
+        super(repositoryFactory, activeUsersMap, host);
         this.policy = new InboxPolicy(this.policyService);
     }
     
@@ -60,16 +67,24 @@ export class InboxService {
         await this.validateAccessToThread(model.data.threadId, user);
         await this.validateAccessToStore(model.data.storeId, user);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(model.contextId, model.keys, model.keyId, model.users, model.managers);
-        const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy);
-        this.inboxNotificationService.sendInboxCreated(inbox, context.solution);
-        return inbox;
+        try {
+            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy);
+            this.inboxNotificationService.sendInboxCreated(inbox, context.solution);
+            return inbox;
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
     async updateInbox(cloudUser: CloudUser, model: inboxApi.InboxUpdateModel) {
         if (model.policy) {
             this.policyService.validateContainerPolicyForContainer("policy", model.policy);
         }
-        const {store: rInbox, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+        const {inbox: rInbox, context: usedContext, oldInbox: old} = await this.repositoryFactory.withTransaction(async session => {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);
             const oldInbox = await inboxRepository.get(model.id);
             if (!oldInbox) {
@@ -90,10 +105,24 @@ export class InboxService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, [...oldInbox.history.map(x => x.keyId), model.keyId], oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
-            const store = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy);
-            return {store, context};
+            if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
+                throw new AppException("RESOURCE_ID_MISSMATCH");
+            }
+            try {
+                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null);
+                return {inbox, context, oldInbox};
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
         });
-        this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution);
+        const updatedInboxUsers = rInbox.managers.concat(rInbox.users);
+        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedInboxUsers.includes(u));
+        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
+        this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution, additionalUsersToNotify);
         return rInbox;
     }
     
@@ -274,32 +303,42 @@ export class InboxService {
         const files = this.checkFilesIndexesAndCountAndSize(last.data.fileConfig, request, model);
         await this.commitFiles(files);
         const msgId = this.repositoryFactory.createThreadMessageRepository().generateMsgId();
-        const dbFiles = await this.saveFiles(inbox.id, store.id, thread.id, msgId, files);
-        if (dbFiles.length > 0) {
-            await this.repositoryFactory.createStoreRepository().increaseFilesCounterBy(store.id, dbFiles[dbFiles.length - 1].createDate, dbFiles.length);
-        }
-        if (request) {
-            await this.repositoryFactory.createRequestRepository().delete(request.id);
-        }
-        const messageDataObj = {
-            message: model.message,
-            store: store.id,
-            files: dbFiles.map(x => x.id),
-            version: model.version,
-        };
-        const messageData = Buffer.from(JSON.stringify(messageDataObj), "utf8").toString("base64") as types.thread.ThreadMessageData;
-        const message = await this.repositoryFactory.createThreadMessageRepository().createMessage(msgId, "<anonymous>" as types.cloud.UserId, thread.id, messageData, `<inbox-${inbox.id}>` as types.core.KeyId);
-        await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
+        const {inbox: rInbox, thread: rThread, message: rMessage, dbFiles: rdbFiles} = await this.repositoryFactory.withTransaction(async session => {
+            try {
+                const dbFiles = await this.saveFiles(inbox.id, store.id, thread.id, msgId, files, session);
+                if (dbFiles.length > 0) {
+                    await this.repositoryFactory.createStoreRepository(session).increaseFilesCounterBy(store.id, dbFiles[dbFiles.length - 1].createDate, dbFiles.length);
+                }
+                if (request) {
+                    await this.repositoryFactory.createRequestRepository(session).delete(request.id);
+                }
+                const messageDataObj = {
+                    message: model.message,
+                    store: store.id,
+                    files: dbFiles.map(x => x.id),
+                    version: model.version,
+                };
+                const messageData = Buffer.from(JSON.stringify(messageDataObj), "utf8").toString("base64") as types.thread.ThreadMessageData;
+                const message = await this.repositoryFactory.createThreadMessageRepository(session).tryCreateMessage(msgId, "<anonymous>" as types.cloud.UserId, thread.id, messageData, `<inbox-${inbox.id}>` as types.core.KeyId, model.resourceId || null);
+                await this.repositoryFactory.createThreadRepository(session).increaseMessageCounter(thread.id, message.createDate);
+                return {inbox, thread, message, dbFiles};
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
+        });
         const solutionForNotification = solutionId ? solutionId : context.solution;
-        for (const dbFile of dbFiles) {
+        for (const dbFile of rdbFiles) {
             this.storeNotificationService.sendStoreFileCreated(store, dbFile, solutionForNotification);
         }
-        if (dbFiles.length > 0) {
-            this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files + dbFiles.length, lastFileDate: dbFiles[dbFiles.length - 1].createDate}, solutionForNotification);
+        if (rdbFiles.length > 0) {
+            this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files + rdbFiles.length, lastFileDate: rdbFiles[rdbFiles.length - 1].createDate}, solutionForNotification);
         }
-        
-        this.threadNotificationService.sendNewThreadMessage(thread, message, solutionForNotification);
-        return {inbox, thread, message};
+        this.threadNotificationService.sendNewThreadMessage(thread, rMessage, solutionForNotification);
+        return {inbox: rInbox, rThread, message: rMessage};
     }
     
     async sendCustomNotification(cloudUser: CloudUser, inboxId: types.inbox.InboxId, keyId: types.core.KeyId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
@@ -378,7 +417,7 @@ export class InboxService {
                 }
                 usedIndexes.push(file.thumbIndex);
             }
-            result.push({meta: file.meta, file: reqFile, thumb: reqThumb});
+            result.push({meta: file.meta, file: reqFile, thumb: reqThumb, resourceId: file.resourceId || null});
         }
         const wholeSize = result.reduce((sum, x) => sum + x.file.sent + (x.thumb ? x.thumb.size : 0), 0);
         if (wholeSize > fileConfig.maxWholeUploadSize) {
@@ -389,17 +428,17 @@ export class InboxService {
     
     private async commitFiles(files: FileDefinition[]) {
         for (const file of files) {
-            await this.storageService.commit(file.file.id);
+            await this.storageService.getStorageService(file.file.supportsRandomWrite ? "randomWrite" : "regular").commit(file.file.id);
             if (file.thumb) {
-                await this.storageService.commit(file.thumb.id);
+                await this.storageService.getStorageService(file.file.supportsRandomWrite ? "randomWrite" : "regular").commit(file.thumb.id);
             }
         }
     }
     
-    private async saveFiles(inboxId: types.inbox.InboxId, storeId: types.store.StoreId, threadId: types.thread.ThreadId, msgId: types.thread.ThreadMessageId, files: FileDefinition[]) {
+    private async saveFiles(inboxId: types.inbox.InboxId, storeId: types.store.StoreId, threadId: types.thread.ThreadId, msgId: types.thread.ThreadMessageId, files: FileDefinition[], session?: mongodb.ClientSession) {
         const result: db.store.StoreFile[] = [];
         for (const file of files) {
-            const dbFile = await this.repositoryFactory.createStoreFileRepository().create(storeId, "<anonymous>" as types.cloud.UserId, file.meta, `<inboxmsg-${inboxId}-${threadId}-${msgId}>` as types.core.KeyId, file.file, file.thumb);
+            const dbFile = await this.repositoryFactory.createStoreFileRepository(session).create(storeId, file.resourceId, "<anonymous>" as types.cloud.UserId, file.meta, `<inboxmsg-${inboxId}-${threadId}-${msgId}>` as types.core.KeyId, file.file, file.thumb);
             result.push(dbFile);
         }
         return result;

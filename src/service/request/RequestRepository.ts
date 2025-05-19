@@ -52,6 +52,7 @@ export class RequestRepository {
                     checksumSize: x.checksumSize,
                     checksumSent: 0,
                     closed: false,
+                    supportsRandomWrite: x.randomWrite,
                 };
                 return f;
             }),
@@ -101,6 +102,7 @@ export class RequestRepository {
                         sent: x.sent + chunkLength,
                         checksumSent: x.checksumSent,
                         closed: false,
+                        supportsRandomWrite: x.supportsRandomWrite,
                     };
                 }
                 return x;
@@ -127,6 +129,7 @@ export class RequestRepository {
                         sent: x.sent,
                         checksumSent: checksumLength,
                         closed: true,
+                        supportsRandomWrite: x.supportsRandomWrite,
                     };
                 }
                 return x;

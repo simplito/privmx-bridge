@@ -2,7 +2,7 @@
 
 This site is only a reference to managing PrivMX Bridge. To get an overview of the whole PrivMX platform and read about using client applications, refer to [PrivMX Documentation](https://docs.privmx.dev/).
 
-PrivMX Bridge is a secure, zero-knowledge server for encrypted data storage and communication. It allows users to communicate and exchange data in a fully encrypted environment, ensuring end-to-end encryption and protecting data privacy at every step. Client software for PrivMX Bridge is [PrivMX Endpoint](https://docs.privmx.dev/endpoint), which handles the encryption.
+PrivMX Bridge is a secure, zero-knowledge server for encrypted data storage and communication. It allows users to communicate and exchange data in a fully encrypted environment, ensuring end-to-end encryption and protecting data privacy at every step. Client software for PrivMX Bridge is [PrivMX Endpoint](https://docs.privmx.dev/docs/latest/start/features#privmx-endpoint), which handles the encryption.
 
 # Introduction
 

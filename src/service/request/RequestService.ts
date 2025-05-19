@@ -15,10 +15,10 @@ import * as db from "../../db/Model";
 import { AppException } from "../../api/AppException";
 import { ConfigService } from "../config/ConfigService";
 import { ObjectRepository } from "../../db/ObjectRepository";
-import { IStorageService } from "../misc/StorageService";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import * as mongodb from "mongodb";
 import { Logger } from "../log/LoggerFactory";
+import { StorageServiceProvider } from "../cloud/StorageServiceProvider";
 
 export interface RequestX {
     request: db.request.Request;
@@ -29,7 +29,7 @@ export class RequestService {
     
     constructor(
         private configService: ConfigService,
-        private storageService: IStorageService,
+        private storageService: StorageServiceProvider,
         private repositoryFactory: RepositoryFactory,
         private logger: Logger,
     ) {
@@ -103,9 +103,9 @@ export class RequestService {
         };
         const {file} = await verify();
         if (file.seq === 0) {
-            await this.storageService.create(file.id);
+            await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").create(file.id);
         }
-        await this.storageService.append(file.id, model.data, file.seq);
+        await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").append(file.id, model.data, file.seq);
         return this.repositoryFactory.withTransaction(async session => {
             const {requestRepository, oldReq} = await verify(session);
             const newReq = await requestRepository.addChunk(oldReq, model.fileIndex, model.data.length);
@@ -134,9 +134,9 @@ export class RequestService {
         };
         const {file} = await verify();
         if (file.seq === 0) {
-            await this.storageService.create(file.id);
+            await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").create(file.id);
         }
-        await this.storageService.setChecksumAndClose(file.id, model.checksum, file.seq);
+        await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").setChecksumAndClose(file.id, model.checksum, file.seq);
         return this.repositoryFactory.withTransaction(async session => {
             const {requestRepository, oldReq} = await verify(session);
             const newReq = await requestRepository.commitFile(oldReq, model.fileIndex, model.checksum.length);
@@ -163,16 +163,11 @@ export class RequestService {
         return res;
     }
     
-    async moveFile(request: RequestX, fileId: types.request.FileId) {
-        request.moved.push(fileId);
-        await this.storageService.commit(fileId);
-    }
-    
     async finishRequest(repo: ObjectRepository<types.request.RequestId, db.request.Request>, request: RequestX) {
         await repo.delete(request.request.id);
         for (const file of request.request.files) {
             if (!request.moved.includes(file.id)) {
-                await this.storageService.reject(file.id, file.seq);
+                await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").reject(file.id, file.seq);
             }
         }
     }
@@ -184,7 +179,7 @@ export class RequestService {
         });
         for (const request of expiredRequests) {
             for (const file of request.files) {
-                await this.storageService.reject(file.id, file.seq);
+                await this.storageService.getStorageService(file.supportsRandomWrite ? "randomWrite" : "regular").reject(file.id, file.seq);
             }
         }
     }

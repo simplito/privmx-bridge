@@ -34,6 +34,9 @@ export class ThreadConverter {
             type: thread.type,
             policy: thread.policy || {},
         };
+        if (thread.clientResourceId) {
+            res.resourceId = thread.clientResourceId;
+        }
         return res;
     }
     
@@ -49,6 +52,9 @@ export class ThreadConverter {
             keyId: message.keyId,
             updates: message.updates || [],
         };
+        if (message.clientResourceId) {
+            res.resourceId = message.clientResourceId;
+        }
         return res;
     }
 }

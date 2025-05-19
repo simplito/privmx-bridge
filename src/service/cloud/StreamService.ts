@@ -21,55 +21,83 @@ import { CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
 import { CloudAccessValidator } from "./CloudAccessValidator";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { BaseContainerService } from "./BaseContainerService";
 
-export class StreamService {
+export class StreamService extends BaseContainerService {
     
     private policy: StreamRoomPolicy;
     
     constructor(
-        private repositoryFactory: RepositoryFactory,
+        repositoryFactory: RepositoryFactory,
+        host: types.core.Host,
+        activeUsersMap: ActiveUsersMap,
         private cloudKeyService: CloudKeyService,
         private streamNotificationService: StreamNotificationService,
         private cloudAclChecker: CloudAclChecker,
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
     ) {
+        super(repositoryFactory, activeUsersMap, host);
         this.policy = new StreamRoomPolicy(this.policyService);
     }
     
-    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, type, user.userId, managers, users, data, keyId, newKeys, policy);
-        this.streamNotificationService.sendStreamRoomCreated(streamRoom, context.solution);
-        return streamRoom;
+        try {
+            const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            this.streamNotificationService.sendStreamRoomCreated(streamRoom, context.solution);
+            return streamRoom;
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
     }
     
-    async updateStreamRoom(cloudUser: CloudUser, id: types.stream.StreamRoomId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean, policy: types.cloud.ContainerWithoutItemPolicy|undefined) {
+    async updateStreamRoom(cloudUser: CloudUser, id: types.stream.StreamRoomId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean, policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
-        const {streamRoom: rStreamRoom, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+        const {streamRoom: rStreamRoom, context: usedContext, oldStreamRoom: old} = await this.repositoryFactory.withTransaction(async session => {
             const streamRoomRepository = this.repositoryFactory.createStreamRoomRepository(session);
-            const oldStreaRoom = await streamRoomRepository.get(id);
-            if (!oldStreaRoom) {
+            const oldStreamRoom = await streamRoomRepository.get(id);
+            if (!oldStreamRoom) {
                 throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
             }
-            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStreaRoom.contextId);
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStreamRoom.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomUpdate", ["streamRoomId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldStreaRoom, managers, policy);
-            const currentVersion = <types.stream.StreamRoomVersion>oldStreaRoom.history.length;
+            this.policy.makeUpdateContainerCheck(user, context, oldStreamRoom, managers, policy);
+            const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreaRoom.contextId, [...oldStreaRoom.history.map(x => x.keyId), keyId], oldStreaRoom.keys, keys, keyId, users, managers);
-            const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreaRoom, user.userId, managers, users, data, keyId, newKeys, policy);
-            return {streamRoom, context};
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, [...oldStreamRoom.history.map(x => x.keyId), keyId], oldStreamRoom.keys, keys, keyId, users, managers);
+            if (oldStreamRoom.clientResourceId && resourceId && oldStreamRoom.clientResourceId !== resourceId) {
+                throw new AppException("RESOURCE_ID_MISSMATCH");
+            }
+            try {
+                const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                return {streamRoom, context, oldStreamRoom};
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
         });
-        this.streamNotificationService.sendStreamRoomUpdated(rStreamRoom, usedContext.solution);
+        const updatedStreamRoomUsers = old.managers.concat(old.users);
+        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedStreamRoomUsers.includes(u));
+        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
+        this.streamNotificationService.sendStreamRoomUpdated(rStreamRoom, usedContext.solution, additionalUsersToNotify);
         return rStreamRoom;
     }
     

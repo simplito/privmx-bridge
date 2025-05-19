@@ -16,3 +16,4 @@ export type ApiKeyId = string&{__apiKeyId: never};
 export type ApiKeySecret = string&{__apiKeySecret: never};
 export type ApiKeyName = string&{__apiKeyName: never};
 export type ApiUserId = string&{__userId: never};
+export type InitializationToken = string&{__initializationToken: never};
