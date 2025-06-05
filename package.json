@@ -1,6 +1,6 @@
 {
   "name": "privmx-bridge",
-  "version": "2.30.5",
+  "version": "2.30.6",
   "description": "Zero-knowledge server for secure storage and transfer of E2E encrypted data.",
   "scripts": {
     "types-gen": "rm -rf out && tsc --emitDeclarationOnly --declaration && touch out/index.d.ts && ~/scripts/types.sh",
