@@ -21,9 +21,10 @@ import { Base58 } from "../../utils/crypto/Base58";
 const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
 
 async function go() {
+    const args = process.argv;
     console.log("NOTICE: Fetching key requires connection with database!");
     const registry = new WorkerRegistry(loggerFactory);
-    const worker = {on: (_ev: string, message: any) => console.log(message), send: (args: any) => console.log(args)} as unknown as Cluster.Worker;
+    const worker = {on: (_ev: string, message: any) => console.log(message), send: (workerArgs: any) => console.log(workerArgs)} as unknown as Cluster.Worker;
     registry.registerWorker(worker);
     const config = registry.registerConfig(loadConfig(false, registry.getWorkerCallbacks()));
     if (config.server.mode.type !== "single") {
@@ -32,14 +33,26 @@ async function go() {
     registry.registerIpcService("activeUsersMap", {});
     registry.registerIpcService("metricsContainer", {});
     LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
-    await registry.createMongoClient(config.db.mongo.url);
-    const ioc = await registry.getHttpHandler().createHostContext();
-    const pkiFactory = ioc.getPkiFactory();
-    const keystore = await pkiFactory.loadKeystore();
-    const serverPublicKeyPem = keystore.getPrimaryKey().keyPair.getPublicView().serializeWithArmor();
-    const der58PublicKey = readPubKeyFromPem(serverPublicKeyPem);
-    prettyPrintKey(der58PublicKey);
-    await registry.getMongoClient().close();
+    try {
+        await registry.createMongoClient(config.db.mongo.url);
+        const ioc = await registry.getHttpHandler().createHostContext();
+        const pkiFactory = ioc.getPkiFactory();
+        const keystore = await pkiFactory.loadKeystore();
+        const serverPublicKeyPem = keystore.getPrimaryKey().keyPair.getPublicView().serializeWithArmor();
+        const der58PublicKey = readPubKeyFromPem(serverPublicKeyPem);
+        if (args.length === 3 && args[2] == "--kvprint") {
+            keyValuePrint(der58PublicKey);
+        }
+        else {
+            prettyPrintKey(der58PublicKey);
+        }
+    }
+    catch {
+        console.log("[ERROR] An error occurred. Please try retrieving the key again.");
+    }
+    finally {
+        await registry.getMongoClient().close();
+    }
 }
 
 function consoleErr(str: string) {
@@ -53,6 +66,10 @@ function readPubKeyFromPem(pem: string) {
     const buffer = Buffer.from(base64, "base64");
     const der = buffer.subarray(16, 81);
     return Base58.encode(der);
+}
+
+function keyValuePrint(keyValue: string) {
+    console.log(`PUBLIC_KEY=${keyValue}`);
 }
 
 function prettyPrintKey(
