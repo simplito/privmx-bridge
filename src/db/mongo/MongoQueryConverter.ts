@@ -9,25 +9,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+import { AppException } from "../../api/AppException";
 import * as types from "../../types";
 export class MongoQueryConverter {
     
-    static convertQuery(query: types.core.Query): {$match: unknown} {
+    private static readonly whitelist: string[] = ["id", "creator", "createDate", "lastModifier", "lastModificationDate", "lastModificationDate", "users", "messages", "author", "lastEntryDate", "entries", "lastFileDate", "files", "size", "entryKey"];
+    
+    static convertQuery(query: types.core.Query, rootField?: string): {$match: unknown} {
         const match = {
-            $match: this.convertQueryRecursievly(query),
+            $match: this.convertQueryRecursievly(query, rootField),
         };
         return match;
     }
     
-    private static convertQueryRecursievly(query: types.core.Query): any {
+    private static convertQueryRecursievly(query: types.core.Query, rootField?: string): any {
         if (this.isAndQuery(query)) {
-            return {$and: query.$and.map(q => this.convertQueryRecursievly(q))};
+            return {$and: query.$and.map(q => this.convertQueryRecursievly(q, rootField))};
         }
         if (this.isOrQuery(query)) {
-            return {$or: query.$or.map(q => this.convertQueryRecursievly(q))};
+            return {$or: query.$or.map(q => this.convertQueryRecursievly(q, rootField))};
         }
         const matchConditions = Object.entries(query).map(([key, value]) => ({
-            [this.convertName(key)]: this.parseValue(value),
+            [this.convertName(key, rootField)]: this.parseValue(value),
         }));
         return {
             $and: matchConditions,
@@ -66,8 +69,15 @@ export class MongoQueryConverter {
         return "$or" in query;
     }
     
-    private static convertName(originalString: string) {
-        return `data.publicMetaObject.${originalString}`;
+    private static convertName(originalString: string, rootField?: string) {
+        if (originalString.startsWith("#")) {
+            const field = originalString.substring(1);
+            if (!this.whitelist.includes(field)) {
+                throw new AppException("INVALID_PARAMS", "Query trying to access restricted or wrong field");
+            }
+            return field === "id" ? "_id" : field;
+        }
+        return originalString.startsWith("#") ? originalString.substring(1) : `${rootField || "data"}.publicMetaObject.${originalString}`;
     }
     
     private static escapeRegexValue(str: string) {

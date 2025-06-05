@@ -253,8 +253,8 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     /** Perform find with sort, skip and limit and returns list of found elements and count of all matched elements */
-    async matchX(match: any, listParams: types.core.ListModel, sortBy: keyof V) {
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
+    async matchX(match: any, listParams: types.core.ListModel, sortBy: keyof V, queryRootField?: string) {
+        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query, queryRootField)] : [];
         return this.getMatchingPage([{$match: match}, ...mongoQueries], listParams, sortBy);
     }
     

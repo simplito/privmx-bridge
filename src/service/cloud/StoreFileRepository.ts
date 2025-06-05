@@ -41,7 +41,7 @@ export class StoreFileRepository {
     
     async getPageByStore(storeId: types.store.StoreId, listParams: types.core.ListModel) {
         const sortBy = "createDate";
-        return this.repository.matchX({storeId: storeId}, listParams, sortBy);
+        return this.repository.matchX({storeId: storeId}, listParams, sortBy, "meta");
     }
     
     async getPageByStoreAndUser(storeId: types.store.StoreId, userId: types.cloud.UserId, listParams: types.core.ListModel) {

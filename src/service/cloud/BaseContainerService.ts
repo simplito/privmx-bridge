@@ -9,8 +9,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-/* eslint-disable max-classes-per-file */
-
 import * as types from "../../types";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
