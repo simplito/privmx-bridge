@@ -189,11 +189,11 @@ export class ThreadRepository {
     }
     
     async increaseMessageCounter(threadId: types.thread.ThreadId, lastMsgDate: types.core.Timestamp) {
-        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: 1}, $max: {lastMsgDate: lastMsgDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: 1}, $max: {lastMsgDate: lastMsgDate}}, {session: this.repository.getSession()});
     }
     
     async decreaseMessageCounter(threadId: types.thread.ThreadId, lastMsgDate: types.core.Timestamp, decrease?: number) {
-        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: (decrease) ? -decrease : -1}, $set: {lastMsgDate: lastMsgDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: (decrease) ? -decrease : -1}, $set: {lastMsgDate: lastMsgDate}}, {session: this.repository.getSession()});
     }
     
     async getThreadStats(threadId: types.thread.ThreadId) {

@@ -151,6 +151,7 @@ export class HttpHandler {
                 plainApiChannels: new Map(),
                 connectionId: this.generateWsConnectionId(),
             } : undefined,
+            contextFactory: (host) => this.createContextWithHost(host),
         };
         ws.on("pong", () => {
             ws.ex.isAlive = true;
@@ -198,7 +199,7 @@ export class HttpHandler {
             }
         });
         ws.on("close", () => {
-            this.webSocketInnerManager.onClose(ws);
+            void this.webSocketInnerManager.onClose(ws);
         });
     }
     

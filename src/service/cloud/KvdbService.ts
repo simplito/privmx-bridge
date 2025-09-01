@@ -301,6 +301,7 @@ export class KvdbService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
         });
+        listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdb(kvdbId, listParams);
         return {kvdb, items};
     }
@@ -325,7 +326,7 @@ export class KvdbService extends BaseContainerService {
         return {kvdb, items};
     }
     
-    async getKvdbEntries(executor: CloudUser, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel, sortBy: keyof db.kvdb.KvdbEntry, lastKey: string|undefined, prefix: string|undefined) {
+    async getKvdbEntries(executor: CloudUser, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel, sortBy: keyof db.kvdb.KvdbEntry) {
         const kvdb = await this.repositoryFactory.createKvdbRepository().get(kvdbId);
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
@@ -336,8 +337,8 @@ export class KvdbService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
         });
-        listParams.lastId = lastKey ? `${kvdbId}:${lastKey}` : undefined;
-        const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefix(kvdbId, listParams, sortBy, prefix);
+        listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
+        const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefix(kvdbId, listParams, sortBy);
         return {kvdb, items};
     }
     

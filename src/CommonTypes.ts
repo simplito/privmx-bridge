@@ -15,6 +15,7 @@ import { Subidentity } from "./service/login/UserLoginService";
 import * as mongodb from "mongodb";
 import * as db from "./db/Model";
 import { WsChannelName } from "./types/core";
+import type { IOC } from "./service/ioc/IOC";
 
 export { mongodb };
 export type Whenable<T> = T|Promise<T>;
@@ -78,8 +79,9 @@ export interface WebSocketInfo {
         connectionId: types.core.WsConnectionId;
         plainApiChannels: SubscribedChannels;
         token?: types.auth.ApiAccessToken;
-        session?: db.auth.TokenSession
+        session?: db.auth.TokenSession;
     };
+    contextFactory: (host: types.core.Host) => Promise<IOC>;
 };
 
 export interface WebSocketEx extends WebSocket {

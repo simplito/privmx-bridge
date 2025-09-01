@@ -151,7 +151,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             inactiveTime: parseInt(process.env.PMX_LIMITER_INACTIVE_TIME || "", 10) ||  2 * 60 * 1000,
             whitelist: process.env.PMX_LIMITER_WHITELIST ? process.env.PMX_LIMITER_WHITELIST.split(",") as types.core.IPAddress[] : [],
         },
-        maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 100,
+        maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 128,
     };
     if (callbacks) {
         callbacks.triggerSync("applyDefaultConfig", [defaultConfig]);

@@ -49,6 +49,7 @@ export class StoreNotificationService {
                         containerId: store.id,
                         contextId: store.contextId,
                         channel: `store/custom/${customChannelName}` as types.core.WsChannelName,
+                        containerType: store.type,
                     },
                     {
                         channel: `store/${store.id}/${customChannelName}`,
@@ -84,6 +85,7 @@ export class StoreNotificationService {
                         containerId: store.id,
                         contextId: store.contextId,
                         channel: "store/create" as types.core.WsChannelName,
+                        containerType: store.type,
                     },
                     {
                         channel: "store",
@@ -111,6 +113,7 @@ export class StoreNotificationService {
                 containerId: store.id,
                 contextId: store.contextId,
                 channel: "store/update" as types.core.WsChannelName,
+                containerType: store.type,
             };
             for (const user of contextUsers) {
                 this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreUpdatedEvent>(
@@ -164,6 +167,7 @@ export class StoreNotificationService {
                     containerId: store.id,
                     contextId: store.contextId,
                     channel: "store/delete" as types.core.WsChannelName,
+                    containerType: store.type,
                 },
                 {
                     channel: "store",
@@ -200,6 +204,7 @@ export class StoreNotificationService {
                     containerId: store.id,
                     contextId: store.contextId,
                     channel: "store/stats" as types.core.WsChannelName,
+                    containerType: store.type,
                 },
                 {
                     channel: "store",
@@ -235,11 +240,12 @@ export class StoreNotificationService {
                     contextId: store.contextId,
                     itemId: file.id,
                     channel: "store/files/create" as types.core.WsChannelName,
+                    containerType: store.type,
                 },
                 {
                     channel: `store/${store.id}/files`,
                     type: "storeFileCreated",
-                    data: this.storeConverter.convertFile(store, file),
+                    data: {...this.storeConverter.convertFile(store, file), containerType: store.type},
                     timestamp: now,
                 },
             );
@@ -264,12 +270,14 @@ export class StoreNotificationService {
                     contextId: store.contextId,
                     itemId: file.id,
                     channel: "store/files/update" as types.core.WsChannelName,
+                    containerType: store.type,
                 },
                 {
                     channel: `store/${store.id}/files`,
                     type: "storeFileUpdated",
                     data: {
                         ...this.storeConverter.convertFile(store, file),
+                        containerType: store.type,
                         changes: operations ? operations.map(o => {
                             return {
                                 type: o.type,
@@ -307,6 +315,7 @@ export class StoreNotificationService {
                     contextId: store.contextId,
                     itemId: file.id,
                     channel: "store/files/delete" as types.core.WsChannelName,
+                    containerType: store.type,
                 },
                 {
                     channel: `store/${store.id}/files`,
@@ -315,6 +324,7 @@ export class StoreNotificationService {
                         id: file.id,
                         contextId: store.contextId,
                         storeId: file.storeId,
+                        containerType: store.type,
                     },
                     timestamp: now,
                 },

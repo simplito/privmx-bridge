@@ -59,20 +59,8 @@ export class KvdbEntryRepository {
         return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy);
     }
     
-    async getPageByKvdbWithPrefix(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel, sortBy: keyof db.kvdb.KvdbEntry, prefix: string|undefined) {
-        const stage: {
-            kvdbId: types.kvdb.KvdbId;
-            entryKey?: any;
-        } = {
-            kvdbId: kvdbId,
-        };
-        if (prefix) {
-            stage.entryKey =  {
-                $gte: prefix,           // Faster and more secure than regex
-                $lt: prefix + "\uffff", //
-            };
-        }
-        return this.repository.matchX(stage, listParams, sortBy);
+    async getPageByKvdbWithPrefix(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel, sortBy: keyof db.kvdb.KvdbEntry) {
+        return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy);
     }
     
     async getPageByKvdbWithPrefixMatch2(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryId>, prefix: string|undefined) {

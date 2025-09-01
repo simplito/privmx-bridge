@@ -23,22 +23,22 @@ export class KvdbApiValidator extends BaseValidator {
             resourceId: this.tv.uuidv4,
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
             data: this.tv.kvdbData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 128),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerPolicy),
         }));
         
         this.registerMethod("kvdbUpdate", this.builder.createObject({
             id: this.tv.kvdbId,
             resourceId: this.tv.uuidv4,
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
             data: this.tv.kvdbData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 128),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             version: this.tv.intNonNegative,
             force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerPolicy),
@@ -60,13 +60,13 @@ export class KvdbApiValidator extends BaseValidator {
         this.registerMethod("kvdbList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
-            sortBy: this.builder.optional(this.builder.createEnum(["createDate"])),
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastEntryDate", "lastModificationDate"])),
         }));
         
         this.registerMethod("kvdbListAll", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
-            sortBy: this.builder.optional(this.builder.createEnum(["createDate"])),
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastEntryDate", "lastModificationDate"])),
         }));
         
         this.registerMethod("kvdbEntrySet", this.builder.createObject({
@@ -88,27 +88,19 @@ export class KvdbApiValidator extends BaseValidator {
             kvdbEntryKey: this.tv.kvdbEntryKey,
         }));
         
-        this.registerMethod("kvdbListKeys", this.builder.createObject({
+        this.registerMethod("kvdbListKeys",  this.builder.addFields(this.tv.listModel, {
             kvdbId: this.tv.kvdbId,
-            skip: this.tv.intNonNegative,
-            limit: this.builder.range(this.builder.int, 1, 100),
-            sortOrder: this.builder.createEnum(["asc", "desc"]),
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "entryKey", "lastModificationDate"])),
         }));
         
-        this.registerMethod("kvdbListEntries", this.builder.createObject({
+        this.registerMethod("kvdbListEntries", this.builder.addFields(this.tv.listModel, {
             kvdbId: this.tv.kvdbId,
-            skip: this.tv.intNonNegative,
-            limit: this.builder.range(this.builder.int, 1, 100),
-            sortOrder: this.builder.createEnum(["asc", "desc"]),
-            prefix: this.builder.optional(this.builder.maxLength(this.builder.string, 256)),
-            lastKey: this.builder.optional(this.builder.maxLength(this.builder.string, 256)),
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "entryKey", "lastModificationDate"])),
-            query: this.builder.optional(this.tv.dbQuery),
         }));
         
         this.registerMethod("kvdbEntryDeleteMany", this.builder.createObject({
             kvdbId: this.tv.kvdbId,
-            kvdbEntryKeys: this.builder.createListWithMaxLength(this.tv.kvdbEntryKey, 128),
+            kvdbEntryKeys: this.builder.createListWithMaxLength(this.tv.kvdbEntryKey, 16384),
         }));
     }
 }

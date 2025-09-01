@@ -183,11 +183,11 @@ export class KvdbRepository {
     }
     
     async increaseEntryCounter(kvdbId: types.kvdb.KvdbId, lastEntryDate: types.core.Timestamp) {
-        await this.repository.collection.updateOne({_id: kvdbId}, {$inc: {entries: 1}, $max: {lastEntryDate: lastEntryDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: kvdbId}, {$inc: {entries: 1}, $max: {lastEntryDate: lastEntryDate}}, {session: this.repository.getSession()});
     }
     
     async decreaseEntryCounter(kvdbId: types.kvdb.KvdbId, lastEntryDate: types.core.Timestamp, decrease?: number) {
-        await this.repository.collection.updateOne({_id: kvdbId}, {$inc: {entries: (decrease) ? -decrease : -1}, $set: {lastEntryDate: lastEntryDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: kvdbId}, {$inc: {entries: (decrease) ? -decrease : -1}, $set: {lastEntryDate: lastEntryDate}}, {session: this.repository.getSession()});
     }
     
     async getKvdbStats(kvdbId: types.kvdb.KvdbId) {

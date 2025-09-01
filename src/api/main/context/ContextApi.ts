@@ -49,6 +49,13 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     @ApiMethod({})
+    async contextListUsers(model: contextApi.ContextListUsersModel): Promise<contextApi.ContextListUsersResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const usersList = await this.contextService.getPageOfContextUsersWithStatus(cloudUser, model.contextId, model);
+        return {count: usersList.count, users: usersList.users.map(user => this.convertUserWithStatusChange(user))};
+    }
+    
+    @ApiMethod({})
     async contextSendCustomEvent(model: contextApi.ContextSendCustomEventModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         await this.contextService.sendCustomNotification(cloudUser, model.contextId, model.data, model.channel, model.users);
@@ -81,6 +88,16 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             id: x.userId,
             pub: x.userPubKey,
             status: x.status,
+        };
+        return res;
+    }
+     
+     private convertUserWithStatusChange(x: db.context.ContextUserWithStatus): types.cloud.UserIdentityWithStatusAndAction {
+        const res: types.cloud.UserIdentityWithStatusAndAction = {
+            id: x.userId,
+            pub: x.userPubKey,
+            status: x.status,
+            lastStatusChange: x.lastStatusChange ? x.lastStatusChange : null,
         };
         return res;
     }

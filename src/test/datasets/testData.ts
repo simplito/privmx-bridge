@@ -31,4 +31,5 @@ export const testData = {
     streamRoomId: "6718e0e99e4e4e36fc5bbcfa" as types.stream.StreamRoomId,
     kvdbId: "67ed23fe1208279fd57b5b1d" as types.kvdb.KvdbId,
     kvdbEntryKey: "jodsajdoisajodisajoidjsa" as types.kvdb.KvdbEntryKey,
+    kvdbResourceId: "c897670b-6641-46fc-8e69-ef38ee0fef4c" as types.core.ClientResourceId,
 };

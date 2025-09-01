@@ -128,7 +128,7 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbListEntries(model: kvdbApi.KvdbListEntriesModel): Promise<kvdbApi.KvdbListItemsResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {kvdb, items} = await this.kvdbService.getKvdbEntries(cloudUser, model.kvdbId, model, model.sortBy || "createDate", model.lastKey, model.prefix);
+        const {kvdb, items} = await this.kvdbService.getKvdbEntries(cloudUser, model.kvdbId, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(kvdb.contextId);
         return {
             kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb),

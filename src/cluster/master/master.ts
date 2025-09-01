@@ -81,6 +81,9 @@ function startJobs(registry: MasterRegistry) {
     const ipRateLimiter = registry.getIpRateLimiter();
     const nonceMap = registry.getNonceMap();
     const config = registry.getConfig();
+    const aggregatedNotificationsService = registry.getAggregatedNotificationsService();
+    const websocketCommunicationManager = registry.getWebsocketCommunicationManager();
     jobService.addPeriodicJob(() => ipRateLimiter.addCreditsAndRemoveInactive(), config.apiRateLimit.addonInterval, "creditRefresh");
     jobService.addPeriodicJob(async () => nonceMap.deleteExpired(), DateUtils.minutes(5), "nonceCacheRemoval");
+    jobService.addPeriodicJob(async () => aggregatedNotificationsService.flush((model) => websocketCommunicationManager.sendWebsocketNotification(model)), DateUtils.seconds(1), "aggregatedEventsFlush");
 }

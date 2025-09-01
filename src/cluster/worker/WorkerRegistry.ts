@@ -42,6 +42,8 @@ import { SignatureVerificationService } from "../../service/auth/SignatureVerifi
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
 import { HostList } from "./HostList";
 import { LockService } from "../master/ipcServices/LockService";
+import { WebsocketCommunicationManger } from "../master/ipcServices/WebsocketCommunicationManager";
+import { AggregatedNotificationsService } from "../master/ipcServices/AggregatedNotificationsService";
 export class WorkerRegistry {
     
     private worker?: Cluster.Worker;
@@ -246,8 +248,6 @@ export class WorkerRegistry {
     getWebSocketInnerManager() {
         if (this.webSocketInnerManager == null) {
             this.webSocketInnerManager = new WebSocketInnerManager(
-                this.getActiveUsersMap(),
-                this.getWorkerCallbacks(),
                 this.getConfig(),
             );
         }
@@ -346,6 +346,14 @@ export class WorkerRegistry {
     
     getActiveUsersMap() {
         return this.getIpcService<ActiveUsersMap>("activeUsersMap");
+    }
+    
+    getAggregatedNotificationsService() {
+        return this.getIpcService<AggregatedNotificationsService>("aggregatedNotificationsService");
+    }
+    
+    getWebsocketCommunicationManager() {
+        return this.getIpcService<WebsocketCommunicationManger>("websocketCommunicationManger");
     }
     
     getMetricsContainer() {

@@ -104,18 +104,33 @@ export interface KvdbDeletedEventData {
 
 export type KvdbCustomEvent = types.cloud.Event<"custom", `kvdb/${types.kvdb.KvdbId}/${types.core.WsChannelName}`, KvdbCustomEventData>;
 
+export type KvdbEntryEventData = KvdbEntryInfo&{containerType?: types.kvdb.KvdbType};
+
 export type KvdbNewEntryEvent = types.cloud.Event<"kvdbNewEntry", `kvdb/${types.kvdb.KvdbId}/entries`, KvdbNewEntryEventData>;
-export type KvdbNewEntryEventData = KvdbEntryInfo;
+export type KvdbNewEntryEventData = KvdbEntryEventData;
 
 export type KvdbUpdatedEntryEvent = types.cloud.Event<"kvdbUpdatedEntry", `kvdb/${types.kvdb.KvdbId}/entries`, KvdbUpdatedEntryEventData>;
-export type KvdbUpdatedEntryEventData = KvdbEntryInfo;
+export type KvdbUpdatedEntryEventData = KvdbEntryEventData;
 
 export type KvdbDeletedEntryEvent = types.cloud.Event<"kvdbDeletedEntry", `kvdb/${types.kvdb.KvdbId}/entries`, KvdbDeletedEntryEventData>;
 
 export interface KvdbDeletedEntryEventData {
     kvdbEntryKey: types.kvdb.KvdbEntryKey;
     kvdbId: types.kvdb.KvdbId;
+    containerType?: types.kvdb.KvdbType
 }
+
+export interface KvdbCollectionChangedEventData {
+    containerId: types.kvdb.KvdbId;
+    affectedItemsCount: number;
+    containerType?: types.kvdb.KvdbType;
+    items: {
+        itemId: types.kvdb.KvdbEntryId;
+        action: types.core.CRUDAction;
+    }[]
+}
+
+export type KvdbCollectionChangedEvent = types.cloud.Event<"kvdbCollectionChanged", "kvdb/collectionChanged", KvdbCollectionChangedEventData>
 
 export type KvdbStatsEvent = types.cloud.Event<"kvdbStats", "kvdb", KvdbStatsEventData>;
 export interface KvdbStatsEventData {
@@ -145,7 +160,7 @@ export interface KvdbGetResult {
 export interface KvdbListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
     type?: types.kvdb.KvdbType;
-    sortBy?: "createDate";
+    sortBy?: "createDate"|"lastEntryDate"|"lastModificationDate";
 }
 
 export interface KvdbListResult {
@@ -184,9 +199,8 @@ export interface KvdbEntryGetResult {
 
 export type KvdbListAllResult = KvdbListResult;
 
-export interface KvdbListKeysModel extends Omit<types.core.ListModel, "query"|"lastId"> {
+export interface KvdbListKeysModel extends types.core.ListModel {
     kvdbId: types.kvdb.KvdbId;
-    lastKey?: types.kvdb.KvdbEntryKey;
     sortBy?: "createDate"|"entryKey"|"lastModificationDate";
 }
 
@@ -196,10 +210,8 @@ export interface KvdbListKeysResult {
     count: number;
 }
 
-export interface KvdbListEntriesModel extends Omit<types.core.ListModel, "lastId"> {
+export interface KvdbListEntriesModel extends types.core.ListModel {
     kvdbId: types.kvdb.KvdbId;
-    lastKey?: types.kvdb.KvdbEntryKey;
-    prefix?: string;
     sortBy?: "createDate"|"entryKey"|"lastModificationDate";
 }
 

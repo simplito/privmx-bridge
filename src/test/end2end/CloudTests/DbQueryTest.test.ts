@@ -152,6 +152,20 @@ export class DbQueryTest extends BaseTestSet {
         await this.tryListThreadUsingRestrictedFieldsInQuery();
     }
     
+    @Test()
+    async getThreadWithExepctions() {
+        await this.createThread();
+        await this.createThreads();
+        await this.fetchThreadWithExpectionUsingNotIn();
+    }
+    
+    @Test()
+    async getThreadWithExepctionsByUsingNotLogicalOperator() {
+        await this.createThread();
+        await this.createThreads();
+        await this.fetchThreadWithExpectionUsingNotLogicalOperator();
+    }
+    
     private async createThreadAndPopulateDataWithMaliciousInput() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
@@ -743,6 +757,50 @@ export class DbQueryTest extends BaseTestSet {
         
         assert(res.count === 1, "invalid count");
         assert(res.threads[0].id === this.threadId, "invalid thread");
+    }
+    
+    private async fetchThreadWithExpectionUsingNotIn() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#id": {
+                    $nin: [this.threadId],
+                },
+            },
+        });
+        
+        assert(res.count === 10, "invalid count");
+        assert(res.threads.length === 10, "invalid number of threads");
+    }
+    
+    private async fetchThreadWithExpectionUsingNotLogicalOperator() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                $nor: [{
+                    "#id": {
+                        $in: [this.threadId],
+                    },
+                }],
+            },
+        });
+        
+        assert(res.count === 10, "invalid count");
+        assert(res.threads.length === 10, "invalid number of threads");
     }
     
     private async tryListThreadUsingRestrictedFieldsInQuery() {

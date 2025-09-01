@@ -132,7 +132,7 @@ export namespace context {
         acl: types.cloud.ContextAcl;
     }
     
-    export type ContextUserWithStatus = ContextUser&{status: "active"|"inactive"};
+    export type ContextUserWithStatus = ContextUser&{status: "active"|"inactive", lastStatusChange: types.cloud.KnownKeyStatusChange};
 }
 
 export namespace solution {
@@ -140,6 +140,13 @@ export namespace solution {
         id: types.cloud.SolutionId;
         created: types.core.Timestamp;
         name: types.cloud.SolutionName;
+    }
+    
+    export interface KnownPublicKey {
+        id: types.cloud.KnownKeyId;
+        publicKey: types.cloud.UserPubKey;
+        solutionId: types.cloud.SolutionId;
+        lastStatusChange: types.cloud.KnownKeyStatusChange
     }
 }
 

@@ -267,6 +267,20 @@ export class MainStoreApiTests extends BaseTestSet {
         await this.validateFileContentAfterMutipleRandomWriteOperations2();
     }
     
+    @Test()
+    async createFewFilesAndTestListMethods() {
+        await this.createNewStore();
+        await this.createNewFile();
+        await this.createNewFile();
+        await this.createNewFile();
+        await this.createNewFile();
+        await this.listFilesByCreateDateAsc();
+        await this.listFilesByCreateDateDesc();
+        await this.updateFile();
+        await this.listFilesByUpdateDateAsc();
+        await this.listFilesByUpdateDateDesc();
+    }
+    
     private async createNewStore() {
         const newStore = await this.apis.storeApi.storeCreate({
             contextId: testData.contextId,
@@ -887,5 +901,100 @@ export class MainStoreApiTests extends BaseTestSet {
         });
         const buf = Buffer.from((file.data as unknown as ByteBuffer).toArrayBuffer());
         assert(buf.length === 255 * 1024 * 4 && buf.subarray((1024 * 255 * 2) - 1024, buf.length).toString().match(/^F*$/), "Invalid file content");
+    }
+    
+    private async listFilesByCreateDateAsc() {
+        if (!this.storeId) {
+            throw new Error("storeId not initialized yet");
+        }
+        
+        const res = await this.apis.storeApi.storeFileList({
+            storeId: this.storeId,
+            limit: 100,
+            skip: 0,
+            sortBy: "createDate",
+            sortOrder: "asc",
+        });
+        
+        assert(res.count === 4, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = 0;
+        for (const file of res.files) {
+            assert(file.createDate > lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = file.createDate;
+        }
+    }
+    
+    private async listFilesByCreateDateDesc() {
+        if (!this.storeId) {
+            throw new Error("storeId not initialized yet");
+        }
+        
+        const res = await this.apis.storeApi.storeFileList({
+            storeId: this.storeId,
+            limit: 100,
+            skip: 0,
+            sortBy: "createDate",
+            sortOrder: "desc",
+        });
+        
+        assert(res.count === 4, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = Infinity;
+        for (const file of res.files) {
+            assert(file.createDate < lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = file.createDate;
+        }
+    }
+    
+    private async listFilesByUpdateDateDesc() {
+        if (!this.storeId) {
+            throw new Error("storeId not initialized yet");
+        }
+        if (!this.fileId) {
+            throw new Error("fileId not initialized yet");
+        }
+        
+        const res = await this.apis.storeApi.storeFileList({
+            storeId: this.storeId,
+            limit: 100,
+            skip: 0,
+            sortBy: "updates",
+            sortOrder: "desc",
+        });
+        
+        assert(res.count === 4, `Message count does not match expected 4! instead:${res.count}`);
+        assert(res.files.length === 4 && res.files[0].id === this.fileId, "last message doesnt match");
+    }
+    
+    private async listFilesByUpdateDateAsc() {
+        if (!this.storeId) {
+            throw new Error("storeId not initialized yet");
+        }
+        if (!this.fileId) {
+            throw new Error("fileId not initialized yet");
+        }
+        
+        const res = await this.apis.storeApi.storeFileList({
+            storeId: this.storeId,
+            limit: 100,
+            skip: 0,
+            sortBy: "updates",
+            sortOrder: "asc",
+        });
+        
+        assert(res.count === 4, `Message count does not match expected 4! instead:${res.count}`);
+        assert(res.files.length === 4 && res.files[3].id === this.fileId, "first message doesnt match");
+    }
+    
+    private async updateFile() {
+        if (!this.fileId) {
+            throw new Error("fileId not initialized yet");
+        }
+        
+        const res = await this.apis.storeApi.storeFileUpdate({
+            fileId: this.fileId,
+            meta: "bbbb" as types.store.StoreFileMeta,
+            keyId: testData.keyId,
+        });
+        assert(res === "OK", "Unexpected return value from storeFileUpdate(");
     }
 }

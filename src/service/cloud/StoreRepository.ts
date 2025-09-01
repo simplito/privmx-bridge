@@ -193,14 +193,14 @@ export class StoreRepository {
     }
     
     async increaseFilesCounterBy(id: types.store.StoreId, lastFileDate: types.core.Timestamp, count: number) {
-        await this.repository.collection.updateOne({_id: id}, {$inc: {files: count}, $max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$inc: {files: count}, $max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
     
     async decreaseFilesCounter(id: types.store.StoreId, lastFileDate: types.core.Timestamp, decrease?: number) {
-        await this.repository.collection.updateOne({_id: id}, {$inc: {files: (decrease) ? -decrease : -1}, $max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$inc: {files: (decrease) ? -decrease : -1}, $max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
     
     async updateLastFileDate(id: types.store.StoreId, lastFileDate: types.core.Timestamp) {
-        await this.repository.collection.updateOne({_id: id}, {$max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
 }

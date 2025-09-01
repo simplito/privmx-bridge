@@ -39,13 +39,11 @@ export class StoreFileRepository {
         ));
     }
     
-    async getPageByStore(storeId: types.store.StoreId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
-        return this.repository.matchX({storeId: storeId}, listParams, sortBy, "meta");
+    async getPageByStore(storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy: keyof db.store.StoreFile) {
+        return this.repository.matchWithUpdates({storeId: storeId}, listParams, sortBy, "meta");
     }
     
-    async getPageByStoreAndUser(storeId: types.store.StoreId, userId: types.cloud.UserId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
+    async getPageByStoreAndUser(storeId: types.store.StoreId, userId: types.cloud.UserId, listParams: types.core.ListModel, sortBy: keyof db.store.StoreFile) {
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -56,7 +54,7 @@ export class StoreFileRepository {
                 },
             ],
         };
-        return this.repository.matchX(match, listParams, sortBy);
+        return this.repository.matchWithUpdates(match, listParams, sortBy, "meta");
     }
     
     async getPageByStore2(storeId: types.store.StoreId, listParams: types.core.ListModel2<types.store.StoreFileId>) {

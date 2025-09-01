@@ -242,6 +242,7 @@ export class TypesValidator {
             $eq: this.builder.optional(this.queryValue),
             $ne: this.builder.optional(this.queryValue),
             $in: this.builder.optional(this.builder.createList(this.queryValue)),
+            $nin: this.builder.optional(this.builder.createList(this.queryValue)),
             $startsWith: this.builder.optional(this.builder.string),
             $endsWith: this.builder.optional(this.builder.string),
             $contains: this.builder.optional(this.builder.string),
@@ -253,7 +254,10 @@ export class TypesValidator {
             $and: this.builder.createList(this.dbQuery),
         }));
         dbQueryValidators.push(this.builder.createObject({
-            $or: this.builder.createList(this.queryPropertiesMap),
+            $or: this.builder.createList(this.dbQuery),
+        }));
+        dbQueryValidators.push(this.builder.createObject({
+            $nor: this.builder.createList(this.dbQuery),
         }));
         dbQueryValidators.push(this.queryPropertiesMap);
         this.listModel = this.builder.createObject({
@@ -329,12 +333,12 @@ export class TypesValidator {
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
         this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb"]);
         this.wsChannelName = this.builder.createCustom((value) => {
-            const alphaNumericalRegex = /^[a-zA-Z0-9/_|=:-]*$/;
+            const alphaNumericalRegex = /^[a-zA-Z0-9,/_|=:-]*$/;
             if (typeof value !== "string") {
                 throw new Error("Expected string");
             }
             if (!alphaNumericalRegex.test(value)) {
-                throw new Error("Value has to be alphanumerical string with '/', '|', '=', `:`, '-' and '_' special characters only");
+                throw new Error("Value has to be alphanumerical string with '/', '|', '=', `:`, '-', ',' and '_' special characters only");
             }
             if (value.length > 512) {
                 throw new Error("Max value length: 512");

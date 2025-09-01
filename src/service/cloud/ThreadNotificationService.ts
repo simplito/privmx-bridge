@@ -49,6 +49,7 @@ export class ThreadNotificationService {
                         contextId: thread.contextId,
                         containerId: thread.id,
                         channel: `thread/custom/${customChannelName}` as types.core.WsChannelName,
+                        containerType: thread.type,
                     },
                     {
                         channel: `thread/${thread.id}/${customChannelName}`,
@@ -75,6 +76,7 @@ export class ThreadNotificationService {
                 type: "threadCreated",
                 data: this.managementThreadConverter.convertThread(thread),
                 timestamp: now,
+                
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
             for (const user of contextUsers) {
@@ -84,6 +86,7 @@ export class ThreadNotificationService {
                         contextId: thread.contextId,
                         containerId: thread.id,
                         channel: "thread/create" as types.core.WsChannelName,
+                        containerType: thread.type,
                     },
                     {
                         channel: "thread",
@@ -111,6 +114,7 @@ export class ThreadNotificationService {
                 contextId: thread.contextId,
                 containerId: thread.id,
                 channel: "thread/update" as types.core.WsChannelName,
+                containerType: thread.type,
             };
             for (const user of contextUsers) {
                 const userNotification: threadApi.ThreadUpdatedEvent = {
@@ -167,6 +171,7 @@ export class ThreadNotificationService {
                     contextId: thread.contextId,
                     containerId: thread.id,
                     channel: "thread/stats" as types.core.WsChannelName,
+                    containerType: thread.type,
                 },
                 {
                     channel: "thread",
@@ -203,6 +208,7 @@ export class ThreadNotificationService {
                     contextId: thread.contextId,
                     containerId: thread.id,
                     channel: "thread/delete" as types.core.WsChannelName,
+                    containerType: thread.type,
                 },
                 {
                     channel: "thread",
@@ -233,12 +239,14 @@ export class ThreadNotificationService {
                 {
                     contextId: thread.contextId,
                     containerId: thread.id,
+                    itemId: msg.id,
                     channel: "thread/messages/create" as types.core.WsChannelName,
+                    containerType: thread.type,
                 },
                 {
                     channel: `thread/${thread.id}/messages`,
                     type: "threadNewMessage",
-                    data: this.threadConverter.convertMessage(thread, msg),
+                    data: {...this.threadConverter.convertMessage(thread, msg), containerType: thread.type},
                     timestamp: now,
                 },
             );
@@ -261,12 +269,14 @@ export class ThreadNotificationService {
                 {
                     contextId: thread.contextId,
                     containerId: thread.id,
+                    itemId: msg.id,
                     channel: "thread/messages/update" as types.core.WsChannelName,
+                    containerType: thread.type,
                 },
                 {
                     channel: `thread/${thread.id}/messages`,
                     type: "threadUpdatedMessage",
-                    data: this.threadConverter.convertMessage(thread, msg),
+                    data: {...this.threadConverter.convertMessage(thread, msg), containerType: thread.type},
                     timestamp: now,
                 },
             );
@@ -292,7 +302,9 @@ export class ThreadNotificationService {
                 {
                     contextId: thread.contextId,
                     containerId: thread.id,
+                    itemId: msg.id,
                     channel: "thread/messages/delete" as types.core.WsChannelName,
+                    containerType: thread.type,
                 },
                 {
                     channel: `thread/${thread.id}/messages`,
@@ -300,6 +312,7 @@ export class ThreadNotificationService {
                     data: {
                         messageId: msg.id,
                         threadId: thread.id,
+                        containerType: thread.type,
                     },
                     timestamp: now,
                 },

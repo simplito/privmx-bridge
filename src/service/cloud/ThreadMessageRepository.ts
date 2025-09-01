@@ -39,8 +39,7 @@ export class ThreadMessageRepository {
         ));
     }
     
-    async getPageByThreadAndUser(userId: types.cloud.UserId, threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
+    async getPageByThreadAndUser(userId: types.cloud.UserId, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy: keyof db.thread.ThreadMessage) {
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -51,12 +50,11 @@ export class ThreadMessageRepository {
                 },
             ],
         };
-        return this.repository.matchX(match, listParams, sortBy);
+        return this.repository.matchWithUpdates(match, listParams, sortBy);
     }
     
-    async getPageByThread(threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
-        return this.repository.matchX({threadId: threadId}, listParams, sortBy);
+    async getPageByThread(threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy: keyof db.thread.ThreadMessage) {
+        return this.repository.matchWithUpdates({threadId: threadId}, listParams, sortBy);
     }
     
     async getPageByThreadMatch2(threadId: types.thread.ThreadId, listParams: types.core.ListModel2<types.thread.ThreadMessageId>) {

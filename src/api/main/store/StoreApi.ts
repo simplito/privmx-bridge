@@ -108,7 +108,7 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeFileList(model: storeApi.StoreFileListModel): Promise<storeApi.StoreFileListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, files} = await this.storeService.getStoreFiles(cloudUser, model.storeId, model);
+        const {store, files} = await this.storeService.getStoreFiles(cloudUser, model.storeId, model, model.sortBy);
         this.requestLogger.setContextId(store.contextId);
         return {
             store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store),

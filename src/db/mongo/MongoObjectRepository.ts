@@ -258,24 +258,31 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         return this.getMatchingPage([{$match: match}, ...mongoQueries], listParams, sortBy);
     }
     
+    /** Extracts lastModificationDate from item and uses it for sorting */
+    async matchWithUpdates(match: any, listParams: types.core.ListModel, sortBy: keyof V, queryRootField?: string) {
+        const extendedStage: any[] = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query, queryRootField)] : [];
+        if (sortBy === "updates") {
+            extendedStage.push({
+                $addFields: {
+                    lastModificationDate: {
+                        $getField: {
+                            field: "createDate",
+                            input: { $arrayElemAt: ["$updates", -1] },
+                        },
+                    },
+                },
+            });
+        }
+        return this.getMatchingPage([{$match: match}, ...extendedStage], listParams, sortBy === "updates" ? "lastModificationDate" as keyof V : sortBy);
+    }
+    
     async getMatchingPage<X = V>(stages: any[], listParams: types.core.ListModel, sortBy: keyof V) {
         if (listParams.lastId) {
             const temporaryListProperties = {
-                limit: listParams.limit + 1,
-                skip: (listParams.skip > 0) ? listParams.skip - 1 : 0,
+                limit: listParams.limit,
+                skip: 0,
                 sortOrder: listParams.sortOrder,
             };
-            
-            const page = await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
-            const firstRecord = page.list[0] as {id?: unknown};
-            if (page.count > 1 && "id" in firstRecord && firstRecord.id === listParams.lastId) {
-                page.list.shift();
-                return page;
-            }
-            
-            temporaryListProperties.limit = listParams.limit;
-            temporaryListProperties.skip = 0;
-            
             const lastObject = (await this.get(listParams.lastId as K)) as V;
             if (!lastObject) {
                 throw new AppException("NO_MATCH_FOR_LAST_ID");
@@ -283,11 +290,11 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
             const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
             const additionalCriteria = {
                 $match: {
-                    [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gt" : "$lt"]: lastObject[sortBy] },
+                    [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gte" : "$lte"]: lastObject[sortBy] },
+                    "_id": {$ne: listParams.lastId},
                 },
             };
             stages.push(additionalCriteria);
-            
             return await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
         }
         return this.aggregationX<X>(stages, listParams, sortBy);

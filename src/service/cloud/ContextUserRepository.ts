@@ -14,6 +14,7 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { AppException } from "../../api/AppException";
+import { KnownPublicKeyRepository } from "./KnownPublicKeyRepository";
 
 export class ContextUserRepository {
     
@@ -21,7 +22,7 @@ export class ContextUserRepository {
     static readonly COLLECTION_ID_PROP = "id";
     
     constructor(
-        private repository: MongoObjectRepository<db.context.ContextUserId, db.context.ContextUser>,
+    private repository: MongoObjectRepository<db.context.ContextUserId, db.context.ContextUser>,
     ) {
     }
     
@@ -96,6 +97,55 @@ export class ContextUserRepository {
     
     async getUsersPageFromContext(contextId: types.context.ContextId, model: types.core.ListModel) {
         return this.repository.matchX({contextId: contextId}, model, "created");
+    }
+    
+    async getUsersPageWithActivityFromContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId, model: types.core.ListModel) {
+        return this.repository.getMatchingPage<db.context.ContextUserWithStatus>([
+        {
+            $match: {
+                contextId: contextId,
+            },
+        },
+        {
+            $lookup: {
+                from: KnownPublicKeyRepository.COLLECTION_NAME,
+                localField: "userPubKey",
+                foreignField: "publicKey",
+                as: "matchedDocs",
+            },
+        },
+        {
+            $addFields: {
+                matchedDocs: {
+                    $filter: {
+                        input: "$matchedDocs",
+                        as: "doc",
+                        cond: { $eq: ["$$doc.solutionId", solutionId] },
+                    },
+                },
+            },
+        },
+        {
+            $unwind: {
+                path: "$matchedDocs",
+                preserveNullAndEmptyArrays: true,
+            },
+        },
+        {
+            $addFields: {
+                lastStatusChange: "$matchedDocs.lastStatusChange",
+            },
+        },
+        {
+            $project: {
+                matchedDocs: 0,
+            },
+        },
+        ], model, "created");
+    }
+    
+    async getCountOfExistingUsersFromList(userId: types.cloud.UserId[], contextId: types.context.ContextId) {
+        return this.repository.count(q => q.in("id", userId.map(uId => this.getUserId(contextId, uId))));
     }
     
     private getUserId(contextId: types.context.ContextId, userId: types.cloud.UserId) {

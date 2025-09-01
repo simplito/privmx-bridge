@@ -17,6 +17,7 @@ import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory"
 import * as util from "util";
 import { WorkerRegistry } from "../../cluster/worker/WorkerRegistry";
 import { Base58 } from "../../utils/crypto/Base58";
+import { Crypto } from "../../utils/crypto/Crypto";
 
 const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
 
@@ -24,16 +25,16 @@ async function go() {
     const args = process.argv;
     console.log("NOTICE: Fetching key requires connection with database!");
     const registry = new WorkerRegistry(loggerFactory);
-    const worker = {on: (_ev: string, message: any) => console.log(message), send: (workerArgs: any) => console.log(workerArgs)} as unknown as Cluster.Worker;
-    registry.registerWorker(worker);
-    const config = registry.registerConfig(loadConfig(false, registry.getWorkerCallbacks()));
-    if (config.server.mode.type !== "single") {
-        throw new Error("Only single mode is supported");
-    }
-    registry.registerIpcService("activeUsersMap", {});
-    registry.registerIpcService("metricsContainer", {});
-    LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
     try {
+        const worker = {on: (_ev: string, message: any) => console.log(message), send: (workerArgs: any) => console.log(workerArgs)} as unknown as Cluster.Worker;
+        registry.registerWorker(worker);
+        const config = registry.registerConfig(loadConfig(false, registry.getWorkerCallbacks()));
+        if (config.server.mode.type !== "single") {
+            throw new Error("Only single mode is supported");
+        }
+        registry.registerIpcService("activeUsersMap", {});
+        registry.registerIpcService("metricsContainer", {});
+        LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
         await registry.createMongoClient(config.db.mongo.url);
         const ioc = await registry.getHttpHandler().createHostContext();
         const pkiFactory = ioc.getPkiFactory();
@@ -64,8 +65,8 @@ function readPubKeyFromPem(pem: string) {
         .filter(x => x && !x.startsWith("---") && !x.startsWith("="))
         .join("");
     const buffer = Buffer.from(base64, "base64");
-    const der = buffer.subarray(16, 81);
-    return Base58.encode(der);
+    const compressedPublicKey = Crypto.compressPublicKey(buffer.subarray(16, 81));
+    return Base58.encodeWithChecksum(Buffer.from(compressedPublicKey));
 }
 
 function keyValuePrint(keyValue: string) {

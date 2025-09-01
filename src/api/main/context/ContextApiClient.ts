@@ -27,6 +27,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.contextGetUsers", model);
     }
     
+    contextListUsers(model: contextApi.ContextListUsersModel): Promise<contextApi.ContextListUsersResult> {
+        return this.request("context.contextListUsers", model);
+    }
+    
     contextSendCustomEvent(model: contextApi.ContextSendCustomEventModel): Promise<types.core.OK> {
         return this.request("context.contextSendCustomEvent", model);
     }

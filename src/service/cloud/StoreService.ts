@@ -317,7 +317,7 @@ export class StoreService extends BaseContainerService {
         return {store, files};
     }
     
-    async getStoreFiles(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel) {
+    async getStoreFiles(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
@@ -328,11 +328,11 @@ export class StoreService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
         });
-        const files = await this.repositoryFactory.createStoreFileRepository().getPageByStore(storeId, listParams);
+        const files = await this.repositoryFactory.createStoreFileRepository().getPageByStore(storeId, listParams, sortBy || "createDate");
         return {store, files};
     }
     
-    async getMyStoreFiles(executor: CloudUser, storeId: types.store.StoreId, listParams: types.core.ListModel) {
+    async getMyStoreFiles(executor: CloudUser, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
@@ -343,7 +343,7 @@ export class StoreService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileListMy", ["storeId=" + storeId]);
         });
-        const files = await this.repositoryFactory.createStoreFileRepository().getPageByStoreAndUser(storeId, executor.getUser(store.contextId), listParams);
+        const files = await this.repositoryFactory.createStoreFileRepository().getPageByStoreAndUser(storeId, executor.getUser(store.contextId), listParams, sortBy || "createDate");
         return {store, files};
     }
     

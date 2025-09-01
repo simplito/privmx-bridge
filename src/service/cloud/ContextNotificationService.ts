@@ -14,11 +14,13 @@ import { WebSocketSender } from "../ws/WebSocketSender";
 import * as contextApi from "../../api/main/context/ContextApiTypes";
 import * as types from "../../types";
 import { DateUtils } from "../../utils/DateUtils";
+import { RepositoryFactory } from "../../db/RepositoryFactory";
 export class ContextNotificationService {
     
     constructor(
         private jobService: JobService,
         private webSocketSender: WebSocketSender,
+        private repositoryFactory: RepositoryFactory,
     ) {
     }
     
@@ -46,6 +48,54 @@ export class ContextNotificationService {
                     timestamp: now,
                 });
             }
+        });
+    }
+    
+    sendUserAdded(userId: types.cloud.UserId, userPubKey: types.core.EccPubKey, contextId: types.context.ContextId) {
+        this.safe("contextUserAdded", async () => {
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
+            this.webSocketSender.sendCloudEventAtChannel<contextApi.ContextUserAddedEvent>(
+                contextUsers.map(user => user.userPubKey),
+                {
+                    contextId: contextId,
+                    channel: "context/userAdded" as types.core.WsChannelName,
+                },
+                {
+                    channel: "context",
+                    type: "contextUserAdded",
+                    data: {
+                        contextId: contextId,
+                        userId: userId,
+                        pubKey: userPubKey,
+                    },
+                    timestamp: now,
+                },
+            );
+        });
+    }
+    
+    sendUserRemoved(userId: types.cloud.UserId, contextId: types.context.ContextId, userPubKey: types.core.EccPubKey) {
+        this.safe("contextUserRemoved", async () => {
+            const now = DateUtils.now();
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
+            this.webSocketSender.sendCloudEventAtChannel<contextApi.ContextUserRemovedEvent>(
+                contextUsers.map(user => user.userPubKey),
+                {
+                    contextId: contextId,
+                    channel: "context/userRemoved" as types.core.WsChannelName,
+                },
+                {
+                    channel: "context",
+                    type: "contextUserRemoved",
+                    data: {
+                        contextId: contextId,
+                        userId: userId,
+                        pubKey: userPubKey,
+                    },
+                    timestamp: now,
+                },
+            );
         });
     }
 }

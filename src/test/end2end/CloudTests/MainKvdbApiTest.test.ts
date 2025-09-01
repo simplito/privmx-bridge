@@ -25,6 +25,10 @@ export class KvdbTests extends BaseTestSet {
         await this.createNewKvdb();
         await this.getNewlyCreatedKvdb();
         await this.shouldListNewlyCreatedKvdb();
+        await this.shouldUpdateExistingKvdb();
+        await this.shouldListNewlyCreatedKvdbByLastModificationDate();
+        await this.createNewKvdbEntry();
+        await this.shouldListNewlyCreatedKvdbByLastEntryDate();
         await this.shouldDeleteNewKvdb();
         await this.shouldFetchListWithoutDeletedKvdb();
     }
@@ -116,6 +120,50 @@ export class KvdbTests extends BaseTestSet {
             sortOrder: "asc",
         });
         assert(result.count === 2 && result.kvdbs.length === 2, "Unexpected return value from kvdbList(");
+    }
+    
+    private async shouldUpdateExistingKvdb() {
+        await this.apis.kvdbApi.kvdbUpdate({
+            id: testData.kvdbId,
+            resourceId: testData.kvdbResourceId,
+            data: "AAAAB" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+            version: 1 as types.kvdb.KvdbVersion,
+            force: false,
+        });
+    }
+    
+    private async shouldListNewlyCreatedKvdbByLastModificationDate() {
+        if (!this.kvdbId) {
+            throw new Error("kvdbId not initialized yet");
+        }
+        const result = await this.apis.kvdbApi.kvdbList({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "desc",
+            sortBy: "lastModificationDate",
+        });
+        assert(result.count === 2 && result.kvdbs.length === 2, "Unexpected return value from kvdbList(");
+        assert(result.kvdbs[0].id === testData.kvdbId, "Invalid first kvdb on list");
+    }
+    
+    private async shouldListNewlyCreatedKvdbByLastEntryDate() {
+        if (!this.kvdbId) {
+            throw new Error("kvdbId not initialized yet");
+        }
+        const result = await this.apis.kvdbApi.kvdbList({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "desc",
+            sortBy: "lastEntryDate",
+        });
+        assert(result.count === 2 && result.kvdbs.length === 2, "Unexpected return value from kvdbList(");
+        assert(result.kvdbs[0].id === this.kvdbId, "Invalid first kvdb on list");
     }
     
     private async shouldListAllNewlyCreatedKvdb() {
@@ -259,9 +307,13 @@ export class KvdbTests extends BaseTestSet {
         const res = await this.apis.kvdbApi.kvdbListEntries({
             kvdbId: this.kvdbId,
             limit: 10,
-            prefix: "myprefix/",
             skip: 0,
             sortOrder: "desc",
+            query: {
+                "#entryKey": {
+                    $startsWith: "myprefix/",
+                },
+            },
         });
         assert(res.count === 5 && res.kvdbEntries.length === 5, "Invalid list length or count");
         for (const item of res.kvdbEntries) {
@@ -304,9 +356,13 @@ export class KvdbTests extends BaseTestSet {
         const res = await this.apis.kvdbApi.kvdbListEntries({
             kvdbId: this.kvdbId,
             limit: 10,
-            prefix: "myprefix/",
             skip: 0,
             sortOrder: "desc",
+            query: {
+                "#entryKey": {
+                    $startsWith: "myprefix/",
+                },
+            },
         });
         assert(res.count === 0 && res.kvdbEntries.length === 0, "Unexpected return value from kvdbListItems(");
     }

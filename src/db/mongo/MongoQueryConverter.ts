@@ -29,6 +29,9 @@ export class MongoQueryConverter {
         if (this.isOrQuery(query)) {
             return {$or: query.$or.map(q => this.convertQueryRecursievly(q, rootField))};
         }
+        if (this.isNorQuery(query)) {
+            return {$nor: query.$nor.map(q => this.convertQueryRecursievly(q, rootField))};
+        }
         const matchConditions = Object.entries(query).map(([key, value]) => ({
             [this.convertName(key, rootField)]: this.parseValue(value),
         }));
@@ -67,6 +70,10 @@ export class MongoQueryConverter {
     
     private static isOrQuery(query: types.core.Query): query is {$or: types.core.Query[]} {
         return "$or" in query;
+    }
+    
+    private static isNorQuery(query: types.core.Query): query is {$nor: types.core.Query[]} {
+        return "$nor" in query;
     }
     
     private static convertName(originalString: string, rootField?: string) {

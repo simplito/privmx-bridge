@@ -32,8 +32,7 @@ import { InboxApiClient } from "../../api/main/inbox/InboxApiClient";
 import { RequestApiClient } from "../../api/main/request/RequestApiClient";
 import { UserApiClient } from "../../api/main/user/UserApiClient";
 import { StreamApiClient } from "../../api/main/stream/StreamApiClient";
-import * as PrivmxCrypto from "privmx-crypto";
-import * as PrivmxRpc from "privmx-rpc";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 import { ErrorCode, ERROR_CODES } from "../../api/AppException";
 import * as assert from "assert";
 import { ManagementContextApiClient } from "../../api/plain/context/ManagementContextApiClient";
@@ -240,8 +239,8 @@ export class BaseTestSet {
                 url: serverUrl + "/api/v2.0",
                 host: "localhost",
             };
-            const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(privKeyWif);
-            const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: solutionId}, connectionOptions);
+            const priv = PrivmxRpc.crypto.ecc.PrivateKey.fromWIF(privKeyWif);
+            const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: await priv, solution: solutionId}, connectionOptions);
             return conn;
         },
         
@@ -347,8 +346,8 @@ export class BaseTestSet {
             url: serverUrl + "/api/v2.0",
             host: "localhost",
         };
-        const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(testData.userPrivKey);
-        const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: testData.solutionId}, connectionOptions);
+        const priv = PrivmxRpc.crypto.ecc.PrivateKey.fromWIF(testData.userPrivKey);
+        const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: await priv, solution: testData.solutionId}, connectionOptions);
         this.apis = {
             connection: conn,
             contextApi: new ContextApiClient(conn),

@@ -17,7 +17,6 @@ import { IpcRequester } from "../common/IpcRequester";
 import { IpcExecutor } from "../common/IpcExecutor";
 import { DeferredMap } from "../common/DeferredMap";
 import { IpcListener } from "../common/IpcListener";
-import { Worker2Service } from "./Worker2Service";
 import { IpcMessageProcessor } from "../common/IpcMessageProcessor";
 import { LoggerFactory } from "../../service/log/LoggerFactory";
 import { IpRateLimiterImpl } from "./IpRateLimiterImpl";
@@ -30,12 +29,13 @@ import { Callbacks } from "../../service/event/Callbacks";
 import { MetricsContainer } from "./ipcServices/MetricsContainer";
 import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
 import { LockService } from "./ipcServices/LockService";
+import { WebsocketCommunicationManger } from "./ipcServices/WebsocketCommunicationManager";
+import { AggregatedNotificationsService } from "./ipcServices/AggregatedNotificationsService";
 
 export class MasterRegistry {
     
     private config?: Config;
     private methodExecutor?: MethodExecutor;
-    private worker2Service?: Worker2Service;
     private mongoClient?: mongodb.MongoClient;
     private workersHolder?: WorkersHolder;
     private ipcRequestMap?: DeferredMap;
@@ -52,6 +52,8 @@ export class MasterRegistry {
     private callbacks?: Callbacks;
     private plugins: MasterPlugin[] = [];
     private lockService?: LockService;
+    private websocketCommunicationManager?: WebsocketCommunicationManger;
+    private aggregatedNotificationsService?: AggregatedNotificationsService;
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -110,13 +112,14 @@ export class MasterRegistry {
     
     registerIpcServices() {
         const methodExecutor = this.getMethodExecutor();
-        methodExecutor.register(this.getWorker2Service());
         methodExecutor.register(this.getIpRateLimiter());
         methodExecutor.register(this.getNonceMap());
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
         methodExecutor.register(this.getActiveUsersMap());
         methodExecutor.register(this.getLockService());
+        methodExecutor.register(this.getWebsocketCommunicationManager());
+        methodExecutor.register(this.getAggregatedNotificationsService());
         this.getCallbacks().triggerSync("registerIpcServices", []);
     }
     
@@ -128,16 +131,6 @@ export class MasterRegistry {
             );
         }
         return this.ipcExecutor;
-    }
-    
-    getWorker2Service() {
-        if (!this.worker2Service) {
-            this.worker2Service = new Worker2Service(
-                this.getIpcRequester(),
-                this.getWorkersHolder(),
-            );
-        }
-        return this.worker2Service;
     }
     
     getWorkersHolder() {
@@ -223,6 +216,26 @@ export class MasterRegistry {
             this.activeUsersMap = new ActiveUsersMap();
         }
         return this.activeUsersMap;
+    }
+    
+    getWebsocketCommunicationManager() {
+        if (this.websocketCommunicationManager == null) {
+            this.websocketCommunicationManager = new WebsocketCommunicationManger(
+                this.getIpcRequester(),
+                this.getWorkersHolder(),
+                this.getAggregatedNotificationsService(),
+            );
+        }
+        return this.websocketCommunicationManager;
+    }
+    
+    getAggregatedNotificationsService() {
+        if (!this.aggregatedNotificationsService) {
+            this.aggregatedNotificationsService = new AggregatedNotificationsService(
+                this.getActiveUsersMap(),
+            );
+        }
+        return this.aggregatedNotificationsService;
     }
     
     getMetricContainer() {

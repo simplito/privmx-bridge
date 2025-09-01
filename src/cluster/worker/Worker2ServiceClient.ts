@@ -26,8 +26,12 @@ export class Worker2ServiceClient implements IWorker2Service {
         return this.ipcRequester.request("sendWebsocketNotificationToPlainUsers", model);
     }
     
+    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
+        return this.ipcRequester.request("sendWebsocketNotificationAndAggregateData", model);
+    }
+    
     sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        return this.ipcRequester.request("sendWebsocketNotification", model);
+        return this.ipcRequester.request("sendWebsocketNotificationAndAggregateData", model);
     }
     
     hasOpenConnectionWithUsername(model: { host: types.core.Host; username: types.core.Username; }): Promise<boolean> {

@@ -15,8 +15,6 @@ import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { PsonHelperEx } from "../../utils/PsonHelperEx";
 import { PlainApiEvent } from "../../api/plain/Types";
-import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
-import { Callbacks } from "../event/Callbacks";
 import { TargetChannel } from "./WebSocketConnectionManager";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { AppException } from "../../api/AppException";
@@ -27,8 +25,6 @@ export class WebSocketInnerManager {
     private psonHelper: PsonHelperEx;
     
     constructor(
-        private activeUsers: ActiveUsersMap,
-        private callbacks: Callbacks,
         private config: Config,
     ) {
         this.servers = [];
@@ -88,6 +84,9 @@ export class WebSocketInnerManager {
                 continue;
             }
             if (userChannel.limitedBy === "itemId" && targetChannel.itemId && (userChannel.objectId !== targetChannel.itemId)) {
+                continue;
+            }
+            if (userChannel.containerType && userChannel.containerType !== targetChannel.containerType) {
                 continue;
             }
             if (!this.isPathPrefix(userChannel.path, targetChannel.channel)) {
@@ -158,7 +157,7 @@ export class WebSocketInnerManager {
         return this.disconnectWebSocketsBy(host, session => session.subidentity && session.subidentity.acl && session.subidentity.acl.group == groupId);
     }
     
-    disconnectWebSocketsBy(host: types.core.Host, func: (session: WebSocketSession) => boolean) {
+    async disconnectWebSocketsBy(host: types.core.Host, func: (session: WebSocketSession) => boolean) {
         const usersToCheck = new Set<types.core.Username>();
         for (const server of this.servers) {
             for (const client of server.clients) {
@@ -167,7 +166,10 @@ export class WebSocketInnerManager {
                     if (session.host === host && func(session)) {
                         this.sendToWsSession(ws, session, this.serializeEvent({type: "disconnected"}));
                         usersToCheck.add(session.username);
-                        this.setUserAsDisconnected(session);
+                        void (async () => {
+                            const hostContext = await ws.ex.contextFactory(session.instanceHost);
+                            void hostContext.getUserStatusManager().decrementUserActiveSessions(session.instanceHost, session.username as unknown as types.core.EccPubKey, session.solution);
+                        })();
                         return false;
                     }
                     return true;
@@ -179,10 +181,12 @@ export class WebSocketInnerManager {
         }
     }
     
-    onClose(wsEx: WebSocketEx) {
+    async onClose(wsEx: WebSocketEx) {
         for (const session of wsEx.ex.sessions) {
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
-            this.setUserAsDisconnected(session);
+            const hostContextIOC = await wsEx.ex.contextFactory(session.instanceHost);
+            const statusManager = hostContextIOC.getUserStatusManager();
+            await statusManager.decrementUserActiveSessions(session.instanceHost, session.username as unknown as types.core.EccPubKey, session.solution);
         }
     }
     
@@ -191,12 +195,13 @@ export class WebSocketInnerManager {
         this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
     }
     
-    removeSessionByWsId(wsEx: WebSocketEx, wsId: types.core.WsId) {
+    async removeSessionByWsId(wsEx: WebSocketEx, wsId: types.core.WsId) {
         const index = wsEx.ex.sessions.findIndex(x => x.wsId == wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
-            this.setUserAsDisconnected(session);
             wsEx.ex.sessions.splice(index, 1);
+            const hostContext = await wsEx.ex.contextFactory(session.host);
+            await hostContext.getUserStatusManager().decrementUserActiveSessions(session.instanceHost, session.username as unknown as types.core.EccPubKey, session.solution);
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
         }
     }
@@ -227,15 +232,10 @@ export class WebSocketInnerManager {
             return;
         }
         wsSession.channels =  wsSession.channels.filter(channel => channel.orgChannel !== orginalChannelPath);
-    }
+}
     
     private refreshHasOpenedWebSocketsForUser(_host: types.core.Host, _username: types.core.Username) {
         // Do nothing
-    }
-    
-    private setUserAsDisconnected(session: WebSocketSession) {
-        void this.activeUsers.setUserAsInactive({host: session.instanceHost, userPubkey: session.username as unknown as types.core.EccPubKey, solutionId: session.solution});
-        this.callbacks.triggerZ("userDisconnected", [session.username, session.solution]);
     }
     
     private removeChannel<T extends string, D>(event: types.core.Event<T, D>) {

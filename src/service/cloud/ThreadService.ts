@@ -111,7 +111,7 @@ export class ThreadService extends BaseContainerService {
         return {thread, message};
     }
     
-    async getThreadMessages(executor: Executor, threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
+    async getThreadMessages(executor: Executor, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy?: keyof db.thread.ThreadMessage) {
         const thread = await this.repositoryFactory.createThreadRepository().get(threadId);
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
@@ -122,11 +122,11 @@ export class ThreadService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
         });
-        const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThread(threadId, listParams);
+        const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThread(threadId, listParams, sortBy || "createDate");
         return {thread, messages};
     }
     
-    async getThreadMyMessages(executor: CloudUser, threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
+    async getThreadMyMessages(executor: CloudUser, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy?: keyof db.thread.ThreadMessage) {
         const thread = await this.repositoryFactory.createThreadRepository().get(threadId);
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
@@ -137,7 +137,7 @@ export class ThreadService extends BaseContainerService {
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGetMy", ["threadId=" + thread.id]);
         });
-        const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThreadAndUser(executor.getUser(thread.contextId), threadId, listParams);
+        const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThreadAndUser(executor.getUser(thread.contextId), threadId, listParams, sortBy || "createDate");
         return {thread, messages};
     }
     

@@ -14,6 +14,7 @@ import { AppException } from "../../api/AppException";
 
 export type AclFunctionNameX =
     | "context/contextGetUsers"
+    | "context/contextListUsers"
     | "context/contextSendCustomNotification"
     | "context/READ"
     | "context/WRITE"
@@ -114,6 +115,7 @@ export class CloudAclChecker {
         
         const contextRead = {
             "context/contextGetUsers": ["contextId"],
+            "context/contextListUsers": ["contextId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {

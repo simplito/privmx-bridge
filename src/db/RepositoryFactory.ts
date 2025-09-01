@@ -41,6 +41,7 @@ import { KvdbEntryRepository } from "../service/cloud/KvdbEntryRepository";
 import { ChunkRepository } from "../service/cloud/ChunkRepository";
 import { FileMetaDataRepository } from "../service/cloud/FileMetaDataRepository";
 import { NotificationRepository } from "../service/cloud/NotificationRepository";
+import { KnownPublicKeyRepository } from "../service/cloud/KnownPublicKeyRepository";
 
 export class RepositoryFactory {
     
@@ -177,5 +178,9 @@ export class RepositoryFactory {
     
     createNotificationRepository(session?: mongodb.ClientSession) {
         return new NotificationRepository(this.createObjectRepositoryFor(NotificationRepository, session));
+    }
+    
+    createKnownPublicKeysRepository(session?: mongodb.ClientSession) {
+        return new KnownPublicKeyRepository(this.createObjectRepositoryFor(KnownPublicKeyRepository, session));
     }
 }

@@ -37,5 +37,8 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("contextGetUsers", this.builder.createObject({
             contextId: this.tv.cloudContextId,
         }));
+        this.registerMethod("contextListUsers", this.builder.addFields(this.tv.listModel, {
+            contextId: this.tv.cloudContextId,
+        }));
     }
 }

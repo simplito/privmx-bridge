@@ -156,6 +156,7 @@ export interface ThreadMessageGetResult {
 
 export interface ThreadMessagesGetModel extends types.core.ListModel {
     threadId: types.thread.ThreadId;
+    sortBy?: "createDate"|"updates";
 }
 
 export interface ThreadMessagesGetResult {
@@ -202,16 +203,19 @@ export interface ThreadCustomEventData {
     author: types.cloud.UserIdentity;
 };
 
+export type ThreadMessageEventData = ThreadMessage&{containerType?: types.thread.ThreadType};
+
 export type ThreadNewMessageEvent = types.cloud.Event<"threadNewMessage", `thread/${types.thread.ThreadId}/messages`, ThreadNewMessageEventData>;
-export type ThreadNewMessageEventData = ThreadMessage;
+export type ThreadNewMessageEventData = ThreadMessageEventData;
 
 export type ThreadUpdatedMessageEvent = types.cloud.Event<"threadUpdatedMessage", `thread/${types.thread.ThreadId}/messages`, ThreadUpdatedMessageEventData>;
-export type ThreadUpdatedMessageEventData = ThreadMessage;
+export type ThreadUpdatedMessageEventData = ThreadMessageEventData;
 
 export type ThreadDeletedMessageEvent = types.cloud.Event<"threadDeletedMessage", `thread/${types.thread.ThreadId}/messages`, ThreadDeletedMessageEventData>;
 export interface ThreadDeletedMessageEventData {
     messageId: types.thread.ThreadMessageId;
     threadId: types.thread.ThreadId;
+    containerType?: types.thread.ThreadType
 }
 
 export type ThreadStatsEvent = types.cloud.Event<"threadStats", "thread", ThreadStatsEventData>;
@@ -222,6 +226,18 @@ export interface ThreadStatsEventData {
     lastMsgDate: types.core.Timestamp;
     messages: number;
 }
+
+export interface ThreadCollectionChangedEventData {
+    containerId: types.thread.ThreadId;
+    affectedItemsCount: number;
+    containerType?: types.thread.ThreadType;
+    items: {
+        itemId: types.thread.ThreadMessageId;
+        action: types.core.CRUDAction;
+    }[]
+}
+
+export type ThreadCollectionChangedEvent = types.cloud.Event<"threadCollectionChanged", "thread/collectionChanged", ThreadCollectionChangedEventData>
 
 export type Thread2CreatedEvent = types.cloud.Event<"thread2Created", "thread2", ThreadCreatedEventData>;
 export type Thread2UpdatedEvent = types.cloud.Event<"thread2Updated", "thread2", ThreadUpdatedEventData>;

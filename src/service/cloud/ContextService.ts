@@ -79,10 +79,8 @@ export class ContextService {
         if (rest.policy) {
             this.policyService.validateContextPolicy(rest.policy);
         }
-        if (rest.scope) {
-            if (context.shares.length > 0 && rest.scope === "private") {
-                throw new AppException("CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE");
-            }
+        if (rest.scope && context.shares.length > 0 && rest.scope === "private") {
+            throw new AppException("CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE");
         }
         await this.repositoryFactory.createContextRepository().updateContext(contextId, rest);
     }
@@ -141,6 +139,10 @@ export class ContextService {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
         }
         await this.repositoryFactory.createContextUserRepository().insertOrUpdate(contextId, userId, userPubKey, acl);
+        void this.contextNotificationService.sendUserAdded(userId, userPubKey, context.id);
+        if (await this.activeUsersMap.isContextUserActive({host: this.host, solutionId: context.solution, user: {userPubKey}})) {
+            void this.activeUsersMap.addToActiveContextUsers({userIdentities: [{userPubKey: userPubKey, contextId: contextId}]});
+        }
     }
     
     async removeUserFromContext(contextId: types.context.ContextId, userId: types.cloud.UserId) {
@@ -153,6 +155,10 @@ export class ContextService {
             throw new AppException("USER_DOESNT_EXIST");
         }
         await this.repositoryFactory.createContextUserRepository().remove(contextId, userId);
+        void this.contextNotificationService.sendUserRemoved(userId, context.id, user.userPubKey);
+        if (await this.activeUsersMap.isContextUserActive({host: this.host, solutionId: context.solution, user})) {
+            void this.activeUsersMap.removeFromActiveContextUsers({userIdentities: [{userPubKey: user.userPubKey, contextId: contextId}]});
+        }
     }
     
     async removeUserFromContextByPubKey(contextId: types.context.ContextId, userPubKey: types.cloud.UserPubKey) {
@@ -190,10 +196,8 @@ export class ContextService {
         if (!context) {
             throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`);
         }
-        if (cloudUser.solutionId) {
-            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-                throw new AppException("ACCESS_DENIED");
-            }
+        if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+            throw new AppException("ACCESS_DENIED");
         }
         return {context, user};
     }
@@ -238,7 +242,7 @@ export class ContextService {
         if (!user) {
             throw new AppException("ACCESS_DENIED");
         }
-        this.cloudAclChecker.verifyAccess(user.acl, "context/contextSendCustomNotification", ["contextId=" + contextId]);
+        this.cloudAclChecker.verifyAccess(user.acl, "context/contextGetUsers", ["contextId=" + contextId]);
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!context) {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
@@ -246,14 +250,33 @@ export class ContextService {
         if (!this.policy.canListUsers(context)) {
             throw new AppException("ACCESS_DENIED");
         }
-        if (cloudUser.solutionId) {
-            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-                throw new AppException("ACCESS_DENIED");
-            }
+        if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+            throw new AppException("ACCESS_DENIED");
         }
         const users = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
         const usersState = await this.activeUsersMap.getUsersState({host: this.host, userPubkeys: users.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
         return users.map((contextUser, index) => ({ ...contextUser, ...usersState[index] })) as db.context.ContextUserWithStatus[];
+    }
+    
+    async getPageOfContextUsersWithStatus(cloudUser: CloudUser, contextId: types.context.ContextId, listParams: types.core.ListModel) {
+        const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
+        if (!user) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        this.cloudAclChecker.verifyAccess(user.acl, "context/contextListUsers", ["contextId=" + contextId]);
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new AppException("CONTEXT_DOES_NOT_EXIST");
+        }
+        if (!this.policy.canListUsers(context)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        const users = await this.repositoryFactory.createContextUserRepository().getUsersPageWithActivityFromContext(contextId, context.solution, listParams);
+        const usersState = await this.activeUsersMap.getUsersState({host: this.host, userPubkeys: users.list.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
+        return {count: users.count, users: users.list.map((contextUser, index) => ({ ...contextUser, ...usersState[index] })) as db.context.ContextUserWithStatus[]};
     }
     
     async sendCustomNotification(cloudUser: CloudUser, contextId: types.context.ContextId, data: unknown, customChannelName: types.core.WsChannelName,  usersWithEncryptionKey: {id: types.cloud.UserId, key: types.core.UserKeyData}[]) {
@@ -269,10 +292,8 @@ export class ContextService {
         if (!this.policy.canSendContextCustomNotification(context)) {
             throw new AppException("ACCESS_DENIED");
         }
-        if (cloudUser.solutionId) {
-            if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-                throw new AppException("ACCESS_DENIED");
-            }
+        if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
+            throw new AppException("ACCESS_DENIED");
         }
         const usersWithPubKey = await this.repositoryFactory.createContextUserRepository().getUsers(contextId, usersWithEncryptionKey.map(e => e.id));
         const users = this.mergeUsersArrays(usersWithPubKey, usersWithEncryptionKey);

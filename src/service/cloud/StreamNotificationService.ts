@@ -49,6 +49,7 @@ export class StreamNotificationService {
                         containerId: streamRoom.id,
                         contextId: streamRoom.contextId,
                         channel: `stream/custom/${customChannelName}` as types.core.WsChannelName,
+                        containerType: streamRoom.type,
                     },
                     {
                         channel: `stream/${streamRoom.id}/${customChannelName}`,
@@ -84,6 +85,7 @@ export class StreamNotificationService {
                         containerId: streamRoom.id,
                         contextId: streamRoom.contextId,
                         channel: "stream/create" as types.core.WsChannelName,
+                        containerType: streamRoom.type,
                     },
                     {
                         channel: "stream",
@@ -111,6 +113,7 @@ export class StreamNotificationService {
                 containerId: streamRoom.id,
                 contextId: streamRoom.contextId,
                 channel: "stream/update" as types.core.WsChannelName,
+                containerType: streamRoom.type,
             };
             for (const user of contextUsers) {
                 this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomUpdatedEvent>(
@@ -164,6 +167,7 @@ export class StreamNotificationService {
                     containerId: streamRoom.id,
                     contextId: streamRoom.contextId,
                     channel: "stream/delete" as types.core.WsChannelName,
+                    containerType: streamRoom.type,
                 },
                 {
                     channel: "stream",

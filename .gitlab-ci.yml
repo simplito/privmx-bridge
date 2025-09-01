@@ -11,13 +11,13 @@ build:
   services:
     - name: docker:20.10.17-dind
       command: ["--tls=false"]
-    - name: dev.privmx.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
+    - name: gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
       alias: mongodb
   script:
     - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - ./scripts/build-base-images.sh
-    - docker build --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" .
+    - docker build --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" .
   except:
     - tags
     - master
@@ -29,7 +29,7 @@ build_and_publish_docker_base_image:
   services:
     - name: docker:20.10.17-dind
       command: ["--tls=false"]
-    - name: dev.privmx.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
+    - name: gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
       alias: mongodb
   script:
     - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
@@ -37,7 +37,7 @@ build_and_publish_docker_base_image:
     - export IMAGE_ID_AMD64=$IMAGE_ID-amd64
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - ./scripts/build-base-images.sh
-    - docker build --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from dev.privmx.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" -t $IMAGE_ID_AMD64 .
+    - docker build --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" -t $IMAGE_ID_AMD64 .
     - docker push $IMAGE_ID_AMD64
   except:
     - tags

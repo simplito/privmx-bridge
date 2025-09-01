@@ -21,7 +21,9 @@ export class NotificationTest extends BaseTestSet {
     private message: string = "";
     private contextUsers?: types.cloud.UserIdentity[];
     private channelSubscriptions: types.core.SubscriptionId[] = [];
-    private newThreadId?: types.thread.ThreadId;
+    private newNoTypeThreadId?: types.thread.ThreadId;
+    private newInboxTypeThreadId?: types.thread.ThreadId;
+    private newThreadTypeThreadId?: types.thread.ThreadId;
     
     @Test()
     async shouldDeliverCustomThreadNotification() {
@@ -150,12 +152,37 @@ export class NotificationTest extends BaseTestSet {
     }
     
     @Test()
-    async shouldSubcribeThreadMessagesAndReceiveEventAsManager() {
+    async shouldSubcribeThreadMessagesDeleteChannelAndThreadCollectionChanged() {
+        await this.startListeningOnEvents();
+        await this.subscribeToThreadMessagesDeleteAndThreadCollectionChangedChannelsWithoutListening();
+        await this.sendManyMessagesOnSubscribedThread();
+        await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeThreadMessagesAndReceiveEventAsManager() {
         await this.startListeningOnEvents();
         await this.createNewThreadWithManagerOnly();
         await this.subscribeToThreadMessagesChannel();
         await this.sendMessageOnNewThread();
         await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeThreadMessagesOnDifferentTypesOfThread() {
+        await this.startListeningOnEvents();
+        await this.createNewThreadWithTypeThread();
+        await this.createNewThreadWithTypeInbox();
+        await this.subscribeToThreadMessagesChannelOnContainerTypeThreadOnly();
+        await this.sendMessageOnThreadTypeNadInboxTypeThreads();
+        await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeOncontextUserStatusChanged() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        await this.checkIfNotificationNumberMatchUserIdentitiesNumber();
     }
     
     async unsubscribeFromAllCustomStreamNotifications() {
@@ -289,6 +316,13 @@ export class NotificationTest extends BaseTestSet {
         }
     }
     
+    async checkIfNotificationNumberMatchUserIdentitiesNumber() {
+        await PromiseUtils.wait(1000);
+        if (this.customNotificationDataQueue.length !== 4) { // 4 because user belongs to 4 contexts in default dataset
+            throw new Error(`Custom notification count expected: 4, got: ${this.customNotificationDataQueue.length}`);
+        }
+    }
+    
     async subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
@@ -368,6 +402,11 @@ export class NotificationTest extends BaseTestSet {
         this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
     }
     
+    async subscribeToThreadMessagesDeleteAndThreadCollectionChangedChannelsWithoutListening() {
+        const res = await this.helpers.subscribeToChannels([`thread/messages/delete|containerId=${testData.threadId}`, "thread/collectionChanged"]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
     async startListeningOnEvents() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
@@ -388,6 +427,17 @@ export class NotificationTest extends BaseTestSet {
         assert(!!res.messageId, "Unexpected return value from threadMessageSend(");
     }
     
+    async sendManyMessagesOnSubscribedThread() {
+        for (let i = 0; i < 10; i++) {
+            void this.apis.threadApi.threadMessageSend({
+                threadId: testData.threadId,
+                resourceId: this.helpers.generateResourceId(),
+                data: "AAAA" as types.thread.ThreadMessageData,
+                keyId: testData.keyId,
+            });
+        }
+    }
+    
     async emptyNotificationQueue() {
         this.customNotificationDataQueue = [];
     }
@@ -404,6 +454,16 @@ export class NotificationTest extends BaseTestSet {
         this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
     }
     
+    async subscribeToThreadMessagesChannelOnContainerTypeThreadOnly() {
+        const res = await this.helpers.subscribeToChannels([`thread/messages/create|contextId=${testData.contextId},containerType=thread`]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    async subscribeToAllContextEvents() {
+        const res = await this.helpers.subscribeToChannels(["context"]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
     private async createNewThreadWithManagerOnly() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
@@ -414,19 +474,71 @@ export class NotificationTest extends BaseTestSet {
             managers: [testData.userId],
             users: [],
         });
-        this.newThreadId = newThread.threadId;
+        this.newNoTypeThreadId = newThread.threadId;
+    }
+    
+    private async createNewThreadWithTypeThread() {
+        const newThreadTypeThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+            type: "thread" as types.thread.ThreadType,
+        });
+        this.newThreadTypeThreadId = newThreadTypeThread.threadId;
+    }
+    
+    private async createNewThreadWithTypeInbox() {
+        const newInboxTypeThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+            type: "inbox" as types.thread.ThreadType,
+        });
+        this.newInboxTypeThreadId = newInboxTypeThread.threadId;
     }
     
     async sendMessageOnNewThread() {
-        if (!this.newThreadId) {
+        if (!this.newNoTypeThreadId) {
             throw new Error("newThreadId not initialized yet");
         }
         const res = await this.apis.threadApi.threadMessageSend({
-            threadId: this.newThreadId,
+            threadId: this.newNoTypeThreadId,
             resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadMessageData,
             keyId: testData.keyId,
         });
         assert(!!res.messageId, "Unexpected return value from threadMessageSend(");
     }
+    
+    async sendMessageOnThreadTypeNadInboxTypeThreads() {
+        if (!this.newInboxTypeThreadId) {
+            throw new Error("newThreadId not initialized yet");
+        }
+        if (!this.newThreadTypeThreadId) {
+            throw new Error("newThreadId not initialized yet");
+        }
+        const res1 = await this.apis.threadApi.threadMessageSend({
+            threadId: this.newInboxTypeThreadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res1.messageId, "Unexpected return value from threadMessageSend(");
+        const res2 = await this.apis.threadApi.threadMessageSend({
+            threadId: this.newThreadTypeThreadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res2.messageId, "Unexpected return value from threadMessageSend(");
+    }
+    
 }

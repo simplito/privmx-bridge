@@ -203,6 +203,7 @@ export type StoreFileFetchResult = StoreFile|types.store.StoreFileFetchError;
 
 export interface StoreFileListModel extends types.core.ListModel {
     storeId: types.store.StoreId;
+    sortBy?: "createDate"|"updates",
 }
 
 export interface StoreFileListResult {
@@ -273,12 +274,13 @@ export interface StoreFileUpdateModel {
 export interface StoreFileDeleteModel {
     fileId: types.store.StoreFileId;
 }
+export type StoreFileEventData = StoreFile&{containerType?: types.store.StoreType};
 
 export type StoreFileCreatedEvent = types.cloud.Event<"storeFileCreated", `store/${types.store.StoreId}/files`, StoreFileCreatedEventData>;
-export type StoreFileCreatedEventData = StoreFile;
+export type StoreFileCreatedEventData = StoreFileEventData;
 
 export type StoreFileUpdatedEvent = types.cloud.Event<"storeFileUpdated", `store/${types.store.StoreId}/files`, StoreFileUpdatedEventData>;
-export type StoreFileUpdatedEventData = StoreFile&{
+export type StoreFileUpdatedEventData = StoreFileEventData&{
     changes?: {
         type: "file"|"checksum";
         pos: number;
@@ -287,11 +289,24 @@ export type StoreFileUpdatedEventData = StoreFile&{
     }[];
 };
 
+export interface StoreCollectionChangedEventData {
+    containerId: types.store.StoreId;
+    affectedItemsCount: number;
+    containerType?: types.store.StoreType;
+    items: {
+        itemId: types.store.StoreFileId;
+        action: types.core.CRUDAction;
+    }[]
+}
+
+export type StoreCollectionChangedEvent = types.cloud.Event<"storeCollectionChanged", "store/collectionChanged", StoreCollectionChangedEventData>
+
 export type StoreFileDeletedEvent = types.cloud.Event<"storeFileDeleted", `store/${types.store.StoreId}/files`, StoreFileDeletedEventData>;
 export interface StoreFileDeletedEventData {
     id: types.store.StoreFileId;
     contextId: types.context.ContextId;
     storeId: types.store.StoreId;
+    containerType?: types.store.StoreType
 }
 
 export interface StoreSendCustomEventModel {

@@ -13,32 +13,63 @@ import { IpcService } from "../../master/Decorators";
 import { ApiMethod } from "../../../api/Decorators";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
+
 @IpcService
 export class ActiveUsersMap {
     
     private usersSet: Map<`${types.core.Host}/${types.cloud.SolutionId}/${types.core.EccPubKey}`, {usage: number}> = new Map();
+    private activeContextUsers: Map<types.context.ContextId, Set<types.core.EccPubKey>> = new Map();
     
     @ApiMethod({})
     async setUserAsActive(model: {host: types.core.Host, userPubkey: types.core.EccPubKey, solutionId: types.cloud.SolutionId}) {
         const entry = this.usersSet.get(`${model.host}/${model.solutionId}/${model.userPubkey}`);
         if (!entry) {
             this.usersSet.set(`${model.host}/${model.solutionId}/${model.userPubkey}`, {usage: 1});
-            return;
+            return {usage: 1};
         };
         entry.usage++;
+        return entry;
+    }
+    
+    @ApiMethod({})
+    async addToActiveContextUsers(model: {userIdentities: {userPubKey: types.core.EccPubKey, contextId: types.context.ContextId}[]}) {
+        for (const identity of model.userIdentities) {
+            const entry = this.activeContextUsers.get(identity.contextId);
+            if (!entry) {
+                this.activeContextUsers.set(identity.contextId, new Set([identity.userPubKey]));
+            }
+ else {
+                entry.add(identity.userPubKey);
+            }
+        }
+    }
+    
+    @ApiMethod({})
+    async removeFromActiveContextUsers(model: {userIdentities: {userPubKey: types.core.EccPubKey, contextId: types.context.ContextId}[]}) {
+        for (const identity of model.userIdentities) {
+            const entry = this.activeContextUsers.get(identity.contextId);
+            if (!entry) {
+                continue;
+            }
+ else {
+                entry.delete(identity.userPubKey);
+            }
+        }
     }
     
     @ApiMethod({})
     async setUserAsInactive(model: {host: types.core.Host, userPubkey: types.core.EccPubKey, solutionId: types.cloud.SolutionId}) {
         const entry = this.usersSet.get(`${model.host}/${model.solutionId}/${model.userPubkey}`);
         if (!entry) {
-            return;
+            return {usage: 0};
         };
         if (entry.usage === 1) {
             this.usersSet.delete(`${model.host}/${model.solutionId}/${model.userPubkey}`);
+            return {usage: 0};
         }
         else {
             entry.usage--;
+            return entry;
         }
     }
     
@@ -63,8 +94,17 @@ export class ActiveUsersMap {
     }
     
     @ApiMethod({})
-    async isContextUserActive(model: {host: types.core.Host, user: db.context.ContextUser, solutionId: types.cloud.SolutionId}) {
+    async isContextUserActive(model: {host: types.core.Host, user: {userPubKey: types.core.EccPubKey}, solutionId: types.cloud.SolutionId}) {
         return !!this.usersSet.has(`${model.host}/${model.solutionId}/${model.user.userPubKey}`);
+    }
+    
+    @ApiMethod({})
+    async getActiveContextUsers(model: {contextId: types.context.ContextId}) {
+        const userKeysSet = this.activeContextUsers.get(model.contextId);
+        if (!userKeysSet) {
+            return [];
+        }
+        return Array.from(userKeysSet);
     }
     
     isUserActive(host: types.core.Host, userPubkey: types.core.EccPubKey, solutionIds: types.cloud.SolutionId[]) {

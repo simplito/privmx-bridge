@@ -80,6 +80,24 @@ export class ThreadTests extends BaseTestSet {
         await this.tryCreateThreadWithDuplicatedResourceIdAndFail();
     }
     
+    @Test()
+    async shouldFetchThreadMessagesSortedByCreateDate() {
+        await this.createNewThreadWithResourceId();
+        await this.sendHundredMessages();
+        await this.fetchMessagesByNewestAndCheckTheirOrder();
+        await this.fetchMessagesByOldestAndCheckTheirOrder();
+    }
+    
+    @Test()
+    async shouldFetchThreadMessagesSortedByUpdates() {
+        await this.createNewThreadWithResourceId();
+        await this.sendHundredMessages();
+        await this.fetchMessagesByUpdatesAndCheckTheirCount();
+        await this.updateSendMessages();
+        await this.fetchMessagesByLastModifiedAndCheckTheirOrder();
+        await this.fetchMessagesByFirstModifiedAndCheckTheirOrder();
+    }
+    
     private async addResourceIdToExistingThread() {
         this.resourceId = this.helpers.generateResourceId();
         const res = await this.apis.threadApi.threadUpdate({
@@ -200,13 +218,139 @@ export class ThreadTests extends BaseTestSet {
         if (!this.threadId) {
             throw new Error("threadId not initialized yet");
         }
+        
         const res = await this.apis.threadApi.threadMessagesGet({
             threadId: this.threadId,
             limit: 100,
             skip: 0,
             sortOrder: "asc",
         });
+        assert(res.count === 100 && res.messages.length === 100, `Message count does not match expected 100! instead:${res.count}`);
+        
+        const firstMessageId = res.messages[0].id;
+        const secondMessageId = res.messages[1].id;
+        const thirdMessageId = res.messages[2].id;
+        
+        const res2 = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            lastId: firstMessageId,
+            sortOrder: "asc",
+        });
+        assert(res2.count === 99 && res2.messages.length === 99, `Message count does not match expected 99! instead:${res2.count}`);
+        
+        const res3 = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            lastId: secondMessageId,
+            sortOrder: "asc",
+        });
+        assert(res3.count === 98 && res3.messages.length === 98, `Message count does not match expected 98! instead:${res3.count}`);
+         
+         const res4 = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            lastId: thirdMessageId,
+            sortOrder: "asc",
+        });
+        assert(res4.count === 97 && res4.messages.length === 97, `Message count does not match expected 97! instead:${res4.count}`);
+    }
+    
+    private async fetchMessagesByUpdatesAndCheckTheirCount() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            sortBy: "updates",
+            sortOrder: "asc",
+        });
         assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
+    }
+    
+    private async fetchMessagesByNewestAndCheckTheirOrder() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            sortBy: "createDate",
+            sortOrder: "desc",
+        });
+        
+        assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = Infinity;
+        for (const message of res.messages) {
+            assert(message.createDate < lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = message.createDate;
+        }
+    }
+    
+    private async fetchMessagesByOldestAndCheckTheirOrder() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            sortBy: "createDate",
+            sortOrder: "asc",
+        });
+        
+        assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = 0;
+        for (const message of res.messages) {
+            assert(message.createDate > lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = message.createDate;
+        }
+    }
+    
+    private async fetchMessagesByLastModifiedAndCheckTheirOrder() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            sortBy: "updates",
+            sortOrder: "desc",
+        });
+        
+        assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = Infinity;
+        for (const message of res.messages) {
+            assert(message.updates.length === 1 && message.updates[0].createDate < lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = message.updates[0].createDate;
+        }
+    }
+    
+    private async fetchMessagesByFirstModifiedAndCheckTheirOrder() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessagesGet({
+            threadId: this.threadId,
+            limit: 100,
+            skip: 0,
+            sortBy: "updates",
+            sortOrder: "asc",
+        });
+        
+        assert(res.count === 100, `Message count does not match expected 100! instead:${res.count}`);
+        let lastMessageTimestamp = 0;
+        for (const message of res.messages) {
+            assert(message.updates.length === 1 && message.updates[0].createDate > lastMessageTimestamp, "Messages are in wrong order");
+            lastMessageTimestamp = message.updates[0].createDate;
+        }
     }
     
     private async deleteAllSendMessages() {
@@ -406,5 +550,18 @@ export class ThreadTests extends BaseTestSet {
             force: true,
         });
         assert(res === "OK", "Invalid response");
+    }
+    
+    private async updateSendMessages() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        for (const messageId of this.messageIds) {
+            await this.apis.threadApi.threadMessageUpdate({
+                messageId: messageId,
+                data: "AAAA" as types.thread.ThreadMessageData,
+                keyId: testData.keyId,
+            });
+        }
     }
 }

@@ -307,6 +307,6 @@ function serialize(x: unknown, escapeString: boolean): string {
     if (typeof(x) === "string") {
         return escapeString ? `"${x}"` : x;
     }
-    
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     return "" + x;
 }

@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import * as PrivmxRpc from "privmx-rpc";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 
 export class BaseApiClient {
     

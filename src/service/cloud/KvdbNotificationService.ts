@@ -50,6 +50,7 @@ export class KvdbNotificationService {
                         containerId: kvdb.id,
                         contextId: kvdb.contextId,
                         channel: `kvdb/custom/${customChannelName}` as types.core.WsChannelName,
+                        containerType: kvdb.type,
                     },
                     {
                         channel: `kvdb/${kvdb.id}/${customChannelName}`,
@@ -85,6 +86,7 @@ export class KvdbNotificationService {
                         containerId: kvdb.id,
                         contextId: kvdb.contextId,
                         channel: "kvdb/create" as types.core.WsChannelName,
+                        containerType: kvdb.type,
                     },
                     {
                         channel: "kvdb",
@@ -112,6 +114,7 @@ export class KvdbNotificationService {
                 containerId: kvdb.id,
                 contextId: kvdb.contextId,
                 channel: "kvdb/update" as types.core.WsChannelName,
+                containerType: kvdb.type,
             };
             for (const user of contextUsers) {
                 this.webSocketSender.sendCloudEventAtChannel<kvdbApi.KvdbUpdatedEvent>(
@@ -165,6 +168,7 @@ export class KvdbNotificationService {
                     containerId: kvdb.id,
                     contextId: kvdb.contextId,
                     channel: "kvdb/delete" as types.core.WsChannelName,
+                    containerType: kvdb.type,
                 },
                 {
                     channel: "kvdb",
@@ -200,6 +204,7 @@ export class KvdbNotificationService {
                     contextId: kvdb.contextId,
                     containerId: kvdb.id,
                     channel: "kvdb/stats" as types.core.WsChannelName,
+                    containerType: kvdb.type,
                 },
                 {
                     channel: "kvdb",
@@ -233,12 +238,14 @@ export class KvdbNotificationService {
                 {
                     contextId: kvdb.contextId,
                     containerId: kvdb.id,
+                    itemId: entry.id,
                     channel: "kvdb/entries/create" as types.core.WsChannelName,
+                    containerType: kvdb.type,
                 },
                 {
                     channel: `kvdb/${kvdb.id}/entries`,
                     type: "kvdbNewEntry",
-                    data: this.kvdbConverter.convertKvdbEntry(kvdb, entry),
+                    data: {...this.kvdbConverter.convertKvdbEntry(kvdb, entry), containerType: kvdb.type},
                     timestamp: now,
                 },
             );
@@ -261,12 +268,14 @@ export class KvdbNotificationService {
                 {
                     contextId: kvdb.contextId,
                     containerId: kvdb.id,
+                    itemId: entry.id,
                     channel: "kvdb/entries/update" as types.core.WsChannelName,
+                    containerType: kvdb.type,
                 },
                 {
                     channel: `kvdb/${kvdb.id}/entries`,
                     type: "kvdbUpdatedEntry",
-                    data: this.kvdbConverter.convertKvdbEntry(kvdb, entry),
+                    data: {...this.kvdbConverter.convertKvdbEntry(kvdb, entry), containerType: kvdb.type},
                     timestamp: now,
                 },
             );
@@ -292,7 +301,9 @@ export class KvdbNotificationService {
                 {
                     contextId: kvdb.contextId,
                     containerId: kvdb.id,
+                    itemId: entry.id,
                     channel: "kvdb/entries/delete" as types.core.WsChannelName,
+                    containerType: kvdb.type,
                 },
                 {
                     channel: `kvdb/${kvdb.id}/entries`,
@@ -300,6 +311,7 @@ export class KvdbNotificationService {
                     data: {
                         kvdbEntryKey: entry.entryKey,
                         kvdbId: kvdb.id,
+                        containerType: kvdb.type,
                     },
                     timestamp: now,
                 },

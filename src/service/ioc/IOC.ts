@@ -121,6 +121,7 @@ import { KvdbApiValidator } from "../../api/main/kvdb/KvdbApiValidator";
 import { ServerSignatureService } from "../cloud/ServerSignatureService";
 import { MongoStorageService } from "../cloud/MongoStorageService";
 import { LockHelper } from "../misc/LockHelper";
+import { UserStatusManager } from "../cloud/UserStatusManager";
 export class IOC {
     
     takeMongoClientFromWorker = true;
@@ -223,6 +224,7 @@ export class IOC {
     protected serverSignatureService?: ServerSignatureService;
     protected mongoStorageService?: MongoStorageService;
     protected lockHelper?: LockHelper;
+    protected userStatusManager?: UserStatusManager;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry, loggerFactory: LoggerFactory) {
         this.instanceHost = instanceHost;
@@ -794,15 +796,28 @@ export class IOC {
         this.webSocketConnectionManager = webSocketConnectionManager;
     }
     
+    getUserStatusManager() {
+        if (this.userStatusManager == null) {
+            this.userStatusManager = new UserStatusManager(
+                this.workerRegistry.getActiveUsersMap(),
+                this.workerRegistry.getWorkerCallbacks(),
+                this.getRepositoryFactory(),
+                this.workerRegistry.getAggregatedNotificationsService(),
+                this.getJobService(),
+                this.getConfigService(),
+            );
+        }
+        return this.userStatusManager;
+    }
+    
     getSimpleWebSocketConnectionManager() {
         if (this.simpleWebSocketConnectionManager == null) {
             this.simpleWebSocketConnectionManager = new SimpleWebSocketConnectionManager(
                 this.getJobService(),
-                this.getWorker2Service(),
+                this.getWebsocketCommunicationManager(),
                 this.getConfigService(),
                 this.workerRegistry.getWebSocketInnerManager(),
-                this.workerRegistry.getActiveUsersMap(),
-                this.workerRegistry.getWorkerCallbacks(),
+                this.getUserStatusManager(),
                 this.getInstanceHost(),
                 this.getRepositoryFactory(),
             );
@@ -849,6 +864,10 @@ export class IOC {
     
     getWorker2Service() {
         return this.workerRegistry.getWorker2ServiceClient();
+    }
+    
+    getWebsocketCommunicationManager() {
+        return this.workerRegistry.getWebsocketCommunicationManager();
     }
     
     getRepositoryFactory() {
@@ -925,6 +944,7 @@ export class IOC {
             this.contextNotificationService = new ContextNotificationService(
                 this.getJobService(),
                 this.getWebSocketSender(),
+                this.getRepositoryFactory(),
             );
         }
         return this.contextNotificationService;
