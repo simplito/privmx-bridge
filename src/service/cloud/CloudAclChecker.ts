@@ -243,7 +243,7 @@ export class CloudAclChecker {
             "kvdb/kvdbDelete": ["kvdbId"],
             "kvdb/kvdbDeleteMany": [],
             "kvdb/kvdbSendCustomNotification": ["kvdbId"],
-            "kvdb/kvdbEntrySet": ["kvdbId"],
+            "kvdb/kvdbEntrySet": ["kvdbId", "entryKey"],
             "kvdb/kvdbEntryDelete": ["kvdbId", "entryKey"],
             "kvdb/kvdbEntryDeleteMany": ["kvdbId"],
         } as types.cloud.AclFunctions;

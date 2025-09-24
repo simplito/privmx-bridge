@@ -15,6 +15,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { AppException } from "../../api/AppException";
 import { KnownPublicKeyRepository } from "./KnownPublicKeyRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class ContextUserRepository {
     
@@ -100,6 +101,7 @@ export class ContextUserRepository {
     }
     
     async getUsersPageWithActivityFromContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId, model: types.core.ListModel) {
+        const mongoQueries = model.query ? [MongoQueryConverter.convertQuery(model.query)] : [];
         return this.repository.getMatchingPage<db.context.ContextUserWithStatus>([
         {
             $match: {
@@ -141,6 +143,7 @@ export class ContextUserRepository {
                 matchedDocs: 0,
             },
         },
+        ...mongoQueries,
         ], model, "created");
     }
     

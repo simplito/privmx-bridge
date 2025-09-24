@@ -224,14 +224,32 @@ export class KvdbService extends BaseContainerService {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, kvdb.contextId);
-        this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntrySet", ["kvdbId=" + kvdbId]);
-        if (!this.policy.canCreateItem(user, context, kvdb)) {
-            throw new AppException("ACCESS_DENIED");
-        }
+        this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntrySet", ["kvdbId=" + kvdbId, "entryKey=" + kvdbEntryKey]);
         if (kvdb.keyId !== keyId) {
             throw new AppException("INVALID_KEY_ID");
         }
-        const item = await this.validateVersionAndUpdateEntry(kvdbEntryKey, user.userId, kvdbId, kvdbEntryValue, keyId, version, !!force);
+        const item = await (async () => {
+            const entryRepository = this.repositoryFactory.createKvdbEntryRepository();
+            const entry = await entryRepository.get(kvdbId, kvdbEntryKey);
+            
+            if (!entry && (version === 0 || force)) {
+                if (!this.policy.canCreateItem(user, context, kvdb)) {
+                    throw new AppException("ACCESS_DENIED");
+                }
+                return await entryRepository.createEntry(kvdbEntryKey, user.userId, kvdbId, kvdbEntryValue, keyId);
+            }
+            if (!entry) {
+                throw new AppException("INVALID_VERSION", "Creating a new entry without the 'force' option is only allowed when the version is 0 or not specified.");
+            }
+            if (!force && entry.version !== version) {
+                throw new AppException("INVALID_VERSION", "Version missmatch");
+            }
+            if (!this.policy.canUpdateItem(user, context, kvdb, entry)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            return await entryRepository.updateEntry(entry, user.userId, kvdbEntryValue, keyId);
+        })();
+        
         await this.repositoryFactory.createKvdbRepository().increaseEntryCounter(kvdb.id, item.createDate);
         if (item.version === 1) {
             this.kvdbNotificationService.sendNewKvdbEntry(kvdb, item, context.solution);
@@ -360,21 +378,6 @@ export class KvdbService extends BaseContainerService {
         };
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefixMatch2(kvdbId, kvdbListParams, prefix);
         return {kvdb, items};
-    }
-    
-    async validateVersionAndUpdateEntry(kvdbEntryKey: types.kvdb.KvdbEntryKey, userId: types.cloud.UserId, kvdbId: types.kvdb.KvdbId, kvdbEntryValue: types.kvdb.KvdbEntryValue, keyId: types.core.KeyId, version: types.kvdb.KvdbEntryVersion, force: boolean) {
-        const entryRepository = this.repositoryFactory.createKvdbEntryRepository();
-        const entry = await entryRepository.get(kvdbId, kvdbEntryKey);
-        if (!entry && (version === 0 || force)) {
-            return await entryRepository.createEntry(kvdbEntryKey, userId, kvdbId, kvdbEntryValue, keyId);
-        }
-        if (!entry) {
-              throw new AppException("INVALID_VERSION", "Creating a new entry without the 'force' option is only allowed when the version is 0 or not specified.");
-        }
-        if (!force && entry.version !== version) {
-            throw new AppException("INVALID_VERSION", "Version missmatch");
-        }
-        return await entryRepository.updateEntry(entry, userId, kvdbEntryValue, keyId);
     }
     
     async deleteManyItems(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKeys: types.kvdb.KvdbEntryKey[], checkAccess = true) {

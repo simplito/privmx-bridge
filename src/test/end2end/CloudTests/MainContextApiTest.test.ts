@@ -45,6 +45,13 @@ export class MainContextApiTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldFetchUserUsingMongoQuery() {
+        await this.createNewUser();
+        await this.fetchUserUsingMongoQueryWithUserId();
+        await this.fetchUserUsingMongoQueryWithUserPubKey();
+    }
+    
+    @Test()
     async shouldListContext() {
         const res = await this.apis.contextApi.contextList({
             limit: 2,
@@ -61,6 +68,46 @@ export class MainContextApiTests extends BaseTestSet {
     @Test()
     async shouldFetchContext() {
         await this.fetchContext();
+    }
+    
+    private async fetchUserUsingMongoQueryWithUserId() {
+        if (!this.newUserId) {
+            throw new Error("newUserId not initialized yet");
+        }
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#userId": {
+                    $in: [this.newUserId],
+                },
+            },
+        });
+        assert(!!res.users && res.users.length === 1, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user, "Invalid user fetched");
+    }
+     
+     private async fetchUserUsingMongoQueryWithUserPubKey() {
+        if (!this.newUserPubkey) {
+            throw new Error("newUserPubKey not initialized yet");
+        }
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#userPubKey": {
+                    $in: [this.newUserPubkey],
+                },
+            },
+        });
+        assert(!!res.users && res.users.length === 1, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user, "Invalid user fetched");
     }
     
     private async fetchContext() {

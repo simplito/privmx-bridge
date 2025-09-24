@@ -13,7 +13,7 @@ import { AppException } from "../../api/AppException";
 import * as types from "../../types";
 export class MongoQueryConverter {
     
-    private static readonly whitelist: string[] = ["id", "creator", "createDate", "lastModifier", "lastModificationDate", "lastModificationDate", "users", "messages", "author", "lastEntryDate", "entries", "lastFileDate", "files", "size", "entryKey"];
+    private static readonly whitelist: string[] = ["id", "userId", "creator", "createDate", "created", "userPubKey", "lastModifier", "lastModificationDate", "lastModificationDate", "users", "messages", "author", "lastEntryDate", "entries", "lastFileDate", "files", "size", "entryKey"];
     
     static convertQuery(query: types.core.Query, rootField?: string): {$match: unknown} {
         const match = {

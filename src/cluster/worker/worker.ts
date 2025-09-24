@@ -23,6 +23,9 @@ import * as PrivMXNative from "../../utils/crypto/PrivMXNative";
 import * as terminus from "@godaddy/terminus";
 import * as fs from "fs";
 import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
+import type { Socket } from "net";
+
+type TrackedSocket = Socket & { _isErrorListenerAttached?: boolean };
 
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;
@@ -74,7 +77,11 @@ async function initWorker(worker: Cluster.Worker) {
     const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
         req.on("error", e => logger.error("Request Error", e));
         res.on("error", e => logger.error("Response Error", e));
-        req.socket.on("error", e => logger.error("Request Socket Error", e));
+        const socket = req.socket as TrackedSocket;
+        if (!socket._isErrorListenerAttached) {
+            req.socket.on("error", e => logger.error("Request Socket Error", e));
+            socket._isErrorListenerAttached = true;
+        }
         registry.getHttpHandler().onRequest(req, res);
     };
     
