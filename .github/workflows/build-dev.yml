@@ -13,10 +13,12 @@ jobs:
   build:
     name: Build Docker Image
     runs-on: Linux
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Get git metadata
         id: vars
