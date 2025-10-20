@@ -1,0 +1,97 @@
+name: Docker Build
+
+on:
+  push:
+    branches:
+      - master
+      - 'hotfix-*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Docker Image
+    runs-on: Linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Get git metadata
+        id: vars
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "GIT_COMMIT=$COMMIT_HASH" >> $GITHUB_ENV
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+            echo "TAG_VERSION=$TAG_VERSION" >> $GITHUB_ENV
+          fi
+
+      - name: Login to Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+
+      - name: Start MongoDB container
+        run: |
+          docker run -d --name mongodb -p 27017:27017 ${{ secrets.MONGO_RS_IMAGE }}
+          # Get Mongo container IP for docker build
+          MONGO_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mongodb)
+          echo "MONGO_IP=$MONGO_IP" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${{ env.GIT_COMMIT }}-amd64
+          build-args: |
+            MONGO_URL=mongodb://mongodb:27017
+          add-hosts: |
+            mongodb:${{ env.MONGO_IP }}
+          cache-to: type=inline
+
+      - name: Prepare image names
+        id: names
+        run: |
+          IMAGE_SHA=${{ secrets.DOCKER_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${{ env.GIT_COMMIT }}
+          IMAGE_AMD64=${{ secrets.DOCKER_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${{ env.GIT_COMMIT }}-amd64
+          IMAGE_ARM64=${{ secrets.DOCKER_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${{ env.GIT_COMMIT }}-arm64-v8
+          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_OUTPUT
+          echo "IMAGE_AMD64=$IMAGE_AMD64" >> $GITHUB_OUTPUT
+          echo "IMAGE_ARM64=$IMAGE_ARM64" >> $GITHUB_OUTPUT
+
+      - name: Pull amd64 image (ensure it's available)
+        run: |
+          docker pull ${{ steps.names.outputs.IMAGE_AMD64 }}
+
+      - name: Run custom platform build script (build arm64 image)
+        run: |
+          IMAGE_AMD64=${{ steps.names.outputs.IMAGE_AMD64 }}
+          IMAGE_ARM64=${{ steps.names.outputs.IMAGE_ARM64 }}
+          ./scripts/build-docker-for-platform.sh "$IMAGE_AMD64" arm64/v8 "$IMAGE_ARM64"
+          docker push "$IMAGE_ARM64" || true
+
+      - name: Create & push multi-arch manifest (using buildx imagetools)
+        run: |
+          IMAGE_SHA=${{ steps.names.outputs.IMAGE_SHA }}
+          IMAGE_AMD64=${{ steps.names.outputs.IMAGE_AMD64 }}
+          IMAGE_ARM64=${{ steps.names.outputs.IMAGE_ARM64 }}
+
+          # create manifest
+          docker buildx imagetools create -t "$IMAGE_SHA" "$IMAGE_AMD64" "$IMAGE_ARM64"
+
+      - name: Cleanup MongoDB
+        if: always()
+        run: |
+          docker stop mongodb
+          docker rm mongodb
