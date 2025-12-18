@@ -20,7 +20,7 @@ import { StoreNotificationService } from "./StoreNotificationService";
 import { DateUtils } from "../../utils/DateUtils";
 import { CloudUser, Executor } from "../../CommonTypes";
 import { JobService } from "../job/JobService";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
@@ -229,13 +229,20 @@ export class StoreService extends BaseContainerService {
         return {user, stores};
     }
     
-    async getMyStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store) {
+    async getMyStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeList", []);
-        if (!this.policy.canListMyContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED", "policy is not met");
+        if (scope === "ALL") {
+            if (!this.policy.canListAllContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
         }
-        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
+        else {
+            if (!this.policy.canListMyContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
         return {user, stores};
     }
     

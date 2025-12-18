@@ -9,19 +9,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { ILogBuilder, ILogFactory, Logger } from "./LoggerFactory";
 import { Utils } from "../../utils/Utils";
 import { Hex } from "../../utils/Hex";
 import { ServerStatsService } from "../misc/ServerStatsService";
-import type * as Cluster from "cluster";
 import { AppException } from "../../api/AppException";
 import { MicroTimeUtils } from "../../utils/MicroTimeUtils";
 import * as types from "../../types";
 import { MetricsContainer } from "../../cluster/master/ipcServices/MetricsContainer";
 import { Config } from "../../cluster/common/ConfigUtils";
-
-/* eslint-disable-next-line */
-const cluster = require("cluster") as Cluster.Cluster;
+import { Logger } from "./Logger";
 
 export interface MethodInfo {
     // session
@@ -49,27 +45,30 @@ export class RequestLogger {
     
     static REQUEST_ID = 0;
     static OMITTED_METHODS = ["srp_init", "srp_exchange", "key_init", "key_exchange"];
-    level: number;
+    private static readonly MAX_STRING_LENGTH = 100;
+    private static readonly MAX_ARRAY_LENGTH = 10;
+    private static readonly MAX_BUFFER_LENGTH = 100;
+    
     requestId: number;
-    startDate: number;
     startTime: bigint;
     list: {info: MethodInfo, time: number}[];
-    connectionException: any;
-    mainException: any;
     logging: boolean;
     requestSize: number;
     responseSize: number;
     currentMethod: MethodInfo|null = null;
     
+    private connectionException: any;
+    private mainException: any;
+    private _hasError = false;
+    private _hasInternal = false;
+    
     constructor(
         private reqName: string,
         private serverStatsService: ServerStatsService|null,
-        private logFactory: ILogFactory,
+        private logger: Logger,
         private metricsContainer: MetricsContainer|null,
         private config: Config,
     ) {
-        this.level = Logger.WARNING;
-        this.startDate = Date.now();
         this.startTime = process.hrtime.bigint();
         this.requestId = RequestLogger.REQUEST_ID++;
         this.list = [];
@@ -110,6 +109,7 @@ export class RequestLogger {
         const startTime = MicroTimeUtils.nowBI();
         const methodInfo: MethodInfo = {};
         try {
+            methodInfo.success = true;
             return await func(methodInfo);
         }
         catch (e) {
@@ -124,14 +124,19 @@ export class RequestLogger {
     
     add(startTime: bigint, info: MethodInfo) {
         this.list.push({info: info, time: MicroTimeUtils.getElapsedTimeInMiliBI(startTime)});
+        if (!info.success) {
+            this._hasError = true;
+        }
     }
     
     setConnectionException(e: any) {
         this.connectionException = e;
+        this._hasError = true;
     }
     
     setMainException(e: any) {
         this.mainException = e;
+        this._hasError = true;
     }
     
     setLogging(logging: boolean) {
@@ -139,8 +144,9 @@ export class RequestLogger {
     }
     
     end() {
+        const elpasedTime = MicroTimeUtils.getElapsedTimeInMiliBI(this.startTime);
         setTimeout(() => {
-            this.flush();
+            this.flush(elpasedTime);
         }, 1);
     }
     
@@ -148,163 +154,157 @@ export class RequestLogger {
     //          FLUSH
     // ==========================
     
-    flush() {
-        if (!this.logging && !this.hasError()) {
+    flush(elpasedTime: number) {
+        if (!this.logging && !this._hasError) {
             return;
         }
-        const builder = this.logFactory.createBuilder();
-        const elpasedTime = MicroTimeUtils.getElapsedTimeInMiliBI(this.startTime);
-        const prefix = this.getPrefix(elpasedTime);
-        if (this.list.length == 0) {
-            builder.addLine(prefix);
+        
+        const logObject: Record<string, any> = {
+            name: this.reqName,
+            requestId: this.requestId,
+            durationMs: elpasedTime,
+            frameCount: this.list.length,
+            bytesIn: this.requestSize,
+            bytesOut: this.responseSize,
+        };
+        
+        const methods = this.list.map(entry => this.formatMethodInfo(entry));
+        if (methods.length > 0) {
+            logObject.methods = methods;
         }
-        else if (this.list.length == 1) {
-            const entry = this.list[0];
-            builder.addLine(prefix + " " + this.getMethodInfo(entry));
-            this.logMethodInfo(builder, entry.info);
+        
+        if (this.connectionException !== undefined) {
+            logObject.connectionError = this.formatException(this.connectionException);
+        }
+        if (this.mainException !== undefined) {
+            logObject.mainError = this.formatException(this.mainException);
+        }
+        
+        const message = `${this.reqName} request #${this.requestId} finished in ${elpasedTime}ms`;
+        
+        if (this._hasInternal) {
+            this.logger.error({ request: logObject }, `${this.reqName} request #${this.requestId} caused INTERNAL SERVER ERROR`);
+        }
+        else if (this._hasError) {
+            this.logger.warning({ request: logObject }, message);
         }
         else {
-            const username = this.getUsernameIfOneUserCallAllMethods();
-            builder.addLine(prefix + (username ? "[u=" + username + "]" : ""));
-            for (const entry of this.list) {
-                builder.addLine("--" + this.getMethodInfo(entry));
-                this.logMethodInfo(builder, entry.info);
+            this.logger.out({ request: logObject }, message);
+        }
+        
+        this.sendMetrics(elpasedTime);
+    }
+    
+    private formatMethodInfo(entry: {info: MethodInfo, time: number}) {
+        const { info, time } = entry;
+        const methodLog: Record<string, any> = {
+            method: info.method || "unknown",
+            user: info.user,
+            sessionId: info.sessionId,
+            success: info.success,
+            durationMs: time,
+        };
+        
+        const shouldLogInDetail = this.logger.isLoggingOnThisLevel(Logger.DEBUG) || AppException.is(info.error, "INVALID_PARAMS");
+        
+        if (shouldLogInDetail) {
+            methodLog.params = this.sanitizeData(info.params);
+        }
+        if (!info.success && info.error) {
+            this._hasInternal = AppException.is(info.error, "INTERNAL_ERROR") || !(info.error instanceof AppException);
+            if (info.response && this._hasInternal) {
+                methodLog.response = this.sanitizeData(info.response.error ?? info.response.result);
             }
+            methodLog.error = this.formatException(info.error);
         }
-        if (typeof(this.connectionException) != "undefined") {
-            this.logException(builder, "Connection error", this.connectionException);
+        if (info.outerError !== undefined) {
+            methodLog.outerError = this.formatException(info.outerError, info.frameRaw);
         }
-        if (typeof(this.mainException) != "undefined") {
-            this.logException(builder, "Main error", this.mainException);
-        }
-        builder.flush();
-        if (this.list.length) {
-            const errors = this.list.filter(x => x.info.error && (!x.info.method || !RequestLogger.OMITTED_METHODS.includes(x.info.method))).length;
-            if (this.serverStatsService) {
-                this.serverStatsService.addRequestInfo(elpasedTime, this.list.length, errors);
+        
+        return methodLog;
+    }
+    
+    private sanitizeData(data: unknown): unknown {
+        if (data === null || typeof data !== "object") {
+            if (typeof data === "string" && data.length > RequestLogger.MAX_STRING_LENGTH) {
+                return data.substring(0, RequestLogger.MAX_STRING_LENGTH) + `...${data.length - RequestLogger.MAX_STRING_LENGTH} more bytes`;
             }
-            if (this.metricsContainer && this.config.metrics.enabled) {
-                const methodWithContext = this.list.find(x => !!x.info.contextId);
-                const methodWithSolution = this.list.find(x => !!x.info.solutionId);
-                void this.metricsContainer.addMetrics({
-                    solutionId: (methodWithSolution ? methodWithSolution.info.solutionId : null) || "" as types.cloud.SolutionId,
-                    contextId: (methodWithContext ? methodWithContext.info.contextId : null) || "" as types.context.ContextId,
-                    errors: errors as types.core.Quantity,
-                    requests: this.list.length as types.core.Quantity,
-                    executionTime: elpasedTime as types.core.Timespan,
-                    inTraffic: this.requestSize as types.core.SizeInBytes,
-                    outTraffic: this.responseSize as types.core.SizeInBytes,
-                });
-            }
-        }
-    }
-    
-    private hasError(): boolean {
-        for (const entry of this.list) {
-            if (!entry.info.success) {
-                return true;
-            }
-        }
-        return typeof(this.connectionException) != "undefined" || typeof(this.mainException) != "undefined";
-    }
-    
-    private getPrefix(elpasedTime: number) {
-        return "[" + new Date(this.startDate).toISOString() + "][" + `${cluster.isPrimary ? "MS" : `${cluster.worker?.id.toString().padStart(2, "0")}`},P:${process.pid}` + "][" + this.reqName + "][id=" + this.requestId + "][t=" + elpasedTime + "][f=" + this.list.length + "][i=" + this.requestSize + "][o=" + this.responseSize + "]";
-    }
-    
-    private getMethodInfo(entry: {info: MethodInfo, time: number}) {
-        return entry.info.method + ";" + entry.info.sessionId + ";" + entry.info.user + ";" + (entry.info.success ? "ok" : "fail") + ";" + entry.time;
-    }
-    
-    private logMethodInfo(builder: ILogBuilder, info: MethodInfo) {
-        if (this.level <= Logger.DEBUG) {
-            builder.addLine("--received", info.frame);
-        }
-        if (this.level <= Logger.INFO || AppException.is(info.error, "INVALID_PARAMS")) {
-            builder.addLine("--frame params", this.prepareDataToLog(info.params));
-        }
-        if (info.response && this.level <= Logger.INFO) {
-            builder.addLine("--frame response data", this.prepareDataToLog(info.response.error == null ? info.response.result : info.response.error));
-        }
-        if (!info.success) {
-            this.logException(builder, "Error", info.error);
-        }
-        if (typeof(info.outerError) != "undefined") {
-            this.logException(builder, "Outer error", info.outerError, info.frameRaw);
-        }
-    }
-    
-    private prepareDataToLog(data: any) {
-        if (this.level > Logger.INFO) {
-            return {};
-        }
-        const res = this.prepareDataToLogCore(data);
-        return {_: res && res.length > 1024 ? res.substr(0, 1024) + "..." : res};
-    }
-    
-    private prepareDataToLogCore(data: any): string {
-        if (data instanceof Buffer) {
-            return data.length > 500 ? Hex.from(data.slice(0, 500)) + "..." : Hex.from(data);
-        }
-        if (typeof(data) == "string") {
             return data;
         }
-        let json: string;
-        try {
-            json = JSON.stringify(data);
+        
+        if (data instanceof Buffer) {
+            const maxLen = RequestLogger.MAX_BUFFER_LENGTH;
+            return data.length > maxLen
+                ? `Buffer(${data.length}): ${Hex.from(data.subarray(0, maxLen))}...${data.length - RequestLogger.MAX_BUFFER_LENGTH} more bytes`
+                : `Buffer(${data.length}): ${Hex.from(data)}`;
         }
-        catch {
-            json = "cannot-encode-json-exception";
+        
+        if (Array.isArray(data)) {
+            const maxLen = RequestLogger.MAX_ARRAY_LENGTH;
+            let itemsToProcess = data;
+            let isTruncated = false;
+            
+            if (data.length > maxLen) {
+                itemsToProcess = data.slice(0, maxLen);
+                isTruncated = true;
+            }
+            
+            const sanitizedArray = itemsToProcess.map(item => this.sanitizeData(item));
+            
+            if (isTruncated) {
+                sanitizedArray.push(`... and ${data.length - maxLen} more items`);
+            }
+            
+            return sanitizedArray;
         }
-        return json;
+        
+        const sanitizedObject: { [key: string]: any } = {};
+        for (const key in data) {
+            if (Object.prototype.hasOwnProperty.call(data, key)) {
+                sanitizedObject[key] = this.sanitizeData((data as any)[key]);
+            }
+        }
+        return sanitizedObject;
     }
     
-    private logException(builder: ILogBuilder, info: string, e: any, frame?: Buffer): void {
-        builder.addLine("--" + info + " - " + (e && e.message ? e.message : e) + this.tryExtractAdditionalErrorFields(e));
-        builder.addLine("--Trace:", e);
-        if (frame != null) {
-            builder.addLine("--Frame:\n" + Utils.hexDump(frame));
-        }
-    }
-    
-    private getUsernameIfOneUserCallAllMethods() {
-        if (this.list.length == 0 || !this.list[0].info || !this.list[0].info.user) {
-            return null;
-        }
-        const user = this.list[0].info.user;
-        return this.list.some(x => !x.info || x.info.user != user) ? null : user;
-    }
-    
-    private tryExtractAdditionalErrorFields(e: unknown) {
+    private formatException(e: any, frame?: Buffer): Record<string, any> {
+        const errorObject: Record<string, any> = {
+            message: e?.message ?? String(e),
+            name: e?.name,
+        };
         if (e instanceof AppException && e.data) {
-            try {
-                return " {data: " + this.valueToString(e.data) + "}";
-            }
-            catch {
-                return " <cannot-serialize-error-data>";
-            }
+            errorObject.data = e.data;
         }
-        return "";
+        if (e?.stack) {
+            errorObject.stack = e.stack;
+        }
+        if (frame) {
+            errorObject.frameDump = Utils.hexDump(frame);
+        }
+        return errorObject;
     }
     
-    private valueToString(e: unknown, level = 0): string {
-        if (typeof(e) === "object") {
-            if (e === null) {
-                return "null";
-            }
-            if (level >= 1) {
-                return "<object>";
-            }
-            if (Array.isArray(e)) {
-                return JSON.stringify(e.map(x => this.valueToString(x, level + 1)));
-            }
-            const obj: {[key: string]: unknown} = {};
-            for (const key in e) {
-                obj[key] = this.valueToString((e as any)[key], level + 1);
-            }
-            return JSON.stringify(obj);
+    private sendMetrics(elpasedTime: number) {
+        if (this.list.length === 0) {
+            return;
         }
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        return "" + e;
+        
+        const errors = this.list.filter(x => !x.info.success && (!x.info.method || !RequestLogger.OMITTED_METHODS.includes(x.info.method))).length;
+        if (this.serverStatsService) {
+            this.serverStatsService.addRequestInfo(elpasedTime, this.list.length, errors);
+        }
+        if (this.metricsContainer && this.config.metrics.enabled) {
+            const methodWithContext = this.list.find(x => !!x.info.contextId);
+            const methodWithSolution = this.list.find(x => !!x.info.solutionId);
+            void this.metricsContainer.addMetrics({
+                solutionId: (methodWithSolution?.info.solutionId) || "" as types.cloud.SolutionId,
+                contextId: (methodWithContext?.info.contextId) || "" as types.context.ContextId,
+                errors: errors as types.core.Quantity,
+                requests: this.list.length as types.core.Quantity,
+                executionTime: elpasedTime as types.core.Timespan,
+                inTraffic: this.requestSize as types.core.SizeInBytes,
+                outTraffic: this.responseSize as types.core.SizeInBytes,
+            });
+        }
     }
 }

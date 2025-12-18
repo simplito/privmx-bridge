@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as mongodb from "mongodb";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { ObjectRepository, Query, QueryResult, ObjectQuery } from "../ObjectRepository";
 import { MongoQuery } from "./MongoQuery";
 import { MongoObjectQuery } from "./MongoObjectQuery";
@@ -21,6 +21,7 @@ import { ListWithCount } from "../../CommonTypes";
 import { AppException } from "../../api/AppException";
 import { MongoQueryConverter } from "./MongoQueryConverter";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { Utils } from "../../utils/Utils";
 
 export class MongoObjectRepository<K extends string|number, V> implements ObjectRepository<K, V> {
     
@@ -30,8 +31,9 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         private session: mongodb.ClientSession|undefined,
         private logger: Logger,
         private metricService: MetricService,
-    ) {
-    }
+        private collectionName: string,
+        private dbCache: Map<string, unknown>,
+    ) {}
     
     col<T extends mongodb.Document>() {
         return this.collection as mongodb.Collection<T>;
@@ -74,34 +76,39 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     async get(key: K): Promise<V|null> {
-        const startTime = MicroTimeUtils.now();
-        this.metricService.addDbRequest();
-        try {
-            const x = await this.collection.findOne<V>({_id: key}, this.getOptions());
-            return x ? this.convertFromDbObj(x) : null;
-        }
-        finally {
-            this.logger.time(startTime, "Mongo get", this.collection.collectionName, key);
-        }
+        return this.withSingleFlightCache(`${this.collectionName}/get:${key}`, async () => {
+            const startTime = MicroTimeUtils.now();
+            this.metricService.addDbRequest();
+            try {
+                const x = await this.collection.findOne<V>({_id: key}, this.getOptions());
+                return x ? this.convertFromDbObj(x) : null;
+            }
+            finally {
+                this.logger.time(startTime, "Mongo get", this.collection.collectionName, key);
+            }
+        });
     }
     
     async getMulti(keys: K[]): Promise<V[]> {
-        const startTime = MicroTimeUtils.now();
-        this.metricService.addDbRequest();
-        try {
-            if (keys.length === 0) {
-                return [];
+        ;
+        return this.withSingleFlightCache(`${this.collectionName}/getMulti:${Utils.hashObject(keys)}`, async () => {
+            const startTime = MicroTimeUtils.now();
+            this.metricService.addDbRequest();
+            try {
+                if (keys.length === 0) {
+                    return [];
+                }
+                if (keys.length === 1) {
+                    const x = await this.collection.findOne<V>({_id: keys[0]}, this.getOptions());
+                    return x ? [this.convertFromDbObj(x)] : [];
+                }
+                const list = await this.collection.find({_id: {$in: keys}}, this.getOptions()).toArray();
+                return list.map(x => this.convertFromDbObj(x as V));
             }
-            if (keys.length === 1) {
-                const x = await this.collection.findOne<V>({_id: keys[0]}, this.getOptions());
-                return x ? [this.convertFromDbObj(x)] : [];
+            finally {
+                this.logger.time(startTime, "Mongo getMulti", this.collection.collectionName, keys);
             }
-            const list = await this.collection.find({_id: {$in: keys}}, this.getOptions()).toArray();
-            return list.map(x => this.convertFromDbObj(x as V));
-        }
-        finally {
-            this.logger.time(startTime, "Mongo getMulti", this.collection.collectionName, keys);
-        }
+        });
     }
     
     async getOrDefault(key: K, def: V): Promise<V> {
@@ -129,41 +136,47 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     async count(f: (q: Query<V>) => QueryResult): Promise<number> {
-        const startTime = MicroTimeUtils.now();
-        this.metricService.addDbRequest();
         const query = f(new MongoQuery(this.idProperty));
-        try {
-            return await this.collection.countDocuments(query);
-        }
-        finally {
-            this.logger.time(startTime, "Mongo count", this.collection.collectionName, JSON.stringify(query));
-        }
+        const startTime = MicroTimeUtils.now();
+        return this.withSingleFlightCache(`${this.collectionName}/count:${Utils.hashObject(query)}`, async () => {
+            try {
+                this.metricService.addDbRequest();
+                return await this.collection.countDocuments(query);
+            }
+            finally {
+                this.logger.time(startTime, "Mongo count", this.collection.collectionName, JSON.stringify(query));
+            }
+        });
     }
     
     async find(f: (q: Query<V>) => QueryResult): Promise<V|null> {
         const startTime = MicroTimeUtils.now();
-        this.metricService.addDbRequest();
         const query = f(new MongoQuery(this.idProperty));
-        try {
-            const x = await this.collection.findOne<V>(query, this.getOptions());
-            return x ? this.convertFromDbObj(x) : null;
-        }
-        finally {
-            this.logger.time(startTime, "Mongo find", this.collection.collectionName, JSON.stringify(query));
-        }
+        return this.withSingleFlightCache(`${this.collectionName}/find:${Utils.hashObject(query)}`, async () => {
+            try {
+                this.metricService.addDbRequest();
+                const x = await this.collection.findOne<V>(query, this.getOptions());
+                return x ? this.convertFromDbObj(x) : null;
+            }
+            finally {
+                this.logger.time(startTime, "Mongo find", this.collection.collectionName, JSON.stringify(query));
+            }
+        });
     }
     
     async findAll(f: (q: Query<V>) => QueryResult): Promise<V[]> {
         const startTime = MicroTimeUtils.now();
-        this.metricService.addDbRequest();
         const query = f(new MongoQuery(this.idProperty));
-        try {
-            const list = await this.collection.find(query, this.getOptions()).toArray();
-            return list.map(x => this.convertFromDbObj(x as V));
-        }
-        finally {
-            this.logger.time(startTime, "Mongo findAll", this.collection.collectionName, JSON.stringify(query));
-        }
+        return this.withSingleFlightCache(`${this.collectionName}/findAll:${Utils.hashObject(query)}`, async () => {
+            try {
+                this.metricService.addDbRequest();
+                const list = await this.collection.find(query, this.getOptions()).toArray();
+                return list.map(x => this.convertFromDbObj(x as V));
+            }
+            finally {
+                this.logger.time(startTime, "Mongo findAll", this.collection.collectionName, JSON.stringify(query));
+            }
+        });
     }
     
     async exists(key: K): Promise<boolean> {
@@ -277,27 +290,29 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     async getMatchingPage<X = V>(stages: any[], listParams: types.core.ListModel, sortBy: keyof V) {
-        if (listParams.lastId) {
-            const temporaryListProperties = {
-                limit: listParams.limit,
-                skip: 0,
-                sortOrder: listParams.sortOrder,
-            };
-            const lastObject = (await this.get(listParams.lastId as K)) as V;
-            if (!lastObject) {
-                throw new AppException("NO_MATCH_FOR_LAST_ID");
+        return this.withSingleFlightCache(`${this.collectionName}/getMatchingPage:${Utils.hashObject({stages, listParams, sortBy})}`, async () => {
+            if (listParams.lastId) {
+                const temporaryListProperties = {
+                    limit: listParams.limit,
+                    skip: 0,
+                    sortOrder: listParams.sortOrder,
+                };
+                const lastObject = (await this.get(listParams.lastId as K)) as V;
+                if (!lastObject) {
+                    throw new AppException("NO_MATCH_FOR_LAST_ID");
+                }
+                const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
+                const additionalCriteria = {
+                    $match: {
+                        [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gte" : "$lte"]: lastObject[sortBy] },
+                        "_id": {$ne: listParams.lastId},
+                    },
+                };
+                stages.push(additionalCriteria);
+                return await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
             }
-            const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
-            const additionalCriteria = {
-                $match: {
-                    [theSortBy]: { [(listParams.sortOrder === "asc") ? "$gte" : "$lte"]: lastObject[sortBy] },
-                    "_id": {$ne: listParams.lastId},
-                },
-            };
-            stages.push(additionalCriteria);
-            return await this.aggregationX<X>(stages, temporaryListProperties, sortBy);
-        }
-        return this.aggregationX<X>(stages, listParams, sortBy);
+            return this.aggregationX<X>(stages, listParams, sortBy);
+        });
     }
     
     /** Perform given stages with sort, skip and limit and returns list of found elements and count of all matched elements */
@@ -348,6 +363,15 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     private withoutId<Q>(obj: Q): Omit<Q, "_id"> {
         delete (obj as any)._id;
         return obj;
+    }
+    
+    protected withSingleFlightCache<T>(key: string, query: () => Promise<T>): Promise<T> {
+        if (this.dbCache.has(key)) {
+            return this.dbCache.get(key) as Promise<T>;
+        }
+        const queryResultDefer = query().finally(() => this.dbCache.delete(key));
+        this.dbCache.set(key, queryResultDefer);
+        return queryResultDefer;
     }
     
     isMongoDuplicateError(e: unknown): boolean {

@@ -14,7 +14,7 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Crypto } from "../../utils/crypto/Crypto";
-import { ContextUserRepository } from "./ContextUserRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class ContextRepository {
     
@@ -87,63 +87,77 @@ export class ContextRepository {
         }, model, "created");
     }
     
-    async getPageByUserPubKey(userPubKey: types.cloud.UserPubKey, listParams: types.core.ListModel) {
-        const sortBy = "created";
-        return this.repository.getMatchingPage<db.context.Context&{users: db.context.ContextUser[]}>([
+    static getPaginationFilterForContainer(solutionId: types.cloud.SolutionId, contextId: types.context.ContextId, userId: types.cloud.UserId, query: types.core.Query|undefined, type: string|undefined, scope: types.core.ContainerAccessScope) {
+        const mongoQueries = query ? [MongoQueryConverter.convertQuery(query)] : [];
+        const match = this.getScopeFilter(scope, contextId, userId);
+        if (type) {
+            match.type = type;
+        }
+        return [
+            {
+                $match: match,
+            },
+            ...mongoQueries,
             {
                 $lookup: {
-                    from: ContextUserRepository.COLLECTION_NAME,
-                    let: {ctxId: "$_id"},
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $eq: [ "$contextId", "$$ctxId" ],
-                                },
-                                userPubKey: userPubKey,
-                            },
-                        },
-                    ],
-                    as: "users",
+                    from: ContextRepository.COLLECTION_NAME,
+                    localField: "contextId",
+                    foreignField: "_id",
+                    as: "contextObj",
                 },
             },
             {
                 $match: {
-                    "users.userPubKey": userPubKey,
+                    $or: [
+                        {"contextObj.solution": solutionId},
+                        {"contextObj.shares": solutionId},
+                    ],
                 },
             },
-        ], listParams, sortBy);
+        ];
     }
     
-    async getPageByUserPubKeyAndSolution(userPubKey: types.cloud.UserPubKey, solutionId: types.cloud.SolutionId, listParams: types.core.ListModel) {
-        const sortBy = "created";
-        return this.repository.getMatchingPage<db.context.Context&{users: db.context.ContextUser[]}>([
-            {
-                $lookup: {
-                    from: ContextUserRepository.COLLECTION_NAME,
-                    let: {ctxId: "$_id"},
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $eq: [ "$contextId", "$$ctxId" ],
-                                },
-                                userPubKey: userPubKey,
-                            },
-                        },
-                    ],
-                    as: "users",
-                },
-            },
-            {
-                $match: {
-                    "users.userPubKey": userPubKey,
-                    $or: [
-                        {solution: solutionId},
-                        {shares: solutionId},
-                    ],
-                },
-            },
-        ], listParams, sortBy);
+    private static getScopeFilter(scope: types.core.ContainerAccessScope, contextId: types.context.ContextId, userId: types.cloud.UserId): Record<string, unknown> {
+        if (scope === "ALL") {
+            return {
+                contextId: contextId,
+            };
+        }
+        else if (scope === "MANAGER") {
+            return {
+                contextId: contextId,
+                managers: userId,
+            };
+        }
+        else if (scope === "USER") {
+            return {
+                contextId: contextId,
+                users: userId,
+            };
+        }
+        else if (scope === "OWNER") {
+            return {
+                contextId: contextId,
+                creator: userId,
+            };
+        }
+        else if (scope === "MEMBER") {
+            return {
+                $and: [
+                    {
+                        contextId: contextId,
+                    },
+                    {
+                        $or: [
+                            {users: userId},
+                            {managers: userId},
+                        ],
+                    },
+                ],
+            };
+        }
+        else {
+            throw new Error("Invalid container access scope");
+        }
     }
 }

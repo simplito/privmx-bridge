@@ -16,11 +16,12 @@ import * as mongodb from "mongodb";
 import * as db from "./db/Model";
 import { WsChannelName } from "./types/core";
 import type { IOC } from "./service/ioc/IOC";
+import { EncoderType } from "./utils/Encoder";
 
 export { mongodb };
 export type Whenable<T> = T|Promise<T>;
 export type WithLockedSession = <T>(locks: string|string[], func: (session: mongodb.ClientSession) => Promise<T>) => Promise<T>;
-
+export type Dictionary = {[key: string]: unknown};
 export interface Requester {
     request<T>(method: string, params: unknown): Promise<T>;
 }
@@ -67,6 +68,9 @@ export interface WebSocketSession {
     deviceId: types.core.DeviceId|null;
     channels: types.cloud.ChannelScheme[];
     instanceHost: types.core.Host;
+    encoder: EncoderType;
+    plainCommunication: boolean;
+    eventBucket: types.core.Event<any, any>[];
 }
 
 export type SubscribedChannels = Map<WsChannelName, Set<types.cloud.SolutionId>>;
@@ -75,6 +79,8 @@ export interface WebSocketInfo {
     connectionId?: string;
     isAlive: boolean;
     sessions: WebSocketSession[];
+    flushTimer?: NodeJS.Timeout;
+    batchStartTime?: types.core.Timestamp
     plainUserInfo?: {
         connectionId: types.core.WsConnectionId;
         plainApiChannels: SubscribedChannels;

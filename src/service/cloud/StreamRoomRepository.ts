@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
-import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class StreamRoomRepository {
     
@@ -58,46 +57,12 @@ export class StreamRoomRepository {
         return await this.repository.getMatchingPage<db.stream.StreamRoom>([{$match: match}], listParams, sortBy);
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
-        const match: Record<string, unknown> = {
-            $and: [
-                {
-                    contextId: contextId,
-                },
-                {
-                    $or: [
-                        {users: userId},
-                        {managers: userId},
-                    ],
-                },
-                {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            ],
-        };
-        if (type) {
-            match.type = type;
-        }
         return this.repository.getMatchingPage([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: match,
-            },
-            ...mongoQueries,
+            ...ContextRepository.getPaginationFilterForContainer(solutionId, contextId, userId, listParams.query, type, scope),
         ], listParams, sortBy);
     }
     

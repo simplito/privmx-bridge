@@ -30,6 +30,7 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
             users: ["john" as types.cloud.UserId],
             managers: ["john" as types.cloud.UserId],
             version: 1 as types.stream.StreamRoomVersion,
+            publicMeta: null,
         },
     });
     call("listStreamRooms", api => api.listStreamRooms({
@@ -51,6 +52,7 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
                 users: ["john" as types.cloud.UserId],
                 managers: ["john" as types.cloud.UserId],
                 version: 1 as types.stream.StreamRoomVersion,
+                publicMeta: null,
             },
         ],
     });

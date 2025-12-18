@@ -14,17 +14,13 @@ import * as types from "../../types";
 import { WebSocketEx } from "../../CommonTypes";
 import { Config } from "../common/ConfigUtils";
 import { WebSocketInnerManager } from "../../service/ws/WebSocketInnerManager";
-import { Logger, LoggerFactory } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { Hex } from "../../utils/Hex";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { WorkerRegistry } from "./WorkerRegistry";
 import { App } from "../../service/app/App";
 import { IOC } from "../../service/ioc/IOC";
 import { ConfigRepository } from "../../service/config/ConfigRepository";
-
-// eslint-disable-next-line
-const WebSocketStatusCodeSymbol = require("ws/lib/constants").kStatusCode;
-
 export type Interceptor = (req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void;
 
 export interface HostContextProvider {
@@ -34,7 +30,7 @@ export interface HostContextProvider {
 export class HttpHandler {
     
     private interceptors: Interceptor[] = [];
-    private singleMode?: Promise<App>;
+    private singleMode?: App;
     private hostContextProvider: HostContextProvider = {
         createHostContext: () => this.createHostContext(),
         createContextWithHost: () => this.createHostContext(),
@@ -104,7 +100,7 @@ export class HttpHandler {
                     }
                 }
                 else {
-                    this.logger.error("Error during processing request", e);
+                    this.logger.error(e, "Error during processing request");
                     res.statusCode = 500;
                     res.setHeader("Content-Type", "text/plain");
                     res.write("500 Internal server error");
@@ -120,18 +116,18 @@ export class HttpHandler {
         }
         if (this.singleMode === undefined) {
             const configPath = this.config.server.mode.configPath;
-            this.singleMode = (async () => {
+            this.singleMode = await (async () => {
                 const host = "<main>" as types.core.Host;
-                const ioc = new IOC(host, this.workerRegistry, new LoggerFactory(host, this.workerRegistry.getLoggerFactory().getAppender()));
+                const ioc = new IOC(host, this.workerRegistry);
                 const app = App.initWithIocAndConfigFile(ioc, configPath);
                 const info = await this.configRepository.getInfo(ioc.getConfigService().values.db.mongo.dbName);
                 await app.init4(info);
                 return app;
             })();
-            return (await this.singleMode).ioc;
+            return this.singleMode.ioc;
         }
         else {
-            const app = await this.singleMode;
+            const app = this.singleMode;
             void app.tryRunJobs();
             return app.ioc;
         }
@@ -153,6 +149,9 @@ export class HttpHandler {
             } : undefined,
             contextFactory: (host) => this.createContextWithHost(host),
         };
+        if (ws.ex.plainUserInfo) {
+            this.webSocketInnerManager.addToPlainUsers(ws);
+        };
         ws.on("pong", () => {
             ws.ex.isAlive = true;
         });
@@ -163,7 +162,7 @@ export class HttpHandler {
                 return {hostContext, ip};
             }
             catch (e) {
-                this.logger.error("Error during processing websocket connection", e);
+                this.logger.error(e, "Error during processing websocket connection");
                 ws.close();
                 return {};
             }
@@ -191,11 +190,11 @@ export class HttpHandler {
             })();
         });
         ws.on("error", e => {
-            if (e && e instanceof Error && (<any>e)[WebSocketStatusCodeSymbol] && typeof((<any>e).code) == "string" && (<any>e).code.startsWith("WS_ERR_")) {
-                this.logger.error("[Error] " + e.message + " " + (<any>e).code + " " + (<any>e)[WebSocketStatusCodeSymbol]);
+            if (e instanceof Error && "code" in e && typeof e.code === "string" && e.code.startsWith("WS_ERR_")) {
+                this.logger.error(`[Error] ${e.message} ${e.code}`);
             }
             else {
-                this.logger.error("[Error] Websocket unknown error:", e);
+                this.logger.error(e, "[Error] Websocket unknown error:");
             }
         });
         ws.on("close", () => {

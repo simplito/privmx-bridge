@@ -13,7 +13,7 @@ import { IpcChannelMessage, isIpcChannelMessage, isIpcRequest, isIpcResponse } f
 import { IpcExecutor } from "./IpcExecutor";
 import { IpcListener } from "./IpcListener";
 import * as child from "child_process";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 
 export class IpcMessageProcessor {
     
@@ -29,6 +29,7 @@ export class IpcMessageProcessor {
             this.logger.error(`Invalid ipc channel message from ${senderName}`);
             return;
         }
+        
         if (message.channel === "request") {
             if (!isIpcRequest(message.data)) {
                 this.logger.error(`Invalid ipc request message from ${senderName}`);
@@ -38,9 +39,34 @@ export class IpcMessageProcessor {
             const res: IpcChannelMessage = {channel: "response", data: response};
             responseChannel.send(res);
         }
+        else if (message.channel === "request-batch") {
+            if (!Array.isArray(message.data)) {
+                this.logger.error(`Invalid ipc request-batch, data is not an array, from ${senderName}`);
+                return;
+            }
+            
+            const processingPromises = message.data.map(async (innerMessage) => {
+                if (isIpcChannelMessage(innerMessage) && isIpcRequest(innerMessage.data)) {
+                    if (innerMessage.channel === "request") {
+                        const response = await this.ipcExecutor.execute(innerMessage.data);
+                        const res: IpcChannelMessage = {channel: "response", data: response};
+                        responseChannel.send(res);
+                    }
+                    else  if (innerMessage.channel === "request_void") {
+                        void this.ipcExecutor.execute(innerMessage.data);
+                    }
+                    
+                }
+                else {
+                    this.logger.error(innerMessage, `Invalid item in ipc request-batch from ${senderName}`);
+                }
+            });
+            
+            await Promise.all(processingPromises);
+        }
         else if (message.channel === "response") {
             if (!isIpcResponse(message.data)) {
-                this.logger.error(`Invalid ipc response message from ${senderName}`, message);
+                this.logger.error(message, `Invalid ipc response message from ${senderName}`);
                 return;
             }
             this.ipcListener.onMessage(message.data);

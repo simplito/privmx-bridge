@@ -173,10 +173,16 @@ export class ContextService {
         await this.repositoryFactory.createContextUserRepository().removeAllByUserPub(contextId, userPubKey);
     }
     
-    async getAllForUser(cloudUser: CloudUser, listParams: types.core.ListModel) {
+    async getContextsOfUser(cloudUser: CloudUser, listParams: types.core.ListModel) {
+        if (listParams.lastId) {
+            const context = await this.repositoryFactory.createContextRepository().get(listParams.lastId as types.context.ContextId);
+            if (!context) {
+                throw new AppException("NO_MATCH_FOR_LAST_ID");
+            }
+        }
         return cloudUser.solutionId ?
-            this.repositoryFactory.createContextRepository().getPageByUserPubKeyAndSolution(cloudUser.pub, cloudUser.solutionId, listParams) :
-            this.repositoryFactory.createContextRepository().getPageByUserPubKey(cloudUser.pub, listParams);
+            this.repositoryFactory.createContextUserRepository().getUserContexts(cloudUser.pub, listParams, cloudUser.solutionId) :
+            this.repositoryFactory.createContextUserRepository().getUserContexts(cloudUser.pub, listParams);
     }
     
     async getContextWithCheckingExistance(contextId: types.context.ContextId) {
@@ -312,7 +318,7 @@ export class ContextService {
                 pubKey: userWithPubKey.userPubKey,
             };
         });
-      }
+    }
 }
 
 class ContextPolicy {

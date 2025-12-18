@@ -16,6 +16,7 @@ import { DateUtils } from "../../utils/DateUtils";
 import { AppException } from "../../api/AppException";
 import { KnownPublicKeyRepository } from "./KnownPublicKeyRepository";
 import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
+import { ContextRepository } from "./ContextRepository";
 
 export class ContextUserRepository {
     
@@ -23,7 +24,7 @@ export class ContextUserRepository {
     static readonly COLLECTION_ID_PROP = "id";
     
     constructor(
-    private repository: MongoObjectRepository<db.context.ContextUserId, db.context.ContextUser>,
+        private repository: MongoObjectRepository<db.context.ContextUserId, db.context.ContextUser>,
     ) {
     }
     
@@ -100,50 +101,97 @@ export class ContextUserRepository {
         return this.repository.matchX({contextId: contextId}, model, "created");
     }
     
+    async getUserContexts(userPubKey: types.cloud.UserPubKey, listParams: types.core.ListModel, solutionId?: types.cloud.SolutionId) {
+        const sortBy = "contextObj.created" as keyof db.context.ContextUser;
+        const stages: any[] = [
+            {
+                $match: {
+                    userPubKey: userPubKey,
+                },
+            },
+            {
+                $lookup: {
+                    from: ContextRepository.COLLECTION_NAME,
+                    localField: "contextId",
+                    foreignField: "_id",
+                    as: "contextObj",
+                },
+            },
+            {
+                $unwind: "$contextObj",
+            },
+        ];
+        if (solutionId) {
+            stages.push({
+                $match: {
+                    $or: [
+                        {"contextObj.solution": solutionId},
+                        {"contextObj.shares": solutionId},
+                    ],
+                },
+            });
+        }
+        if (listParams.lastId) {
+            const temporaryListProperties = {
+                limit: listParams.limit,
+                skip: 0,
+                sortOrder: listParams.sortOrder,
+            };
+            const additionalCriteria = {
+                $match: {
+                    "contextId": { [(listParams.sortOrder === "asc") ? "$lt" : "$gt"]: listParams.lastId},
+                },
+            };
+            stages.push(additionalCriteria);
+            return await this.repository.aggregationX<db.context.ContextUser&{contextObj: db.context.Context}>(stages, temporaryListProperties, sortBy);
+        }
+        return this.repository.aggregationX<db.context.ContextUser&{contextObj: db.context.Context}>(stages, listParams, sortBy);
+    }
+    
     async getUsersPageWithActivityFromContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId, model: types.core.ListModel) {
         const mongoQueries = model.query ? [MongoQueryConverter.convertQuery(model.query)] : [];
         return this.repository.getMatchingPage<db.context.ContextUserWithStatus>([
-        {
-            $match: {
-                contextId: contextId,
+            {
+                $match: {
+                    contextId: contextId,
+                },
             },
-        },
-        {
-            $lookup: {
-                from: KnownPublicKeyRepository.COLLECTION_NAME,
-                localField: "userPubKey",
-                foreignField: "publicKey",
-                as: "matchedDocs",
+            {
+                $lookup: {
+                    from: KnownPublicKeyRepository.COLLECTION_NAME,
+                    localField: "userPubKey",
+                    foreignField: "publicKey",
+                    as: "matchedDocs",
+                },
             },
-        },
-        {
-            $addFields: {
-                matchedDocs: {
-                    $filter: {
-                        input: "$matchedDocs",
-                        as: "doc",
-                        cond: { $eq: ["$$doc.solutionId", solutionId] },
+            {
+                $addFields: {
+                    matchedDocs: {
+                        $filter: {
+                            input: "$matchedDocs",
+                            as: "doc",
+                            cond: { $eq: ["$$doc.solutionId", solutionId] },
+                        },
                     },
                 },
             },
-        },
-        {
-            $unwind: {
-                path: "$matchedDocs",
-                preserveNullAndEmptyArrays: true,
+            {
+                $unwind: {
+                    path: "$matchedDocs",
+                    preserveNullAndEmptyArrays: true,
+                },
             },
-        },
-        {
-            $addFields: {
-                lastStatusChange: "$matchedDocs.lastStatusChange",
+            {
+                $addFields: {
+                    lastStatusChange: "$matchedDocs.lastStatusChange",
+                },
             },
-        },
-        {
-            $project: {
-                matchedDocs: 0,
+            {
+                $project: {
+                    matchedDocs: 0,
+                },
             },
-        },
-        ...mongoQueries,
+            ...mongoQueries,
         ], model, "created");
     }
     

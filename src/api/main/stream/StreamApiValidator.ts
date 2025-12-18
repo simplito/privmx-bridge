@@ -60,6 +60,7 @@ export class StreamApiValidator extends BaseValidator {
         this.registerMethod("streamRoomList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
+            scope: this.tv.optionalContainerAccessScope,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
         }));
         

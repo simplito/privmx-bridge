@@ -122,6 +122,8 @@ export interface Thread {
     lastMsgDate: types.core.Timestamp;
     /** Messages count in thread */
     messages: number;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface ThreadMessage {
@@ -137,6 +139,8 @@ export interface ThreadMessage {
     author: types.cloud.UserId;
     /** Key ID */
     keyId: types.core.KeyId;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface ThreadDeletedData {

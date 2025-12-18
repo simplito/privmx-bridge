@@ -15,23 +15,24 @@ import { MasterRegistry } from "./MasterRegistry";
 import * as mongodb from "mongodb";
 import { VersionDetector } from "../../service/config/VersionDetector";
 import { PromiseUtils } from "../../utils/PromiseUtils";
-import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
+import { LoggerFactory } from "../../service/log/LoggerFactory";
 import { MongoDebug } from "../../db/mongo/MongoDebug";
 import { DateUtils } from "../../utils/DateUtils";
 import { PluginsLoader } from "../../service/plugin/PluginsLoader";
+import { Utils } from "../../utils/Utils";
 
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;
 
-const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
-const logger = loggerFactory.get("MASTER");
+const loggerFactory = new LoggerFactory(`${Utils.getThisWorkerId()}`);
+const logger = loggerFactory.createLogger("INIT");
 
 export function startMaster() {
     if (!cluster.isPrimary) {
         throw new Error("Cannot run MasterThread outside of master");
     }
     initMaster().catch(e => {
-        logger.error("Error during initializing", e);
+        logger.error(e, "Error during initializing");
         process.exit(1);
     });
 }
@@ -46,14 +47,21 @@ async function initMaster() {
     const masterRegistry = new MasterRegistry(loggerFactory);
     PluginsLoader.loadForMaster(masterRegistry);
     const ipcMessageProcessor = masterRegistry.getIpcMessageProcessor();
+    cluster.setupPrimary();
+    cluster.setupPrimary();
     cluster.on("message", (worker, message) => {
         void ipcMessageProcessor.processMessage(message, `worker ${worker.id}`, worker);
     });
-    const config = masterRegistry.registerConfig(loadConfig(loggerFactory.get("ConfigLoader"), masterRegistry.getCallbacks()));
-    LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
-    masterRegistry.registerMongoClient(MongoDebug.decorateClient(await mongodb.MongoClient.connect(config.db.mongo.url, {minPoolSize: 5, maxPoolSize: 5})));
+    const config = masterRegistry.registerConfig(loadConfig(loggerFactory.createLogger("ConfigLoader"), masterRegistry.getCallbacks()));
+    masterRegistry.registerMongoClient(MongoDebug.decorateClient(await mongodb.MongoClient.connect(config.db.mongo.url, {minPoolSize: 32, maxPoolSize: 64})));
     masterRegistry.registerIpcServices();
-    
+    const broker = masterRegistry.getBroker();
+    if (broker !== null) {
+        await broker.start();
+    }
+    else {
+        logger.out("Internal broker disabled");
+    }
     logger.out(`Master thread started - spawning ${config.server.workers} workers`);
     const workersHolder = masterRegistry.getWorkersHolder();
     for (let i = 0; i < config.server.workers; i++) {
@@ -62,16 +70,18 @@ async function initMaster() {
     startJobs(masterRegistry);
     async function onExitSignal() {
         workersHolder.killWorkers();
-        // Wait for all workers to exit
+        if (broker !== null) {
+            broker.stop();
+        }
         while (true) {
             if (!workersHolder.hasWorkers()) {
                 logger.out("All workers are dead, so bye!");
+                loggerFactory.flushLogs();
                 process.exit();
             }
             await PromiseUtils.wait(100);
         }
     }
-    
     process.on("SIGINT", () => void onExitSignal());
     process.on("SIGTERM", () => void onExitSignal());
 }
@@ -81,9 +91,6 @@ function startJobs(registry: MasterRegistry) {
     const ipRateLimiter = registry.getIpRateLimiter();
     const nonceMap = registry.getNonceMap();
     const config = registry.getConfig();
-    const aggregatedNotificationsService = registry.getAggregatedNotificationsService();
-    const websocketCommunicationManager = registry.getWebsocketCommunicationManager();
     jobService.addPeriodicJob(() => ipRateLimiter.addCreditsAndRemoveInactive(), config.apiRateLimit.addonInterval, "creditRefresh");
     jobService.addPeriodicJob(async () => nonceMap.deleteExpired(), DateUtils.minutes(5), "nonceCacheRemoval");
-    jobService.addPeriodicJob(async () => aggregatedNotificationsService.flush((model) => websocketCommunicationManager.sendWebsocketNotification(model)), DateUtils.seconds(1), "aggregatedEventsFlush");
 }

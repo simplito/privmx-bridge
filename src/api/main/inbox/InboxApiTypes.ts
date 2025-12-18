@@ -86,6 +86,7 @@ export interface InboxGetResult {
 
 export interface InboxListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.inbox.InboxType;
     sortBy?: "createDate"|"lastModificationDate";
 }

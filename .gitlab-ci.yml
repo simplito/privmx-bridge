@@ -4,68 +4,137 @@ stages:
 variables:
   DOCKER_TLS_CERTDIR: ""
   GIT_SUBMODULE_STRATEGY: recursive
+  MONGO_RS_NAME: "rs0"
+  MONGO_PORT: 27017
+  MONGO_URL: "mongodb://mongodb"
+  MONGO_HOST: "mongodb"
 
-build:
+build_amd64:
   stage: build
-  image: docker:20.10.17
+  image: docker:29.1.2
   services:
-    - name: docker:20.10.17-dind
+    - name: docker:29.1.2-dind
       command: ["--tls=false"]
     - name: gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
       alias: mongodb
-  script:
+  before_script:
     - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - ./scripts/build-base-images.sh
-    - docker build --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" .
+  script:
+    - |
+      docker buildx build \
+        --platform=linux/amd64 \
+        --add-host=mongodb:$MONGODB_IP \
+        --build-arg MONGO_URL=$MONGO_URL \
+        .
   except:
     - tags
     - master
     - /^hotfix-.*$/
 
-build_and_publish_docker_base_image:
+build_arm64:
   stage: build
-  image: docker:20.10.17
+  image: docker:29.1.2
+  tags:
+    - linux-arm64
   services:
-    - name: docker:20.10.17-dind
+    - name: docker:29.1.2-dind
+      command: ["--tls=false"]
+  before_script:
+    - docker run -d --hostname $MONGO_HOST --name $MONGO_HOST hub.simplito.com/public/mongo:8.0 --replSet rs0 --bind_ip_all
+    - |
+      until docker exec $MONGO_HOST mongosh --host $MONGO_HOST --eval "db.adminCommand('ping')" | grep 'ok: 1'; do sleep 1; done
+    - docker exec mongodb mongosh $MONGO_URL --eval "{ rs.initiate({_id:'$MONGO_RS_NAME', members:[{_id:0,host:'$MONGO_HOST:$MONGO_PORT'}]}) }"
+    - export MONGODB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mongodb)
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      docker buildx build \
+        --platform=linux/arm64 \
+        --add-host=mongodb:$MONGODB_IP \
+        --build-arg MONGO_URL=$MONGO_URL \
+        .
+  except:
+    - tags
+    - master
+    - /^hotfix-.*$/
+
+build_amd64_docker_image:
+  stage: build
+  image: docker:29.1.2
+  services:
+    - name: docker:29.1.2-dind
       command: ["--tls=false"]
     - name: gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/mongo-with-rs2:7
       alias: mongodb
-  script:
+  before_script:
     - export MONGODB_IP=$(cat /etc/hosts | grep mongodb | awk '{print $1}')
     - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     - export IMAGE_ID_AMD64=$IMAGE_ID-amd64
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - ./scripts/build-base-images.sh
-    - docker build --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim --cache-from gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim --add-host=mongodb:$MONGODB_IP --build-arg "MONGO_URL=mongodb://mongodb" -t $IMAGE_ID_AMD64 .
-    - docker push $IMAGE_ID_AMD64
+  script:
+    - |
+      docker buildx build \
+        --platform linux/amd64 \
+        --cache-from type=registry,ref=gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-python3:22.11.0-bullseye-slim \
+        --cache-from type=registry,ref=gitlab2.simplito.com:5050/teamserverdev/privmx-server-ee/node-ssl:22.11.0-bullseye-slim \
+        --add-host=mongodb:$MONGODB_IP \
+        --build-arg MONGO_URL=$MONGO_URL \
+        -t $IMAGE_ID_AMD64 \
+        --push \
+        .
   except:
     - tags
   only:
     - master
     - /^hotfix-.*$/
 
-# These two stages could be merged, but the second `docker build` does not consider the --platform argument of the FROM directive, so they have to be separated.
-build_multi_arch_docker_image:
+build_arm64_docker_image:
+  stage: build
+  image: docker:29.1.2
+  tags:
+    - linux-arm64
+  services:
+    - name: docker:29.1.2-dind
+      command: ["--tls=false"]
+  before_script:
+    - docker run -d --hostname $MONGO_HOST --name $MONGO_HOST hub.simplito.com/public/mongo:8.0 --replSet rs0 --bind_ip_all
+    - |
+      until docker exec $MONGO_HOST mongosh --host $MONGO_HOST --eval "db.adminCommand('ping')" | grep 'ok: 1'; do sleep 1; done
+    - docker exec mongodb mongosh $MONGO_URL --eval "{ rs.initiate({_id:'$MONGO_RS_NAME', members:[{_id:0,host:'$MONGO_HOST:$MONGO_PORT'}]}) }"
+    - export MONGODB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mongodb)
+    - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - export IMAGE_ID_ARM64=$IMAGE_ID-arm64-v8
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      docker buildx build \
+        --platform linux/arm64 \
+        --add-host=mongodb:$MONGODB_IP \
+        --build-arg MONGO_URL=$MONGO_URL \
+        -t $IMAGE_ID_ARM64 \
+        --push \
+        .
+  except:
+    - tags
+  only:
+    - master
+    - /^hotfix-.*$/
+
+create_multiarch_docker_image:
   stage: build
   needs:
-    - build_and_publish_docker_base_image
-  image: docker:20.10.17
-  services:
-    - name: docker:20.10.17-dind
-      command: ["--tls=false"]
-  script:
+    - build_arm64_docker_image
+    - build_amd64_docker_image
+  image: docker:29.1.2
+  before_script:
     - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     - export IMAGE_ID_AMD64=$IMAGE_ID-amd64
     - export IMAGE_ID_ARM64=$IMAGE_ID-arm64-v8
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker pull $IMAGE_ID_AMD64
-    - ./scripts/build-docker-for-platform.sh $IMAGE_ID_AMD64 arm64/v8 $IMAGE_ID_ARM64
-    - docker push $IMAGE_ID_ARM64
-    - docker manifest create $IMAGE_ID $IMAGE_ID_AMD64 $IMAGE_ID_ARM64
-    - docker manifest annotate --arch amd64 $IMAGE_ID $IMAGE_ID_AMD64
-    - docker manifest annotate --arch arm64 --variant v8 $IMAGE_ID $IMAGE_ID_ARM64
-    - docker manifest push $IMAGE_ID
+  script:
+    - docker buildx imagetools create -t $IMAGE_ID $IMAGE_ID_AMD64 $IMAGE_ID_ARM64 
   except:
     - tags
   only:
@@ -74,9 +143,9 @@ build_multi_arch_docker_image:
 
 tag_docker_image:
   stage: build
-  image: docker:20.10.17
+  image: docker:29.1.2
   services:
-    - name: docker:20.10.17-dind
+    - name: docker:29.1.2-dind
       command: ["--tls=false"]
   script:
     - export IMAGE_ID=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA

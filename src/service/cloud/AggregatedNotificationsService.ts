@@ -1,13 +1,22 @@
-import { DateUtils } from "../../../utils/DateUtils";
-import * as types from "../../../types";
-import { TargetChannel } from "../../../service/ws/WebSocketConnectionManager";
-import { KvdbCollectionChangedEvent } from "../../../api/main/kvdb/KvdbApiTypes";
-import { ThreadCollectionChangedEvent } from "../../../api/main/thread/ThreadApiTypes";
-import { StoreCollectionChangedEvent } from "../../../api/main/store/StoreApiTypes";
-import { IpcService } from "../Decorators";
-import { ApiMethod } from "../../../api/Decorators";
-import { ContextUsersStatusChange } from "../../../api/main/context/ContextApiTypes";
-import { ActiveUsersMap } from "./ActiveUsers";
+/*!
+PrivMX Bridge.
+Copyright © 2024 Simplito sp. z o.o.
+
+This file is part of the PrivMX Platform (https://privmx.dev).
+This software is Licensed under the PrivMX Free License.
+
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import { ContextUsersStatusChange } from "../../api/main/context/ContextApiTypes";
+import { KvdbCollectionChangedEvent } from "../../api/main/kvdb/KvdbApiTypes";
+import { StoreCollectionChangedEvent } from "../../api/main/store/StoreApiTypes";
+import { ThreadCollectionChangedEvent } from "../../api/main/thread/ThreadApiTypes";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import * as types from "../../types";
+import { DateUtils } from "../../utils/DateUtils";
+import { TargetChannel } from "../ws/WebSocketConnectionManager";
 
 type HostDistinguishedKey = `${types.core.Host}/${string}`;
 
@@ -38,7 +47,6 @@ interface UserIdentityWithContext {
     userPubKey: types.core.EccPubKey
 }
 
-@IpcService
 export class AggregatedNotificationsService {
     
     private static readonly ChannelPathPart = {
@@ -54,8 +62,7 @@ export class AggregatedNotificationsService {
         private activeUsersMap: ActiveUsersMap,
     ) {}
     
-    @ApiMethod({})
-    async aggregateDataForcontextUserStatusChangedNotification(model: {userIdentities: UserIdentityWithContext[], host: types.core.Host, action: "login"|"logout"}) {
+    async aggregateDataForContextUserStatusChangedNotification(model: {userIdentities: UserIdentityWithContext[], host: types.core.Host, action: "login"|"logout"}) {
         for (const userIdentity of model.userIdentities) {
             const entryKey: HostDistinguishedKey = `${model.host}/${userIdentity.contextId}`;
             const entry = this.aggregatedcontextUserStatusChangeds.get(entryKey);
@@ -72,7 +79,7 @@ export class AggregatedNotificationsService {
         }
     }
     
-    aggregateDataForCollectionChangedNotification(channel: TargetChannel, clients: types.core.Client[]|null, host: types.core.Host) {
+    async aggregateDataForCollectionChangedNotification(channel: TargetChannel, clients: types.core.Client[]|null, host: types.core.Host) {
         if (!channel.containerId || !channel.itemId) {
             return;
         }
@@ -105,14 +112,14 @@ export class AggregatedNotificationsService {
         entry.clients = clients;
     }
     
-    async flush(sink: <T = unknown>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}) => Promise<void>) {
+    async flush(sink: <T = unknown>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}) => void) {
         const now = DateUtils.now();
         for (const value of this.aggregatedCollectionChangeds.values()) {
             const eventData = this.assembleCollectionChangedNotification(value, now);
             if (!eventData) {
                 continue;
             }
-            void sink({
+            sink({
                 channel: {
                     channel: `${value.containerKind}/collectionChanged` as types.core.WsChannelName,
                     contextId: value.contextId,
@@ -126,7 +133,7 @@ export class AggregatedNotificationsService {
         }
         this.aggregatedCollectionChangeds.clear();
         for (const value of this.aggregatedcontextUserStatusChangeds.values()) {
-            void sink({
+            sink({
                 channel: {
                     channel: "context/userStatus" as types.core.WsChannelName,
                     contextId: value.contextId,

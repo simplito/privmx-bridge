@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as managementKvdbApi from "./ManagementKvdbApiTypes";
 import * as db from "../../../db/Model";
+import { Utils } from "../../../utils/Utils";
 
 export class ManagementKvdbConverter {
     
@@ -29,6 +30,7 @@ export class ManagementKvdbConverter {
             version: x.history.length as types.kvdb.KvdbVersion,
             lastEntryDate: x.lastEntryDate,
             entries: x.entries,
+            publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
         };
         return res;
     }
@@ -44,6 +46,7 @@ export class ManagementKvdbConverter {
             keyId: x.keyId,
             lastModificationDate: x.lastModificationDate,
             lastModifier: x.lastModifier,
+            publicMeta: Utils.findFieldInUnknownObject(x.entryValue, "publicMetaObject"),
         };
         return res;
     }

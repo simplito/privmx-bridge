@@ -105,7 +105,9 @@ export class ManagementThreadApiTest extends BaseTestSet {
             const newThread = await this.apis.threadApi.threadCreate({
                 contextId: testData.contextId,
                 resourceId: this.helpers.generateResourceId(),
-                data: "AAAA" as types.thread.ThreadData,
+                data: {
+                    publicMetaObject: {publicInfo: "AAAA"},
+                } as types.thread.ThreadData,
                 keyId: testData.keyId,
                 keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
                 managers: [testData.userId],

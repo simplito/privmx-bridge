@@ -23,8 +23,7 @@ import { SrpLogic } from "../../utils/crypto/SrpLogic";
 import * as pki from "privmx-pki2";
 import * as types from "../../types";
 import { PrivmxConnectionBase } from "./PrivmxConnectionBase";
-import * as ByteBuffer from "bytebuffer";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import * as BN from "bn.js";
 
 export interface Ticket {
@@ -68,7 +67,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
                 throw new Error("Unexpected ecdhe packet from server");
             }
             
-            const pubKey = ec.keyFromPublic(packet.key.toBuffer());
+            const pubKey = ec.keyFromPublic(packet.key);
             const der = Buffer.from(ecKey.derive(pubKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
             this.setPreMasterSecret(z);
@@ -79,19 +78,19 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         else if (raw.type == "ticket_response") {
             const packet = <types.packet.TicketsResponsePacket>raw;
             this.logger.debug("ticket_response");
-            this.saveTickets(packet.tickets.map(x => x.toBuffer()));
+            this.saveTickets(packet.tickets);
         }
         else if (raw.type == "srp_init") {
             // srp init response from server
             const packet = <types.packet.SrpInitResponsePacket>raw;
-            this.logger.debug("srp init response", {packet: packet});
+            this.logger.debug({packet: packet}, "srp init response");
             this.session.save("server_agent", packet.agent != null ? packet.agent : null);
             const exchange = this.validateSrpInit(packet);
             this.reset(true);
             this.ticketHandshake();
-            this.logger.debug("srp exchange request", {request: exchange});
+            this.logger.debug({request: exchange}, "srp exchange request");
             this.send(
-                this.psonHelper.pson_encode(exchange),
+                this.getEncoder().encode(exchange),
                 ContentType.HANDSHAKE,
             );
         }
@@ -121,11 +120,11 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         
         const packet: types.packet.EcdheRequestPacket = {
             type: "ecdhe",
-            key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
+            key: Buffer.from(ecKey.getPublic(true, "binary")),
             agent: this.getClientAgent(),
         };
-        const pson = this.psonHelper.pson_encode(packet);
-        this.send(pson, ContentType.HANDSHAKE);
+        const serializedPayload = this.getEncoder().encode(packet);
+        this.send(serializedPayload, ContentType.HANDSHAKE);
         
         this.session.save("ecdhe_key", {
             pub: ecKey.getPublic("hex"),
@@ -142,13 +141,13 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         
         const packet: types.packet.EcdhefRequestPacket = {
             type: "ecdhef",
-            key_id: ByteBuffer.wrap(key.getKeyId()),
-            key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
+            key_id: key.getKeyId(),
+            key: Buffer.from(ecKey.getPublic(true, "binary")),
             agent: this.getClientAgent(),
         };
-        const pson = this.psonHelper.pson_encode(packet);
+        const serializedPayload = this.getEncoder().encode(packet);
         
-        this.send(pson, ContentType.HANDSHAKE);
+        this.send(serializedPayload, ContentType.HANDSHAKE);
         const der = Buffer.from(ecKey.derive((<pki.common.keystore.EccKeyPair>key).keyPair.getPublic()).toString("hex", 2), "hex");
         const z = Utils.fillTo32(der);
         this.setPreMasterSecret(z);
@@ -171,8 +170,8 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             host: host,
             agent: this.getClientAgent(),
         };
-        const pson = this.psonHelper.pson_encode(packet);
-        this.send(pson, ContentType.HANDSHAKE);
+        const serializedPayload = this.getEncoder().encode(packet);
+        this.send(serializedPayload, ContentType.HANDSHAKE);
         this.session.save("srp_data", {I: username, password: password, tickets: tickets});
     }
     
@@ -202,13 +201,13 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         
         const packet: types.packet.TicketPacket = {
             type: "ticket",
-            ticket_id: ByteBuffer.wrap(ticket.id),
-            client_random: ByteBuffer.wrap(clientRandom),
+            ticket_id: ticket.id,
+            client_random: clientRandom,
         };
-        const pson = this.psonHelper.pson_encode(packet);
+        const serializedPayload = this.getEncoder().encode(packet);
         this.logger.debug("send ticket handshake");
         
-        this.send(pson, ContentType.HANDSHAKE);
+        this.send(serializedPayload, ContentType.HANDSHAKE);
         this.restore(ticket, clientRandom);
     }
     
@@ -217,7 +216,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
             type: "ticket_request",
             count: n,
         };
-        this.send(this.psonHelper.pson_encode(packet), ContentType.HANDSHAKE);
+        this.send(this.getEncoder().encode(packet), ContentType.HANDSHAKE);
     }
     
     saveTickets(tickets: Buffer[]) {
@@ -231,7 +230,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     
     useTicket(ticketId: Buffer) {
         const ticketIdHex = Hex.from(ticketId);
-        this.logger.debug("using ticket", {ticketId: ticketIdHex});
+        this.logger.debug({ticketId: ticketIdHex}, "using ticket");
         if (this.tickets[ticketIdHex] != null) {
             const ticket = this.tickets[ticketIdHex];
             delete this.tickets[ticketIdHex];
@@ -279,12 +278,12 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const u = SrpLogic.get_u(A, B, N);
         const S = SrpLogic.getClient_S(B, k, v, a, u, x, N);
         const M1 = SrpLogic.get_M1(A, B, S, N);
-        this.logger.debug("Client M1", {
+        this.logger.debug({
             A: Hex.fromBN(A),
             B: Hex.fromBN(B),
             S: Hex.fromBN(S),
             N: Hex.fromBN(N),
-        });
+        }, "Client M1");
         
         const M2 = SrpLogic.get_M2(A, M1, S, N);
         const K = SrpLogic.get_big_K(S, N);
@@ -313,6 +312,6 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         
         // flush old tickets
         this.tickets = {};
-        this.saveTickets(frame.tickets.map(x => x.toBuffer()));
+        this.saveTickets(frame.tickets);
     }
 }

@@ -42,28 +42,26 @@ export class StreamNotificationService {
         this.safe("streamCustomEvent", async () => {
             const now = DateUtils.now();
             const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomCustomEvent>(
-                    [user.userPubKey],
-                    {
-                        containerId: streamRoom.id,
-                        contextId: streamRoom.contextId,
-                        channel: `stream/custom/${customChannelName}` as types.core.WsChannelName,
-                        containerType: streamRoom.type,
+            this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomCustomEvent>(
+                contextUsers.map(u => u.userPubKey),
+                {
+                    containerId: streamRoom.id,
+                    contextId: streamRoom.contextId,
+                    channel: `stream/custom/${customChannelName}` as types.core.WsChannelName,
+                    containerType: streamRoom.type,
+                },
+                {
+                    channel: `stream/${streamRoom.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: streamRoom.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
                     },
-                    {
-                        channel: `stream/${streamRoom.id}/${customChannelName}`,
-                        type: "custom",
-                        data: {
-                            id: streamRoom.id,
-                            author: author,
-                            keyId: keyId,
-                            eventData: eventData,
-                        },
-                        timestamp: now,
-                    },
-                );
-            }
+                    timestamp: now,
+                },
+            );
         });
     }
     
@@ -127,7 +125,7 @@ export class StreamNotificationService {
                     },
                 );
             }
-           for (const user of additionalUsers) {
+            for (const user of additionalUsers) {
                 const userNotification: streamApi.StreamRoomUpdatedEvent = {
                     channel: "stream",
                     type: "streamRoomUpdated",

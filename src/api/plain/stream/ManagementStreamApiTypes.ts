@@ -69,6 +69,8 @@ export interface StreamRoom {
     managers: types.cloud.UserId[];
     /** Version */
     version: types.stream.StreamRoomVersion;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface StreamRoomDeletedData {

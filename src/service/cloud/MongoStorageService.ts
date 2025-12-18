@@ -30,6 +30,7 @@ export interface MongoRandomWriteStorageContext extends RandomWriteStorageContex
     chunksToDelete: db.MongoFileStorage.ChunkId[];
     fileMetaData: db.MongoFileStorage.FileMetaData;
 }
+
 export class MongoStorageService implements IStorageService {
     
     static readonly MAX_CHUNK_SIZE = 255 * 1024;
@@ -39,46 +40,104 @@ export class MongoStorageService implements IStorageService {
     ) {
     }
     
+    // =================================================================================================
+    // READ OPERATIONS (OPTIMIZED)
+    // =================================================================================================
+    
     async read(id: types.request.FileId, range: types.store.BufferReadRange): Promise<Buffer> {
         const fileMetaData = await this.getCommitedFile(id);
         
-        const chunkIds = (() => {
-            if (range.type === "all") {
-                return this.getFileChunksIds(fileMetaData);
-            }
-            if (range.type === "slice") {
-                return this.getFileChunksIdsInRange(fileMetaData, range.from, range.to);
-            }
-            if (range.type === "checksum") {
-                return this.getChecksumFileChunksIds(fileMetaData);
-            }
-            throw new Error("UNSUPPORTED_RANGE_TYPE");
-        })();
+        const realFileSize = range.type === "checksum"
+            ? fileMetaData.checksumSize
+            : (fileMetaData.chunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + fileMetaData.lastChunkSize;
         
+        const chunkIds = this.getRequiredChunkIds(fileMetaData, range);
         const chunks = await this.repositoryFactory.createChunkRepository().getMany(chunkIds);
-        const sortedChunks = chunks.sort((a, b) => a.index - b.index);
-        const totalBuffer = Buffer.concat(sortedChunks.map(chunk => chunk.binary.buffer));
+        
+        const chunksMap = new Map<number, Buffer>();
+        chunks.forEach(c => chunksMap.set(c.index, Buffer.from(c.binary.buffer)));
+        
+        const totalBuffer = this.reconstructBufferFromChunks(chunkIds, chunksMap, range);
         
         if (range.type === "slice") {
-            const leftOffset = (sortedChunks[0].index - 1) * MongoStorageService.MAX_CHUNK_SIZE;
-            return totalBuffer.subarray(range.from - leftOffset, range.to - leftOffset);
+            if (range.from >= realFileSize) {
+                return Buffer.alloc(0);
+            }
+            
+            const startChunkIndex = Math.floor(range.from / MongoStorageService.MAX_CHUNK_SIZE) + 1;
+            const leftOffset = (startChunkIndex - 1) * MongoStorageService.MAX_CHUNK_SIZE;
+            
+            const sliceStart = range.from - leftOffset;
+            let sliceEnd = range.to - leftOffset;
+            
+            const maxSliceEnd = realFileSize - leftOffset;
+            if (sliceEnd > maxSliceEnd) {
+                sliceEnd = maxSliceEnd;
+            }
+            
+            return totalBuffer.subarray(sliceStart, sliceEnd);
+        }
+        
+        if (totalBuffer.length > realFileSize) {
+            return totalBuffer.subarray(0, realFileSize);
         }
         
         return totalBuffer;
     }
     
+    private getRequiredChunkIds(fileMetaData: db.MongoFileStorage.FileMetaData, range: types.store.BufferReadRange): db.MongoFileStorage.ChunkId[] {
+        if (range.type === "all") {
+            return this.getFileChunksIds(fileMetaData);
+        }
+        if (range.type === "slice") {
+            return this.getFileChunksIdsInRange(fileMetaData, range.from, range.to);
+        }
+        if (range.type === "checksum") {
+            return this.getChecksumFileChunksIds(fileMetaData);
+        }
+        throw new Error("UNSUPPORTED_RANGE_TYPE");
+    }
+    
+    private reconstructBufferFromChunks(chunkIds: db.MongoFileStorage.ChunkId[], chunksMap: Map<number, Buffer>, range: types.store.BufferReadRange): Buffer {
+        const orderedBuffers: Buffer[] = [];
+        let expectedIndex = 1;
+        
+        if (range.type === "slice") {
+            expectedIndex = Math.floor(range.from / MongoStorageService.MAX_CHUNK_SIZE) + 1;
+        }
+        
+        for (let i = 0; i < chunkIds.length; i++) {
+            const currentIndex = expectedIndex + i;
+            const buf = chunksMap.get(currentIndex);
+            
+            if (buf) {
+                orderedBuffers.push(buf);
+            }
+            else {
+                orderedBuffers.push(Buffer.alloc(MongoStorageService.MAX_CHUNK_SIZE));
+            }
+        }
+        return Buffer.concat(orderedBuffers);
+    }
+    
+    // =================================================================================================
+    // BASIC FILE OPERATIONS
+    // =================================================================================================
+    
     async copy(src: types.request.FileId, dst: types.request.FileId): Promise<void> {
         const fileMetaData = await this.getCommitedFile(src);
-        
         const chunkIds = this.getFileChunksIds(fileMetaData);
         const chunks = await this.repositoryFactory.createChunkRepository().getMany(chunkIds);
+        
         const dstFileChunks = chunks.map(chunk => ({
             chunkIndex: chunk.index,
             buf: Buffer.from(chunk.binary.buffer),
         }));
         await this.repositoryFactory.createChunkRepository().createManyChunks(dst, dstFileChunks);
+        
         const checksumChunkIds = this.getChecksumFileChunksIds(fileMetaData);
         const checksumChunks = await this.repositoryFactory.createChunkRepository().getMany(checksumChunkIds);
+        
         const dstChecksumChunks = checksumChunks.map(chunk => ({
             chunkIndex: chunk.index,
             buf: Buffer.from(chunk.binary.buffer),
@@ -98,9 +157,22 @@ export class MongoStorageService implements IStorageService {
         await this.repositoryFactory.createChunkRepository().createChunk(id, 1, Buffer.alloc(0));
     }
     
+    async list(): Promise<types.request.FileId[]> {
+        const filesMeta = await this.repositoryFactory.createFileMetaDataRepository().getAll();
+        return filesMeta.map(fileMeta => fileMeta._id as unknown as types.request.FileId);
+    }
+    
+    async clearStorage() {
+        await this.repositoryFactory.createChunkRepository().deleteAll();
+        await this.repositoryFactory.createFileMetaDataRepository().deleteAll();
+    }
+    
+    // =================================================================================================
+    // TEMPORARY FILE OPERATIONS
+    // =================================================================================================
+    
     async append(id: TmpFileId, buffer: Buffer, seq: number): Promise<void> {
         const fileMetaData = await this.getTemporaryFile(id);
-        
         if (fileMetaData.seq !== seq) {
             throw new Error("INVALID_SEQ");
         }
@@ -122,15 +194,11 @@ export class MongoStorageService implements IStorageService {
             fileMetaDataToUpdate.lastChunkSize = chunks[chunks.length - 1].buf.length;
             await this.repositoryFactory.createChunkRepository().createManyChunks(fileMetaData._id, chunks);
         }
-        await this.repositoryFactory.createFileMetaDataRepository().update({
-            ...fileMetaData,
-            ...fileMetaDataToUpdate,
-        });
+        await this.repositoryFactory.createFileMetaDataRepository().update({ ...fileMetaData, ...fileMetaDataToUpdate });
     }
     
     async setChecksumAndClose(id: TmpFileId, checksum: Buffer, seqs: number): Promise<void> {
         const fileMetaData = await this.getTemporaryFile(id);
-        
         if (fileMetaData.seq !== seqs) {
             throw new Error("INVALID_SEQ");
         }
@@ -140,7 +208,7 @@ export class MongoStorageService implements IStorageService {
         const chunks = this.prepareChunksFromBuffer(checksum, numOfChunks, 0, 0);
         
         if (chunks.length === 0) {
-            await this.repositoryFactory.createChunkRepository().createChunk(checksumId, 0, Buffer.alloc(0));
+            await this.repositoryFactory.createChunkRepository().createChunk(checksumId, 1, Buffer.alloc(0));
         }
         else {
             await this.repositoryFactory.createChunkRepository().createManyChunks(checksumId, chunks);
@@ -154,121 +222,240 @@ export class MongoStorageService implements IStorageService {
     
     async commit(id: TmpFileId): Promise<void> {
         const fileMetaData = await this.getTemporaryFile(id);
-        
         await this.repositoryFactory.createFileMetaDataRepository().update({...fileMetaData, isTemporary: false});
     }
     
     async reject(id: TmpFileId, seqs: number): Promise<void> {
         const fileMetaData = await this.getTemporaryFile(id);
-        
         if (fileMetaData.seq !== seqs) {
             throw new Error("INVALID_SEQ");
         }
-        
         await this.repositoryFactory.createChunkRepository().deleteByFileMetaDataId(id);
         await this.repositoryFactory.createFileMetaDataRepository().delete(id);
-    }
-    
-    async list(): Promise<types.request.FileId[]> {
-        const filesMeta = await this.repositoryFactory.createFileMetaDataRepository().getAll();
-        return filesMeta.map(fileMeta => fileMeta._id as unknown as types.request.FileId);
-    }
-    
-    async clearStorage() {
-        await this.repositoryFactory.createChunkRepository().deleteAll();
-        await this.repositoryFactory.createFileMetaDataRepository().deleteAll();
     }
     
     async switchToFreshStorage() {
         throw new Error("Opperation not supported");
     }
     
+    // =================================================================================================
+    // RANDOM WRITE OPERATIONS (OPTIMIZED)
+    // =================================================================================================
+    
     async randomWritePrepare(fileId: FileId, operations: types.store.StoreFileRandomWriteOperation[]): Promise<RandomWriteStorageContext> {
         const fileMetaData = await this.getCommitedFile(fileId);
         const cachedChunks = new Map<db.MongoFileStorage.ChunkId, ChunkModel>();
         const chunksToDelete = new Set<db.MongoFileStorage.ChunkId>();
+        
+        const allChunkIdsToFetch = new Set<db.MongoFileStorage.ChunkId>();
+        
         for (const operation of operations) {
-            const {fId, chunksIds, position, firstChunkLeftOffset, firstChunkPartSize} = this.prepareOperationContext(fileMetaData, operation, fileId);
-            if (chunksIds.length === 0) {
-                throw new Error(`Invalid chunkIds ${fId}`);
+            const effectiveOperation = this.fillGapWithZeros(fileMetaData, operation);
+            const ctx = this.prepareOperationContext(fileMetaData, effectiveOperation, fileId);
+            if (ctx.chunksIds.length > 0) {
+                allChunkIdsToFetch.add(ctx.chunksIds[0]);
+                allChunkIdsToFetch.add(ctx.chunksIds[ctx.chunksIds.length - 1]);
             }
-            const [firstChunkId, lastChunkId] = [chunksIds[0], chunksIds[chunksIds.length - 1]];
-            const result = await this.getChunksViaCache([firstChunkId, lastChunkId], cachedChunks, chunksToDelete);
-            if (result.length === 0 || result.length > 2) {
-                throw new DbInconsistencyError(`Cannot find ${fId} chunks described by fileMetaData or received too many chunks (expected: 1 or 2, got: ${result.length})`);
-            }
-            const {lastChunkModel, chunksToUpdate} = (() => {
-                if (result.length === 2 && firstChunkId !== lastChunkId) {
-                    const endPos = position + operation.data.length;
-                    const lastChunkRightOffset = MongoStorageService.MAX_CHUNK_SIZE - (endPos % MongoStorageService.MAX_CHUNK_SIZE);
-                    const lastChunkPartSize = MongoStorageService.MAX_CHUNK_SIZE - lastChunkRightOffset;
-                    const [firstChunk, lastChunk] = [...result.sort((a, b) => a.chunkIndex - b.chunkIndex)];
-                    return this.prepareChunksToUpdateFromFirstAndLastChunk(firstChunk, lastChunk, operation.data, firstChunkPartSize, firstChunkLeftOffset, lastChunkPartSize, operation.truncate, fId);
-                }
-                else {
-                    return this.prepareChunksToUpdateFromStartingChunk(result[0], operation.data, firstChunkPartSize, firstChunkLeftOffset, operation.truncate, fId);
-                }
-            })();
-            for (const chunk of chunksToUpdate) {
-                const chunkId = ChunkRepository.getChunkId(fId, chunk.chunkIndex);
-                cachedChunks.set(chunkId, chunk);
-                chunksToDelete.delete(chunkId);
-            }
-            this.prepareUpdatedFileMetaData(fileMetaData, operation.type, lastChunkModel.chunkIndex, lastChunkModel.buf.length, operation.truncate);
-            const localChunkToDelete = operation.type === "file" && operation.truncate ?
-                this.getChunksIdsToDelete(fileId, fileMetaData.chunks, lastChunkModel.chunkIndex, "file") :
-                this.getChunksIdsToDelete(fileId, fileMetaData.checksumChunks, lastChunkModel.chunkIndex, "checksum");
-            
-            localChunkToDelete.forEach(chunk => chunksToDelete.add(chunk));
         }
-        const randomWriteCtx: MongoRandomWriteStorageContext = {
+        
+        if (allChunkIdsToFetch.size > 0) {
+            const batchChunks = await this.repositoryFactory.createChunkRepository().getMany(Array.from(allChunkIdsToFetch));
+            for (const chunk of batchChunks) {
+                const chunkId = ChunkRepository.getChunkId(chunk.fileMetaData as unknown as types.request.FileId, chunk.index);
+                cachedChunks.set(chunkId, {
+                    chunkId,
+                    fileId: chunk.fileMetaData as unknown as types.request.FileId,
+                    chunkIndex: chunk.index,
+                    buf: Buffer.from(chunk.binary.buffer),
+                });
+            }
+        }
+        
+        for (const operation of operations) {
+            const effectiveOperation = this.fillGapWithZeros(fileMetaData, operation);
+            const ctx = this.prepareOperationContext(fileMetaData, effectiveOperation, fileId);
+            
+            let lastModifiedChunkIndex = 0;
+            let lastModifiedChunkSize = 0;
+            
+            if (ctx.chunksIds.length > 0) {
+                const [firstChunkId, lastChunkId] = [ctx.chunksIds[0], ctx.chunksIds[ctx.chunksIds.length - 1]];
+                
+                const fetchedChunks = this.ensureChunksFromCache(
+                    ctx.fId, firstChunkId, lastChunkId,
+                    effectiveOperation, fileMetaData, ctx.position, cachedChunks,
+                );
+                
+                const { lastChunkModel, chunksToUpdate } = this.calculateChunksUpdates(
+                    fetchedChunks, effectiveOperation, ctx, firstChunkId, lastChunkId,
+                );
+                
+                for (const chunk of chunksToUpdate) {
+                    const chunkId = ChunkRepository.getChunkId(ctx.fId, chunk.chunkIndex);
+                    cachedChunks.set(chunkId, chunk);
+                    chunksToDelete.delete(chunkId);
+                }
+                
+                lastModifiedChunkIndex = lastChunkModel.chunkIndex;
+                lastModifiedChunkSize = lastChunkModel.buf.length;
+            }
+            else {
+                if (effectiveOperation.data.length === 0) {
+                    lastModifiedChunkIndex = Math.ceil(ctx.position / MongoStorageService.MAX_CHUNK_SIZE);
+                    lastModifiedChunkSize = ctx.position % MongoStorageService.MAX_CHUNK_SIZE;
+                    if (lastModifiedChunkSize === 0 && lastModifiedChunkIndex > 0) {
+                        lastModifiedChunkSize = MongoStorageService.MAX_CHUNK_SIZE;
+                    }
+                }
+            }
+            
+            this.prepareUpdatedFileMetaData(
+                fileMetaData, effectiveOperation.type, lastModifiedChunkIndex,
+                lastModifiedChunkSize, effectiveOperation.truncate,
+            );
+            
+            this.collectChunksToDelete(
+                ctx.fId, fileMetaData, effectiveOperation, lastModifiedChunkIndex, chunksToDelete,
+            );
+        }
+        
+        return {
             fileMetaData,
             chunksToUpsert: Array.from(cachedChunks.values()),
             chunksToDelete: [...chunksToDelete],
         };
-        return randomWriteCtx;
     }
     
     async randomWriteCommit(randomWriteCtx: MongoRandomWriteStorageContext, session: mongodb.ClientSession): Promise<{ newFileSize: number; newChecksumSize: number; }> {
         await this.repositoryFactory.createFileMetaDataRepository(session).update(randomWriteCtx.fileMetaData);
-        await this.repositoryFactory.createChunkRepository(session).upsertManyChunks(randomWriteCtx.chunksToUpsert, session);
+        
+        if (randomWriteCtx.chunksToUpsert.length > 0) {
+            await this.repositoryFactory.createChunkRepository(session).upsertManyChunks(randomWriteCtx.chunksToUpsert, session);
+        }
+        
         if (randomWriteCtx.chunksToDelete.length !== 0) {
             await this.repositoryFactory.createChunkRepository(session).deleteMany(randomWriteCtx.chunksToDelete);
         }
-        return { newFileSize: randomWriteCtx.fileMetaData.chunks * MongoStorageService.MAX_CHUNK_SIZE, newChecksumSize: randomWriteCtx.fileMetaData.checksumSize};
+        const newFileSize = (randomWriteCtx.fileMetaData.chunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + randomWriteCtx.fileMetaData.lastChunkSize;
+        return {
+            newFileSize: newFileSize > 0 ? newFileSize : 0,
+            newChecksumSize: randomWriteCtx.fileMetaData.checksumSize,
+        };
     }
     
-    private async getChunksViaCache(chunkIds: db.MongoFileStorage.ChunkId[], cache: ChunkCache, deletedCache: Set<db.MongoFileStorage.ChunkId>) {
+    // --- Helper methods ---
+    
+    private fillGapWithZeros(fileMetaData: db.MongoFileStorage.FileMetaData, operation: types.store.StoreFileRandomWriteOperation): types.store.StoreFileRandomWriteOperation {
+        const currentFSize = operation.type === "file"
+            ? (fileMetaData.chunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + fileMetaData.lastChunkSize
+            : fileMetaData.checksumSize;
+        
+        if (operation.pos !== -1 && operation.pos > currentFSize) {
+            const gapSize = operation.pos - currentFSize;
+            const gapBuffer = Buffer.alloc(gapSize);
+            return {
+                ...operation,
+                pos: currentFSize,
+                data: Buffer.concat([gapBuffer, operation.data]),
+            };
+        }
+        return operation;
+    }
+    
+    private ensureChunksFromCache(
+        fId: types.request.FileId,
+        firstChunkId: db.MongoFileStorage.ChunkId,
+        lastChunkId: db.MongoFileStorage.ChunkId,
+        operation: types.store.StoreFileRandomWriteOperation,
+        fileMetaData: db.MongoFileStorage.FileMetaData,
+        position: number,
+        cachedChunks: ChunkCache,
+    ): ChunkModel[] {
         const results: ChunkModel[] = [];
-        for (const chunkId of chunkIds) {
-            if (deletedCache.has(chunkId)) {
-                continue;
+        const ids = [firstChunkId];
+        if (firstChunkId !== lastChunkId) {
+            ids.push(lastChunkId);
+        }
+        
+        for (const id of ids) {
+            const chunk = cachedChunks.get(id);
+            if (chunk) {
+                results.push(chunk);
             }
-            const entry = cache.get(chunkId);
-            if (!entry) {
-                const chunk = await this.repositoryFactory.createChunkRepository().getByChunkId(chunkId);
-                if (!chunk) {
-                    continue;
-                }
-                const chunkModel: ChunkModel = {
-                    chunkIndex: chunk.index,
-                    buf: chunk.binary.buffer as Buffer,
-                    fileId: chunk.fileMetaData,
-                    chunkId,
-                };
-                results.push(chunkModel);
+        }
+        
+        if (results.length === 0) {
+            const calculatedChunkIndex = Math.floor(position / MongoStorageService.MAX_CHUNK_SIZE) + 1;
+            const currentChunksCount = operation.type === "file" ? fileMetaData.chunks : fileMetaData.checksumChunks;
+            
+            if (calculatedChunkIndex === currentChunksCount + 1 || (currentChunksCount <= 1 && calculatedChunkIndex === 1)) {
+                results.push({
+                    chunkId: firstChunkId,
+                    fileId: fId,
+                    chunkIndex: calculatedChunkIndex,
+                    buf: Buffer.alloc(0),
+                });
             }
-            else {
-                results.push(entry);
-            }
+        }
+        
+        if (results.length === 0 || results.length > 2) {
+            throw new DbInconsistencyError(`Cannot find ${fId} chunks described by fileMetaData or received too many chunks (expected: 1 or 2, got: ${results.length})`);
         }
         return results;
     }
     
+    private calculateChunksUpdates(
+        fetchedChunks: ChunkModel[],
+        operation: types.store.StoreFileRandomWriteOperation,
+        ctx: { firstChunkLeftOffset: number, firstChunkPartSize: number },
+        firstChunkId: db.MongoFileStorage.ChunkId,
+        lastChunkId: db.MongoFileStorage.ChunkId,
+    ) {
+        if (fetchedChunks.length === 2 && firstChunkId !== lastChunkId) {
+            const absoluteEndPos = operation.pos + operation.data.length;
+            const lastChunkRightOffset = MongoStorageService.MAX_CHUNK_SIZE - (absoluteEndPos % MongoStorageService.MAX_CHUNK_SIZE);
+            const lastChunkPartSize = MongoStorageService.MAX_CHUNK_SIZE - lastChunkRightOffset;
+            
+            const [firstChunk, lastChunk] = [...fetchedChunks.sort((a, b) => a.chunkIndex - b.chunkIndex)];
+            return this.prepareChunksToUpdateFromFirstAndLastChunk(
+                firstChunk, lastChunk, operation.data,
+                ctx.firstChunkPartSize, ctx.firstChunkLeftOffset, lastChunkPartSize,
+                operation.truncate, operation.type === "file" ? firstChunk.fileId : firstChunk.fileId,
+            );
+        }
+        else {
+            return this.prepareChunksToUpdateFromStartingChunk(
+                fetchedChunks[0], operation.data,
+                ctx.firstChunkPartSize, ctx.firstChunkLeftOffset,
+                operation.truncate, fetchedChunks[0].fileId,
+            );
+        }
+    }
+    
+    private collectChunksToDelete(
+        fId: types.request.FileId,
+        fileMetaData: db.MongoFileStorage.FileMetaData,
+        operation: types.store.StoreFileRandomWriteOperation,
+        lastModifiedChunkIndex: number,
+        chunksToDelete: Set<db.MongoFileStorage.ChunkId>,
+    ) {
+        if (!operation.truncate) {
+            return;
+        }
+        
+        const oldChunksCount = operation.type === "file" ? fileMetaData.chunks : fileMetaData.checksumChunks;
+        const localChunkToDelete = this.getChunksIdsToDelete(fId, oldChunksCount, lastModifiedChunkIndex, operation.type);
+        localChunkToDelete.forEach(chunk => chunksToDelete.add(chunk));
+    }
+    
+    // =================================================================================================
+    // LOW LEVEL HELPERS
+    // =================================================================================================
+    
     private getChunksIdsToDelete(fileId: types.request.FileId, oldChunksCount: number, newChunksCount: number, type: "checksum"|"file") {
         const chunksToDelete = [];
         if (oldChunksCount > newChunksCount) {
-            for (let fileIndex = newChunksCount; fileIndex <= oldChunksCount; fileIndex++ ) {
+            for (let fileIndex = newChunksCount + 1; fileIndex <= oldChunksCount; fileIndex++ ) {
                 chunksToDelete.push(type === "file" ? ChunkRepository.getChunkId(fileId, fileIndex) : ChunkRepository.getChecksumChunkId(fileId, fileIndex));
             }
         }
@@ -276,7 +463,7 @@ export class MongoStorageService implements IStorageService {
     }
     
     private prepareChunksToUpdateFromStartingChunk(firstChunkModel: ChunkModel, data: Buffer, firstChunkPartSize: number, firstChunkLeftOffset: number, truncate: boolean, fileId: types.request.FileId) {
-        firstChunkModel.buf = this.updateBuffer(firstChunkModel.buf, data.subarray(0, firstChunkPartSize), firstChunkLeftOffset, (firstChunkPartSize !== MongoStorageService.MAX_CHUNK_SIZE && truncate));
+        firstChunkModel.buf = this.updateBuffer(firstChunkModel.buf, data.subarray(0, firstChunkPartSize), firstChunkLeftOffset, (truncate && data.length <= firstChunkPartSize));
         const middleChunks = this.prepareChunksFromBufferWithOffset(data, firstChunkPartSize, 0, firstChunkModel.chunkIndex, fileId);
         const chunksToUpdate = [firstChunkModel, ...middleChunks];
         const lastChunkModel = chunksToUpdate[chunksToUpdate.length - 1];
@@ -301,11 +488,7 @@ export class MongoStorageService implements IStorageService {
     }
     
     private prepareChunksFromBuffer(buffer: Buffer, numberOfChunks: number, startOffset: number, lastChunkIndex: number) {
-        const chunks: {
-            chunkIndex: number,
-            buf: Buffer,
-        }[] = [];
-        
+        const chunks: { chunkIndex: number, buf: Buffer }[] = [];
         const bufferLength = buffer.length;
         
         for (let chunkIndex = 0; chunkIndex < numberOfChunks; chunkIndex++) {
@@ -314,10 +497,11 @@ export class MongoStorageService implements IStorageService {
                 break;
             }
             const chunkEnd = Math.min(chunkStart + MongoStorageService.MAX_CHUNK_SIZE, bufferLength);
-            const buf = buffer.subarray(chunkStart, chunkEnd);
-            chunks.push({chunkIndex: chunkIndex + lastChunkIndex + 1, buf});
+            chunks.push({
+                chunkIndex: chunkIndex + lastChunkIndex + 1,
+                buf: buffer.subarray(chunkStart, chunkEnd),
+            });
         }
-        
         return chunks;
     }
     
@@ -395,30 +579,33 @@ export class MongoStorageService implements IStorageService {
     
     private prepareChunksFromBufferWithOffset(data: Buffer, leftOffset: number, rightOffset: number, fromIndex: number, fileId: types.request.FileId) {
         const middleBuffer = data.subarray(leftOffset, data.length - rightOffset);
-        const middleBufferChunksNumber = middleBuffer.length / MongoStorageService.MAX_CHUNK_SIZE;
+        const middleBufferChunksNumber = Math.ceil(middleBuffer.length / MongoStorageService.MAX_CHUNK_SIZE);
         const chunks = this.prepareChunksFromBuffer(middleBuffer, middleBufferChunksNumber, 0, fromIndex);
-        return chunks.map(chunk => {
-            const chunkModel: ChunkModel = {
-                chunkId: ChunkRepository.getChunkId(fileId, chunk.chunkIndex),
-                chunkIndex: chunk.chunkIndex,
-                buf: chunk.buf,
-                fileId: fileId,
-            };
-            return chunkModel;
-        });
+        return chunks.map(chunk => ({
+            chunkId: ChunkRepository.getChunkId(fileId, chunk.chunkIndex),
+            chunkIndex: chunk.chunkIndex,
+            buf: chunk.buf,
+            fileId: fileId,
+        }));
     }
     
     private prepareUpdatedFileMetaData(fileMetaData: db.MongoFileStorage.FileMetaData, type: "checksum"|"file", lastModifiedChunkIndex: number, lastModifiedChunkSize: number, truncate: boolean) {
         if (type === "checksum") {
-            fileMetaData.checksumChunks = truncate ? Math.min(lastModifiedChunkIndex, fileMetaData.checksumChunks) : Math.max(lastModifiedChunkIndex, fileMetaData.checksumChunks);
+            fileMetaData.checksumChunks = truncate
+                ? lastModifiedChunkIndex
+                : Math.max(lastModifiedChunkIndex, fileMetaData.checksumChunks);
+            
             if (!truncate && lastModifiedChunkIndex < fileMetaData.checksumChunks) {
                 return;
             }
             fileMetaData.checksumSize = (fileMetaData.checksumChunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + lastModifiedChunkSize;
         }
         else {
-            fileMetaData.chunks = truncate ? Math.min(lastModifiedChunkIndex, fileMetaData.chunks) : Math.max(lastModifiedChunkIndex, fileMetaData.chunks);
-            if (!truncate && lastModifiedChunkIndex < fileMetaData.checksumChunks) {
+            fileMetaData.chunks = truncate
+                ? lastModifiedChunkIndex
+                : Math.max(lastModifiedChunkIndex, fileMetaData.chunks);
+            
+            if (!truncate && lastModifiedChunkIndex < fileMetaData.chunks) {
                 return;
             }
             fileMetaData.lastChunkSize = lastModifiedChunkSize;
@@ -428,9 +615,13 @@ export class MongoStorageService implements IStorageService {
     private prepareOperationContext(fileMetaData: db.MongoFileStorage.FileMetaData, operation: types.store.StoreFileRandomWriteOperation, fileId: types.request.FileId) {
         const checksumId = `${fileMetaData._id}-checksum` as types.request.FileId;
         const fId = operation.type === "file" ? fileId : checksumId;
-        const fSize = operation.type === "file" ? (fileMetaData.chunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + fileMetaData.lastChunkSize : fileMetaData.checksumSize ;
+        const fSize = operation.type === "file"
+            ? (fileMetaData.chunks - 1) * MongoStorageService.MAX_CHUNK_SIZE + fileMetaData.lastChunkSize
+            : fileMetaData.checksumSize;
         const position = operation.pos === -1 || operation.pos > fSize ? fSize : operation.pos;
-        const chunksIds =  operation.type === "file" ? this.getFileChunksIdsInRange(fileMetaData, position, position + operation.data.length) : this.getChecksumFileChunksIdsInRange(fileMetaData, position, position + operation.data.length);
+        const chunksIds = operation.type === "file"
+            ? this.getFileChunksIdsInRange(fileMetaData, position, position + operation.data.length)
+            : this.getChecksumFileChunksIdsInRange(fileMetaData, position, position + operation.data.length);
         const firstChunkLeftOffset = position % MongoStorageService.MAX_CHUNK_SIZE;
         const firstChunkPartSize = MongoStorageService.MAX_CHUNK_SIZE - firstChunkLeftOffset;
         return {fId, fSize, chunksIds, position, firstChunkLeftOffset, firstChunkPartSize};

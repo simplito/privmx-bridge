@@ -98,6 +98,18 @@ export class ThreadTests extends BaseTestSet {
         await this.fetchMessagesByFirstModifiedAndCheckTheirOrder();
     }
     
+    @Test()
+    async shouldFetchThreadsInDifferentScopes() {
+        this.helpers.authorizePlainApi();
+        await this.updateContextPolicyToAllowListingAllContainers();
+        await this.createNewThreadWithManagerOnly();
+        await this.tryListAllThreadByContextOnly();
+        await this.tryListThreadByCreator();
+        await this.tryListThreadByUser();
+        await this.tryListThreadByManager();
+        await this.tryListThreadByMember();
+    }
+    
     private async addResourceIdToExistingThread() {
         this.resourceId = this.helpers.generateResourceId();
         const res = await this.apis.threadApi.threadUpdate({
@@ -164,6 +176,73 @@ export class ThreadTests extends BaseTestSet {
         });
         
         this.threadId = newThread.threadId;
+    }
+    
+    private async updateContextPolicyToAllowListingAllContainers() {
+        const result = await this.plainApis.contextApi.updateContext({
+            contextId: testData.contextId,
+            policy: {
+                thread: {
+                    listAll: "all",
+                },
+            },
+        });
+        assert(result === "OK", "Unexpected response from updateContext");
+    }
+    
+    private async createNewThreadWithManagerOnly() {
+        this.resourceId = this.helpers.generateResourceId();
+        const newThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.resourceId,
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+        });
+        
+        this.threadId = newThread.threadId;
+    }
+    
+    private async tryListAllThreadByContextOnly() {
+        if (!this.threadId || !this.resourceId) {
+            throw new Error("threadId or resourceId not set or initialized yet");
+        }
+        const result = await this.apis.threadApi.threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "ALL"});
+        assert(result.count === 2, "thread count missmatch");
+    }
+    
+    private async tryListThreadByManager() {
+        if (!this.threadId || !this.resourceId) {
+            throw new Error("threadId or resourceId not set or initialized yet");
+        }
+        const result = await this.apis.threadApi.threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "MANAGER"});
+        assert(result.count === 2, "thread count missmatch");
+    }
+    
+    private async tryListThreadByMember() {
+        if (!this.threadId || !this.resourceId) {
+            throw new Error("threadId or resourceId not set or initialized yet");
+        }
+        const result = await this.apis.threadApi.threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "MEMBER"});
+        assert(result.count === 2, "thread count missmatch");
+    }
+    
+    private async tryListThreadByUser() {
+        if (!this.threadId || !this.resourceId) {
+            throw new Error("threadId or resourceId not set or initialized yet");
+        }
+        const result = await this.apis.threadApi.threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "USER"});
+        assert(result.count === 1, "thread count missmatch");
+    }
+    
+    private async tryListThreadByCreator() {
+        if (!this.threadId || !this.resourceId) {
+            throw new Error("threadId or resourceId not set or initialized yet");
+        }
+        const result = await this.apis.threadApi.threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "OWNER"});
+        assert(result.count === 2, "thread count missmatch");
     }
     
     private async createNewThreadWithoutResourceId() {
@@ -248,8 +327,8 @@ export class ThreadTests extends BaseTestSet {
             sortOrder: "asc",
         });
         assert(res3.count === 98 && res3.messages.length === 98, `Message count does not match expected 98! instead:${res3.count}`);
-         
-         const res4 = await this.apis.threadApi.threadMessagesGet({
+        
+        const res4 = await this.apis.threadApi.threadMessagesGet({
             threadId: this.threadId,
             limit: 100,
             skip: 0,

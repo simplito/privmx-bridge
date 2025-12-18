@@ -310,7 +310,7 @@ export class NotificationTest extends BaseTestSet {
     }
     
     async checkIfSingleNotificationWasDelivered() {
-        await PromiseUtils.wait(1000);
+        await PromiseUtils.wait(2000);
         if (this.customNotificationDataQueue.length !== 1) {
             throw new Error(`Custom notification count expected: 1, got: ${this.customNotificationDataQueue.length}`);
         }

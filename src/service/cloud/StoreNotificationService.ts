@@ -42,28 +42,26 @@ export class StoreNotificationService {
         this.safe("storeCustomEvent", async () => {
             const now = DateUtils.now();
             const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreCustomEvent>(
-                    [user.userPubKey],
-                    {
-                        containerId: store.id,
-                        contextId: store.contextId,
-                        channel: `store/custom/${customChannelName}` as types.core.WsChannelName,
-                        containerType: store.type,
+            this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreCustomEvent>(
+                contextUsers.map(u => u.userPubKey),
+                {
+                    containerId: store.id,
+                    contextId: store.contextId,
+                    channel: `store/custom/${customChannelName}` as types.core.WsChannelName,
+                    containerType: store.type,
+                },
+                {
+                    channel: `store/${store.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: store.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
                     },
-                    {
-                        channel: `store/${store.id}/${customChannelName}`,
-                        type: "custom",
-                        data: {
-                            id: store.id,
-                            author: author,
-                            keyId: keyId,
-                            eventData: eventData,
-                        },
-                        timestamp: now,
-                    },
-                );
-            }
+                    timestamp: now,
+                },
+            );
         });
     }
     
@@ -130,9 +128,9 @@ export class StoreNotificationService {
             for (const user of additionalUsers) {
                 const userNotification: storeApi.StoreUpdatedEvent = {
                     channel: "store",
-                        type: "storeUpdated",
-                        data: this.storeConverter.convertStore(user.id, store),
-                        timestamp: now,
+                    type: "storeUpdated",
+                    data: this.storeConverter.convertStore(user.id, store),
+                    timestamp: now,
                 };
                 if (user.status === "inactive") {
                     await this.repositoryFactory.createNotificationRepository().insert(user.pub, targetChannel, userNotification);
@@ -229,7 +227,7 @@ export class StoreNotificationService {
             const notification: managementStoreApi.StoreFileCreatedEvent = {
                 channel: "store",
                 type: "storeFileCreated",
-                data: this.storeConverter.convertFile(store, file),
+                data: this.managementStoreConverter.convertStoreFile(store, file),
                 timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);
@@ -259,7 +257,7 @@ export class StoreNotificationService {
             const notification: managementStoreApi.StoreFileUpdatedEvent = {
                 channel: "store",
                 type: "storeFileUpdated",
-                data: this.storeConverter.convertFile(store, file),
+                data: this.managementStoreConverter.convertStoreFile(store, file),
                 timestamp: now,
             };
             this.webSocketPlainSender.sendToPlainUsers(solution, notification);

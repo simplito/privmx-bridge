@@ -91,6 +91,8 @@ export interface Kvdb {
     lastEntryDate: types.core.Timestamp;
     /** Entries count in thread */
     entries: number;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface KvdbEntry {
@@ -112,6 +114,8 @@ export interface KvdbEntry {
     lastModificationDate: types.core.Timestamp;
     /** Last modifier */
     lastModifier: types.cloud.UserId;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface KvdbDeletedData {

@@ -17,7 +17,7 @@ import { ConfigService } from "../config/ConfigService";
 import { ObjectRepository } from "../../db/ObjectRepository";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import * as mongodb from "mongodb";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { StorageServiceProvider } from "../cloud/StorageServiceProvider";
 
 export interface RequestX {
@@ -95,7 +95,7 @@ export class RequestService {
             const fixedChunkSize = 128 * 1024;
             if (model.data.length < fixedChunkSize) {
                 if (file.sent + model.data.length < file.size) { // It is not the last part
-                    this.logger.warning("REQUEST_CHUNK_TOO_SMALL", {requestId: model.requestId, fileIndex: model.fileIndex, seq: file.seq, expected: fixedChunkSize, given: model.data.length, fileSize: file.size});
+                    this.logger.warning({requestId: model.requestId, fileIndex: model.fileIndex, seq: file.seq, expected: fixedChunkSize, given: model.data.length, fileSize: file.size}, "REQUEST_CHUNK_TOO_SMALL");
                     // throw new JsonRpcException("REQUEST_CHUNK_TOO_SMALL", {fileIndex: model.fileIndex, seq: file.seq, expected: fixedChunkSize, given: model.data.length, fileSize: file.size});
                 }
             }

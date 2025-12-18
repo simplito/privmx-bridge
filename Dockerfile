@@ -1,4 +1,4 @@
-FROM node:22.11.0-bullseye-slim AS base
+FROM hub.simplito.com/public/node:22.11.0-bullseye-slim AS base
 
 
 FROM base AS builder
@@ -9,7 +9,7 @@ ARG E2E_TESTS
 RUN cd /app && ./scripts/build.sh
 RUN cd /app && ./scripts/build-panel.sh
 
-FROM slatedocs/slate AS docs
+FROM hub.simplito.com/public/slatedocs/slate AS docs
 RUN rm -rf /srv/slate/source
 COPY --from=builder /app/slatedocs /srv/slate/source
 RUN cd /srv/slate && /srv/slate/slate.sh build --verbose

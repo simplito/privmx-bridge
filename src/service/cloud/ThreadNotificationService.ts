@@ -42,28 +42,26 @@ export class ThreadNotificationService {
         this.safe("threadCustomEvent", async () => {
             const now = DateUtils.now();
             const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>(
-                    [user.userPubKey],
-                    {
-                        contextId: thread.contextId,
-                        containerId: thread.id,
-                        channel: `thread/custom/${customChannelName}` as types.core.WsChannelName,
-                        containerType: thread.type,
+            this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>(
+                contextUsers.map(u => u.userPubKey),
+                {
+                    contextId: thread.contextId,
+                    containerId: thread.id,
+                    channel: `thread/custom/${customChannelName}` as types.core.WsChannelName,
+                    containerType: thread.type,
+                },
+                {
+                    channel: `thread/${thread.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: thread.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
                     },
-                    {
-                        channel: `thread/${thread.id}/${customChannelName}`,
-                        type: "custom",
-                        data: {
-                            id: thread.id,
-                            author: author,
-                            keyId: keyId,
-                            eventData: eventData,
-                        },
-                        timestamp: now,
-                    },
-                );
-            }
+                    timestamp: now,
+                },
+            );
         });
     }
     

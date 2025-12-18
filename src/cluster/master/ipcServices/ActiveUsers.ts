@@ -38,7 +38,7 @@ export class ActiveUsersMap {
             if (!entry) {
                 this.activeContextUsers.set(identity.contextId, new Set([identity.userPubKey]));
             }
- else {
+            else {
                 entry.add(identity.userPubKey);
             }
         }
@@ -51,7 +51,7 @@ export class ActiveUsersMap {
             if (!entry) {
                 continue;
             }
- else {
+            else {
                 entry.delete(identity.userPubKey);
             }
         }

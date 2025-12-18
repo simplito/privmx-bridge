@@ -11,7 +11,7 @@ limitations under the License.
 
 import * as types from "../../types";
 import * as db from "../../db/Model";
-import { IWorker2Service } from "../../cluster/common/Worker2Service";
+import { IWorker2Service, NotificationBrokerInterface } from "../../cluster/common/Worker2Service";
 import { ConfigService } from "../config/ConfigService";
 import { JobService } from "../job/JobService";
 import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
@@ -58,7 +58,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
     
     constructor(
         private jobService: JobService,
-        private workerService: IWorker2Service,
+        private workerService: IWorker2Service&NotificationBrokerInterface,
         private configService: ConfigService,
         private webSocketInnerManager: WebSocketInnerManager,
         private userStatusManager: UserStatusManager,
@@ -101,13 +101,16 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
             encryptionKey: Base64.toBuf(key),
             channels: [],
             instanceHost: this.host,
+            encoder: session.get("encoder"),
+            plainCommunication: session.get("plainCommunication", false),
+            eventBucket: [],
         });
         void this.userStatusManager.incrementUserActiveSessions(this.host, username as unknown as types.core.EccPubKey, solution);
         return wsChannelId;
     }
     
     async unauthorizeWebSocket(session: Session, wsEx: WebSocketEx) {
-       await this.webSocketInnerManager.removeSessionByWsId(wsEx, session.getWsId());
+        await this.webSocketInnerManager.removeSessionByWsId(wsEx, session.getWsId());
     }
     
     async subscribeToChannels(session: Session, wsEx: WebSocketEx, channels: types.core.WsChannelName[]): Promise<types.core.Subscription[]> {
@@ -229,7 +232,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
     
     sendAtChannel<T extends types.core.Event<any, any>>(channel: TargetChannel, clients: types.core.Client[]|null, event: T) {
         this.jobService.addJob(async () => {
-            await this.workerService.sendWebsocketNotificationAndAggregateData({channel: channel, host: this.getHost(), clients, event});
+            this.workerService.sendWebsocketNotificationAndAggregateData({channel: channel, host: this.getHost(), clients, event});
         }, "Error during sending websocket notification");
     }
     

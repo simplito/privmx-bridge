@@ -62,6 +62,7 @@ export type ClientResourceId = string&{__clientResourceId: never};
 export type CRUDAction = "create"|"update"|"delete";
 export type ContainerWithItems = "thread"|"store"|"kvdb";
 export type PropertiesQuery = Record<string, PropertyQuery>;
+export type ContainerAccessScope = "ALL"|"MANAGER"|"USER"|"MEMBER"|"OWNER";
 
 export type PropertyQuery = Value | {
     $gt?: number;

@@ -58,13 +58,20 @@ export class ThreadService extends BaseContainerService {
         return thread;
     }
     
-    async getMyThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
+    async getMyThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadList", []);
-        if (!this.policy.canListMyContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+        if (scope === "ALL") {
+            if (!this.policy.canListAllContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
         }
-        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
+        else {
+            if (!this.policy.canListMyContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
         return {user, threads};
     }
     
@@ -323,7 +330,7 @@ export class ThreadService extends BaseContainerService {
         }
         try {
             const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
-            await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
+            void this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
             this.threadNotificationService.sendNewThreadMessage(thread, message, context.solution);
             const threadStats = await this.repositoryFactory.createThreadRepository().getThreadStats(thread.id);
             if (threadStats) {
@@ -364,9 +371,9 @@ export class ThreadService extends BaseContainerService {
             throw new AppException("RESOURCE_ID_MISSMATCH");
         }
         try {
-              const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId, resourceId);
-              this.threadNotificationService.sendUpdatedThreadMessage(thread, newMessage, context.solution);
-              return {thread, message: newMessage};
+            const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId, resourceId);
+            this.threadNotificationService.sendUpdatedThreadMessage(thread, newMessage, context.solution);
+            return {thread, message: newMessage};
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {

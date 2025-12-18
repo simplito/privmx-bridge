@@ -32,6 +32,7 @@ export const test = testApi("client", "thread/", ManagementThreadApi, new Manage
             version: 1 as types.thread.ThreadVersion,
             lastMsgDate: 1715959261394 as types.core.Timestamp,
             messages: 34,
+            publicMeta: null,
         },
     });
     call("listThreads", api => api.listThreads({
@@ -55,6 +56,7 @@ export const test = testApi("client", "thread/", ManagementThreadApi, new Manage
                 version: 1 as types.thread.ThreadVersion,
                 lastMsgDate: 1715959261394 as types.core.Timestamp,
                 messages: 34,
+                publicMeta: null,
             },
         ],
     });
@@ -71,6 +73,7 @@ export const test = testApi("client", "thread/", ManagementThreadApi, new Manage
             createDate: 1715959261318 as types.core.Timestamp,
             author: "john" as types.cloud.UserId,
             keyId: "my-key" as types.core.KeyId,
+            publicMeta: null,
         },
     });
     call("listThreadMessages", api => api.listThreadMessages({
@@ -88,6 +91,7 @@ export const test = testApi("client", "thread/", ManagementThreadApi, new Manage
                 createDate: 1715959261318 as types.core.Timestamp,
                 author: "john" as types.cloud.UserId,
                 keyId: "my-key" as types.core.KeyId,
+                publicMeta: null,
             },
         ],
     });

@@ -102,6 +102,8 @@ export class TypesValidator {
     kvdbData: Validator;
     kvdbEntryKey: Validator;
     uuidv4: Validator;
+    containerAccessScope: Validator;
+    optionalContainerAccessScope: Validator;
     
     constructor() {
         this.builder = new AdvValidator.ValidatorBuilder();
@@ -219,7 +221,6 @@ export class TypesValidator {
         this.cloudUserPubKey = this.eccPub;
         this.threadId = id;
         this.threadMessageId = id;
-        this.kvdbEntryKey = id;
         this.threadData = this.unknown4Kb;
         this.kvdbData = this.unknown4Kb;
         this.threadMessageData = this.unknown16Kb;
@@ -347,7 +348,18 @@ export class TypesValidator {
         this.objectId = this.builder.rangeLength(this.builder.string, 3, 128);
         this.subscriptionId = id;
         this.kvdbId = id;
-        this.kvdbEntryKey = this.builder.rangeLength(this.builder.string, 1, 256);
+        this.kvdbEntryKey = this.builder.createCustom((value) => {
+            const kvdbEntryKeyRegex = /^[a-zA-Z0-9/_:-]*$/;
+            if (typeof value !== "string") {
+                throw new Error("Expected string");
+            }
+            if (value.length < 1 || value.length > 256) {
+                throw new Error("Invalid length, expected range between 1-256.");
+            }
+            if (!kvdbEntryKeyRegex.test(value)) {
+                throw new Error("Value has to be an alphanumerical string with '/', `_`, ':' and '-' special characters only. No whitespaces allowed.");
+            }
+        });
         this.uuidv4 = this.builder.createCustom((value) => {
             const uuidv4Regex = /^[0-9A-F]{8}-[0-9A-F]{4}-[4][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i;
             if (typeof value !== "string") {
@@ -357,6 +369,8 @@ export class TypesValidator {
                 throw new Error("Value has to be uuid v4");
             }
         });
+        this.containerAccessScope = this.builder.createEnum(["ALL", "MANAGER", "USER", "MEMBER", "OWNER"]);
+        this.optionalContainerAccessScope = this.builder.optional(this.containerAccessScope);
     }
     
     createAcl(entryType: Validator, aclType: Validator, propertyType: Validator, maxEntryLength: number, maxAclLength: number, maxAclListLength: number) {

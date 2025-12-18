@@ -86,17 +86,17 @@ export default [...compat.extends(
             accessibility: "explicit",
         }],
 
-        // "@typescript-eslint/indent": ["error", 4, {
-        //     SwitchCase: 1,
+        "@/indent": ["error", 4, {
+            SwitchCase: 1,
 
-        //     FunctionExpression: {
-        //         parameters: "off",
-        //     },
+            FunctionExpression: {
+                parameters: "off",
+            },
 
-        //     CallExpression: {
-        //         arguments: "off",
-        //     },
-        // }],
+            CallExpression: {
+                arguments: "off",
+            },
+        }],
 
         "@typescript-eslint/member-delimiter-style": "off",
         "@typescript-eslint/member-ordering": "off",

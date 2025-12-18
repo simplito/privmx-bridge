@@ -9,7 +9,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../service/log/LoggerFactory";
 import { EngineResponse, Engine } from "./server/Engine";
 import * as express from "express";
 import { ServerEndpoint } from "./ServerEndpoint";
@@ -17,6 +16,7 @@ import { RequestInfoHolder } from "./session/RequestInfoHolder";
 import * as types from "../types";
 import { ClientIpService } from "../service/misc/ClientIpService";
 import { IpRateLimiterClient } from "../cluster/worker/IpRateLimiterClient";
+import { Logger } from "../service/log/Logger";
 
 export class ApiEndpoint {
     

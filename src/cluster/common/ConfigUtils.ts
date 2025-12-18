@@ -15,7 +15,7 @@ import * as os from "os";
 import { DateUtils } from "../../utils/DateUtils";
 import * as types from "../../types";
 import { Callbacks } from "../../service/event/Callbacks";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 
 export interface Config {
     cloudUrl?: string;
@@ -38,6 +38,10 @@ export interface Config {
             baseUrl: string;
             useBaseUrl: boolean;
         };
+        broker: {
+            mode: string,
+            brokerUri: string,
+        }
         initializationToken: string|null;
     };
     db: {
@@ -123,6 +127,10 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
                 baseUrl: process.env.PRIVMX_BASE_URL || "http://localhost",
                 useBaseUrl: process.env.PRIVMX_USE_BASE_URL === "true",
             },
+            broker: {
+                mode: process.env.PMX_BRIDGE_BROKER_MODE || "internal",
+                brokerUri: process.env.PMX_BRIDGE_BROKER_URI || "/tmp/pmx_event",
+            },
             initializationToken: process.env.PRIVMX_INITIALIZATION_TOKEN || null,
         },
         db: {
@@ -158,7 +166,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
     }
     const config = mergeValues(defaultConfig, configFromFile);
     if (logger) {
-        logger.out("Config loaded", config);
+        logger.out(config, "Config loaded");
     }
     return config;
 }

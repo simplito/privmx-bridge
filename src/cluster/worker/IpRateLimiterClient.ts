@@ -20,6 +20,6 @@ export class IpRateLimiterClient implements IpRateLimiter {
     ) {}
     
     canPerformRequest(ip: types.core.IPAddress): Promise<boolean> {
-        return this.ipcRequester.request("canPerformRequest", ip);
+        return this.ipcRequester.request("canPerformRequest", ip, true);
     }
 }

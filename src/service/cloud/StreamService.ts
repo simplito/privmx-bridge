@@ -206,13 +206,20 @@ export class StreamService extends BaseContainerService {
         return {user, streamRooms};
     }
     
-    async getMyStreamRooms(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom) {
+    async getMyStreamRooms(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomList", []);
-        if (!this.policy.canListMyContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+        if (scope === "ALL") {
+            if (!this.policy.canListAllContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
         }
-        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
+        else {
+            if (!this.policy.canListMyContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
         return {user, streamRooms};
     }
     

@@ -14,6 +14,7 @@ limitations under the License.
 import * as types from "../../types";
 import { Subidentity } from "../../service/login/UserLoginService";
 import * as db from "../../db/Model";
+import { EncoderType } from "../../utils/Encoder";
 
 export interface SrpDataInSession {
     I: types.user.UserLogin;
@@ -68,6 +69,8 @@ export class Session {
     get(name: "lastUsage", value?: types.core.Timestamp): types.core.Timestamp;
     get(name: "solution", value?: types.cloud.SolutionId): types.cloud.SolutionId;
     get(name: "deviceToken", value?: boolean): boolean;
+    get(name: "encoder", value?: EncoderType): EncoderType;
+    get(name: "plainCommunication", value?: boolean): boolean;
     get<K extends keyof db.session.SessionData>(name: K, def?: db.session.SessionData[K]): db.session.SessionData[K] {
         return name in this.data ? this.data[name] : def;
     }
@@ -88,6 +91,8 @@ export class Session {
     set(name: "lastUsage", value: types.core.Timestamp): void;
     set(name: "solution", value: types.cloud.SolutionId): void;
     set(name: "deviceToken", value: boolean): void;
+    set(name: "encoder", value: EncoderType): void;
+    set(name: "plainCommunication", value: boolean): void;
     set<K extends keyof db.session.SessionData>(name: K, value: db.session.SessionData[K]): void {
         this.data[name] = value;
         this.changes[name] = value;

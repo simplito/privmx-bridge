@@ -71,6 +71,7 @@ export interface ThreadGetResult {
 
 export interface ThreadListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.thread.ThreadType;
     sortBy?: "createDate"|"lastModificationDate"|"lastMsgDate";
 }

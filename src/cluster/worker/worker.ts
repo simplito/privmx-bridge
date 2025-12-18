@@ -22,18 +22,19 @@ import { WebSocketEx } from "../../CommonTypes";
 import * as PrivMXNative from "../../utils/crypto/PrivMXNative";
 import * as terminus from "@godaddy/terminus";
 import * as fs from "fs";
-import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
+import { LoggerFactory } from "../../service/log/LoggerFactory";
 import type { Socket } from "net";
+import { Utils } from "../../utils/Utils";
+import { DateUtils } from "../../utils/DateUtils";
 
 type TrackedSocket = Socket & { _isErrorListenerAttached?: boolean };
 
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;
-
-const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
-const logger = loggerFactory.get("WORKER");
-
-PrivMXNative.init(loggerFactory.get("PrivMXNative"));
+const workerId = Utils.getThisWorkerId();
+const loggerFactory = new LoggerFactory(`${workerId}`);
+const logger = loggerFactory.createLogger("INIT");
+PrivMXNative.init(loggerFactory.createLogger("PrivMXNative"));
 
 // preload all libs
 if (App) {
@@ -56,30 +57,33 @@ export function startWorker() {
     if (!worker) {
         throw new Error("Cannot run WorkerThread outside of worker");
     }
-    initWorker(worker).catch(e => logger.error("Error during initializing", e));
+    initWorker(worker).catch(e => logger.error(e, "Error during initializing"));
 }
 
 async function initWorker(worker: Cluster.Worker) {
     const registry = new WorkerRegistry(loggerFactory);
+    const config = registry.registerConfig(loadConfig(false, registry.getWorkerCallbacks()));
     registry.registerWorker(worker);
     PluginsLoader.loadForWorker(registry);
-    registry.getTypesValidator(); // Preload validators to speed up first request
+    registry.getTypesValidator();
+    const subscriberMessageProcessor = registry.getSubscriberMessageProcessor();
+    const brokerClient = registry.getBrokerClient();
+    brokerClient.onMessage((data) => subscriberMessageProcessor.processMessage(data.data, data.sender));
+    await brokerClient.start();
     const ipcMessageProcessor = registry.getIpcMessageProcessor();
     worker.on("message", message => {
         void ipcMessageProcessor.processMessage(message, "master", worker);
     });
     await registry.initIpc();
-    const config = registry.registerConfig(loadConfig(false, registry.getWorkerCallbacks()));
-    LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
     await registry.createMongoClient(config.db.mongo.url);
     await registry.getWorkerCallbacks().trigger("initDb", []);
     registry.registerIpcServices();
     const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
-        req.on("error", e => logger.error("Request Error", e));
-        res.on("error", e => logger.error("Response Error", e));
+        req.on("error", e => logger.error(e, "Request Error"));
+        res.on("error", e => logger.error(e, "Response Error"));
         const socket = req.socket as TrackedSocket;
         if (!socket._isErrorListenerAttached) {
-            req.socket.on("error", e => logger.error("Request Socket Error", e));
+            req.socket.on("error", e => logger.error(e, "Request Socket Error"));
             socket._isErrorListenerAttached = true;
         }
         registry.getHttpHandler().onRequest(req, res);
@@ -90,7 +94,6 @@ async function initWorker(worker: Cluster.Worker) {
         await registry.getHttpHandler().createHostContext();
     }
     await registry.getWorkerCallbacks().trigger("initWorker", []);
-    
     const httpServer = registry.registerHttpServer(http.createServer(onRequest));
     setupServer(registry, httpServer);
     httpServer.listen(config.server.port, config.server.hostname, () => {
@@ -107,6 +110,15 @@ async function initWorker(worker: Cluster.Worker) {
             logger.out(`Worker starterd, listen on https://${config.server.hostname}:${config.server.ssl.port}`);
         });
     }
+    
+    const jobService = registry.getJobService();
+    const metricsCollector = registry.getMetricsCollector();
+    const metricsContainer = registry.getMetricsContainer();
+    const aggregatedNotificationService = registry.getAggregatedNotificationsService();
+    const websocketInnerManager = registry.getWebSocketInnerManager();
+    void metricsContainer.sendDefaultMetrics(await metricsCollector.getThisWorkerMetrics());
+    jobService.addPeriodicJob(async () => aggregatedNotificationService.flush((model) => websocketInnerManager.send(model.host, model.channel, model.clients, model.event as any)), DateUtils.seconds(1), "aggregated events flush");
+    jobService.addPeriodicJob(async () => metricsContainer.sendDefaultMetrics(await metricsCollector.getThisWorkerMetrics()), DateUtils.seconds(10), "metrics scrap");
     registry.getWorkerCallbacks().triggerSync("workerLoaded", []);
     registry.getWorkerCallbacks().triggerZ("workerLoadedAsync", []);
 }
@@ -114,7 +126,7 @@ async function initWorker(worker: Cluster.Worker) {
 function setupServer(registry: WorkerRegistry, server: http.Server|https.Server) {
     setUpTerminus(registry, server);
     server.on("error", (e) => {
-        logger.error("Server Error", e);
+        logger.error(e, "Server Error");
     });
     
     const wss = new WebSocket.Server({server: server});
@@ -126,12 +138,12 @@ function setupServer(registry: WorkerRegistry, server: http.Server|https.Server)
         name: "wsAliveRefresher",
         interval: 10 * 1000,
         func: () => {
-            wss.clients.forEach((ws: WebSocket) => {
-                if (!(<WebSocketEx>ws).ex.isAlive) {
+            wss.clients.forEach((ws) => {
+                if (!(ws as WebSocketEx).ex.isAlive) {
                     ws.terminate();
                     return;
                 }
-                (<WebSocketEx>ws).ex.isAlive = false;
+                (ws as WebSocketEx).ex.isAlive = false;
                 ws.ping();
             });
         },
@@ -158,6 +170,7 @@ function setUpTerminus(registry: WorkerRegistry, server: http.Server|https.Serve
         },
         onShutdown: async () => {
             logger.out("Server gracefully turned off!");
+            loggerFactory.flushLogs();
         },
     });
 }
@@ -175,6 +188,13 @@ async function tryClose(registry: WorkerRegistry, server: http.Server|https.Serv
     catch {
         logger.error("Error during closing mongo connection");
     }
+    try {
+        await registry.getBrokerClient().stop();
+    }
+    catch {
+        logger.error("Error during closing broker connection");
+    }
     await registry.getWorkerCallbacks().trigger("closeDb", []);
     server.close();
 }
+

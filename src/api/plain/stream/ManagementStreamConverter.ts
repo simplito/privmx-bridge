@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as managementStreamApi from "./ManagementStreamApiTypes";
 import * as db from "../../../db/Model";
+import { Utils } from "../../../utils/Utils";
 
 export class ManagementStreamConverter {
     
@@ -27,6 +28,7 @@ export class ManagementStreamConverter {
             managers: x.managers,
             keyId: x.keyId,
             version: <types.stream.StreamRoomVersion>x.history.length,
+            publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
         };
         return res;
     }

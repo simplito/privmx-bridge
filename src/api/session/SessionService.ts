@@ -12,7 +12,7 @@ limitations under the License.
 /* eslint-disable no-bitwise */
 
 import { Permission } from "../Permission";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { Session } from "./Session";
 import * as types from "../../types";
 import { AccessDeniedError } from "./AccessDeniedError";

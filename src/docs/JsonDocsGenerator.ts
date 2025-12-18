@@ -19,6 +19,7 @@ import { ApiFunc, ApiResult } from "../test/api/Utils";
 import * as types from "./docsGeneratorTypes";
 import { Validator } from "adv-validator/out/Types";
 import { Utils } from "../utils/Utils";
+import { CloudAclChecker } from "../service/cloud/CloudAclChecker";
 
 const LOG_LEVEL = 2;
 
@@ -57,8 +58,9 @@ export class JsonDocsGenerator {
     }
     
     private loadAclGroups() {
-        const content = fs.readFileSync(path.resolve(__dirname, "../../src/docs/acl.json"));
-        return JSON.parse(content.toString()) as types.AclGroups;
+        const aclChecker = new CloudAclChecker();
+        const aclInfo = aclChecker.getAclInfo();
+        return aclInfo;
     }
     
     private findApis() {
@@ -281,6 +283,9 @@ export class JsonDocsGenerator {
             return {kind: "primitive", type: "unknown"};
         }
         if (type.kind === ts.SyntaxKind.UndefinedKeyword) {
+            return {kind: "primitive", type: "unknown"};
+        }
+        if (type.kind === ts.SyntaxKind.UnknownKeyword) {
             return {kind: "primitive", type: "unknown"};
         }
         if (ts.isLiteralTypeNode(type)) {

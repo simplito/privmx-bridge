@@ -22,7 +22,7 @@ export interface BasePacket {
 
 export interface EcdheRequestPacket extends BasePacket {
     type: "ecdhe";
-    key: ByteBuffer;
+    key: Buffer;
     agent: types.core.UserAgent;
     solution?: types.cloud.SolutionId;
     challenge?: types.core.Nonce;
@@ -32,7 +32,7 @@ export interface EcdheResponsePacket extends BasePacket {
     type: "ecdhe";
     agent: types.core.UserAgent;
     config: ServerConfig;
-    key: ByteBuffer;
+    key: Buffer;
     signature?: {
         challenge: string;
         timestamp: types.core.Timestamp;
@@ -41,7 +41,7 @@ export interface EcdheResponsePacket extends BasePacket {
 
 export interface EcdhexRequestPacket extends BasePacket {
     type: "ecdhex";
-    key: ByteBuffer;
+    key: Buffer;
     nonce: types.core.Nonce;
     timestamp: types.core.TimestampStr;
     signature: types.core.EccSignature;
@@ -55,7 +55,7 @@ export interface EcdhexResponsePacket extends BasePacket {
     type: "ecdhex";
     agent: types.core.UserAgent;
     config: ServerConfig;
-    key: ByteBuffer;
+    key: Buffer;
     host: types.core.Host;
     signature?: {
         challenge: string;
@@ -76,20 +76,20 @@ export interface SessionResponsePacket extends BasePacket {
     type: "session";
     agent: types.core.UserAgent;
     config: ServerConfig;
-    key: ByteBuffer;
+    key: Buffer;
 }
 
 export interface EcdhefRequestPacket extends BasePacket {
     type: "ecdhef";
-    key_id: ByteBuffer;
-    key: ByteBuffer;
+    key_id: Buffer;
+    key: Buffer;
     agent: types.core.UserAgent;
 }
 
 export interface TicketPacket extends BasePacket {
     type: "ticket";
-    ticket_id: ByteBuffer;
-    client_random: ByteBuffer;
+    ticket_id: Buffer;
+    client_random: Buffer;
     plain?: boolean;
 }
 
@@ -100,7 +100,7 @@ export interface TicketsRequestPacket extends BasePacket {
 
 export interface TicketsResponsePacket extends BasePacket {
     type: "ticket_response";
-    tickets: ByteBuffer[];
+    tickets: Buffer[];
     ttl: number;
 }
 
@@ -137,7 +137,7 @@ export interface SrpExchangeRequestPacket extends BasePacket {
 export interface SrpExchangeResponsePacket extends BasePacket {
     type: "srp_exchange";
     agent?: types.core.UserAgent;
-    tickets: ByteBuffer[];
+    tickets: Buffer[];
     ttl: number;
     M2: types.core.Hex;
     additionalLoginStep?: any;
@@ -172,7 +172,7 @@ export interface KeyExchangeRequestPacket extends BasePacket {
 
 export interface KeyExchangeResponsePacket extends BasePacket {
     type: "key_exchange";
-    tickets: ByteBuffer[];
+    tickets: Buffer[];
     ttl: number;
     additionalLoginStep?: any;
 }

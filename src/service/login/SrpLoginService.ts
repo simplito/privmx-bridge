@@ -13,7 +13,7 @@ import * as BN from "bn.js";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { UserLoginService } from "./UserLoginService";
 import { Callbacks } from "../event/Callbacks";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { SrpLogic } from "../../utils/crypto/SrpLogic";
 import { AppException } from "../../api/AppException";
 import { Session } from "../../api/session/Session";
@@ -68,7 +68,7 @@ export class SrpLoginService {
     }
     
     async init(I: types.user.UserLogin, host: types.core.Host, properties: types.user.LoginProperties): Promise<SrpInitResult> {
-        this.logger.debug("init", {I: I, host: host, properties: properties});
+        this.logger.debug({I: I, host: host, properties: properties}, "init");
         if (this.maintenanceService.isMaintenanceModeEnabled()) {
             throw new AppException("MAINTENANCE_MODE");
         }
@@ -128,7 +128,7 @@ export class SrpLoginService {
     }
     
     async exchange(out: {user?: string}, sessionId: types.core.SessionId, A: BN, clientM1: BN, withK: boolean, sessionKey: types.core.EccPubKey|undefined): Promise<SrpExchangeResult> {
-        this.logger.debug("exchange", {A: A, clientM1: clientM1});
+        this.logger.debug({A: A, clientM1: clientM1}, "exchange");
         let session: Session;
         try {
             session = await this.sessionHolder.closeCurrentSessionAndRestoreGiven(undefined, sessionId);
@@ -167,13 +167,13 @@ export class SrpLoginService {
         const u = SrpLogic.get_u(A, bigB, N);
         const S = SrpLogic.getServer_S(A, v, u, b, N);
         const serverM1 = SrpLogic.get_M1(A, bigB, S, N);
-        this.logger.debug("Server M1", {
+        this.logger.debug({
             A: Hex.fromBN(A),
             B: Hex.fromBN(bigB),
             S: Hex.fromBN(S),
             N: Hex.fromBN(N),
             M1: Hex.fromBN(serverM1),
-        });
+        }, "Server M1");
         
         if (serverM1.cmp(clientM1) != 0) {
             await this.sessionHolder.destroy(undefined, session);

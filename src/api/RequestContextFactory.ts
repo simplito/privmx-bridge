@@ -38,7 +38,7 @@ export class RequestContextFactory {
     }
     
     createForRequest(requestType: string, request: express.Request, response: express.Response) {
-        const requestLogger = new RequestLogger(requestType, this.serverStatsService, this.loggerFactory, this.metricsContainer, this.config);
+        const requestLogger = new RequestLogger(requestType, this.serverStatsService, this.loggerFactory.createLogger(RequestLogger, this.ioc.getInstanceHost()), this.metricsContainer, this.config);
         if (Buffer.isBuffer(request.body)) {
             requestLogger.setRequestSize(request.body.length);
         }
@@ -50,7 +50,7 @@ export class RequestContextFactory {
     }
     
     createForWebSocket(requestType: string, webSocketInfo: WebSocketInfo) {
-        const requestLogger = new RequestLogger(requestType, this.serverStatsService, this.loggerFactory, this.metricsContainer, this.config);
+        const requestLogger = new RequestLogger(requestType, this.serverStatsService, this.loggerFactory.createLogger(RequestLogger, this.ioc.getInstanceHost()), this.metricsContainer, this.config);
         const ioc = new RequestScopeIOC(this.ioc, null, null, webSocketInfo.webSocket, requestLogger);
         ioc.getRequestInfoHolder().setIP(webSocketInfo.ip);
         return new RequestContext(ioc);

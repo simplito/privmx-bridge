@@ -30,7 +30,10 @@ import { MetricsContainer } from "./ipcServices/MetricsContainer";
 import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
 import { LockService } from "./ipcServices/LockService";
 import { WebsocketCommunicationManger } from "./ipcServices/WebsocketCommunicationManager";
-import { AggregatedNotificationsService } from "./ipcServices/AggregatedNotificationsService";
+import { IBrokerClient } from "../common/BrokerClient";
+import { MetricsCollector } from "../../service/misc/MetricsCollector";
+import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
+import { ZeroMQBroker } from "./ZeroMQBroker";
 
 export class MasterRegistry {
     
@@ -54,7 +57,8 @@ export class MasterRegistry {
     private lockService?: LockService;
     private websocketCommunicationManager?: WebsocketCommunicationManger;
     private aggregatedNotificationsService?: AggregatedNotificationsService;
-    
+    private metricsCollector?: MetricsCollector;
+    private zeroMQBroker?: ZeroMQBroker;
     constructor(
         private loggerFactory: LoggerFactory,
     ) {
@@ -87,6 +91,26 @@ export class MasterRegistry {
             throw new Error("Config not registered yet");
         }
         return this.config;
+    }
+    
+    getBroker() {
+        const config = this.getConfig();
+        if (config.server.broker.mode === "internal") {
+            return this.getZeroMQBroker();
+        }
+        else {
+            return null;
+        }
+    }
+    
+    getZeroMQBroker() {
+        if (!this.zeroMQBroker) {
+            this.zeroMQBroker = new ZeroMQBroker(
+                this.getLoggerFactory().createLogger(ZeroMQBroker),
+                this.getConfig(),
+            );
+        }
+        return this.zeroMQBroker;
     }
     
     getMongoClient() {
@@ -127,7 +151,7 @@ export class MasterRegistry {
         if (!this.ipcExecutor) {
             this.ipcExecutor = new IpcExecutor(
                 this.getMethodExecutor(),
-                this.getLoggerFactory().get(IpcExecutor),
+                this.getLoggerFactory().createLogger(IpcExecutor),
             );
         }
         return this.ipcExecutor;
@@ -136,7 +160,7 @@ export class MasterRegistry {
     getWorkersHolder() {
         if (!this.workersHolder) {
             this.workersHolder = new WorkersHolder(
-                this.getLoggerFactory().get(WorkersHolder),
+                this.getLoggerFactory().createLogger(WorkersHolder),
             );
         }
         return this.workersHolder;
@@ -153,7 +177,7 @@ export class MasterRegistry {
         if (!this.ipcListener) {
             this.ipcListener = new IpcListener(
                 this.getIpcRequestMap(),
-                this.getLoggerFactory().get(IpcListener),
+                this.getLoggerFactory().createLogger(IpcListener),
             );
         }
         return this.ipcListener;
@@ -173,15 +197,20 @@ export class MasterRegistry {
             this.ipcMessageProcessor = new IpcMessageProcessor(
                 this.getIpcExecutor(),
                 this.getIpcListener(),
-                this.getLoggerFactory().get(IpcMessageProcessor),
+                this.getLoggerFactory().createLogger(IpcMessageProcessor),
             );
         }
         return this.ipcMessageProcessor;
     }
     
+    getSubscriberMock() {
+        const subMock = {};
+        return subMock as IBrokerClient;
+    }
+    
     getJobService() {
         if (!this.jobService) {
-            this.jobService = new JobService(this.getLoggerFactory().get(JobService));
+            this.jobService = new JobService(this.getLoggerFactory().createLogger(JobService));
         }
         return this.jobService;
     }
@@ -223,7 +252,6 @@ export class MasterRegistry {
             this.websocketCommunicationManager = new WebsocketCommunicationManger(
                 this.getIpcRequester(),
                 this.getWorkersHolder(),
-                this.getAggregatedNotificationsService(),
             );
         }
         return this.websocketCommunicationManager;
@@ -240,7 +268,9 @@ export class MasterRegistry {
     
     getMetricContainer() {
         if (this.metricsContainer == null) {
-            this.metricsContainer = new MetricsContainer();
+            this.metricsContainer = new MetricsContainer(
+                this.getMetricsCollector(),
+            );
         }
         return this.metricsContainer;
     }
@@ -251,4 +281,12 @@ export class MasterRegistry {
         }
         return this.ipcRegistryService;
     }
+    
+    getMetricsCollector() {
+        if (this.metricsCollector == null) {
+            this.metricsCollector = new MetricsCollector();
+        }
+        return this.metricsCollector;
+    }
+    
 }

@@ -14,13 +14,16 @@ import { TargetChannel } from "../../service/ws/WebSocketConnectionManager";
 import * as types from "../../types";
 
 export interface IWorker2Service {
-    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}): Promise<void>;
-    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}): Promise<void>;
-    sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId, event: PlainApiEvent}): Promise<void>;
     hasOpenConnectionWithUsername(model: {host: types.core.Host, username: types.core.Username}): Promise<boolean>;
     disconnectWebSocketsBySession(model: {host: types.core.Host, sessionId: types.core.SessionId}): Promise<void>;
     disconnectWebSocketsByUsername(model: {host: types.core.Host, username: types.core.Username}): Promise<void>;
     disconnectWebSocketsBySubidentity(model: {host: types.core.Host, pub: types.core.EccPubKey}): Promise<void>;
     disconnectWebSocketsByDeviceId(model: {host: types.core.Host, deviceId: types.core.DeviceId}): Promise<void>;
     disconnectWebSocketsBySubidentityGroup(model: {host: types.core.Host, groupId: types.user.UsersGroupId}): Promise<void>;
+}
+
+export interface NotificationBrokerInterface {
+    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}): void;
+    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}): void;
+    sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId, event: PlainApiEvent}): void;
 }

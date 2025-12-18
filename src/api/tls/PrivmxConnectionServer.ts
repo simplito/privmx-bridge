@@ -19,7 +19,6 @@ import * as elliptic from "elliptic";
 import * as pki from "privmx-pki2";
 import { TicketsDb, TicketData, TicketId } from "./TicketsDb";
 import { PrivmxConnectionBase } from "./PrivmxConnectionBase";
-import * as ByteBuffer from "bytebuffer";
 import * as types from "../../types";
 import { RequestLogger } from "../../service/log/RequestLogger";
 import { ECUtils } from "../../utils/crypto/ECUtils";
@@ -32,7 +31,7 @@ import { PacketValidator } from "./PacketValidator";
 import { ConfigService } from "../../service/config/ConfigService";
 import { DateUtils } from "../../utils/DateUtils";
 import { Crypto } from "../../utils/crypto/Crypto";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { ServerSignatureService } from "../../service/cloud/ServerSignatureService";
 import { VersionDetector } from "../../service/config/VersionDetector";
 
@@ -75,20 +74,20 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             const ecKey = ec.genKeyPair();
             const response: types.packet.EcdheResponsePacket = {
                 type: "ecdhe",
-                key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
+                key: Buffer.from(ecKey.getPublic(true, "binary")),
                 agent: this.getServerAgent(),
                 config: this.getServerConfig(),
             };
             if (packet.challenge) {
                 response.signature = await this.serverSignatureService.signChallenge(packet.challenge);
             }
-            const pson = this.psonHelper.pson_encode(response);
-            this.send(pson, ContentType.HANDSHAKE);
+            const serializedPayload = this.getEncoder().encode(response);
+            this.send(serializedPayload, ContentType.HANDSHAKE);
             if (packet.agent != null) {
                 this.clientAgent = packet.agent;
             }
-            const clientKey = ec.keyFromPublic(packet.key.toBuffer());
-            const sessionId = await this.ecdheLoginService.onLogin(ECUtils.publicToBase58DER(clientKey), packet.solution);
+            const clientKey = ec.keyFromPublic(packet.key);
+            const sessionId = await this.ecdheLoginService.onLogin(ECUtils.publicToBase58DER(clientKey), this.getEncoderType(), packet.solution);
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
@@ -102,7 +101,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             const ecKey = ec.genKeyPair();
             const response: types.packet.EcdhexResponsePacket = {
                 type: "ecdhex",
-                key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
+                key: Buffer.from(ecKey.getPublic(true, "binary")),
                 agent: this.getServerAgent(),
                 config: this.getServerConfig(),
                 host: this.configService.getMainHost(),
@@ -110,13 +109,13 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             if (packet.challenge) {
                 response.signature = await this.serverSignatureService.signChallenge(packet.challenge);
             }
-            const pson = this.psonHelper.pson_encode(response);
-            this.send(pson, ContentType.HANDSHAKE);
+            const serializedPayload = this.getEncoder().encode(response);
+            this.send(serializedPayload, ContentType.HANDSHAKE);
             if (packet.agent != null) {
                 this.clientAgent = packet.agent;
             }
-            const clientKey = ec.keyFromPublic(packet.key.toBuffer());
-            const sessionId = await this.ecdheLoginService.onLoginX(ECUtils.publicToBase58DER(clientKey), packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution);
+            const clientKey = ec.keyFromPublic(packet.key);
+            const sessionId = await this.ecdheLoginService.onLoginX(ECUtils.publicToBase58DER(clientKey), packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution, this.getEncoderType());
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
@@ -145,11 +144,12 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 const z = Utils.fillTo32(der);
                 const response: types.packet.SessionResponsePacket = {
                     type: "session",
-                    key: ByteBuffer.wrap(Buffer.from(ecKey.getPublic(true, "binary"))),
+                    key: Buffer.from(ecKey.getPublic(true, "binary")),
                     agent: this.getServerAgent(),
                     config: this.getServerConfig(),
                 };
-                this.send(this.psonHelper.pson_encode(response), ContentType.HANDSHAKE);
+                const serializedPayload = this.getEncoder().encode(response);
+                this.send(serializedPayload, ContentType.HANDSHAKE);
                 this.setPreMasterSecret(z);
                 this.changeWriteCipherSpec();
                 methodInfo.success = true;
@@ -167,19 +167,19 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 const tickets = await this.generateTickets(packet.count);
                 const ticketResponse: types.packet.TicketsResponsePacket = {
                     type: "ticket_response",
-                    tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
+                    tickets: tickets.ids,
                     ttl: Math.floor(tickets.ttl / 1000),
                 };
                 methodInfo.success = true;
                 methodInfo.response = {result: ticketResponse};
-                this.send(this.psonHelper.pson_encode(ticketResponse), ContentType.HANDSHAKE);
+                this.send(this.getEncoder().encode(ticketResponse), ContentType.HANDSHAKE);
             });
         }
         else if (raw.type == "ticket") {
             const packet = <types.packet.TicketPacket>raw;
             this.validators.validate("handshake_ticket", packet);
-            const ticketId = <TicketId>packet.ticket_id.toBuffer();
-            const clientRandom = packet.client_random.toBuffer();
+            const ticketId = <TicketId>packet.ticket_id;
+            const clientRandom = packet.client_random;
             this.logger.debug("ticket " + Hex.from(ticketId));
             const ticketData = await this.useTicket(ticketId);
             if (!ticketData) {
@@ -204,7 +204,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 if (this.srpLoginService === null) {
                     throw new RpcError("SRP handshake unavailable");
                 }
-                this.logger.debug("srp init request", {packet: packet});
+                this.logger.debug({packet: packet}, "srp init request");
                 const properties = packet.properties != null ? packet.properties : {};
                 if (packet.agent != null) {
                     this.clientAgent = packet.agent;
@@ -225,9 +225,9 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.success = true;
                 methodInfo.sessionId = response.sessionId;
                 methodInfo.response = {result: srpResponse};
-                this.logger.debug("send srp init response", {response: srpResponse});
+                this.logger.debug({response: srpResponse}, "send srp init response");
                 this.send(
-                    this.psonHelper.pson_encode(srpResponse),
+                    this.getEncoder().encode(srpResponse),
                     ContentType.HANDSHAKE,
                 );
             });
@@ -241,7 +241,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.method = "srp_exchange";
                 methodInfo.params = packet;
                 methodInfo.sessionId = ssid;
-                this.logger.debug("sessionId " + ssid, {packet: packet});
+                this.logger.debug({packet: packet}, "sessionId " + ssid);
                 const A = Hex.toBN(packet.A);
                 const M1 = Hex.toBN(packet.M1);
                 const response = await this.srpLoginService.exchange(methodInfo, ssid, A, M1, true, packet.sessionKey);
@@ -254,14 +254,14 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     type: "srp_exchange",
                     M2: response.M2,
                     additionalLoginStep: response.additionalLoginStep,
-                    tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
+                    tickets: tickets.ids,
                     ttl: Math.floor(tickets.ttl / 1000),
                 };
                 methodInfo.success = true;
                 methodInfo.response = {result: srpResponse};
-                this.logger.debug("srp exchange done on server", {response: srpResponse});
+                this.logger.debug({response: srpResponse}, "srp exchange done on server");
                 this.send(
-                    this.psonHelper.pson_encode(srpResponse),
+                    this.getEncoder().encode(srpResponse),
                     ContentType.HANDSHAKE,
                 );
                 this.changeWriteCipherSpec();
@@ -269,15 +269,15 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         }
         else if (raw.type == "ecdhef") {
             const packet = <types.packet.EcdhefRequestPacket>raw;
-            this.logger.debug("ecdhef request", {packet: packet});
+            this.logger.debug({packet: packet}, "ecdhef request");
             this.validators.validate("handshake_ecdhef", packet);
             const serverKeystore = await this.serverKeystoreProvider();
-            const key = serverKeystore !== null ? serverKeystore.getKeyById(packet.key_id.toBuffer()) : null;
+            const key = serverKeystore !== null ? serverKeystore.getKeyById(packet.key_id) : null;
             if (key === null) {
                 throw new RpcError("Cannot find key with id " + packet.key_id);
             }
             const ec = elliptic.ec("secp256k1");
-            const ecKey = ec.keyFromPublic(packet.key.toBuffer());
+            const ecKey = ec.keyFromPublic(packet.key);
             this.logger.debug("derive");
             const der = Buffer.from((<pki.common.keystore.EccKeyPair>key.keyPair).keyPair.derive(ecKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
@@ -294,7 +294,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 if (this.keyLoginService === null) {
                     throw new RpcError("Key Login handshake unavailable");
                 }
-                this.logger.debug("key login init request", {packet: packet});
+                this.logger.debug({packet: packet}, "key login init request");
                 if (packet.agent != null) {
                     this.clientAgent = packet.agent;
                 }
@@ -307,12 +307,12 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                     agent: this.getServerAgent(),
                     config: this.getServerConfig(),
                 };
-                this.logger.debug("send key init response", {response: keyResponse});
+                this.logger.debug({response: keyResponse}, "send key init response");
                 methodInfo.success = true;
                 methodInfo.sessionId = response.sessionId;
                 methodInfo.response = {result: keyResponse};
                 this.send(
-                    this.psonHelper.pson_encode(keyResponse),
+                    this.getEncoder().encode(keyResponse),
                     ContentType.HANDSHAKE,
                 );
             });
@@ -345,14 +345,14 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 const keyResponse: types.packet.KeyExchangeResponsePacket = {
                     type: "key_exchange",
                     additionalLoginStep: response.additionalLoginStep,
-                    tickets: tickets.ids.map(x => ByteBuffer.wrap(x)),
+                    tickets: tickets.ids,
                     ttl: Math.floor(tickets.ttl / 1000),
                 };
-                this.logger.debug("send key exchange response", {response: keyResponse});
+                this.logger.debug({response: keyResponse}, "send key exchange response");
                 methodInfo.success = true;
                 methodInfo.response = {result: keyResponse};
                 this.send(
-                    this.psonHelper.pson_encode(keyResponse),
+                    this.getEncoder().encode(keyResponse),
                     ContentType.HANDSHAKE,
                 );
                 this.changeWriteCipherSpec();

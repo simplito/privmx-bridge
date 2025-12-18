@@ -22,16 +22,16 @@ export class Worker2ServiceClient implements IWorker2Service {
     ) {
     }
     
-    sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId; event: PlainApiEvent}): Promise<void> {
-        return this.ipcRequester.request("sendWebsocketNotificationToPlainUsers", model);
+    sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId; event: PlainApiEvent}): void {
+        this.ipcRequester.publishToBroker("sendWebsocketNotificationToPlainUsers", model);
     }
     
-    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        return this.ipcRequester.request("sendWebsocketNotificationAndAggregateData", model);
+    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): void {
+        this.ipcRequester.publishToBroker("sendWebsocketNotificationAndAggregateData", model);
     }
     
-    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        return this.ipcRequester.request("sendWebsocketNotificationAndAggregateData", model);
+    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): void {
+        this.ipcRequester.publishToBroker("sendWebsocketNotificationAndAggregateData", model);
     }
     
     hasOpenConnectionWithUsername(model: { host: types.core.Host; username: types.core.Username; }): Promise<boolean> {

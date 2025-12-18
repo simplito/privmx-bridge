@@ -106,7 +106,7 @@ export class RequestScopeIOC {
                 this.getServerEndpoint(),
                 this.getRequestInfoHolder(),
                 this.ioc.getClientIpService(),
-                this.ioc.getLoggerFactory().get(ApiEndpoint),
+                this.ioc.createLogger(ApiEndpoint),
                 this.ioc.getIpRateLimiterClient(),
             );
         }
@@ -132,7 +132,7 @@ export class RequestScopeIOC {
                 this.getRequestInfoHolder(),
                 this.ioc.getLoginLogService(),
                 this.ioc.getMaintenanceService(),
-                this.ioc.getLoggerFactory().get(SrpLoginService),
+                this.ioc.createLogger(SrpLoginService),
             );
         }
         return this.srpLoginService;
@@ -146,7 +146,7 @@ export class RequestScopeIOC {
                 this.ioc.getNonceService(),
                 this.ioc.getCallbacks(),
                 this.getRequestInfoHolder(),
-                this.ioc.getLoggerFactory().get(KeyLoginService),
+                this.ioc.createLogger(KeyLoginService),
             );
         }
         return this.keyLoginService;
@@ -169,7 +169,7 @@ export class RequestScopeIOC {
             this.sessionLoginService = new SessionLoginService(
                 this.getSessionHolder(),
                 this.ioc.getNonceService(),
-                this.ioc.getLoggerFactory().get(SessionLoginService),
+                this.ioc.createLogger(SessionLoginService),
             );
         }
         return this.sessionLoginService;
@@ -194,9 +194,10 @@ export class RequestScopeIOC {
                 this.getEcdheLoginService(),
                 this.getSessionLoginService(),
                 this.ioc.getServerAgent(),
-                this.ioc.getLoggerFactory().get(ServerEndpoint),
+                this.ioc.createLogger(ServerEndpoint),
                 this.ioc.getLoggerFactory(),
                 this.ioc.getServerSignatureService(),
+                this.ioc.getInstanceHost(),
             );
         }
         return this.serverEndpoint;

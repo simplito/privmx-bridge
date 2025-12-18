@@ -22,7 +22,7 @@ import { PromiseUtils } from "../../utils/PromiseUtils";
 import { Deferred } from "../../CommonTypes";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
 import { MetricService } from "../../service/misc/MetricService";
-import { ConsoleAppender, Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { HttpClient2 } from "../../utils/HttpClient2";
 import { ConfigLoader } from "../../service/config/ConfigLoader";
 import { ContextApiClient } from "../../api/main/context/ContextApiClient";
@@ -48,6 +48,7 @@ import * as types from "../../types";
 import { KvdbApiClient } from "../../api/main/kvdb/KvdbApiClient";
 import { ManagementKvdbApiClient } from "../../api/plain/kvdb/ManagementKvdbApiClient";
 import { Crypto } from "../../utils/crypto/Crypto";
+import { pino } from "pino";
 
 interface Collection {
     name: string;
@@ -163,6 +164,10 @@ export class BaseTestSet {
             "port": 3001,
             "hostname": "0.0.0.0",
             "workers": 1,
+            "broker": {
+                "mode": "internal",
+                "brokerUri": "/tmp/pmx_event",
+            },
         },
         "db": {
             "mongo": {
@@ -256,6 +261,7 @@ export class BaseTestSet {
             if (workerId) {
                 this.defaultConfig.server.port += workerId;
                 this.defaultConfig.db.mongo.dbName += "-" + workerId;
+                this.defaultConfig.server.broker.brokerUri += "=" + workerId;
                 this.configPath = "/tmp/config" + workerId + ".json";
             }
             await this.connectToMongo();
@@ -437,8 +443,9 @@ export class BaseTestSet {
     private async connectToMongo() {
         this.dbManager = new MongoDbManager(
             new MongoClient(this.defaultConfig.db.mongo.url),
-            new Logger("Tests", "TestLogger", 0, new ConsoleAppender(), true),
+            new Logger("Tests", "TestLogger", pino()),
             new MetricService(),
+            new Map<string, unknown>(),
         );
         this.dbManager.init(this.defaultConfig.db.mongo.dbName);
     }

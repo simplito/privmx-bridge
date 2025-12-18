@@ -261,7 +261,6 @@ export class CloudAclChecker {
         this.groups.set("WRITE" as types.cloud.AclGroupName, allWrite);
         const allAll = {...storeAll, ...threadAll, ...inboxAll, ...streamAll, ...contextAll, ...kvdbAll};
         this.groups.set("ALL" as types.cloud.AclGroupName, allAll);
-        
         this.functions = allAll;
     }
     

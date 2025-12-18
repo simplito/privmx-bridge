@@ -81,6 +81,7 @@ export interface SteramRoomDeleteManyResult {
 
 export interface StreamRoomListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.stream.StreamRoomType;
     sortBy?: "createDate"|"lastModificationDate";
 }

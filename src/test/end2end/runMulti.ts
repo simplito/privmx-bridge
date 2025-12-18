@@ -52,7 +52,9 @@ async function runTestsInParallel(testSets: TestSet[]) {
         };
         
         const numCPUs = os.cpus().length;
-        for (let i = 0; i < numCPUs; i++) {
+        const targetWorkers = Math.floor(numCPUs / 2);
+        const numWorkers = Math.max(1, targetWorkers);
+        for (let i = 0; i < numWorkers; i++) {
             const worker = cluster.fork();
             worker.on("message", (message: TestSummary) => handleWorkerMessage(worker, message));
             processIdleWorker(worker);

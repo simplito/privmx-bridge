@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import { DbManager } from "../../db/DbManager";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { ObjectRepositoryFactory } from "../../db/ObjectRepository";
 import * as types from "../../types";
 import { IOC } from "../../service/ioc/IOC";
@@ -38,6 +38,8 @@ import { Migration064ResourceId } from "./Migration064ResourceId";
 import { Migration065AddKvdbCollections } from "./Migration065AddKvdbCollections";
 import { Migration066MongoStorage } from "./Migration066MongoStorage";
 import { Migration067AddNotificationCollection } from "./Migration067AddNotificationCollection";
+import { Migration068KnownPublicKeysCollection } from "./Migration068KnownPublicKeysCollection";
+import { Migration069IndexesForSession } from "./Migration069IndexesForSession";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -81,6 +83,8 @@ export class MigrationManager {
         Migration065AddKvdbCollections,
         Migration066MongoStorage,
         Migration067AddNotificationCollection,
+        Migration068KnownPublicKeysCollection,
+        Migration069IndexesForSession,
     ];
     static DB_VERSION: string|null = null;
     
@@ -115,7 +119,7 @@ export class MigrationManager {
                     this.logger.debug("Migration '" + migration.id + "' already done!");
                     continue;
                 }
-                this.logger.debug("Performing '" + migration.id + "' migration...");
+                this.logger.out("Performing '" + migration.id + "' migration...");
                 model = {
                     id: migration.id,
                     startDate: DateUtils.now(),
@@ -133,10 +137,10 @@ export class MigrationManager {
                     model.endDate = DateUtils.now();
                     model.status = "SUCCESS";
                     await repo.update(model);
-                    this.logger.debug("Migration '" + migration.id + "' successfully finished!");
+                    this.logger.out("Migration '" + migration.id + "' successfully finished!");
                 }
                 catch (e) {
-                    this.logger.error("Error during performing migration '" + migration.id + "'", e);
+                    this.logger.error(e, `Error during performing migration ${migration.id}`);
                     model.endDate = DateUtils.now();
                     model.status = "FAIL";
                     await repo.update(model);

@@ -76,7 +76,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomList(model: streamApi.StreamRoomListModel): Promise<streamApi.StreamRoomListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, streamRooms} = await this.streamService.getMyStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, streamRooms} = await this.streamService.getMyStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
         return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x)), count: streamRooms.count};
     }

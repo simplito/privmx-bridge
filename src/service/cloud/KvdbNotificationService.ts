@@ -43,28 +43,26 @@ export class KvdbNotificationService {
         this.safe("kvdbCustomEvent", async () => {
             const now = DateUtils.now();
             const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(kvdb.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(kvdb.contextId, kvdb.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<kvdbApi.KvdbCustomEvent>(
-                    [user.userPubKey],
-                    {
-                        containerId: kvdb.id,
-                        contextId: kvdb.contextId,
-                        channel: `kvdb/custom/${customChannelName}` as types.core.WsChannelName,
-                        containerType: kvdb.type,
+            this.webSocketSender.sendCloudEventAtChannel<kvdbApi.KvdbCustomEvent>(
+                contextUsers.map(u => u.userPubKey),
+                {
+                    containerId: kvdb.id,
+                    contextId: kvdb.contextId,
+                    channel: `kvdb/custom/${customChannelName}` as types.core.WsChannelName,
+                    containerType: kvdb.type,
+                },
+                {
+                    channel: `kvdb/${kvdb.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: kvdb.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
                     },
-                    {
-                        channel: `kvdb/${kvdb.id}/${customChannelName}`,
-                        type: "custom",
-                        data: {
-                            id: kvdb.id,
-                            author: author,
-                            keyId: keyId,
-                            eventData: eventData,
-                        },
-                        timestamp: now,
-                    },
-                );
-            }
+                    timestamp: now,
+                },
+            );
         });
     }
     
