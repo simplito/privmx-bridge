@@ -180,6 +180,11 @@ export class BaseTestSet {
             "tmpDir": "/tmp/privmx-bridge-e2e-tests/tmp",
         },
         "dbMigrationId": "Migration048FixAclCache",
+        "streams": {
+            "mediaServer": {
+                "fake": true,
+            },
+        },
     };
     
     protected apis!: {

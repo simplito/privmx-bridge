@@ -70,5 +70,6 @@
     "allTimeUsers": [
       "janek"
     ],
-    "policy": {}
+    "policy": {},
+    "closed": false
 }]

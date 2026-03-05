@@ -26,6 +26,8 @@ import { LoggerFactory } from "../../service/log/LoggerFactory";
 import type { Socket } from "net";
 import { Utils } from "../../utils/Utils";
 import { DateUtils } from "../../utils/DateUtils";
+import * as types from "../../types";
+import type { IOC } from "../../service/ioc/IOC";
 
 type TrackedSocket = Socket & { _isErrorListenerAttached?: boolean };
 
@@ -116,9 +118,51 @@ async function initWorker(worker: Cluster.Worker) {
     const metricsContainer = registry.getMetricsContainer();
     const aggregatedNotificationService = registry.getAggregatedNotificationsService();
     const websocketInnerManager = registry.getWebSocketInnerManager();
+    const handler = registry.getHttpHandler();
     void metricsContainer.sendDefaultMetrics(await metricsCollector.getThisWorkerMetrics());
     jobService.addPeriodicJob(async () => aggregatedNotificationService.flush((model) => websocketInnerManager.send(model.host, model.channel, model.clients, model.event as any)), DateUtils.seconds(1), "aggregated events flush");
     jobService.addPeriodicJob(async () => metricsContainer.sendDefaultMetrics(await metricsCollector.getThisWorkerMetrics()), DateUtils.seconds(10), "metrics scrap");
+    if (Utils.getFirstWorkerId() == workerId) {
+        jobService.addPeriodicJob(async () => {
+            const janusRoomsWatcherCache = registry.getJanusRoomsWatcherCache();
+            const BATCH_SIZE = 50;
+            const MAX_ITERATIONS = 40;
+            const activeIocContexts = new Map<types.core.Host, IOC>();
+            for (let i = 0; i < MAX_ITERATIONS; i++) {
+                const batch = await janusRoomsWatcherCache.extractPendingEmptyRooms({limit: BATCH_SIZE});
+                
+                if (batch.length === 0) {
+                    break;
+                }
+                
+                const roomsByHost = new Map<types.core.Host, types.stream.StreamRoomId[]>();
+                for (const item of batch) {
+                    const host = item.host as types.core.Host;
+                    if (!roomsByHost.has(host)) {
+                        roomsByHost.set(host, []);
+                    }
+                        roomsByHost.get(host)!.push(item.streamRoomId);
+                }
+                
+                for (const [host, streamRoomIds] of roomsByHost.entries()) {
+                    try {
+                        let instanceIOC = activeIocContexts.get(host);
+                        if (!instanceIOC) {
+                            instanceIOC = await handler.createContextWithHost(host);
+                            activeIocContexts.set(host, instanceIOC);
+                        }
+                        logger.out(host);
+                        const watcher = instanceIOC.getJanusRoomsWatcher();
+                        await watcher.cleanupEmptyRooms(host as string, streamRoomIds);
+                        
+                    }
+                    catch (e) {
+                        logger.error(e, `Failed to process empty rooms for host: ${host}`);
+                    }
+                }
+            }
+        }, DateUtils.seconds(15), "emptyVideoRoomsClear");
+    }
     registry.getWorkerCallbacks().triggerSync("workerLoaded", []);
     registry.getWorkerCallbacks().triggerZ("workerLoadedAsync", []);
 }

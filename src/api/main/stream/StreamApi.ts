@@ -18,6 +18,9 @@ import { StreamApiValidator } from "./StreamApiValidator";
 import { StreamService } from "../../../service/cloud/StreamService";
 import { StreamConverter } from "./StreamConverter";
 import { RequestLogger } from "../../../service/log/RequestLogger";
+import { WebSocketExtendedWithJanus } from "../../../CommonTypes";
+import { AppException } from "../../AppException";
+import { TurnCredentialsService } from "../../../service/webrtc/v2/TurnCredentialsService";
 
 export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     
@@ -27,6 +30,8 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
         private streamService: StreamService,
         private streamConverter: StreamConverter,
         private requestLogger: RequestLogger,
+        private websocket: WebSocketExtendedWithJanus|null,
+        private turnCredentialsService: TurnCredentialsService,
     ) {
         super(storeApiValidator);
     }
@@ -90,10 +95,163 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
+    async streamList(model: streamApi.StreamListModel): Promise<streamApi.StreamListResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const streams = await this.streamService.listStreams(cloudUser, model.streamRoomId);
+        return {list: streams};
+    }
+    
+    @ApiMethod({})
+    async streamPublish(model: streamApi.StreamPublishModel): Promise<streamApi.StreamPublishResult> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        const res = await this.streamService.publishStream(cloudUser, model.streamRoomId, model.offer, this.websocket, wsId);
+        return res;
+    }
+    
+    @ApiMethod({})
+    async streamUpdate(model: streamApi.StreamUpdateModel): Promise<streamApi.StreamUpdateResult> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        const res = await this.streamService.updateStream(cloudUser, model.streamRoomId, model.offer, this.websocket, wsId);
+        return res;
+    }
+    
+    @ApiMethod({})
+    async streamsSubscribeToRemote(model: streamApi.StreamsSubscribeModel): Promise<streamApi.StreamSubscribeResult> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        const res = await this.streamService.subscribeToRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToAdd, this.websocket, wsId);
+        return res;
+    }
+    
+    @ApiMethod({})
+    async streamsModifyRemoteSubscriptions(model: streamApi.StreamModifySubscriptionModel): Promise<streamApi.StreamSubscribeResult> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        const res = await this.streamService.modifyRemoteSubscriptions(cloudUser, model.streamRoomId, model.subscriptionsToAdd, model.subscriptionsToRemove, this.websocket, wsId);
+        return res;
+    }
+    
+    @ApiMethod({})
+    async streamsUnsubscribeFromRemote(model: streamApi.StreamsUnsubscribeModel): Promise<streamApi.StreamSubscribeResult> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        const res = await this.streamService.unsubscribeFromRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToRemove, this.websocket, wsId);
+        return res;
+    }
+    
+    @ApiMethod({})
+    async streamTrickle(model: streamApi.StreamTrickleModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.trickle(cloudUser, model.rtcCandidate, model.sessionId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamAcceptOffer(model: streamApi.StreamAcceptOfferModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.acceptStreamOffer(cloudUser, model.answer, model.sessionId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.setStreamOffer(cloudUser, model.offer, model.sessionId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamGetTurnCredentials(): Promise<streamApi.StreamGetTurnCredentialsResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        return {credentials: this.turnCredentialsService.getTurnCredentials(cloudUser.pub)};
+    }
+    
+    @ApiMethod({})
+    async streamUnpublish(model: streamApi.StreamUnpublishModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.unpublishStream(cloudUser, model.sessionId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
     async streamRoomSendCustomEvent(model: streamApi.StreamRoomSendCustomEventModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const store = await this.streamService.sendCustomNotification(cloudUser, model.streamRoomId, model.keyId, model.data, model.channel, model.users);
         this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamRoomJoin(model: streamApi.StreamRoomJoinModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.joinStreamRoom(cloudUser, model.streamRoomId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamRoomLeave(model: streamApi.StreamRoomJoinModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.leaveStreamRoom(cloudUser, model.streamRoomId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamRoomEnableRecording(model: streamApi.StreamRoomRecordingModel): Promise<types.core.OK> {
+        if (!this.websocket) {
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+        }
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const wsId = this.sessionService.getSessionUser().getWsId();
+        await this.streamService.enableStreamRoomRecording(cloudUser, model.streamRoomId, this.websocket, wsId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async streamRoomClose(model: streamApi.StreamRoomCloseModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const streamRoom = await this.streamService.closeStreamRoom(cloudUser, model.streamRoomId);
+        this.requestLogger.setContextId(streamRoom.contextId);
         return "OK";
     }
 }

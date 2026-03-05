@@ -24,6 +24,12 @@ export class BaseApiClient {
         return decoded;
     }
     
+    protected async requestWS<T>(method: string, params: unknown) {
+        const result = await this.conn.call(method, params, {sendAlone: true, channelType: "websocket"});
+        const decoded = this.decode(result) as T;
+        return decoded;
+    }
+    
     protected decode(val: any) {
         if (val !== null && typeof(val) === "object") {
             if (val.constructor.name === "Long") {

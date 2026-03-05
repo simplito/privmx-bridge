@@ -11,7 +11,6 @@ limitations under the License.
 
 import * as types from "../../types";
 import { AppException } from "../../api/AppException";
-
 export type AclFunctionNameX =
     | "context/contextGetUsers"
     | "context/contextListUsers"
@@ -74,12 +73,26 @@ export type AclFunctionNameX =
     | "stream/streamRoomGet"
     | "stream/streamRoomList"
     | "stream/streamRoomListAll"
+    | "stream/streamList"
+    | "stream/streamRoomEnableRecording"
     | "stream/READ"
     | "stream/streamRoomCreate"
     | "stream/streamRoomUpdate"
     | "stream/streamRoomDelete"
     | "stream/streamRoomDeleteMany"
+    | "stream/streamRoomClose"
     | "stream/streamSendCustomNotification"
+    | "stream/streamRoomJoin"
+    | "stream/streamRoomLeave"
+    | "stream/streamPublish"
+    | "stream/streamUpdate"
+    | "stream/streamUnpublish"
+    | "stream/streamSubscribe"
+    | "stream/streamUnsubscribe"
+    | "stream/streamModifySubscription"
+    | "stream/streamTrickle"
+    | "stream/streamAcceptOffer"
+    | "stream/streamSetNewOffer"
     | "stream/WRITE"
     | "stream/ALL"
     | "kvdb/kvdbGet"
@@ -207,20 +220,37 @@ export class CloudAclChecker {
         // ===================
         //    STREAM ROOM
         // ===================
+        
         const streamRead = {
             "stream/streamRoomGet": ["streamRoomId"],
             "stream/streamRoomList": [],
             "stream/streamRoomListAll": [],
+            "stream/streamList": ["streamRoomId"],
         } as types.cloud.AclFunctions;
         this.groups.set("stream/READ" as types.cloud.AclGroupName, streamRead);
+        
         const streamWrite = {
             "stream/streamRoomCreate": [],
             "stream/streamRoomUpdate": ["streamRoomId"],
             "stream/streamRoomDelete": ["streamRoomId"],
             "stream/streamRoomDeleteMany": [],
+            "stream/streamRoomClose": ["streamRoomId"],
+            "stream/streamRoomEnableRecording": ["streamRoomId"],
             "stream/streamSendCustomNotification": ["streamRoomId"],
+            "stream/streamRoomJoin": ["streamRoomId"],
+            "stream/streamRoomLeave": ["streamRoomId"],
+            "stream/streamPublish": ["streamRoomId"],
+            "stream/streamUpdate": ["streamRoomId"],
+            "stream/streamUnpublish": ["streamRoomId"],
+            "stream/streamSubscribe": ["streamRoomId"],
+            "stream/streamUnsubscribe": ["streamRoomId"],
+            "stream/streamModifySubscription": ["streamRoomId"],
+            "stream/streamTrickle": ["streamRoomId"],
+            "stream/streamAcceptOffer": ["streamRoomId"],
+            "stream/streamSetNewOffer": ["streamRoomId"],
         } as types.cloud.AclFunctions;
         this.groups.set("stream/WRITE" as types.cloud.AclGroupName, streamWrite);
+        
         const streamAll = {...streamRead, ...streamWrite};
         this.groups.set("stream/ALL" as types.cloud.AclGroupName, streamAll);
         

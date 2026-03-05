@@ -39,6 +39,13 @@ export class Crypto {
     }
     
     /**
+     * HMAC-SHA-1
+     */
+    static hmacSha1(key: Buffer, data: Buffer): Buffer {
+        return Crypto.hmac("sha1", key, data);
+    }
+    
+    /**
      * HMAC-SHA-256
      */
     static hmacSha256(key: Buffer, data: Buffer): Buffer {

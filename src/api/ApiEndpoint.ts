@@ -54,7 +54,7 @@ export class ApiEndpoint {
         try {
             this.requestInfoHolder.setData(
                 this.clientIpService.getClientIp(this.request),
-                <types.core.ServerSessionId> this.request.header("Privmx-Auth"));
+                this.request.header("Privmx-Auth") as types.core.ServerSessionId);
         }
         catch (e) {
             if (e && (e as {message: string}).message == "INVALID_PROXY_SESSION") {
@@ -64,7 +64,7 @@ export class ApiEndpoint {
         }
         const response: EngineResponse = {};
         this.engine.setHeaders(response, "application/octet-stream");
-        response.body = await this.serverEndpoint.execute(<Buffer> this.request.body);
+        response.body = await this.serverEndpoint.execute(this.request.body as Buffer);
         return response;
     }
 }

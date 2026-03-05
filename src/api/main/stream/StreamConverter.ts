@@ -31,6 +31,7 @@ export class StreamConverter {
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,
             policy: stream.policy || {},
+            closed: stream.closed,
         };
         if (stream.clientResourceId) {
             res.resourceId = stream.clientResourceId;

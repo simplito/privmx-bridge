@@ -102,8 +102,11 @@ export class TypesValidator {
     kvdbData: Validator;
     kvdbEntryKey: Validator;
     uuidv4: Validator;
+    stringOrNull: Validator;
+    numberOrNull: Validator;
     containerAccessScope: Validator;
     optionalContainerAccessScope: Validator;
+    streamId: Validator;
     
     constructor() {
         this.builder = new AdvValidator.ValidatorBuilder();
@@ -369,8 +372,11 @@ export class TypesValidator {
                 throw new Error("Value has to be uuid v4");
             }
         });
+        this.stringOrNull = this.builder.createOneOf([this.builder.string, this.builder.nullValue]);
+        this.numberOrNull = this.builder.createOneOf([this.builder.nullValue, this.builder.int]);
         this.containerAccessScope = this.builder.createEnum(["ALL", "MANAGER", "USER", "MEMBER", "OWNER"]);
         this.optionalContainerAccessScope = this.builder.optional(this.containerAccessScope);
+        this.streamId = this.builder.min(this.builder.int, 1);
     }
     
     createAcl(entryType: Validator, aclType: Validator, propertyType: Validator, maxEntryLength: number, maxAclLength: number, maxAclListLength: number) {

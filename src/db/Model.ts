@@ -315,6 +315,8 @@ export namespace stream {
         keys: types.cloud.UserKeysEntry[];
         history: StreamRoomHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
+        janusRoomId: number;
+        closed: boolean;
     }
     
     export interface StreamRoomHistoryEntry {

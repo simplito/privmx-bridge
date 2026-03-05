@@ -18,23 +18,43 @@ export class ManagementStreamApiTest extends BaseTestSet {
     
     private newStreamRooms: types.stream.StreamRoomId[] = [];
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldGetStreamRoom() {
         this.helpers.authorizePlainApi();
         await this.fetchStreamRoom();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeleteStreamRoom() {
         this.helpers.authorizePlainApi();
         await this.deleteSingleStreamRoom();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeleteManyStreamesRoom() {
         this.helpers.authorizePlainApi();
         await this.createNewStreamRooms();
         await this.listAllStreamRooms();
+        await this.listClosedStreamRooms();
+        await this.listActiveStreamRooms();
         await this.deleteAllNewStreamRooms();
         await this.validateStreamRoomCount();
     }
@@ -77,6 +97,30 @@ export class ManagementStreamApiTest extends BaseTestSet {
             limit: 10,
             sortOrder: "asc",
             from: null,
+        });
+        verifyResponseFor("listTlistStreameshreads", result, ["list", "count"]);
+        assert(result.count === this.newStreamRooms.length + 1);
+    }
+    
+    private async listClosedStreamRooms() {
+        const result = await this.plainApis.streamApi.listStreamRooms({
+            contextId: testData.contextId,
+            limit: 10,
+            sortOrder: "asc",
+            from: null,
+            state: "closed",
+        });
+        verifyResponseFor("listTlistStreameshreads", result, ["list", "count"]);
+        assert(result.count === 0);
+    }
+    
+    private async listActiveStreamRooms() {
+        const result = await this.plainApis.streamApi.listStreamRooms({
+            contextId: testData.contextId,
+            limit: 10,
+            sortOrder: "asc",
+            from: null,
+            state: "active",
         });
         verifyResponseFor("listTlistStreameshreads", result, ["list", "count"]);
         assert(result.count === this.newStreamRooms.length + 1);

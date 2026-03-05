@@ -29,6 +29,7 @@ export class ManagementStreamConverter {
             keyId: x.keyId,
             version: <types.stream.StreamRoomVersion>x.history.length,
             publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
+            closed: x.closed,
         };
         return res;
     }

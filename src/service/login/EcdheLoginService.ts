@@ -90,7 +90,10 @@ export class EcdheLoginService {
             throw new AppException("INVALID_SIGNATURE");
         }
         await this.nonceService.nonceCheck2P(Buffer.from("ecdhexlogin", "utf8"), pub, nonce, timestamp, signature);
-        
+        return this.loginUsingKey(key, solutionId, encoderType, plain);
+    }
+    
+    async loginUsingKey(key: types.core.EccPubKey, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean) {
         const keyExists = await this.repositoryFactory.createContextUserRepository().userPubKeyExists(key);
         if (!keyExists) {
             throw new AppException("USER_DOESNT_EXIST");

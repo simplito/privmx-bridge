@@ -107,6 +107,7 @@ import { ManagementStreamConverter } from "../../api/plain/stream/ManagementStre
 import { ManagementStoreConverter } from "../../api/plain/store/ManagementStoreConverter";
 import { ManagementInboxConverter } from "../../api/plain/inbox/ManagementInboxConverter";
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
+import { TurnCredentialsService } from "../webrtc/v2/TurnCredentialsService";
 import { ContextNotificationService } from "../cloud/ContextNotificationService";
 import { StorageServiceProvider } from "../cloud/StorageServiceProvider";
 import { ManagementKvdbApi } from "../../api/plain/kvdb/ManagementKvdbApi";
@@ -121,6 +122,8 @@ import { ServerSignatureService } from "../cloud/ServerSignatureService";
 import { MongoStorageService } from "../cloud/MongoStorageService";
 import { LockHelper } from "../misc/LockHelper";
 import { UserStatusManager } from "../cloud/UserStatusManager";
+import { JanusContextFactory } from "../cloud/JanusContextFactory";
+import { JanusRoomsWatcher } from "../cloud/JanusRoomsWatcher";
 export class IOC {
     
     takeMongoClientFromWorker = true;
@@ -212,6 +215,7 @@ export class IOC {
     protected managementStreamConverter?: ManagementStreamConverter;
     protected managementStoreConverter?: ManagementStoreConverter;
     protected managementInboxConverter?: ManagementInboxConverter;
+    protected turnCredentialsService?: TurnCredentialsService;
     protected contextNotificationService?: ContextNotificationService;
     protected managementKvdbApiValidator?: ManagementKvdbApiValidator;
     protected kvdbService?: KvdbService;
@@ -223,6 +227,8 @@ export class IOC {
     protected mongoStorageService?: MongoStorageService;
     protected lockHelper?: LockHelper;
     protected userStatusManager?: UserStatusManager;
+    protected janusContextFactory?: JanusContextFactory;
+    protected janusRoomsWatcher?: JanusRoomsWatcher;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry) {
         this.instanceHost = instanceHost;
@@ -585,9 +591,10 @@ export class IOC {
             this.mainApiRsolver.registerApiWithPrefix("thread.", ThreadApi, ({ioc: e, sessionService: s}) => new ThreadApi(e.ioc.getThreadApiValidator(), e.ioc.getThreadService(), s, e.ioc.getThreadConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("store.", StoreApi, ({ioc: e, sessionService: s}) => new StoreApi(e.ioc.getStoreApiValidator(), s, e.ioc.getStoreService(), e.ioc.getStoreConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("inbox.", InboxApi, ({ioc: e, sessionService: s}) => new InboxApi(e.ioc.getInboxApiValidator(), s, e.ioc.getInboxService(), e.ioc.getInboxConverter(), e.getRequestLogger()));
-            this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("kvdb.", KvdbApi, ({ioc: e, sessionService: s}) => new KvdbApi(e.ioc.getKvdbApiValidator(), s, e.ioc.getKvdbService(), e.ioc.getKvdbConverter(), e.getRequestLogger()));
-            
+            if (!!this.workerRegistry.getConfig().streams.enabled) {
+                this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger(), e.webSocket, e.ioc.getTurnCredentialsService()));
+            }
             this.getPluginsManager().registerEndpoint(this.mainApiRsolver);
         }
         return this.mainApiRsolver;
@@ -754,13 +761,6 @@ export class IOC {
                 e.ioc.getStoreService(),
                 e.ioc.getManagementStoreConverter(),
             ));
-            this.plainApiResolver.registerApiWithPrefix("stream/", ManagementStreamApi, e => new ManagementStreamApi(
-                e.ioc.getManagementStreamApiValidator(),
-                e.getAuthorizationDetector(),
-                e.getAuthorizationHolder(),
-                e.ioc.getStreamService(),
-                e.ioc.getManagementStreamConverter(),
-            ));
             this.plainApiResolver.registerApiWithPrefix("inbox/", ManagementInboxApi, e => new ManagementInboxApi(
                 e.ioc.getManagementInboxApiValidator(),
                 e.ioc.getInboxService(),
@@ -775,6 +775,15 @@ export class IOC {
                 e.ioc.getKvdbService(),
                 e.ioc.getManagementKvdbConverter(),
             ));
+            if (!!this.workerRegistry.getConfig().streams.enabled) {
+                this.plainApiResolver.registerApiWithPrefix("stream/", ManagementStreamApi, e => new ManagementStreamApi(
+                    e.ioc.getManagementStreamApiValidator(),
+                    e.getAuthorizationDetector(),
+                    e.getAuthorizationHolder(),
+                    e.ioc.getStreamService(),
+                    e.ioc.getManagementStreamConverter(),
+                ));
+            }
             this.getPluginsManager().registerJsonRpcEndpoint(this.plainApiResolver);
         }
         return this.plainApiResolver;
@@ -1203,6 +1212,8 @@ export class IOC {
                 this.getStreamConverter(),
                 this.getRepositoryFactory(),
                 this.getManagementStreamConverter(),
+                this.workerRegistry.getWebSocketOutboundHandler(),
+                this.workerRegistry.getWebSocketInnerManager(),
             );
         }
         return this.streamNotificationService;
@@ -1219,9 +1230,25 @@ export class IOC {
                 this.workerRegistry.getCloudAclChecker(),
                 this.getPolicyService(),
                 this.getCloudAccessValidator(),
+                this.workerRegistry.getConfig(),
+                this.getJanusContextFactory(),
+                this.getJanusRoomsWatcher(),
             );
         }
         return this.streamService;
+    }
+    
+    getJanusContextFactory() {
+        if (this.janusContextFactory == null) {
+            this.janusContextFactory = new JanusContextFactory(
+                this.getLoggerFactory(),
+                this.workerRegistry.getWebSocketOutboundHandler(),
+                this.getStreamNotificationService(),
+                this.getRepositoryFactory(),
+                this.workerRegistry.getConfig(),
+            );
+        }
+        return this.janusContextFactory;
     }
     
     getCloudAccessValidator() {
@@ -1307,5 +1334,27 @@ export class IOC {
             this.managementInboxConverter = new ManagementInboxConverter();
         }
         return this.managementInboxConverter;
+    }
+    
+    getTurnCredentialsService() {
+        if (this.turnCredentialsService == null) {
+            this.turnCredentialsService = new TurnCredentialsService(
+                this.workerRegistry.getConfig(),
+            );
+        }
+        return this.turnCredentialsService;
+    }
+    
+    getJanusRoomsWatcher() {
+        if (this.janusRoomsWatcher == null) {
+            this.janusRoomsWatcher = new JanusRoomsWatcher(
+                this.workerRegistry.getJanusRoomsWatcherCache(),
+                this.getLoggerFactory().createLogger(JanusRoomsWatcher),
+                this.getJanusContextFactory(),
+                this.getJobService(),
+                this.getRepositoryFactory(),
+            );
+        }
+        return this.janusRoomsWatcher;
     }
 }

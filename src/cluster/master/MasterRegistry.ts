@@ -34,6 +34,7 @@ import { IBrokerClient } from "../common/BrokerClient";
 import { MetricsCollector } from "../../service/misc/MetricsCollector";
 import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
 import { ZeroMQBroker } from "./ZeroMQBroker";
+import { JanusRoomsWatcherCache } from "./ipcServices/JanusRoomsWatcherCache";
 
 export class MasterRegistry {
     
@@ -59,6 +60,8 @@ export class MasterRegistry {
     private aggregatedNotificationsService?: AggregatedNotificationsService;
     private metricsCollector?: MetricsCollector;
     private zeroMQBroker?: ZeroMQBroker;
+    private janusRoomsWatcherCache?: JanusRoomsWatcherCache;
+    
     constructor(
         private loggerFactory: LoggerFactory,
     ) {
@@ -141,6 +144,7 @@ export class MasterRegistry {
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
         methodExecutor.register(this.getActiveUsersMap());
+        methodExecutor.register(this.getJanusRoomsWatcherCache());
         methodExecutor.register(this.getLockService());
         methodExecutor.register(this.getWebsocketCommunicationManager());
         methodExecutor.register(this.getAggregatedNotificationsService());
@@ -287,6 +291,15 @@ export class MasterRegistry {
             this.metricsCollector = new MetricsCollector();
         }
         return this.metricsCollector;
+    }
+    
+    getJanusRoomsWatcherCache() {
+        if (!this.janusRoomsWatcherCache) {
+            this.janusRoomsWatcherCache = new JanusRoomsWatcherCache(
+                this.getLoggerFactory().createLogger(JanusRoomsWatcherCache),
+            );
+        }
+        return this.janusRoomsWatcherCache;
     }
     
 }

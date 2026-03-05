@@ -436,7 +436,6 @@ export class ThreadTests extends BaseTestSet {
         const res = await this.apis.threadApi.threadMessageDeleteMany({
             messageIds: this.messageIds,
         });
-        
         for (const result of res.results) {
             assert(result.status === "OK", `Deletion failed!: ${JSON.stringify(result)}`);
         }

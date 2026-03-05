@@ -48,7 +48,13 @@ export class DbQueryTest extends BaseTestSet {
         await this.searchInboxesForExactMatch();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async searchStreamRoomsForExactMatchTest() {
         await this.createStreamRooms();
         await this.searchStreamRoomsForExactMatch();

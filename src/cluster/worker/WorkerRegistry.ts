@@ -38,6 +38,7 @@ import { IpRateLimiterClient } from "./IpRateLimiterClient";
 import type { NonceMap } from "../master/ipcServices/NonceMap";
 import { IpcServiceDescriptor } from "../master/Decorators";
 import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
+import { WebSocketOutboundHandler } from "../../service/ws/WebSocketOutboundHandler";
 import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
 import { HostList } from "./HostList";
@@ -48,6 +49,7 @@ import { IBrokerClient } from "../common/BrokerClient";
 import { MetricsCollector } from "../../service/misc/MetricsCollector";
 import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
 import { BrokerClientProvider } from "./BrokerClientProvider";
+import { JanusRoomsWatcherCache } from "../master/ipcServices/JanusRoomsWatcherCache";
 export class WorkerRegistry {
     
     private worker?: Cluster.Worker;
@@ -62,6 +64,7 @@ export class WorkerRegistry {
     private ipcListener?: IpcListener;
     private ipcRequester?: WorkerIpcRequester;
     private webSocketInnerManager?: WebSocketInnerManager;
+    private webSocketOutboundHandler?: WebSocketOutboundHandler;
     private methodExecutor?: MethodExecutor;
     private ipcExecutor?: IpcExecutor;
     private ipcMessageProcessor?: IpcMessageProcessor;
@@ -278,10 +281,18 @@ export class WorkerRegistry {
         return this.ipcRequester;
     }
     
+    getWebSocketOutboundHandler() {
+        if (this.webSocketOutboundHandler == null) {
+            this.webSocketOutboundHandler = new WebSocketOutboundHandler();
+        }
+        return this.webSocketOutboundHandler;
+    }
+    
     getWebSocketInnerManager() {
         if (this.webSocketInnerManager == null) {
             this.webSocketInnerManager = new WebSocketInnerManager(
                 this.getConfig(),
+                this.getWebSocketOutboundHandler(),
                 this.getLoggerFactory().createLogger(WebSocketInnerManager),
             );
         }
@@ -390,6 +401,10 @@ export class WorkerRegistry {
     
     getActiveUsersMap() {
         return this.getIpcService<ActiveUsersMap>("activeUsersMap");
+    }
+    
+    getJanusRoomsWatcherCache() {
+        return this.getIpcService<JanusRoomsWatcherCache>("janusRoomsWatcherCache");
     }
     
     getWebsocketCommunicationManager() {

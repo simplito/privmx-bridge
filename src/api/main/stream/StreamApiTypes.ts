@@ -9,7 +9,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+import { StreamRoomId } from "privmx-cloud-server-api/src/context";
+import { PublisherAsStream, RTCIceCandidate, StreamTrackModification} from "../../../service/webrtc/v2/WebRtcTypes";
 import * as types from "../../../types";
+import { UserId } from "../../../types/cloud";
 
 export interface StreamRoom {
     id: types.stream.StreamRoomId
@@ -27,6 +30,7 @@ export interface StreamRoom {
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;
+    closed: boolean;
 }
 
 export interface StreamRoomCreateModel {
@@ -97,6 +101,117 @@ export interface StreamRoomListResult {
     count: number;
 }
 
+export interface StreamListModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface StreamListResult {
+    list: PublisherAsStream[];
+}
+
+export interface StreamPublishModel {
+    streamRoomId: types.stream.StreamRoomId;
+    offer: {
+        type: "offer";
+        sdp: string;
+    };
+}
+
+export interface StreamPublishResult {
+    sessionId: types.stream.SessionId;
+    answer?: {
+        type: "answer";
+        sdp: string;
+    };
+    publishedData?: {
+        streamRoomId: StreamRoomId;
+        stream: PublisherAsStream;
+        userId: UserId;
+    }
+}
+
+export interface StreamUpdateModel {
+    streamRoomId: types.stream.StreamRoomId;
+    offer: {
+        type: "offer";
+        sdp: string;
+    };
+}
+
+export interface StreamUpdateResult {
+    sessionId: types.stream.SessionId;
+    answer?: {
+        type: "answer";
+        sdp: string;
+    };
+    publishedData?: {
+        streamRoomId: StreamRoomId;
+        stream: PublisherAsStream;
+        userId: UserId;
+    }
+}
+
+export interface StreamSubscription {
+    streamId: types.stream.StreamId;
+    streamTrackId?: types.stream.StreamTrackId;
+}
+
+export interface StreamsSubscribeModel {
+    streamRoomId: types.stream.StreamRoomId;
+    subscriptionsToAdd: StreamSubscription[];
+}
+
+export interface StreamsUnsubscribeModel {
+    streamRoomId: types.stream.StreamRoomId;
+    subscriptionsToRemove: StreamSubscription[];
+}
+
+export interface StreamModifySubscriptionModel {
+    streamRoomId: types.stream.StreamRoomId;
+    subscriptionsToAdd: StreamSubscription[];
+    subscriptionsToRemove: StreamSubscription[];
+}
+
+export interface StreamTrickleModel {
+    sessionId: types.stream.SessionId;
+    rtcCandidate: RTCIceCandidate;
+}
+
+export interface StreamSubscribeResult {
+    offer?: {
+        type: "offer";
+        sdp: string;
+    };
+    sessionId: types.stream.SessionId;
+}
+
+export interface StreamAcceptOfferModel {
+    sessionId: types.stream.SessionId;
+    answer: {
+        type: "answer";
+        sdp: string;
+    };
+}
+
+export interface StreamSetNewOfferModel {
+    sessionId: types.stream.SessionId;
+    offer: {
+        type: "offer";
+        sdp: string;
+    };
+}
+
+export interface StreamGetTurnCredentialsResult {
+    credentials: TurnCredentials[];
+}
+
+export interface TurnCredentials {
+    url: string;
+    username: string;
+    password: string;
+    expirationTime: number;
+}
+
 export type StreamRoomListAllResult = StreamRoomListResult;
 
 export type StreamRoomCreatedEvent = types.cloud.Event<"streamRoomCreated", "stream", StreamRoomCreatedEventData>;
@@ -111,7 +226,43 @@ export interface StreamRoomDeletedEventData {
     type?: types.stream.StreamRoomType;
 }
 
+export type JanusGenericEvent = types.cloud.Event<"janus", "stream", unknown>;
+export type JanusCloseEvent = types.cloud.Event<"janusclose", "stream", true>;
+
 export type StreamRoomCustomEvent = types.cloud.Event<"custom", `stream/${types.stream.StreamRoomId}/${types.core.WsChannelName}`, StreamRoomCustomEventData>;
+
+export type StreamPublishedEvent = types.cloud.Event<"streamPublished", "stream", StreamPublishedEventData>;
+export type StreamUpdatedEvent = types.cloud.Event<"streamUpdated", "stream", StreamUpdatedEventData>;
+export type StreamJoinedEvent = types.cloud.Event<"streamJoined", "stream", StreamJoinedEventData>;
+export type StreamUnpublishedEvent = types.cloud.Event<"streamUnpublished", "stream", StreamUnpublishedEventData>;
+export type StreamLeftEvent = types.cloud.Event<"streamLeft", "stream", StreamLeftEventData>;
+
+export interface StreamPublishedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    stream: PublisherAsStream;
+    userId: types.cloud.UserId;
+}
+export interface StreamUpdatedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    streamsAdded: PublisherAsStream[];
+    streamsRemoved: PublisherAsStream[];
+    streamsModified: StreamTrackModification[];
+}
+export interface StreamJoinedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    stream: PublisherAsStream;
+    userId: types.cloud.UserId;
+}
+export interface StreamUnpublishedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    streamId: number;
+    userId: types.cloud.UserId;
+}
+export interface StreamLeftEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    streamId: number;
+    userId: types.cloud.UserId;
+}
 
 export interface StreamRoomCustomEventData {
     id: types.stream.StreamRoomId;
@@ -128,6 +279,31 @@ export interface StreamRoomSendCustomEventModel {
     users?: types.cloud.UserId[];
 }
 
+export interface StreamLeaveModel {
+    streamRoomId: types.stream.StreamRoomId;
+    streamIds: number[];
+}
+
+export interface StreamUnpublishModel {
+    sessionId: types.stream.SessionId;
+}
+
+export interface StreamRoomJoinModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface StreamRoomLeaveModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface StreamRoomRecordingModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface StreamRoomCloseModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
 export interface IStreamApi {
     streamRoomCreate(model: StreamRoomCreateModel): Promise<StreamRoomCreateResult>;
     streamRoomUpdate(model: StreamRoomUpdateModel): Promise<types.core.OK>;
@@ -136,5 +312,18 @@ export interface IStreamApi {
     streamRoomGet(model: StreamRoomGetModel): Promise<StreamRoomGetResult>;
     streamRoomList(model: StreamRoomListModel): Promise<StreamRoomListResult>;
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
+    streamList(model: StreamListModel): Promise<StreamListResult>;
+    streamPublish(model: StreamPublishModel): Promise<StreamPublishResult>;
+    streamsSubscribeToRemote(model: StreamsSubscribeModel): Promise<StreamSubscribeResult>;
+    streamsModifyRemoteSubscriptions(model: StreamModifySubscriptionModel): Promise<StreamSubscribeResult>;
+    streamsUnsubscribeFromRemote(model: StreamsUnsubscribeModel): Promise<StreamSubscribeResult>
+    streamAcceptOffer(model: StreamAcceptOfferModel): Promise<types.core.OK>;
+    streamSetNewOffer(model: StreamSetNewOfferModel): Promise<types.core.OK>;
+    streamTrickle(model: StreamTrickleModel): Promise<types.core.OK>;
+    streamGetTurnCredentials(): Promise<StreamGetTurnCredentialsResult>;
     streamRoomSendCustomEvent(model: StreamRoomSendCustomEventModel): Promise<types.core.OK>;
+    streamUnpublish(model: StreamUnpublishModel): Promise<types.core.OK>
+    streamRoomJoin(model: StreamRoomJoinModel): Promise<types.core.OK>
+    streamRoomLeave(model: StreamRoomLeaveModel): Promise<types.core.OK>
+    streamRoomClose(model: StreamRoomCloseModel): Promise<types.core.OK>
 }

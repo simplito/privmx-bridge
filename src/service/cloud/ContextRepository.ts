@@ -87,7 +87,7 @@ export class ContextRepository {
         }, model, "created");
     }
     
-    static getPaginationFilterForContainer(solutionId: types.cloud.SolutionId, contextId: types.context.ContextId, userId: types.cloud.UserId, query: types.core.Query|undefined, type: string|undefined, scope: types.core.ContainerAccessScope) {
+    static getPaginationFilterForContainer(contextId: types.context.ContextId, userId: types.cloud.UserId, query: types.core.Query|undefined, type: string|undefined, scope: types.core.ContainerAccessScope) {
         const mongoQueries = query ? [MongoQueryConverter.convertQuery(query)] : [];
         const match = this.getScopeFilter(scope, contextId, userId);
         if (type) {
@@ -98,22 +98,6 @@ export class ContextRepository {
                 $match: match,
             },
             ...mongoQueries,
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            },
         ];
     }
     

@@ -14,6 +14,8 @@ import * as types from "../../../types";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
 import { testData } from "../../datasets/testData";
 import { BaseTestSet, Test } from "../BaseTestSet";
+import { ECUtils } from "../../../utils/crypto/ECUtils";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 
 export class NotificationTest extends BaseTestSet {
     
@@ -24,6 +26,7 @@ export class NotificationTest extends BaseTestSet {
     private newNoTypeThreadId?: types.thread.ThreadId;
     private newInboxTypeThreadId?: types.thread.ThreadId;
     private newThreadTypeThreadId?: types.thread.ThreadId;
+    private secondaryConnections: PrivmxRpc.AuthorizedConnection[] = [];
     
     @Test()
     async shouldDeliverCustomThreadNotification() {
@@ -46,7 +49,13 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeliverCustomStreamNotification() {
         await this.subscribeToCustomMyChannelStreamNotificationChannel();
         await this.sendNewCustomMyChannelStreamNotification();
@@ -61,7 +70,13 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldNotDeliverInternalStreamNotification() {
         await this.subscribeToCustomMyChannelStreamNotificationChannel();
         await this.sendNewInternalStreamNotification();
@@ -69,7 +84,13 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldNotDeliverInternalStreamNotificationWithNewChannels() {
         await this.subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels();
         await this.sendNewInternalStreamNotification();
@@ -77,21 +98,39 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeliverCustomStreamNotificationWithNewChannels() {
         await this.subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels();
         await this.sendNewCustomMyChannelStreamNotification();
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeliverCustomStreamNotificationWithNewChannelsAndSubPath() {
         await this.subscribeToAllCustomStreamNotificationChannelWithNewChannels();
         await this.sendNewCustomStreamNotificationWithSubPathAbc();
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeliverCustomStreamNotificationWithNewChannelsAndSubPathDefOnly() {
         await this.subscribeToCustomStreamNotificationChannelWithNewChannelsWithChannelCustomDef();
         await this.sendNewCustomStreamNotificationWithSubPathAbc();
@@ -108,7 +147,13 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldSubcribeToAllStreamNotificationsAndReceiveAllNotifications() {
         await this.subscribeToAllCustomStreamNotifications();
         await this.sendNewCustomStreamNotificationWithSubPathAbc();
@@ -117,7 +162,13 @@ export class NotificationTest extends BaseTestSet {
         await this.checkIfThreeNotificationWereDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldSubcribeToStreamChannelsAndThenUnsubscribe() {
         await this.subscribeToAllCustomStreamNotifications();
         await this.unsubscribeFromAllCustomStreamNotifications();
@@ -183,6 +234,44 @@ export class NotificationTest extends BaseTestSet {
         await this.startListeningOnEvents();
         await this.subscribeToAllContextEvents();
         await this.checkIfNotificationNumberMatchUserIdentitiesNumber();
+    }
+    
+    @Test()
+    async shouldReceiveContextUserStatusChangeOnLogin() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        
+        const { userId } = await this.createAndLoginNewUser();
+        
+        await this.checkIfUserStatusNotificationReceived("login", 1, userId);
+        await this.cleanupSecondaryConnections();
+    }
+    
+    @Test()
+    async shouldReceiveContextUserStatusChangeOnLogout() {
+        const { connection, userId } = await this.createAndLoginNewUser();
+        
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        
+        await PromiseUtils.wait(1500);
+        await this.emptyNotificationQueue();
+        connection.destroy();
+        this.secondaryConnections = this.secondaryConnections.filter(c => c !== connection);
+        
+        await this.checkIfUserStatusNotificationReceived("logout", 1, userId);
+    }
+    
+    @Test()
+    async shouldReceiveAggregatedContextUserStatusChange() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        const users = await Promise.all([
+            this.createAndLoginNewUser(),
+            this.createAndLoginNewUser(),
+        ]);
+        await this.checkIfAggregatedUserStatusNotificationReceived("login", users.map(u => u.userId));
+        await this.cleanupSecondaryConnections();
     }
     
     async unsubscribeFromAllCustomStreamNotifications() {
@@ -321,6 +410,60 @@ export class NotificationTest extends BaseTestSet {
         if (this.customNotificationDataQueue.length !== 4) { // 4 because user belongs to 4 contexts in default dataset
             throw new Error(`Custom notification count expected: 4, got: ${this.customNotificationDataQueue.length}`);
         }
+    }
+    
+    async createAndLoginNewUser() {
+        const keys = ECUtils.generateKeyPair();
+        const pubKey = ECUtils.publicToBase58DER(keys.keyPair);
+        const userId = `NewUser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` as types.cloud.UserId;
+        const privKey = keys.privWif;
+        
+        this.helpers.authorizePlainApi();
+        await this.plainApis.contextApi.addUserToContext({
+            contextId: testData.contextId,
+            userId: userId,
+            userPubKey: pubKey,
+        });
+        
+        const connection = await this.helpers.createNewConnection(privKey, testData.solutionId);
+        this.secondaryConnections.push(connection);
+        return { connection, userId };
+    }
+    
+    async checkIfUserStatusNotificationReceived(action: "login"|"logout", expectedCount: number, targetUserId: types.cloud.UserId) {
+        await PromiseUtils.wait(1500);
+        let count = 0;
+        for (const evt of this.customNotificationDataQueue) {
+            const typedEvt = evt as unknown as { users?: { userId: string, action: string }[] };
+            if (typedEvt && Array.isArray(typedEvt.users)) {
+                count += typedEvt.users.filter(u => u.action === action && u.userId === targetUserId).length;
+            }
+        }
+        assert(count === expectedCount, `Expected ${expectedCount} users with action '${action}' for user ${targetUserId}, found ${count}`);
+    }
+    
+    async checkIfAggregatedUserStatusNotificationReceived(action: "login"|"logout", targetUserIds: types.cloud.UserId[]) {
+        await PromiseUtils.wait(1500);
+        const foundUsers = new Set<string>();
+        
+        for (const evt of this.customNotificationDataQueue) {
+            const typedEvt = evt as unknown as { users?: { userId: types.cloud.UserId, action: string }[] };
+            if (typedEvt && Array.isArray(typedEvt.users)) {
+                for (const u of typedEvt.users) {
+                    if (u.action === action && targetUserIds.includes(u.userId)) {
+                        foundUsers.add(u.userId);
+                    }
+                }
+            }
+        }
+        assert(foundUsers.size === targetUserIds.length, `Expected events for ${targetUserIds.length} users, found ${foundUsers.size}`);
+    }
+    
+    async cleanupSecondaryConnections() {
+        for (const c of this.secondaryConnections) {
+            c.destroy();
+        }
+        this.secondaryConnections = [];
     }
     
     async subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels() {

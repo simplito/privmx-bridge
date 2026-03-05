@@ -20,7 +20,6 @@ import { MongoDebug } from "../../db/mongo/MongoDebug";
 import { DateUtils } from "../../utils/DateUtils";
 import { PluginsLoader } from "../../service/plugin/PluginsLoader";
 import { Utils } from "../../utils/Utils";
-
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;
 

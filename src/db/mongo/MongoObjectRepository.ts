@@ -262,7 +262,7 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
     }
     
     query(f: (q: Query<V>) => QueryResult): ObjectQuery<V> {
-        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), x => this.convertFromDbObj(x), this.session, <string> this.idProperty, this.logger, this.metricService);
+        return new MongoObjectQuery(this.collection, f(new MongoQuery(this.idProperty)), x => this.convertFromDbObj(x), this.session, this.idProperty as string, this.logger, this.metricService);
     }
     
     /** Perform find with sort, skip and limit and returns list of found elements and count of all matched elements */

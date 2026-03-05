@@ -71,6 +71,20 @@ export interface Config {
         whitelist: types.core.IPAddress[];
     };
     maximumChannelsPerSession: number,
+    streams: {
+        enabled: boolean;
+        mediaServer: {
+            fake?: boolean;
+            url: string;
+            port: number;
+            secret: string;
+            allowSelfSignedCerts: boolean;
+        };
+        turnServers: {
+            url: string;
+            sharedSecret: string;
+        }[];
+    };
 }
 
 export interface SingleServerMode {
@@ -160,6 +174,22 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             whitelist: process.env.PMX_LIMITER_WHITELIST ? process.env.PMX_LIMITER_WHITELIST.split(",") as types.core.IPAddress[] : [],
         },
         maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 128,
+        streams: {
+            enabled: Boolean(process.env.PMX_STREAM_ENABLED === "true"),
+            mediaServer: {
+                fake: false,
+                url: process.env.PMX_STREAMS_MEDIA_SERVER || "localhost",
+                port: parseInt(process.env.PMX_STREAMS_MEDIA_SERVER_PORT || "", 10) || 8989,
+                secret: process.env.PMX_STREAMS_MEDIA_SERVER_SECRET || "<janus_secret>",
+                allowSelfSignedCerts: process.env.PMX_MEDIA_SERVER_ALLLOW_SELF_SIGNED_CERTS === "true" || false,
+            },
+            turnServers: [
+                {
+                    url: process.env.PMX_STREAMS_TURN_SERVER || "turn:127.0.0.1:3478",
+                    sharedSecret: process.env.PMX_STREAMS_TURN_SERVER_SECRET || "<turn_secret>",
+                },
+            ],
+        },
     };
     if (callbacks) {
         callbacks.triggerSync("applyDefaultConfig", [defaultConfig]);

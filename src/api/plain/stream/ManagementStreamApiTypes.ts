@@ -24,6 +24,7 @@ export interface GetStreamRoomResult {
 export interface ListStreamRoomsModel extends types.core.ListModel2<types.stream.StreamRoomId> {
     /** Context's ID */
     contextId: types.context.ContextId;
+    state?: "all"|"closed"|"active";
 }
 
 export interface ListStreamRoomsResult {
@@ -70,7 +71,9 @@ export interface StreamRoom {
     /** Version */
     version: types.stream.StreamRoomVersion;
     /** Public meta data set by user, equal to null if does not exist */
-    publicMeta: unknown
+    publicMeta: unknown;
+    /** If stream room is closed */
+    closed: boolean;
 }
 
 export interface StreamRoomDeletedData {

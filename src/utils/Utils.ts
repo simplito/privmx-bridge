@@ -16,6 +16,8 @@ import { Deferred, Dictionary, Immutable, ParsedHashmail, Result, SettleResult, 
 import { Base64 } from "./Base64";
 import { Crypto } from "./crypto/Crypto";
 import type * as Cluster from "cluster";
+import type * as WebSocket from "ws";
+
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;
 
@@ -528,5 +530,25 @@ export class Utils {
     static getThisWorkerId() {
         const mainId = cluster.isPrimary ? "MS" : `WORKER${(cluster.worker?.id.toString().padStart(2, "0") || "-1")}`;
         return `${mainId}`;
+    }
+    
+    static getFirstWorkerId() {
+        return "WORKER01";
+    }
+    
+    static convertWebSocketDataToString(data: WebSocket.Data) {
+        if (typeof(data) === "string") {
+            return data;
+        }
+        if (data instanceof ArrayBuffer) {
+            return Buffer.from(data).toString("utf8");
+        }
+        if (Buffer.isBuffer(data)) {
+            return data.toString("utf8");
+        }
+        if (Array.isArray(data)) {
+            return Buffer.concat(data).toString("utf8");
+        }
+        throw new Error("Cannot convert WebSocketData to string");
     }
 }

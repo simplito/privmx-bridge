@@ -12,29 +12,25 @@ limitations under the License.
 import * as WebSocket from "ws";
 import * as types from "../../types";
 import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
-import { Crypto } from "../../utils/crypto/Crypto";
-import { PsonHelperEx } from "../../utils/PsonHelperEx";
 import { PlainApiEvent } from "../../api/plain/Types";
 import { TargetChannel } from "./WebSocketConnectionManager";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { AppException } from "../../api/AppException";
-import { EncoderHelper, EncoderType } from "../../utils/Encoder";
-import { DateUtils } from "../../utils/DateUtils";
 import { Logger } from "../log/Logger";
+import { WebSocketOutboundHandler } from "./WebSocketOutboundHandler";
 
 export class WebSocketInnerManager {
     
     private servers: WebSocket.Server[];
-    private encoderHelper: EncoderHelper;
     private userLookUpMap: Map<types.core.Username, WebSocketEx[]> = new Map();
     private plainUsersMap: Map<string, WebSocketEx> = new Map();
     
     constructor(
         private config: Config,
+        private webSocketOutboundHandler: WebSocketOutboundHandler,
         private logger: Logger,
     ) {
         this.servers = [];
-        this.encoderHelper = new EncoderHelper(new PsonHelperEx([]));
     }
     
     registerServer(server: WebSocket.Server) {
@@ -76,7 +72,7 @@ export class WebSocketInnerManager {
                         const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
                         sessionEventCopy.subscriptions = matchingSubscriptions;
                         sessionEventCopy.version = options.version;
-                        this.sendToWsSession(socket, session, sessionEventCopy);
+                        this.webSocketOutboundHandler.sendToWsSession(socket, session, sessionEventCopy);
                     }
                 }
             }
@@ -96,14 +92,14 @@ export class WebSocketInnerManager {
                         const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
                         sessionEventCopy.subscriptions = matchingSubscriptions;
                         sessionEventCopy.version = options.version;
-                        this.sendToWsSession(ws, session, sessionEventCopy);
+                        this.webSocketOutboundHandler.sendToWsSession(ws, session, sessionEventCopy);
                     }
                 }
             }
         }
     }
     
-    private getMatchingsubscriptionsAndOptions(targetChannel: TargetChannel, userChannels: types.cloud.ChannelScheme[]) {
+    public getMatchingsubscriptionsAndOptions(targetChannel: TargetChannel, userChannels: types.cloud.ChannelScheme[]) {
         const matchingSubscriptions = [];
         const options = {
             version: 2,
@@ -134,66 +130,6 @@ export class WebSocketInnerManager {
     
     private isPathPrefix(parent: string, child: string): boolean {
         return child.startsWith(parent);
-    }
-    
-    prepareEvent(session: WebSocketSession, message: Buffer, plain?: boolean) {
-        const prefix = this.preparePrefix(session);
-        const cipher = Buffer.concat([prefix, plain ? message : Crypto.aes256CbcHmac256Encrypt(message, session.encryptionKey)]);
-        return cipher;
-    }
-    
-    private sendToWsSession<T extends types.core.Event<any, any>>(ws: WebSocketEx, session: WebSocketSession, event: T) {
-        if (session.encoder === EncoderType.PSON) {
-            const serializedPayload = this.serializeEvent(session.encoder, event);
-            const preparedEvent = this.prepareEvent(session, serializedPayload, session.plainCommunication);
-            ws.send(preparedEvent);
-            return;
-        }
-        session.eventBucket.push(event);
-        
-        const INITIAL_DELAY = 20;
-        const MAX_DELAY = 100;
-        
-        const flushBatch = () => {
-            for (const virtualSession of ws.ex.sessions) {
-                if (virtualSession.eventBucket.length > 0 && ws.readyState === ws.OPEN) {
-                    const serializedBatch = this.serializeEvent(EncoderType.MSGPACK, virtualSession.eventBucket);
-                    const preparedBatch = this.prepareEvent(virtualSession, serializedBatch, virtualSession.plainCommunication);
-                    virtualSession.eventBucket = [];
-                    ws.send(preparedBatch);
-                }
-                else {
-                    virtualSession.eventBucket = [];
-                }
-            }
-            ws.ex.flushTimer = undefined;
-            ws.ex.batchStartTime = undefined;
-        };
-        
-        if (!ws.ex.flushTimer) {
-            ws.ex.batchStartTime = DateUtils.now();
-            ws.ex.flushTimer = setTimeout(flushBatch, INITIAL_DELAY);
-        }
-        else {
-            clearTimeout(ws.ex.flushTimer);
-            const elapsedTime = DateUtils.now() - (ws.ex.batchStartTime ?? DateUtils.now());
-            const remainingTimeInWindow = MAX_DELAY - elapsedTime;
-            const newDelay = Math.max(0, Math.min(INITIAL_DELAY, remainingTimeInWindow));
-            ws.ex.flushTimer = setTimeout(flushBatch, newDelay);
-        }
-    }
-    
-    private serializeEvent(encoder: EncoderType, event: any) {
-        return this.encoderHelper.getEncoder(encoder).encode(event);
-    }
-    
-    private preparePrefix(session: WebSocketSession) {
-        if (session.addWsChannelId) {
-            const prefix = Buffer.alloc(8, 0);
-            prefix.writeUInt32BE(session.wsChannelId, 4);
-            return prefix;
-        }
-        return Buffer.alloc(4, 0);
     }
     
     hasOpenConnectionWithUsername(host: types.core.Host, username: types.core.Username): boolean {
@@ -235,7 +171,7 @@ export class WebSocketInnerManager {
                 const ws = <WebSocketEx>client;
                 ws.ex.sessions = ws.ex.sessions.filter(session => {
                     if (session.host === host && func(session)) {
-                        this.sendToWsSession(ws, session, {type: "disconnected", data: {}});
+                        this.webSocketOutboundHandler.sendToWsSession(ws, session, {type: "disconnected", data: {}});
                         usersToCheck.add(session.username);
                         void (async () => {
                             const hostContext = await ws.ex.contextFactory(session.instanceHost);
