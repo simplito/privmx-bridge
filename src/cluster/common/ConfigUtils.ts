@@ -181,7 +181,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
                 url: process.env.PMX_STREAMS_MEDIA_SERVER || "localhost",
                 port: parseInt(process.env.PMX_STREAMS_MEDIA_SERVER_PORT || "", 10) || 8989,
                 secret: process.env.PMX_STREAMS_MEDIA_SERVER_SECRET || "<janus_secret>",
-                allowSelfSignedCerts: process.env.PMX_MEDIA_SERVER_ALLLOW_SELF_SIGNED_CERTS === "true" || false,
+                allowSelfSignedCerts: process.env.PMX_MEDIA_SERVER_ALLOW_SELF_SIGNED_CERTS === "true" || false,
             },
             turnServers: [
                 {
