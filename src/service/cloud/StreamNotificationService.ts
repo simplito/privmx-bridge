@@ -331,7 +331,7 @@ export class StreamNotificationService {
     }
     
     sendNewStreamsSingleEvent(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, streamRoom: db.stream.StreamRoom, data: WebRtcTypes.NewStreamsEventData) {
-        const eventType = "streamRemoteStreamsChanged";
+        const eventType = "remoteStreamsChanged";
         this.safe(`${eventType}Event`, async () => {
             const session = websocket.ex.sessions.find(x => x.wsId === wsId);
             if (session) {
