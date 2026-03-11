@@ -330,7 +330,7 @@ export class ThreadService extends BaseContainerService {
         }
         try {
             const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
-            void this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
+            await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
             this.threadNotificationService.sendNewThreadMessage(thread, message, context.solution);
             const threadStats = await this.repositoryFactory.createThreadRepository().getThreadStats(thread.id);
             if (threadStats) {

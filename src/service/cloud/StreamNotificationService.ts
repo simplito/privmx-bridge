@@ -343,13 +343,15 @@ export class StreamNotificationService {
                 };
                 
                 const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
+                if (matchingSubscriptions.length === 0) {
+                    return;
+                }
                 const convertedEvent = this.convertJanusRoomIdToBridgeRoomId(streamRoom, {
-                    channel: "stream",
                     type: eventType,
                     data: data,
                     timestamp: DateUtils.now(),
                     subscriptions: matchingSubscriptions,
-                    version: 1,
+                    version: 2,
                 });
                 this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
             }
@@ -366,7 +368,6 @@ export class StreamNotificationService {
         this.safe(`${eventType}Event`, async () => {
             const session = websocket.ex.sessions.find(x => x.wsId === wsId);
             if (session) {
-                
                 const targetChannel: TargetChannel = {
                     containerId: streamRoom.id,
                     containerType: streamRoom.type,
@@ -375,14 +376,16 @@ export class StreamNotificationService {
                 };
                 
                 const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
+                if (matchingSubscriptions.length === 0) {
+                    return;
+                }
                 const now = DateUtils.now();
                 const convertedEvent = this.convertJanusRoomIdToBridgeRoomId(streamRoom, {
-                    channel: "stream",
                     type: eventType,
                     data: data,
                     timestamp: now,
                     subscriptions: matchingSubscriptions,
-                    version: 1,
+                    version: 2,
                 });
                 
                 this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
@@ -407,14 +410,15 @@ export class StreamNotificationService {
                 };
                 
                 const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
-                
+                if (matchingSubscriptions.length === 0) {
+                    return;
+                }
                 const convertedEvent = {
-                    channel: "stream",
                     type: eventType,
                     data: {streamRoomId: streamRoom.id, streamId: leavingPublisher},
                     timestamp: DateUtils.now(),
                     subscriptions: matchingSubscriptions,
-                    version: 1,
+                    version: 2,
                 };
                 
                 this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
