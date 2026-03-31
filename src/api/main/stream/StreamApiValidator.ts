@@ -142,7 +142,7 @@ export class StreamApiValidator extends BaseValidator {
         
         this.registerMethod("streamSetNewOffer", this.builder.createObject({
             sessionId: this.builder.int,
-            answer: this.builder.createObject({
+            offer: this.builder.createObject({
                 type: this.builder.createConst("offer"),
                 sdp: this.builder.string,
             }),

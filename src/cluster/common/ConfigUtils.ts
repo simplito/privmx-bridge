@@ -42,7 +42,7 @@ export interface Config {
             mode: string,
             brokerUri: string,
         }
-        initializationToken: string|null;
+        initializationToken: string | null;
     };
     db: {
         mongo: {
@@ -79,6 +79,12 @@ export interface Config {
             port: number;
             secret: string;
             allowSelfSignedCerts: boolean;
+            recordingsPath: string;
+            videoRoom: {
+                maxBitrate: number;
+                maxPublishers: number;
+                bitrateCap: boolean;
+            };
         };
         turnServers: {
             url: string;
@@ -92,9 +98,9 @@ export interface SingleServerMode {
     configPath: string;
 }
 
-export type HostId = types.core.Host | (string&{__hostId: never});
+export type HostId = types.core.Host | (string & { __hostId: never });
 
-export function loadConfig(logger: Logger|false, callbacks?: Callbacks) {
+export function loadConfig(logger: Logger | false, callbacks?: Callbacks) {
     const configFilePath = process.argv[2] || path.join(__dirname, "../../../conf/config.json");
     const configFromFile: Partial<Config> = (() => {
         if (configFilePath && fs.existsSync(configFilePath)) {
@@ -111,12 +117,12 @@ export function loadConfig(logger: Logger|false, callbacks?: Callbacks) {
     return loadConfigCore(configFilePath, configFromFile, logger, callbacks);
 }
 
-export function loadConfigFromFile(configFilePath: string, logger: Logger|false, callbacks?: Callbacks) {
+export function loadConfigFromFile(configFilePath: string, logger: Logger | false, callbacks?: Callbacks) {
     const configFromFile: Partial<Config> = JSON.parse(fs.readFileSync(configFilePath, "utf8"));
     return loadConfigCore(configFilePath, configFromFile, logger, callbacks);
 }
 
-export function loadConfigCore(configFilePath: string, configFromFile: Partial<Config>, logger: Logger|false, callbacks?: Callbacks) {
+export function loadConfigCore(configFilePath: string, configFromFile: Partial<Config>, logger: Logger | false, callbacks?: Callbacks) {
     const defaultConfig: Config = {
         cloudUrl: undefined,
         server: {
@@ -170,7 +176,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             creditAddon: parseInt(process.env.PMX_LIMITER_CREDIT_ADDON || "", 10) || 100,
             addonInterval: parseInt(process.env.PMX_LIMITER_CREDIT_ADDON_INTERVAL || "", 10) || 1000,
             requestCost: parseInt(process.env.PMX_LIMITER_REQUEST_COST || "", 10) || 10,
-            inactiveTime: parseInt(process.env.PMX_LIMITER_INACTIVE_TIME || "", 10) ||  2 * 60 * 1000,
+            inactiveTime: parseInt(process.env.PMX_LIMITER_INACTIVE_TIME || "", 10) || 2 * 60 * 1000,
             whitelist: process.env.PMX_LIMITER_WHITELIST ? process.env.PMX_LIMITER_WHITELIST.split(",") as types.core.IPAddress[] : [],
         },
         maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 128,
@@ -182,6 +188,12 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
                 port: parseInt(process.env.PMX_STREAMS_MEDIA_SERVER_PORT || "", 10) || 8989,
                 secret: process.env.PMX_STREAMS_MEDIA_SERVER_SECRET || "<janus_secret>",
                 allowSelfSignedCerts: process.env.PMX_MEDIA_SERVER_ALLOW_SELF_SIGNED_CERTS === "true" || false,
+                recordingsPath: process.env.PMX_STREAMS_RECORDINGS_PATH || "recordings",
+                videoRoom: {
+                    maxBitrate: parseInt(process.env.PMX_STREAMS_MAX_BITRATE || "", 10) || 512000,
+                    maxPublishers: parseInt(process.env.PMX_STREAMS_MAX_PUBLISHERS || "", 10) || 50,
+                    bitrateCap: process.env.PMX_STREAMS_BITRATE_CAP === "true",
+                },
             },
             turnServers: [
                 {
@@ -202,10 +214,10 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
 }
 
 function mergeValues<T>(a: T, b: Partial<T>) {
-    if (typeof(a) != "object" || a == null || Array.isArray(b)) {
+    if (typeof (a) != "object" || a == null || Array.isArray(b)) {
         return b as T;
     }
-    const res: any = {...a};
+    const res: any = { ...a };
     for (const x in b) {
         if (x in a || x === "configDirectory" || x === "dbName") {
             res[x] = x in res ? mergeValues(a[x] as Record<string, unknown>, b[x] as Record<string, unknown>) : b[x];

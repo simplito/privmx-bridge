@@ -62,7 +62,6 @@ const JanusConstants = {
 } as const;
 
 export class StreamService extends BaseContainerService {
-    private static readonly BASE_RECORDINGS_DIR = "recordings";
     private policy: StreamRoomPolicy;
     
     constructor(
@@ -105,8 +104,10 @@ export class StreamService extends BaseContainerService {
                         body: {
                             request: JanusConstants.REQUEST.CREATE,
                             permanent: false,
-                            rec_dir: StreamService.BASE_RECORDINGS_DIR,
-                            publishers: 1000,
+                            rec_dir: this.config.streams.mediaServer.recordingsPath,
+                            publishers: this.config.streams.mediaServer.videoRoom.maxPublishers,
+                            bitrate: this.config.streams.mediaServer.videoRoom.maxBitrate,
+                            bitrate_cap: this.config.streams.mediaServer.videoRoom.bitrateCap,
                         },
                     });
                 });
@@ -794,7 +795,7 @@ export class StreamService extends BaseContainerService {
             body: {
                 request: JanusConstants.REQUEST.EDIT,
                 room: streamRoom.janusRoomId as WebRtcTypes.VideoRoomId,
-                new_rec_dir: `${StreamService.BASE_RECORDINGS_DIR}/${streamRoomId}`,
+                new_rec_dir: `${this.config.streams.mediaServer.recordingsPath}/${streamRoomId}`,
             },
         });
         await ctx.ws.janusVideoRoomPluginApi.enableRcording({

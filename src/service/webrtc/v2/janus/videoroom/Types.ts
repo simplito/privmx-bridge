@@ -63,6 +63,8 @@ export interface CreateRoomOptions {
     publishers?: number;
     require_e2ee?: boolean;
     rec_dir?: string;
+    bitrate?: number;
+    bitrate_cap?: boolean;
     // TODO - dodac pozostale opcje
 }
 export type CreateResponse = SyncJanusResponse<{
