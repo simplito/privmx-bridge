@@ -71,7 +71,7 @@
     "moment-timezone": "^0.5.45",
     "mongodb": "^6.7.0",
     "msgpackr": "^1.11.5",
-    "nodemailer": "^7.0.10",
+    "nodemailer": "^8.0.5",
     "notp": "^2.0.3",
     "pino": "^10.0.0",
     "pino-pretty": "^13.1.2",
@@ -92,7 +92,7 @@
     "privmx-native": "^2.0.0"
   },
   "devDependencies": {
-    "@simplito/privmx-minimal-js": "^3.0.0",
+    "@simplito/privmx-minimal-js": "^2.7.4",
     "@stylistic/eslint-plugin": "^2.9.0",
     "@stylistic/eslint-plugin-js": "^2.9.0",
     "@types/authenticator": "^1.1.0",
