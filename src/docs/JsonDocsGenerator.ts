@@ -34,7 +34,7 @@ export class JsonDocsGenerator {
     readonly baseDir: string;
     readonly program: ts.Program;
     readonly typeChecker: ts.TypeChecker;
-    readonly forbiddenApis = ["IStreamApi"];
+    readonly forbiddenApis: string[] = [];
     
     constructor() {
         this.baseDir = path.resolve(__dirname, "../../");
