@@ -92,7 +92,7 @@
     "privmx-native": "^2.0.0"
   },
   "devDependencies": {
-    "@simplito/privmx-minimal-js": "^2.7.4",
+    "@simplito/privmx-minimal-js": "^3.0.0",
     "@stylistic/eslint-plugin": "^2.9.0",
     "@stylistic/eslint-plugin-js": "^2.9.0",
     "@types/authenticator": "^1.1.0",
