@@ -90,7 +90,7 @@ export class JanusVideoRoomPluginApi {
     
     async trickle(model: videoroom.TrickleRequest): Promise<void> {
         try {
-            return await this.janusRequester.createJanusCall("trickle", model.body, model.session_id, model.handle_id);
+            return await this.janusRequester.requestSync(model);
         }
         catch (e) {
             throw this.mapToAppException(e);

@@ -464,7 +464,7 @@ export class StreamService extends BaseContainerService {
             session_id: session.session.id,
             plugin: JanusConstants.PLUGIN,
             handle_id: session.session.handle,
-            body: { candidate: rtcCandidate },
+            candidate: rtcCandidate,
         });
     }
     
