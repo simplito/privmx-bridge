@@ -108,12 +108,7 @@ export class StoreApiValidator extends BaseValidator {
             this.builder.createObject({
                 fileId: this.tv.storeFileId,
                 meta: this.tv.storeFileMeta,
-                operations: this.builder.createListWithRangeLength(this.builder.createObject({
-                    type: this.builder.createEnum(["file", "checksum"]),
-                    pos: this.builder.min(this.builder.int, -1),
-                    data: this.builder.maxLength(this.tv.byteBuffer, 524288),
-                    truncate: this.builder.bool,
-                }), 1, 4),
+                operations: this.tv.storeFileOperations,
                 keyId: this.tv.keyId,
                 version: this.tv.intNonNegative,
                 force: this.builder.bool,
