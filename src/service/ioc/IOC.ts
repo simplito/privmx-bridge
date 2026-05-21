@@ -124,6 +124,9 @@ import { LockHelper } from "../misc/LockHelper";
 import { UserStatusManager } from "../cloud/UserStatusManager";
 import { JanusContextFactory } from "../cloud/JanusContextFactory";
 import { JanusRoomsWatcher } from "../cloud/JanusRoomsWatcher";
+import { LockApi } from "../../api/main/lock/LockApi";
+import { LockApiValidator } from "../../api/main/lock/LockApiValidator";
+import { LockService } from "../cloud/LockService";
 export class IOC {
     
     takeMongoClientFromWorker = true;
@@ -229,6 +232,8 @@ export class IOC {
     protected userStatusManager?: UserStatusManager;
     protected janusContextFactory?: JanusContextFactory;
     protected janusRoomsWatcher?: JanusRoomsWatcher;
+    protected lockApiValidator?: LockApiValidator;
+    protected cloudLockService?: LockService;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry) {
         this.instanceHost = instanceHost;
@@ -595,6 +600,8 @@ export class IOC {
             if (!!this.workerRegistry.getConfig().streams.enabled) {
                 this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger(), e.webSocket, e.ioc.getTurnCredentialsService()));
             }
+            this.mainApiRsolver.registerApiWithPrefix("lock.", LockApi, ({ioc: e, sessionService: s}) => new LockApi(e.ioc.getLockApiValidator(), e.ioc.getCloudLockService(), s));
+            
             this.getPluginsManager().registerEndpoint(this.mainApiRsolver);
         }
         return this.mainApiRsolver;
@@ -1094,6 +1101,22 @@ export class IOC {
             );
         }
         return this.storeApiValidator;
+    }
+    
+    getLockApiValidator() {
+        if (this.lockApiValidator == null) {
+            this.lockApiValidator = new LockApiValidator(
+                this.getTypesValidator(),
+            );
+        }
+        return this.lockApiValidator;
+    }
+    
+    getCloudLockService() {
+        if (this.cloudLockService == null) {
+            this.cloudLockService = new LockService(this.workerRegistry.getCloudLockService());
+        }
+        return this.cloudLockService;
     }
     
     getLockHelper() {
