@@ -43,6 +43,7 @@ import { SignatureVerificationService } from "../../service/auth/SignatureVerifi
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
 import { HostList } from "./HostList";
 import { LockService } from "../master/ipcServices/LockService";
+import { CloudLockService } from "../master/ipcServices/CloudLockService";
 import { WebsocketCommunicationManger } from "../master/ipcServices/WebsocketCommunicationManager";
 import { SubscriberMessageProcessor } from "../common/SubscriberMesageProcessor";
 import { IBrokerClient } from "../common/BrokerClient";
@@ -417,6 +418,10 @@ export class WorkerRegistry {
     
     getLockService() {
         return this.getIpcService<LockService>("lockService");
+    }
+    
+    getCloudLockService() {
+        return this.getIpcService<CloudLockService>("cloudLockService");
     }
     
     getIpcService<T>(serviceName: string) {
