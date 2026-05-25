@@ -47,6 +47,10 @@ export class KvdbApiClient extends BaseApiClient implements kvdbApi.IKvdbApi {
         return this.request("kvdb.kvdbEntryGet", model);
     }
     
+    kvdbEntryFind(model: kvdbApi.KvdbEntryGetModel): Promise<kvdbApi.KvdbEntryFindResult> {
+        return this.request("kvdb.kvdbEntryFind", model);
+    }
+    
     kvdbEntrySet(model: kvdbApi.KvdbEntrySetModel): Promise<types.core.OK> {
         return this.request("kvdb.kvdbEntrySet", model);
     }

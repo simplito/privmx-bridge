@@ -89,6 +89,11 @@ export class KvdbApiValidator extends BaseValidator {
             kvdbEntryKey: this.tv.kvdbEntryKey,
         }));
         
+        this.registerMethod("kvdbEntryFind", this.builder.createObject({
+            kvdbId: this.tv.kvdbId,
+            kvdbEntryKey: this.tv.kvdbEntryKey,
+        }));
+        
         this.registerMethod("kvdbListKeys",  this.builder.addFields(this.tv.listModel, {
             kvdbId: this.tv.kvdbId,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "entryKey", "lastModificationDate"])),

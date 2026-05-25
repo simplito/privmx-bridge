@@ -106,6 +106,17 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     }
     
     @ApiMethod({})
+    async kvdbEntryFind(model: kvdbApi.KvdbEntryGetModel): Promise<kvdbApi.KvdbEntryFindResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const result = await this.kvdbService.findKvdbEntry(cloudUser, model.kvdbId, model.kvdbEntryKey);
+        if (result === null) {
+            return {kvdbEntry: null};
+        }
+        this.requestLogger.setContextId(result.kvdb.contextId);
+        return {kvdbEntry: this.kvdbConverter.convertKvdbEntry(result.kvdb, result.item)};
+    }
+    
+    @ApiMethod({})
     async kvdbEntryDelete(model: kvdbApi.KvdbEntryDeleteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const {kvdb} = await this.kvdbService.deleteItem(cloudUser, model.kvdbId, model.kvdbEntryKey);
