@@ -11,7 +11,7 @@ limitations under the License.
 
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import * as types from "../../types";
 import { ConfigService } from "../config/ConfigService";
 import { FileId } from "../misc/StorageService";
@@ -187,7 +187,7 @@ export class FileSystemService {
             if (e && (e as {code: string}).code === "ENOENT") {
                 return;
             }
-            this.logger.error("Error during removing file " + filePath, e);
+            this.logger.error(e, "Error during removing file " + filePath);
         }
     }
     

@@ -14,10 +14,8 @@ import { IWorker2Service } from "../../common/Worker2Service";
 import { IpcRequester } from "../../common/IpcRequester";
 import { WorkersHolder } from "../WorkersHolder";
 import { ApiMethod } from "../../../api/Decorators";
-import { PlainApiEvent } from "../../../api/plain/Types";
 import { TargetChannel } from "../../../service/ws/WebSocketConnectionManager";
 import { IpcService } from "../Decorators";
-import { AggregatedNotificationsService } from "./AggregatedNotificationsService";
 
 @IpcService
 export class WebsocketCommunicationManger implements IWorker2Service {
@@ -25,34 +23,12 @@ export class WebsocketCommunicationManger implements IWorker2Service {
     constructor(
         private ipcRequester: IpcRequester,
         private workersHolder: WorkersHolder,
-        private aggregatedNotificationsService: AggregatedNotificationsService,
     ) {}
     
     private request<T = unknown>(method: string, params: unknown) {
         return Promise.all(this.workersHolder.getWorkers().map(async worker => {
             return {worker, result: await this.ipcRequester.request<T>(worker, method, params)};
         }));
-    }
-    
-    @ApiMethod({})
-    async sendWebsocketNotificationToPlainUsers(model: { channel: string; solution: types.cloud.SolutionId; event: PlainApiEvent}): Promise<void> {
-        await this.request("sendWebsocketNotificationToPlainUsers", model);
-    }
-    
-    @ApiMethod({})
-    async aggregateDataForNotification<T = unknown>(model: {channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        this.aggregatedNotificationsService.aggregateDataForCollectionChangedNotification(model.channel, model.clients, model.host);
-    }
-    
-    @ApiMethod({})
-    async sendWebsocketNotification<T = unknown>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        await this.request("sendWebsocketNotification", model);
-    }
-    
-    @ApiMethod({})
-    async sendWebsocketNotificationAndAggregateData<T = unknown>(model: {channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        this.aggregatedNotificationsService.aggregateDataForCollectionChangedNotification(model.channel, model.clients, model.host);
-        await this.sendWebsocketNotification(model);
     }
     
     @ApiMethod({})
@@ -87,6 +63,6 @@ export class WebsocketCommunicationManger implements IWorker2Service {
     }
     
     async sendNotificationToUsers<T = unknown>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        await this.request("sendWebsocketNotification", model);
+        void this.request("sendWebsocketNotification", model);
     }
 }

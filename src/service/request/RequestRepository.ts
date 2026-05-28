@@ -45,7 +45,7 @@ export class RequestRepository {
             processing: false,
             files: files.map(x => {
                 const f: db.request.FileDefinition = {
-                    id: <types.request.FileId><string> this.repository.generateId(),
+                    id: this.repository.generateId() as string as types.request.FileId,
                     seq: 0,
                     sent: 0,
                     size: x.size,

@@ -76,7 +76,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadList(model: threadApi.ThreadListModel): Promise<threadApi.ThreadListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, threads} = await this.threadService.getMyThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, threads} = await this.threadService.getMyThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
         return {threads: threads.list.map(x => this.threadConverter.convertThread(user.userId, x)), count: threads.count};
     }

@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { Callbacks } from "../event/Callbacks";
 import { NonceService } from "../misc/NonceService";
 import { SessionHolder } from "../../api/session/SessionHolder";

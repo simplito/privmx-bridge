@@ -43,27 +43,25 @@ export class InboxNotificationService {
         this.safe("inboxCustomEvent", async () => {
             const now = DateUtils.now();
             const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, [...inbox.users, ...inbox.managers]);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<inboxApi.InboxCustomEvent>(
-                    [user.userPubKey],
-                    {
-                        containerId: inbox.id,
-                        contextId: inbox.contextId,
-                        channel: `inbox/custom/${customChannelName}` as types.core.WsChannelName,
+            this.webSocketSender.sendCloudEventAtChannel<inboxApi.InboxCustomEvent>(
+                contextUsers.map(u => u.userPubKey),
+                {
+                    containerId: inbox.id,
+                    contextId: inbox.contextId,
+                    channel: `inbox/custom/${customChannelName}` as types.core.WsChannelName,
+                },
+                {
+                    channel: `inbox/${inbox.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: inbox.id,
+                        author: author,
+                        keyId: keyId,
+                        eventData: eventData,
                     },
-                    {
-                        channel: `inbox/${inbox.id}/${customChannelName}`,
-                        type: "custom",
-                        data: {
-                            id: inbox.id,
-                            author: author,
-                            keyId: keyId,
-                            eventData: eventData,
-                        },
-                        timestamp: now,
-                    },
-                );
-            }
+                    timestamp: now,
+                },
+            );
         });
     }
     
@@ -128,9 +126,9 @@ export class InboxNotificationService {
             for (const user of additionalUsers) {
                 const userNotification: inboxApi.InboxUpdatedEvent = {
                     channel: "inbox",
-                        type: "inboxUpdated",
-                        data: this.inboxConverter.convertInbox(user.id, inbox),
-                        timestamp: now,
+                    type: "inboxUpdated",
+                    data: this.inboxConverter.convertInbox(user.id, inbox),
+                    timestamp: now,
                 };
                 if (user.status === "inactive") {
                     await this.repositoryFactory.createNotificationRepository().insert(user.pub, targetChannel, userNotification);

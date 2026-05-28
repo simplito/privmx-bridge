@@ -13,13 +13,13 @@ limitations under the License.
 
 import type * as Cluster from "cluster";
 import { loadConfig } from "../../cluster/common/ConfigUtils";
-import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
+import { LoggerFactory } from "../../service/log/LoggerFactory";
 import * as util from "util";
 import { WorkerRegistry } from "../../cluster/worker/WorkerRegistry";
 import { Base58 } from "../../utils/crypto/Base58";
 import { Crypto } from "../../utils/crypto/Crypto";
 
-const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
+const loggerFactory = new LoggerFactory("MAIN");
 
 async function go() {
     const args = process.argv;
@@ -34,7 +34,6 @@ async function go() {
         }
         registry.registerIpcService("activeUsersMap", {});
         registry.registerIpcService("metricsContainer", {});
-        LoggerFactory.ESCAPE_NEW_LINE = config.loggerEscapeNewLine;
         await registry.createMongoClient(config.db.mongo.url);
         const ioc = await registry.getHttpHandler().createHostContext();
         const pkiFactory = ioc.getPkiFactory();
@@ -80,7 +79,7 @@ function prettyPrintKey(
     keyColor: string = "\x1b[33m",
     borderColor: string = "\x1b[36m",
     titleColor: string = "\x1b[1m\x1b[37m",
-  ) {
+) {
     const resetColor = "\x1b[0m";
     const keyStr = keyValue.toString();
     const contentWidth = Math.min(maxWidth, process.stdout.columns);

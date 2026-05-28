@@ -20,8 +20,8 @@ export class BaseApi {
     ) {
     }
     
-    async execute(method: string, params: any): Promise<any> {
-        const m = (<any> this)[method];
+    async execute(method: string, params: any): Promise<unknown> {
+        const m = (this as any)[method];
         if (!ApiMethod.getExportedMethod(this.constructor, method) || typeof(m) != "function") {
             throw new AppException("METHOD_NOT_FOUND");
         }

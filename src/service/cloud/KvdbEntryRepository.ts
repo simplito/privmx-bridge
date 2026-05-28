@@ -56,11 +56,11 @@ export class KvdbEntryRepository {
     
     async getPageByKvdb(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel) {
         const sortBy = "entryKey";
-        return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy);
+        return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy, "entryValue");
     }
     
     async getPageByKvdbWithPrefix(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel, sortBy: keyof db.kvdb.KvdbEntry) {
-        return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy);
+        return this.repository.matchX({kvdbId: kvdbId}, listParams, sortBy, "entryValue");
     }
     
     async getPageByKvdbWithPrefixMatch2(kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryId>, prefix: string|undefined) {

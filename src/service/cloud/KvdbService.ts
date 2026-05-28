@@ -59,13 +59,20 @@ export class KvdbService extends BaseContainerService {
         return kvdb;
     }
     
-    async getMyKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb) {
+    async getMyKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbList", []);
-        if (!this.policy.canListMyContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+        if (scope === "ALL") {
+            if (!this.policy.canListAllContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
         }
-        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
+        else {
+            if (!this.policy.canListMyContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
         return {user, kvdbs};
     }
     

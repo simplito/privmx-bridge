@@ -38,12 +38,18 @@ import { IpRateLimiterClient } from "./IpRateLimiterClient";
 import type { NonceMap } from "../master/ipcServices/NonceMap";
 import { IpcServiceDescriptor } from "../master/Decorators";
 import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
+import { WebSocketOutboundHandler } from "../../service/ws/WebSocketOutboundHandler";
 import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
 import { HostList } from "./HostList";
 import { LockService } from "../master/ipcServices/LockService";
 import { WebsocketCommunicationManger } from "../master/ipcServices/WebsocketCommunicationManager";
-import { AggregatedNotificationsService } from "../master/ipcServices/AggregatedNotificationsService";
+import { SubscriberMessageProcessor } from "../common/SubscriberMesageProcessor";
+import { IBrokerClient } from "../common/BrokerClient";
+import { MetricsCollector } from "../../service/misc/MetricsCollector";
+import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
+import { BrokerClientProvider } from "./BrokerClientProvider";
+import { JanusRoomsWatcherCache } from "../master/ipcServices/JanusRoomsWatcherCache";
 export class WorkerRegistry {
     
     private worker?: Cluster.Worker;
@@ -58,9 +64,11 @@ export class WorkerRegistry {
     private ipcListener?: IpcListener;
     private ipcRequester?: WorkerIpcRequester;
     private webSocketInnerManager?: WebSocketInnerManager;
+    private webSocketOutboundHandler?: WebSocketOutboundHandler;
     private methodExecutor?: MethodExecutor;
     private ipcExecutor?: IpcExecutor;
     private ipcMessageProcessor?: IpcMessageProcessor;
+    private subscriberMessageProcessor?: SubscriberMessageProcessor;
     private configRepository?: ConfigRepository;
     private typesValidator?: TypesValidator;
     private jobManager?: JobManager;
@@ -73,6 +81,11 @@ export class WorkerRegistry {
     private ipRateLimiterClient?: IpRateLimiterClient;
     private ipcServices = new Map<string, any>();
     protected hostList?: HostList;
+    private dbCache?: Map<string, unknown>;
+    private aggregatedNotificationsServiceImpl?: AggregatedNotificationsService;
+    private metricsCollector?: MetricsCollector;
+    private brokerClient?: IBrokerClient;
+    private brokerClientProvider?: BrokerClientProvider;
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -91,7 +104,14 @@ export class WorkerRegistry {
     }
     
     async createMongoClient(mongoUrl: string) {
-        this.registerMongoClient(MongoDebug.decorateClient(await mongodb.MongoClient.connect(mongoUrl, {minPoolSize: 5, maxPoolSize: 5})));
+        this.registerMongoClient(MongoDebug.decorateClient(await mongodb.MongoClient.connect(mongoUrl, {minPoolSize: 32, maxPoolSize: 64})));
+    }
+    
+    getAggregatedNotificationsService() {
+        if (!this.aggregatedNotificationsServiceImpl) {
+            this.aggregatedNotificationsServiceImpl = new AggregatedNotificationsService(this.getActiveUsersMap());
+        }
+        return this.aggregatedNotificationsServiceImpl;
     }
     
     getIpRateLimiterClient() {
@@ -159,6 +179,20 @@ export class WorkerRegistry {
         return this.worker;
     }
     
+    getDbCache() {
+        if (this.dbCache == null) {
+            this.dbCache = new Map();
+        }
+        return this.dbCache;
+    }
+    
+    getMetricsCollector() {
+        if (this.metricsCollector == null) {
+            this.metricsCollector = new MetricsCollector();
+        }
+        return this.metricsCollector;
+    }
+    
     getConfig() {
         if (!this.config) {
             throw new Error("Config not registered yet");
@@ -192,7 +226,7 @@ export class WorkerRegistry {
             this.httpHandler = new HttpHandler(
                 this.getConfig(),
                 this.getWebSocketInnerManager(),
-                this.getLoggerFactory().get(HttpHandler),
+                this.getLoggerFactory().createLogger(HttpHandler),
                 this,
                 this.getConfigRepository(),
             );
@@ -204,6 +238,7 @@ export class WorkerRegistry {
         if (!this.worker2Service) {
             this.worker2Service = new Worker2Service(
                 this.getWebSocketInnerManager(),
+                this.getAggregatedNotificationsService(),
             );
         }
         return this.worker2Service;
@@ -229,7 +264,7 @@ export class WorkerRegistry {
         if (!this.ipcListener) {
             this.ipcListener = new IpcListener(
                 this.getIpcRequestMap(),
-                this.getLoggerFactory().get(IpcListener),
+                this.getLoggerFactory().createLogger(IpcListener),
             );
         }
         return this.ipcListener;
@@ -240,15 +275,25 @@ export class WorkerRegistry {
             this.ipcRequester = new WorkerIpcRequester(
                 this.getIpcRequestMap(),
                 this.getWorker(),
+                this.getBrokerClient(),
             );
         }
         return this.ipcRequester;
+    }
+    
+    getWebSocketOutboundHandler() {
+        if (this.webSocketOutboundHandler == null) {
+            this.webSocketOutboundHandler = new WebSocketOutboundHandler();
+        }
+        return this.webSocketOutboundHandler;
     }
     
     getWebSocketInnerManager() {
         if (this.webSocketInnerManager == null) {
             this.webSocketInnerManager = new WebSocketInnerManager(
                 this.getConfig(),
+                this.getWebSocketOutboundHandler(),
+                this.getLoggerFactory().createLogger(WebSocketInnerManager),
             );
         }
         return this.webSocketInnerManager;
@@ -271,7 +316,7 @@ export class WorkerRegistry {
         if (!this.ipcExecutor) {
             this.ipcExecutor = new IpcExecutor(
                 this.getMethodExecutor(),
-                this.getLoggerFactory().get(IpcExecutor),
+                this.getLoggerFactory().createLogger(IpcExecutor),
             );
         }
         return this.ipcExecutor;
@@ -282,10 +327,20 @@ export class WorkerRegistry {
             this.ipcMessageProcessor = new IpcMessageProcessor(
                 this.getIpcExecutor(),
                 this.getIpcListener(),
-                this.getLoggerFactory().get(IpcMessageProcessor),
+                this.getLoggerFactory().createLogger(IpcMessageProcessor),
             );
         }
         return this.ipcMessageProcessor;
+    }
+    
+    getSubscriberMessageProcessor() {
+        if (!this.subscriberMessageProcessor) {
+            this.subscriberMessageProcessor = new SubscriberMessageProcessor(
+                this.getIpcExecutor(),
+                this.getLoggerFactory().createLogger(SubscriberMessageProcessor),
+            );
+        }
+        return this.subscriberMessageProcessor;
     }
     
     getConfigRepository() {
@@ -307,7 +362,7 @@ export class WorkerRegistry {
     getJobManager() {
         if (!this.jobManager) {
             this.jobManager = new JobManager(
-                this.getLoggerFactory().get(JobManager),
+                this.getLoggerFactory().createLogger(JobManager),
             );
         }
         return this.jobManager;
@@ -316,7 +371,7 @@ export class WorkerRegistry {
     getJobService() {
         if (!this.jobService) {
             this.jobService = new JobService(
-                this.getLoggerFactory().get(JobService),
+                this.getLoggerFactory().createLogger(JobService),
             );
         }
         return this.jobService;
@@ -348,8 +403,8 @@ export class WorkerRegistry {
         return this.getIpcService<ActiveUsersMap>("activeUsersMap");
     }
     
-    getAggregatedNotificationsService() {
-        return this.getIpcService<AggregatedNotificationsService>("aggregatedNotificationsService");
+    getJanusRoomsWatcherCache() {
+        return this.getIpcService<JanusRoomsWatcherCache>("janusRoomsWatcherCache");
     }
     
     getWebsocketCommunicationManager() {
@@ -381,6 +436,20 @@ export class WorkerRegistry {
         return this.signatureVerificationService;
     }
     
+    getBrokerClientProvider() {
+        if (!this.brokerClientProvider) {
+            this.brokerClientProvider = new BrokerClientProvider(this.getLoggerFactory(), this.getConfig());
+        }
+        return this.brokerClientProvider;
+    }
+    
+    getBrokerClient() {
+        if (!this.brokerClient) {
+            this.brokerClient = this.getBrokerClientProvider().createClient();
+        }
+        return this.brokerClient;
+    }
+    
     async initIpc() {
         const requester = this.getIpcRequester();
         const descriptors = await requester.request<IpcServiceDescriptor[]>("getIpcServiceRegistry", {});
@@ -389,7 +458,7 @@ export class WorkerRegistry {
             for (const method of ipcService.methods) {
                 service[method] = ((m: string) => {
                     return (params: unknown) => {
-                        return requester.request(m, typeof(params) === "undefined" ? {} : params);
+                        return requester.request(m, typeof(params) === "undefined" ? {} : params, true);
                     };
                 })(method);
             }

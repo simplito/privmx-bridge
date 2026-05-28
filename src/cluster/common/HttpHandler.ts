@@ -46,13 +46,13 @@ export class HttpHandler {
                 }, response, requestLogger);
             }
             finally {
-                requestLogger.flush();
+                requestLogger.end();
             }
         })();
     }
     
     private createRequestLogger() {
-        return new RequestLogger(this.requestName, null, this.loggerFactory, null, this.config);
+        return new RequestLogger(this.requestName, null, this.loggerFactory.createLogger(RequestLogger), null, this.config);
     }
     
     private applyResponse(eRes: EngineResponse, res: http.ServerResponse, requestLogger: RequestLogger) {

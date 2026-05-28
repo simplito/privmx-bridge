@@ -1,20 +1,24 @@
-import { DateUtils } from "../../../utils/DateUtils";
-import * as types from "../../../types";
-import { TargetChannel } from "../../../service/ws/WebSocketConnectionManager";
-import { KvdbCollectionChangedEvent } from "../../../api/main/kvdb/KvdbApiTypes";
-import { ThreadCollectionChangedEvent } from "../../../api/main/thread/ThreadApiTypes";
-import { StoreCollectionChangedEvent } from "../../../api/main/store/StoreApiTypes";
-import { IpcService } from "../Decorators";
-import { ApiMethod } from "../../../api/Decorators";
-import { ContextUsersStatusChange } from "../../../api/main/context/ContextApiTypes";
-import { ActiveUsersMap } from "./ActiveUsers";
+/*!
+PrivMX Bridge.
+Copyright © 2024 Simplito sp. z o.o.
+
+This file is part of the PrivMX Platform (https://privmx.dev).
+This software is Licensed under the PrivMX Free License.
+
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import { ContextUsersStatusChange } from "../../api/main/context/ContextApiTypes";
+import { KvdbCollectionChangedEvent } from "../../api/main/kvdb/KvdbApiTypes";
+import { StoreCollectionChangedEvent } from "../../api/main/store/StoreApiTypes";
+import { ThreadCollectionChangedEvent } from "../../api/main/thread/ThreadApiTypes";
+import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import * as types from "../../types";
+import { DateUtils } from "../../utils/DateUtils";
+import { TargetChannel } from "../ws/WebSocketConnectionManager";
 
 type HostDistinguishedKey = `${types.core.Host}/${string}`;
-
-interface UserStatus {
-    userPubKey: types.cloud.UserPubKey;
-    action: "login"|"logout"
-}
 
 interface AggregatedEvent {
     containerId: string;
@@ -26,19 +30,12 @@ interface AggregatedEvent {
     items: Map<string, types.core.CRUDAction>;
 }
 
-interface AggregatedContextUserStatus {
-    contextId: types.context.ContextId;
-    host: types.core.Host;
-    userStatusChanges: Map<types.cloud.UserId, UserStatus>;
-}
-
 interface UserIdentityWithContext {
     contextId: types.context.ContextId;
     userId: types.cloud.UserId;
     userPubKey: types.core.EccPubKey
 }
 
-@IpcService
 export class AggregatedNotificationsService {
     
     private static readonly ChannelPathPart = {
@@ -47,37 +44,44 @@ export class AggregatedNotificationsService {
         Action: 2,
     };
     private static EXPECTED_PATH_PARTS = 3;
-    private aggregatedCollectionChangeds: Map<HostDistinguishedKey, AggregatedEvent> = new Map();
-    private aggregatedcontextUserStatusChangeds: Map<HostDistinguishedKey, AggregatedContextUserStatus> = new Map();
+    private aggregatedCollectionChanges: Map<HostDistinguishedKey, AggregatedEvent> = new Map();
+    private lastEventId: number = 0;
     
     constructor(
         private activeUsersMap: ActiveUsersMap,
     ) {}
     
-    @ApiMethod({})
-    async aggregateDataForcontextUserStatusChangedNotification(model: {userIdentities: UserIdentityWithContext[], host: types.core.Host, action: "login"|"logout"}) {
+    async aggregateDataForContextUserStatusChangedNotification(model: {userIdentities: UserIdentityWithContext[], host: types.core.Host, action: "login"|"logout"}) {
+        const contextGroups = new Map<types.context.ContextId, {userId: types.cloud.UserId, userPubKey: types.core.EccPubKey, action: "login"|"logout"}[]>();
+        
         for (const userIdentity of model.userIdentities) {
-            const entryKey: HostDistinguishedKey = `${model.host}/${userIdentity.contextId}`;
-            const entry = this.aggregatedcontextUserStatusChangeds.get(entryKey);
-            if (!entry) {
-                this.aggregatedcontextUserStatusChangeds.set(entryKey, {
-                    contextId: userIdentity.contextId,
-                    host: model.host,
-                    userStatusChanges: new Map([[userIdentity.userId, {userPubKey: userIdentity.userPubKey, action: model.action}]]),
-                });
+            let group = contextGroups.get(userIdentity.contextId);
+            if (!group) {
+                group = [];
+                contextGroups.set(userIdentity.contextId, group);
             }
-            else {
-                entry.userStatusChanges.set(userIdentity.userId, {userPubKey: userIdentity.userPubKey, action: model.action});
-            }
+            group.push({
+                userId: userIdentity.userId,
+                userPubKey: userIdentity.userPubKey,
+                action: model.action,
+            });
+        }
+        
+        for (const [contextId, identities] of contextGroups) {
+            await this.activeUsersMap.registerContextUserStatusChange({
+                host: model.host,
+                contextId: contextId,
+                userIdentities: identities,
+            });
         }
     }
     
-    aggregateDataForCollectionChangedNotification(channel: TargetChannel, clients: types.core.Client[]|null, host: types.core.Host) {
+    async aggregateDataForCollectionChangedNotification(channel: TargetChannel, clients: types.core.Client[]|null, host: types.core.Host) {
         if (!channel.containerId || !channel.itemId) {
             return;
         }
         const entryKey: HostDistinguishedKey = `${host}/${channel.containerId}`;
-        const entry = this.aggregatedCollectionChangeds.get(entryKey);
+        const entry = this.aggregatedCollectionChanges.get(entryKey);
         const {action, containerKind} = this.getChannelTypeAndAction(channel.channel);
         if (!action || !containerKind) {
             return;
@@ -92,7 +96,7 @@ export class AggregatedNotificationsService {
                 containerType: channel.containerType,
                 items: new Map([[channel.itemId, action]]),
             };
-            this.aggregatedCollectionChangeds.set(entryKey, entryValue);
+            this.aggregatedCollectionChanges.set(entryKey, entryValue);
             return;
         }
         const itemEntry = entry.items.get(channel.itemId);
@@ -105,14 +109,14 @@ export class AggregatedNotificationsService {
         entry.clients = clients;
     }
     
-    async flush(sink: <T = unknown>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}) => Promise<void>) {
+    async flush(sink: <T = unknown>(model: {channel: TargetChannel, host: types.core.Host, clients: types.core.Client[]|null, event: T}) => void) {
         const now = DateUtils.now();
-        for (const value of this.aggregatedCollectionChangeds.values()) {
+        for (const value of this.aggregatedCollectionChanges.values()) {
             const eventData = this.assembleCollectionChangedNotification(value, now);
             if (!eventData) {
                 continue;
             }
-            void sink({
+            sink({
                 channel: {
                     channel: `${value.containerKind}/collectionChanged` as types.core.WsChannelName,
                     contextId: value.contextId,
@@ -124,19 +128,32 @@ export class AggregatedNotificationsService {
                 event: eventData,
             });
         }
-        this.aggregatedCollectionChangeds.clear();
-        for (const value of this.aggregatedcontextUserStatusChangeds.values()) {
-            void sink({
+        this.aggregatedCollectionChanges.clear();
+        
+        const result = await this.activeUsersMap.fetchContextUserStatusChanges({lastEventId: this.lastEventId});
+        this.lastEventId = result.lastEventId;
+        
+        for (const value of result.events) {
+            const event: ContextUsersStatusChange = {
+                type: "contextUserStatusChanged",
+                channel: "context",
+                timestamp: now,
+                data: {
+                    contextId: value.contextId,
+                    users: value.changes.map(x => ({userId: x.userId, pubKey: x.userPubKey, action: x.action})),
+                },
+            };
+            
+            sink({
                 channel: {
                     channel: "context/userStatus" as types.core.WsChannelName,
                     contextId: value.contextId,
                 },
                 clients: await this.activeUsersMap.getActiveContextUsers({contextId: value.contextId}),
                 host: value.host,
-                event: this.assembleUserStatusChangeNotification(value, now),
+                event: event,
             });
         }
-        this.aggregatedcontextUserStatusChangeds.clear();
     }
     
     private getChannelTypeAndAction(channelPath: string) {
@@ -147,19 +164,6 @@ export class AggregatedNotificationsService {
         const containerKind = parts[AggregatedNotificationsService.ChannelPathPart.ContainerType] as types.core.ContainerWithItems;
         const action = parts[AggregatedNotificationsService.ChannelPathPart.Action] as types.core.CRUDAction;
         return { containerKind, action };
-    }
-    
-    private assembleUserStatusChangeNotification(aggregatedContextUsersStatus: AggregatedContextUserStatus, now: types.core.Timestamp) {
-        const event: ContextUsersStatusChange = {
-            type: "contextUserStatusChanged",
-            channel: "context",
-            timestamp: now,
-            data: {
-                contextId: aggregatedContextUsersStatus.contextId,
-                users: this.convertUsersMapToArray(aggregatedContextUsersStatus.userStatusChanges),
-            },
-        };
-        return event;
     }
     
     private assembleCollectionChangedNotification(aggregatedEventInfo: AggregatedEvent, now: types.core.Timestamp) {
@@ -212,14 +216,6 @@ export class AggregatedNotificationsService {
             default:
                 return null;
         }
-    }
-    
-    private convertUsersMapToArray(users: Map<types.cloud.UserId, UserStatus>) {
-        return Array.from(users.entries()).map(([userId, {userPubKey, action}]) => ({
-            userId,
-            pubKey: userPubKey,
-            action,
-        }));
     }
     
     private convertItemsMapToArray<T>(items: Map<string, types.core.CRUDAction>) {

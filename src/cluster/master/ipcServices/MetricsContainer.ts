@@ -13,6 +13,7 @@ import { IpcService } from "../Decorators";
 import * as types from "../../../types";
 import { ApiMethod } from "../../../api/Decorators";
 import { DateUtils } from "../../../utils/DateUtils";
+import { MetricsCollector } from "../../../service/misc/MetricsCollector";
 
 interface Metrics {
     solutionId: types.cloud.SolutionId;
@@ -29,8 +30,11 @@ export class MetricsContainer {
     
     private metrics: Map<string, Metrics> = new Map();
     private flushTimeoutHandle: NodeJS.Timeout;
+    private defaultNodeMetrics: Map<string, string> = new Map();
     
-    constructor() {
+    constructor(
+        private metricsCollector: MetricsCollector,
+    ) {
         this.flushTimeoutHandle = setTimeout(() => {
             void this.flush();
         }, DateUtils.minutes(1));
@@ -53,6 +57,11 @@ export class MetricsContainer {
     }
     
     @ApiMethod({})
+    async sendDefaultMetrics(model: {workerId: string, workerMetrics: string}) {
+        this.defaultNodeMetrics.set(model.workerId, model.workerMetrics);
+    }
+    
+    @ApiMethod({})
     async getMetrics() {
         const metrics: string[] = [
             "# TYPE privmx_bridge_error_gauge gauge",
@@ -61,7 +70,6 @@ export class MetricsContainer {
             "# TYPE privmx_bridge_out_traffic_gauge gauge",
             "# TYPE privmx_bridge_request_gauge gauge",
         ];
-        
         for (const entry of this.metrics.values()) {
             const metricLabel = `{solutionId="${entry.solutionId}",contextId="${entry.contextId}"}`;
             metrics.push(`privmx_bridge_error_gauge${metricLabel} ${entry.errors}`);
@@ -70,6 +78,8 @@ export class MetricsContainer {
             metrics.push(`privmx_bridge_out_traffic_gauge${metricLabel} ${entry.outTraffic}`);
             metrics.push(`privmx_bridge_request_gauge${metricLabel} ${entry.requests}`);
         }
+        metrics.push((await this.metricsCollector.getThisWorkerMetrics()).workerMetrics);
+        metrics.push(...Array.from(this.defaultNodeMetrics.values()));
         void this.flush();
         return metrics.join("\n");
     }

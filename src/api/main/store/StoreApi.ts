@@ -76,7 +76,7 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeList(model: storeApi.StoreListModel): Promise<storeApi.StoreListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, stores} = await this.storeService.getMyStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, stores} = await this.storeService.getMyStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
         return {stores: stores.list.map(x => this.storeConverter.convertStore(user.userId, x)), count: stores.count};
     }

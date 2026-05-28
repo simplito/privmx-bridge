@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 
 export interface JobEntry {
     intervalId: NodeJS.Timeout;
@@ -61,7 +61,7 @@ export class JobService {
                 }
             }
             catch (e) {
-                this.logger.error(errorMessage || "Error in job", e);
+                this.logger.error(e, errorMessage || "Error in job");
             }
         })();
     }

@@ -30,6 +30,7 @@ export const test = testApi("client", "inbox/", ManagementInboxApi, new Manageme
             users: ["john" as types.cloud.UserId],
             managers: ["john" as types.cloud.UserId],
             version: 1 as types.inbox.InboxVersion,
+            publicMeta: null,
         },
     });
     call("listInboxes", api => api.listInboxes({
@@ -51,6 +52,7 @@ export const test = testApi("client", "inbox/", ManagementInboxApi, new Manageme
                 users: ["john" as types.cloud.UserId],
                 managers: ["john" as types.cloud.UserId],
                 version: 1 as types.inbox.InboxVersion,
+                publicMeta: null,
             },
         ],
     });

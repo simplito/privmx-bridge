@@ -54,6 +54,7 @@ export class StoreApiValidator extends BaseValidator {
         }));
         this.registerMethod("storeList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
+            scope: this.tv.optionalContainerAccessScope,
             type: this.tv.optResourceType,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate", "lastFileDate"])),
         }));

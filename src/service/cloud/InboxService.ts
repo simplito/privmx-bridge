@@ -246,13 +246,20 @@ export class InboxService extends BaseContainerService {
         return {user, inboxes};
     }
     
-    async getMyInboxes(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox) {
+    async getMyInboxes(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxList", []);
-        if (!this.policy.canListMyContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+        if (scope === "ALL") {
+            if (!this.policy.canListAllContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
         }
-        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy);
+        else {
+            if (!this.policy.canListMyContainers(user, context)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        }
+        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
         return {user, inboxes};
     }
     

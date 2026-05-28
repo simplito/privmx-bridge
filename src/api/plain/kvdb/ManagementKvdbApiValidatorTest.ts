@@ -32,6 +32,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
             version: 1 as types.kvdb.KvdbVersion,
             lastEntryDate: 1715959261142 as types.core.Timestamp,
             entries: 1,
+            publicMeta: null,
         },
     });
     call("listKvdbs", api => api.listKvdbs({
@@ -55,6 +56,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
                 version: 1 as types.kvdb.KvdbVersion,
                 lastEntryDate: 1715959261142 as types.core.Timestamp,
                 entries: 1,
+                publicMeta: null,
             },
         ],
     });
@@ -75,6 +77,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
             version: 1 as types.kvdb.KvdbEntryVersion,
             lastModificationDate: 1715959261318 as types.core.Timestamp,
             lastModifier: "john" as types.cloud.UserId,
+            publicMeta: null,
         },
     });
     call("listKvdbEntries", api => api.listKvdbKeys({
@@ -97,6 +100,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
             version: 1 as types.kvdb.KvdbVersion,
             lastEntryDate: 1715959261142 as types.core.Timestamp,
             entries: 1,
+            publicMeta: null,
         },
         list: ["664775dd05c7c6f92f654a11"] as types.kvdb.KvdbEntryKey[],
     });
@@ -146,6 +150,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
             version: 1 as types.kvdb.KvdbVersion,
             lastEntryDate: 1715959261142 as types.core.Timestamp,
             entries: 1,
+            publicMeta: null,
         },
         list: [{
             kvdbEntryKey: "664775dd05c7c6f92f654a11" as types.kvdb.KvdbEntryKey,
@@ -157,6 +162,7 @@ export const test = testApi("client", "kvdb/", ManagementKvdbApi, new Management
             version: 1 as types.kvdb.KvdbEntryVersion,
             lastModificationDate: 1715959261318 as types.core.Timestamp,
             lastModifier: "john" as types.cloud.UserId,
+            publicMeta: null,
         }],
     });
 });

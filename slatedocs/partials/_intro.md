@@ -280,38 +280,3 @@ When requesting an Access Token, you can specify the scope, which defines the le
 | **solution:\***          | Restricts the token to manage all Contexts.                                                                                                                                                                                        |
 
 These scopes allow fine-grained control over what actions can be performed with the generated tokens, making it easier to manage permissions across different parts of the system.
-
-# Metrics Documentation
-
-### Overview
-
-The application provides a `/metrics` endpoint that returns various metrics in a format compatible with [Prometheus](https://prometheus.io/). The endpoint is protected by HTTP Basic Authorization for security.
-
-### Metrics Endpoint
-
-- **Endpoint:** `/metrics`
-- **Access Control:** Requires HTTP Basic Authorization
-- **Scrape Interval:** 1 minute (data older than 1 minute is discarded)
-- **Bucket Clearing:** After each metric collection via the `/metrics` endpoint, the internal metrics bucket is cleared. This enables the endpoint to support scrape intervals shorter than 1 minute, if desired.
-
-### Metrics Collected
-
-The following metrics are available from the `/metrics` endpoint:
-
-1. **privmx_bridge_error_gauge**
-   - **Type:** Gauge
-   - **Description:** Tracks the number of errors.
-2. **privmx_bridge_cpu_execution_time_gauge**
-   - **Type:** Gauge
-   - **Description:** Measures the CPU time taken for executions.
-3. **privmx_bridge_in_traffic_gauge**
-   - **Type:** Gauge
-   - **Description:** Records incoming traffic volume in bytes.
-4. **privmx_bridge_out_traffic_gauge**
-   - **Type:** Gauge
-   - **Description:** Records outgoing traffic volume in bytes.
-5. **privmx_bridge_request_gauge**
-   - **Type:** Gauge
-   - **Description:** Counts the number of requests.
-
-Each of these metrics is exposed with the `# TYPE <metric_name> gauge` format.

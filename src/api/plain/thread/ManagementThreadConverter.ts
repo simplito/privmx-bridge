@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as managementThreadApi from "./ManagementThreadApiTypes";
 import * as db from "../../../db/Model";
+import { Utils } from "../../../utils/Utils";
 
 export class ManagementThreadConverter {
     
@@ -29,6 +30,7 @@ export class ManagementThreadConverter {
             version: x.history.length as types.thread.ThreadVersion,
             lastMsgDate: x.lastMsgDate,
             messages: x.messages,
+            publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
         };
         return res;
     }
@@ -41,6 +43,7 @@ export class ManagementThreadConverter {
             createDate: x.createDate,
             author: x.author,
             keyId: x.keyId,
+            publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
         };
         return res;
     }

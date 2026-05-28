@@ -69,6 +69,8 @@ export interface Inbox {
     managers: types.cloud.UserId[];
     /** Version */
     version: types.inbox.InboxVersion;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown;
 }
 
 export interface InboxDeletedData {

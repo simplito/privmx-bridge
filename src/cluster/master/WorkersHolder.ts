@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import type * as Cluster from "cluster";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 
 /* eslint-disable-next-line */
 const cluster = require("cluster") as Cluster.Cluster;

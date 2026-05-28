@@ -13,7 +13,7 @@ limitations under the License.
 
 import { Config, loadConfig } from "../../cluster/common/ConfigUtils";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
-import { ConsoleAppender, LoggerFactory } from "../../service/log/LoggerFactory";
+import { LoggerFactory } from "../../service/log/LoggerFactory";
 import * as mongodb from "mongodb";
 import { MetricService } from "../../service/misc/MetricService";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
@@ -25,8 +25,8 @@ import { JobService } from "../../service/job/JobService";
 import * as util from "util";
 import { ConfigService } from "../../service/config/ConfigService";
 
-const loggerFactory = new LoggerFactory("MAIN", new ConsoleAppender());
-const logger = loggerFactory.get("MASTER");
+const loggerFactory = new LoggerFactory("MAIN");
+const logger = loggerFactory.createLogger("MASTER");
 
 async function go() {
     const config = loadConfig(false);
@@ -37,8 +37,9 @@ async function go() {
     const mongoClient = await mongodb.MongoClient.connect(config.db.mongo.url, {minPoolSize: 5, maxPoolSize: 5});
     const mongoDbManager = new MongoDbManager(
         mongoClient,
-        loggerFactory.get(MongoDbManager),
+        loggerFactory.createLogger(MongoDbManager),
         new MetricService(),
+        new Map<string, unknown>(),
     );
     mongoDbManager.init(fullConfig.db.mongo.dbName);
     const repositoryFactory = new RepositoryFactory(mongoDbManager, null as unknown as ConfigService);

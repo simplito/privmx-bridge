@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import { PrivmxConnectionServer } from "./tls/PrivmxConnectionServer";
-import { Logger, LoggerFactory, LowLogger } from "../service/log/LoggerFactory";
+import { LoggerFactory } from "../service/log/LoggerFactory";
 import { SrpLoginService } from "../service/login/SrpLoginService";
 import { ConfigService } from "../service/config/ConfigService";
 import { KeyLoginService } from "../service/login/KeyLoginService";
@@ -39,6 +39,7 @@ import { PacketValidator } from "./tls/PacketValidator";
 import { MicroTimeUtils } from "../utils/MicroTimeUtils";
 import { ApiResolver } from "./ApiResolver";
 import { ServerSignatureService } from "../service/cloud/ServerSignatureService";
+import { Logger } from "../service/log/Logger";
 
 export interface Context {
     ioc: RequestScopeIOC;
@@ -51,7 +52,6 @@ export type RequestApiResolver = ApiResolver<RequestScopeIOC>;
 export class ServerEndpoint {
     
     connection: PrivmxConnectionServer;
-    private lowLogger!: LowLogger;
     
     constructor(
         private requestLogger: RequestLogger,
@@ -73,9 +73,10 @@ export class ServerEndpoint {
         private logger: Logger,
         private loggerFactory: LoggerFactory,
         private serverSignatureService: ServerSignatureService,
+        private instanceHost: types.core.Host,
     ) {
         this.connection = new PrivmxConnectionServer(this.requestLogger, this.ticketsDb, this.serverAgent, this.packetValidator, this.srpLoginService, this.keyLoginService,
-            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.sessionValidator.bind(this), this.serverSignatureService, this.loggerFactory.get(PrivmxConnectionServer));
+            this.ecdheLoginService, this.sessionLoginService, () => this.pkiFactory.loadKeystore(), this.configService, this.sessionValidator.bind(this), this.serverSignatureService, this.loggerFactory.createLogger(PrivmxConnectionServer, this.instanceHost));
         this.connection.setOutputStream(new OutputBufferStream());
         this.connection.setAppFrameHandler(this.__invoke.bind(this));
     }
@@ -96,7 +97,7 @@ export class ServerEndpoint {
             const method = frame.method;
             const params = frame.params;
             const result = await this.callMethod(this.requestScopeIoc, sessionService, method, params);
-            this.lowLogger.log("Called");
+            this.logger.debug("Called");
             if (result instanceof Raw) {
                 const data = result.getData();
                 const binary = result.isBinary();
@@ -153,7 +154,7 @@ export class ServerEndpoint {
                 response.result = null;
             }
         }
-        this.lowLogger.log("Handle Frame end");
+        this.logger.debug("Handle Frame end");
         return {
             response: response,
             success: success,
@@ -167,24 +168,28 @@ export class ServerEndpoint {
             frameRaw: frameData,
         };
         this.requestLogger.setCurrentMethod(methodInfo);
-        this.lowLogger.log("Server Endpoint Invoke start");
+        this.logger.debug("Server Endpoint Invoke start");
+        this.logger.debug("Server Endpoint Invoke start");
         try {
+            if (!conn.encoder) {
+                throw new RpcError("Enocder not set");
+            }
             const sessionId = this.connection.getSessionId();
             const session = sessionId ? await this.sessionHolder.restoreSession(sessionId) : null;
-            const sessionService = new SessionService(session, this.maintenanceService, this.loggerFactory.get(SessionService));
+            const sessionService = new SessionService(session, this.maintenanceService, this.loggerFactory.createLogger(SessionService, this.instanceHost));
             methodInfo.sessionId = session ? session.id : "";
             methodInfo.user = session ? session.get("username") || "" : "";
             if (session) {
                 methodInfo.solutionId = session.get("solution");
             }
-            this.lowLogger.log("Server Endpoint SessionService");
-            const frameResult = Utils.try(() => <{id_: any, id: any, method: string, params: any}>conn.psonHelper.pson_decodeEx(frameData));
+            this.logger.debug("Server Endpoint SessionService");
+            const frameResult = Utils.try(() => <{id_: any, id: any, method: string, params: any}>conn.getEncoder().decode(frameData));
             if (frameResult.success === false) {
                 methodInfo.error = frameResult.error;
                 throw new RpcError("Invalid application frame data. Cannot decode given PSON");
             }
             const frame = frameResult.result;
-            this.lowLogger.log("Server Endpoint Refresh Decode frame");
+            this.logger.debug("Server Endpoint Refresh Decode frame");
             methodInfo.frame = frame;
             methodInfo.id = frame ? frame.id : null;
             methodInfo.method = frame ? frame.method || "" : "";
@@ -199,16 +204,17 @@ export class ServerEndpoint {
                 throw new RpcError("Invalid frame. Field 'params' required");
             }
             frame.id_ = typeof(frame.id) == "string" ? frame.id.substr(-4) : frame.id;
-            this.lowLogger.log("Server Endpoint Prepare frame");
+            this.logger.debug("Server Endpoint Prepare frame");
             const response = await this.handleFrame(sessionService, frame);
             methodInfo.response = response.response;
             methodInfo.success = response.success;
             methodInfo.error = response.error;
-            this.lowLogger.log("Server Endpoint Handle frame");
-            const encoded = conn.psonHelper.pson_encode(response.response);
-            this.lowLogger.log("Server Endpoint Encode");
+            this.logger.debug("Server Endpoint Handle frame");
+            const encoded = conn.encoderHelper.getEncoder(conn.encoder).encode(response.response);
+            this.logger.debug("Server Endpoint Encode");
             conn.send(encoded);
-            this.lowLogger.log("Server Endpoint Send");
+            this.logger.debug("Server Endpoint Send");
+            this.logger.debug("Server Endpoint Send");
         }
         catch (e) {
             methodInfo.outerError = e;
@@ -218,7 +224,7 @@ export class ServerEndpoint {
             this.requestLogger.add(startTime, methodInfo);
             this.requestLogger.clearCurrentMethod();
         }
-        this.lowLogger.log("Server Endpoint Invoke end");
+        this.logger.debug("Server Endpoint Invoke end");
     }
     
     async sessionValidator(sessionId: types.core.SessionId|undefined): Promise<boolean> {
@@ -259,10 +265,7 @@ export class ServerEndpoint {
     }
     
     async execute(request: Buffer): Promise<Buffer> {
-        this.lowLogger = this.logger.createLow();
-        // this.lock.reader();
-        
-        this.lowLogger.log("Processing request");
+        this.logger.debug("Processing request");
         try {
             await this.connection.process(new InputBufferStream(request));
         }
@@ -274,21 +277,15 @@ export class ServerEndpoint {
             throw new Error("No connection output");
         }
         const result = this.connection.output.getContentsAndClear();
-        
-        // this.lock.release();
-        
         await this.callbacks.trigger("afterRequest", []);
         await this.sessionHolder.close(undefined);
-        this.lowLogger.log("Server Endpoint Execute");
-        this.lowLogger.flushLogInNextTick();
+        this.logger.debug("Server Endpoint Execute");
         
         return result;
     }
     
     async executeLite(request: Buffer): Promise<Buffer> {
-        this.lowLogger = this.logger.createLow();
-        
-        this.lowLogger.log("Processing request");
+        this.logger.debug("Processing request");
         try {
             await this.connection.process(new InputBufferStream(request));
         }
@@ -303,24 +300,21 @@ export class ServerEndpoint {
         
         await this.callbacks.trigger("afterRequest", []);
         await this.sessionHolder.close(undefined);
-        this.lowLogger.log("Server Endpoint Execute");
-        this.lowLogger.flushLogInNextTick();
+        this.logger.debug("Server Endpoint Execute");
         
         return result;
     }
     
     async executeMethod(method: string, params: any, sessionId: types.core.SessionId): Promise<any> {
-        this.lowLogger = this.logger.createLow();
-        this.lowLogger.log("Processing method");
+        this.logger.debug("Processing method");
         try {
             const session = sessionId ? await this.sessionHolder.restoreSession(sessionId) : null;
-            const sessionService = new SessionService(session, this.maintenanceService, this.loggerFactory.get(SessionService));
+            const sessionService = new SessionService(session, this.maintenanceService, this.loggerFactory.createLogger(SessionService, this.instanceHost));
             return await this.callMethod(this.requestScopeIoc, sessionService, method, params);
         }
         finally {
             await this.sessionHolder.close(undefined);
-            this.lowLogger.log("Server Endpoint Execute Method");
-            this.lowLogger.flushLogInNextTick();
+            this.logger.debug("Server Endpoint Execute Method");
         }
     }
 }

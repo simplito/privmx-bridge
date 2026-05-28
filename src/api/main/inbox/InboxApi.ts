@@ -84,7 +84,7 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
     @ApiMethod({})
     async inboxList(model: inboxApi.InboxListModel): Promise<inboxApi.InboxListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {inboxes, user} = await this.inboxService.getMyInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {inboxes, user} = await this.inboxService.getMyInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
         return {inboxes: inboxes.list.map(x => this.inboxConverter.convertInbox(user.userId, x)), count: inboxes.count};
     }

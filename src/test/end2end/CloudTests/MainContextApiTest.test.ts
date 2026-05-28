@@ -89,8 +89,8 @@ export class MainContextApiTests extends BaseTestSet {
         const user = res.users.find(u => u.id === "NewUser");
         assert(!!user, "Invalid user fetched");
     }
-     
-     private async fetchUserUsingMongoQueryWithUserPubKey() {
+    
+    private async fetchUserUsingMongoQueryWithUserPubKey() {
         if (!this.newUserPubkey) {
             throw new Error("newUserPubKey not initialized yet");
         }

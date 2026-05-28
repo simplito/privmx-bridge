@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as exec from "child_process";
-import { Logger } from "../service/log/LoggerFactory";
+import { Logger } from "../service/log/Logger";
 
 export interface ExecResult {
     type: "exec";
@@ -49,9 +49,9 @@ export class NodeHelper {
                 .on("exit", code => {
                     exitCode = code;
                 });
-            proc.stdin?.on("error", e => this.logger.error("Error stdin during spawning process", e));
-            proc.stdout?.on("error", e => this.logger.error("Error stdout during spawning process", e));
-            proc.stderr?.on("error", e => this.logger.error("Error stderr during spawning process", e));
+            proc.stdin?.on("error", e => this.logger.error(e, "Error stdin during spawning process"));
+            proc.stdout?.on("error", e => this.logger.error(e, "Error stdout during spawning process"));
+            proc.stderr?.on("error", e => this.logger.error(e, "Error stderr during spawning process"));
             if (stdin) {
                 proc.stdin?.write(stdin);
                 proc.stdin?.end();

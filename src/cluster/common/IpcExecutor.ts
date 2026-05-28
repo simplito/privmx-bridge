@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { IpcRequest, IpcResponseError, IpcResponseSuccess } from "./Ipc";
 import { MethodExecutor } from "./MethodExecutor";
 
@@ -28,7 +28,7 @@ export class IpcExecutor {
             return response;
         }
         catch (e) {
-            this.logger.error("Error during processing request", data.id, data.method, e);
+            this.logger.error({data, e}, "Error during processing request");
             
             const response: IpcResponseError = {id: data.id, error: "" + e};
             return response;

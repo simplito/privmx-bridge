@@ -59,6 +59,7 @@ export class KvdbApiValidator extends BaseValidator {
         
         this.registerMethod("kvdbList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
+            scope: this.tv.optionalContainerAccessScope,
             type: this.tv.optResourceType,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastEntryDate", "lastModificationDate"])),
         }));

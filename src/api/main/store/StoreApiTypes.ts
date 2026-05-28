@@ -106,6 +106,7 @@ export interface StoreGetResult {
 
 export interface StoreListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.store.StoreType;
     sortBy?: "createDate"|"lastModificationDate"|"lastFileDate";
 }

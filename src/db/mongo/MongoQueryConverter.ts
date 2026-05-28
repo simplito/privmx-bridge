@@ -62,7 +62,7 @@ export class MongoQueryConverter {
         const pattern = `${startPart}.*${containsPart}.*${endPart}`;
         
         return new RegExp(pattern);
-      }
+    }
     
     private static isAndQuery(query: types.core.Query): query is {$and: types.core.Query[]} {
         return "$and" in query;

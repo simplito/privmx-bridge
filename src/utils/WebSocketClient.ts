@@ -15,7 +15,7 @@ import { Deferred } from "../CommonTypes";
 import * as types from "../types";
 import { DateUtils } from "./DateUtils";
 import { Utils } from "./Utils";
-import { Logger } from "../service/log/LoggerFactory";
+import { Logger } from "../service/log/Logger";
 import { JsonRpcId, JsonRpcResponse, JsonRpcRequest } from "../api/JsonRpcServer";
 
 interface MapEntry {
@@ -67,7 +67,7 @@ export class WebSocketClient {
                 onMessage: (data) => {
                     const res = Utils.try(() => JSON.parse(typeof(data) === "string" ? data : Buffer.from(data as Buffer).toString("utf8")));
                     if (res.success === false) {
-                        this.logger.error("Cannot decode ws message", data.toString(), res.error);
+                        this.logger.error( res.error, "Cannot decode ws message", data.toString());
                         return;
                     }
                     const obj = res.result;
@@ -105,7 +105,7 @@ export class WebSocketClient {
         }
         catch (e) {
             if (!this.closed) {
-                this.logger.out("Wait 5s to reconnect WebSocket", e instanceof Error ? null : e);
+                this.logger.out(e instanceof Error ? null : e, "Wait 5s to reconnect WebSocket");
                 await PromiseUtils.wait(5000);
                 void this.connect(onOpen);
             }
@@ -120,7 +120,7 @@ export class WebSocketClient {
             }
         }
         catch (e) {
-            this.logger.error("Error during closing ws", e);
+            this.logger.error(e, "Error during closing ws");
         }
     }
     
@@ -168,7 +168,7 @@ export class WebSocketClient {
             pingIntervalId = setInterval(() => {
                 ws.ping(undefined, undefined, err => {
                     if (err) {
-                        logger.error("Error during ws ping", err);
+                        logger.error(err, "Error during ws ping");
                     }
                 });
             }, 5000);

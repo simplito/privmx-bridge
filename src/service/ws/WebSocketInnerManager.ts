@@ -12,23 +12,25 @@ limitations under the License.
 import * as WebSocket from "ws";
 import * as types from "../../types";
 import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
-import { Crypto } from "../../utils/crypto/Crypto";
-import { PsonHelperEx } from "../../utils/PsonHelperEx";
 import { PlainApiEvent } from "../../api/plain/Types";
 import { TargetChannel } from "./WebSocketConnectionManager";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { AppException } from "../../api/AppException";
+import { Logger } from "../log/Logger";
+import { WebSocketOutboundHandler } from "./WebSocketOutboundHandler";
 
 export class WebSocketInnerManager {
     
     private servers: WebSocket.Server[];
-    private psonHelper: PsonHelperEx;
+    private userLookUpMap: Map<types.core.Username, WebSocketEx[]> = new Map();
+    private plainUsersMap: Map<string, WebSocketEx> = new Map();
     
     constructor(
         private config: Config,
+        private webSocketOutboundHandler: WebSocketOutboundHandler,
+        private logger: Logger,
     ) {
         this.servers = [];
-        this.psonHelper = new PsonHelperEx([]);
     }
     
     registerServer(server: WebSocket.Server) {
@@ -36,39 +38,68 @@ export class WebSocketInnerManager {
     }
     
     sendToPlainUsers(solution: types.cloud.SolutionId, event: PlainApiEvent) {
-        for (const server of this.servers) {
-            for (const client of server.clients) {
-                const ws = <WebSocketEx>client;
-                if (ws.ex.plainUserInfo) {
-                    const entry = ws.ex.plainUserInfo.plainApiChannels.get(event.channel as types.core.WsChannelName);
-                    if (entry && (entry.has(solution) || entry.has("*" as types.cloud.SolutionId))) {
-                        ws.send(JSON.stringify(event));
-                    }
+        for (const client of this.plainUsersMap.values()) {
+            const ws = <WebSocketEx>client;
+            if (ws.ex.plainUserInfo) {
+                const entry = ws.ex.plainUserInfo.plainApiChannels.get(event.channel as types.core.WsChannelName);
+                if (entry && (entry.has(solution) || entry.has("*" as types.cloud.SolutionId))) {
+                    ws.send(JSON.stringify(event));
                 }
             }
         }
     }
     
     send<T extends types.core.Event<any, any>>(host: types.core.Host, channel: TargetChannel, clients: types.core.Client[]|null, event: T) {
-        if (clients != null && clients.length == 0) {
+        if (clients !== null && clients.length == 0) {
             return;
         }
-        for (const server of this.servers) {
-            for (const client of server.clients) {
-                const ws = <WebSocketEx>client;
-                for (const session of ws.ex.sessions) {
+        if (clients === null) {
+            this.broadcastEvent(host, channel, event);
+            return;
+        }
+        for (const client of clients) {
+            const sockets = this.userLookUpMap.get(client as types.core.Username) || [];
+            for (const socket of sockets) {
+                if (socket.readyState !== socket.OPEN) {
+                    continue;
+                }
+                for (const session of socket.ex.sessions) {
+                    if (session.host !== host || session.username !== client) {
+                        continue;
+                    }
                     const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(channel, session.channels);
-                    if (session.host === host && (clients == null || clients.includes(session.username)) && matchingSubscriptions.length !== 0) {
-                        event.subscriptions = matchingSubscriptions;
-                        event.version = options.version;
-                        this.sendToWsSession(ws, session, this.serializeEvent(options.version === 1 ? event : this.removeChannel(event)));
+                    if (matchingSubscriptions.length !== 0) {
+                        const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
+                        sessionEventCopy.subscriptions = matchingSubscriptions;
+                        sessionEventCopy.version = options.version;
+                        this.webSocketOutboundHandler.sendToWsSession(socket, session, sessionEventCopy);
                     }
                 }
             }
         }
     }
     
-    private getMatchingsubscriptionsAndOptions(targetChannel: TargetChannel, userChannels: types.cloud.ChannelScheme[]) {
+    private broadcastEvent<T extends types.core.Event<any, any>>(host: types.core.Host, channel: TargetChannel, event: T) {
+        for (const server of this.servers) {
+            for (const client of server.clients) {
+                const ws = <WebSocketEx>client;
+                for (const session of ws.ex.sessions) {
+                    if (session.host !== host) {
+                        continue;
+                    }
+                    const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(channel, session.channels);
+                    if (matchingSubscriptions.length !== 0) {
+                        const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
+                        sessionEventCopy.subscriptions = matchingSubscriptions;
+                        sessionEventCopy.version = options.version;
+                        this.webSocketOutboundHandler.sendToWsSession(ws, session, sessionEventCopy);
+                    }
+                }
+            }
+        }
+    }
+    
+    public getMatchingsubscriptionsAndOptions(targetChannel: TargetChannel, userChannels: types.cloud.ChannelScheme[]) {
         const matchingSubscriptions = [];
         const options = {
             version: 2,
@@ -98,31 +129,7 @@ export class WebSocketInnerManager {
     }
     
     private isPathPrefix(parent: string, child: string): boolean {
-        const parentParts = parent.split("/").filter(segment => segment.length > 0);
-        const childParts = child.split("/").filter(segment => segment.length > 0);
-        if (parentParts.length > childParts.length) {
-          return false;
-        }
-        return parentParts.every((part, index) => part === childParts[index]);
-    }
-    
-    private sendToWsSession(ws: WebSocketEx, session: WebSocketSession, message: Buffer) {
-        const prefix = this.preparePrefix(session);
-        const cipher = Buffer.concat([prefix, Crypto.aes256CbcHmac256Encrypt(message, session.encryptionKey)]);
-        ws.send(cipher);
-    }
-    
-    private serializeEvent(event: any) {
-        return this.psonHelper.pson_encode(event);
-    }
-    
-    private preparePrefix(session: WebSocketSession) {
-        if (session.addWsChannelId) {
-            const prefix = Buffer.alloc(8, 0);
-            prefix.writeUInt32BE(session.wsChannelId, 4);
-            return prefix;
-        }
-        return Buffer.alloc(4, 0);
+        return child.startsWith(parent);
     }
     
     hasOpenConnectionWithUsername(host: types.core.Host, username: types.core.Username): boolean {
@@ -164,7 +171,7 @@ export class WebSocketInnerManager {
                 const ws = <WebSocketEx>client;
                 ws.ex.sessions = ws.ex.sessions.filter(session => {
                     if (session.host === host && func(session)) {
-                        this.sendToWsSession(ws, session, this.serializeEvent({type: "disconnected"}));
+                        this.webSocketOutboundHandler.sendToWsSession(ws, session, {type: "disconnected", data: {}});
                         usersToCheck.add(session.username);
                         void (async () => {
                             const hostContext = await ws.ex.contextFactory(session.instanceHost);
@@ -182,6 +189,10 @@ export class WebSocketInnerManager {
     }
     
     async onClose(wsEx: WebSocketEx) {
+        if (wsEx.ex.plainUserInfo) {
+            this.removeFromPlainUsers(wsEx);
+        }
+        this.popSocketFromUserLookUpMap(wsEx);
         for (const session of wsEx.ex.sessions) {
             this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
             const hostContextIOC = await wsEx.ex.contextFactory(session.instanceHost);
@@ -192,11 +203,42 @@ export class WebSocketInnerManager {
     
     addSession(wsEx: WebSocketEx, session: WebSocketSession) {
         wsEx.ex.sessions.push(session);
+        this.pushToUserLookUpMap(wsEx, session.username);
         this.refreshHasOpenedWebSocketsForUser(session.host, session.username);
     }
     
+    pushToUserLookUpMap(wsEx: WebSocketEx, username: types.core.Username) {
+        const entry = this.userLookUpMap.get(username);
+        if (!entry) {
+            this.userLookUpMap.set(username, [wsEx]);
+            return;
+        }
+        entry.push(wsEx);
+    }
+    
+    popSocketFromUserLookUpMap(wsEx: WebSocketEx) {
+        for (const session of wsEx.ex.sessions) {
+            const entry = this.userLookUpMap.get(session.username);
+            if (entry) {
+                this.userLookUpMap.set(session.username, entry.filter(socket => socket !== wsEx));
+            }
+        }
+    }
+    
+    popUserFromUserLookUpMap(wsEx: WebSocketEx, username: types.core.Username) {
+        const entry = this.userLookUpMap.get(username);
+        if (!entry) {
+            return;
+        }
+        const foundSocket = entry.find(socket => socket === wsEx);
+        if (!foundSocket) {
+            return;
+        }
+        foundSocket.ex.sessions = foundSocket.ex.sessions.filter((s) => s.username !== username);
+    }
+    
     async removeSessionByWsId(wsEx: WebSocketEx, wsId: types.core.WsId) {
-        const index = wsEx.ex.sessions.findIndex(x => x.wsId == wsId);
+        const index = wsEx.ex.sessions.findIndex(x => x.wsId === wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
             wsEx.ex.sessions.splice(index, 1);
@@ -232,18 +274,38 @@ export class WebSocketInnerManager {
             return;
         }
         wsSession.channels =  wsSession.channels.filter(channel => channel.orgChannel !== orginalChannelPath);
-}
+    }
+    
+    addToPlainUsers(wsEx: WebSocketEx) {
+        if (!wsEx.ex.plainUserInfo) {
+            this.logger.error("Tried to add user socket as plain");
+            return;
+        }
+        const entry = this.plainUsersMap.get(wsEx.ex.plainUserInfo.connectionId);
+        if (entry) {
+            this.logger.error("Socket is already exists in map");
+        }
+        this.plainUsersMap.set(wsEx.ex.plainUserInfo.connectionId, wsEx);
+    }
+    
+    removeFromPlainUsers(wsEx: WebSocketEx) {
+        if (!wsEx.ex.plainUserInfo) {
+            this.logger.error("Socket is not plain");
+            return;
+        }
+        this.plainUsersMap.delete(wsEx.ex.plainUserInfo.connectionId);
+    }
     
     private refreshHasOpenedWebSocketsForUser(_host: types.core.Host, _username: types.core.Username) {
         // Do nothing
     }
     
-    private removeChannel<T extends string, D>(event: types.core.Event<T, D>) {
-        if ("channel" in event) {
+    private createShallowEventCopy<T extends string, D>(event: types.core.Event<T, D>, removeChannel?: boolean) {
+        if (removeChannel && "channel" in event) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const {channel, ...eventWithoutChannel } = event;
             return eventWithoutChannel;
         }
-        return event;
+        return {...event};
     }
 }

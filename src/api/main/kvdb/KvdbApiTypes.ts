@@ -159,6 +159,7 @@ export interface KvdbGetResult {
 
 export interface KvdbListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.kvdb.KvdbType;
     sortBy?: "createDate"|"lastEntryDate"|"lastModificationDate";
 }

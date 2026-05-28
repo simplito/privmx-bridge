@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 
 export interface JobOptions {
     name: string;
@@ -81,7 +81,7 @@ export class JobManager {
                     await func();
                 }
                 catch (e) {
-                    this.logger.error("Error during running one shot job '" + jobType + "' " + id, e);
+                    this.logger.error(e, "Error during running one shot job '" + jobType + "' " + id);
                 }
                 finally {
                     job.done = true;
@@ -137,11 +137,11 @@ export class JobManager {
     
     async run(options: Pick<JobOptions, "name"|"func">) {
         try {
-            this.logger.info("Job '" + options.name + "' started");
+            // this.logger.out("Job '" + options.name + "' started");
             await options.func();
         }
         catch (e) {
-            this.logger.error("Error during running job '" + options.name + "'", e);
+            this.logger.error(e, "Error during running job '" + options.name + "'");
         }
     }
 }

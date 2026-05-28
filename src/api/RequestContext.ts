@@ -32,6 +32,6 @@ export class RequestContext {
     }
     
     flush() {
-        this.ioc.requestLogger.flush();
+        this.ioc.requestLogger.end();
     }
 }

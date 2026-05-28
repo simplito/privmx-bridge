@@ -121,6 +121,8 @@ export interface Store {
     lastFileDate: types.core.Timestamp;
     /** Files count in the store */
     files: number;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface StoreFile {
@@ -149,6 +151,8 @@ export interface StoreFile {
         /** Thumb's size */
         size: types.core.SizeInBytes;
     };
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown
 }
 
 export interface StoreFileDeletedData {

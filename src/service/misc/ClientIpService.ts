@@ -23,7 +23,7 @@ export class ClientIpService {
     }
     
     getClientIp(req: RequestLike) {
-        return <types.core.IPAddress> this.getClientIpResolver().getClientIP(req);
+        return this.getClientIpResolver().getClientIP(req) as types.core.IPAddress;
     }
     
     private getClientIpResolver() {

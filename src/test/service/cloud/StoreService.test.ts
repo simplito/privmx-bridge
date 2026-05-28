@@ -28,7 +28,7 @@ import { ContextUserRepository } from "../../../service/cloud/ContextUserReposit
 import { DateUtils } from "../../../utils/DateUtils";
 import { ErrorCode, AppException } from "../../../api/AppException";
 import { JobService } from "../../../service/job/JobService";
-import { Logger } from "../../../service/log/LoggerFactory";
+import { Logger } from "../../../service/log/Logger";
 import { CloudAclChecker } from "../../../service/cloud/CloudAclChecker";
 import { PolicyService } from "../../../service/cloud/PolicyService";
 import { ContextRepository } from "../../../service/cloud/ContextRepository";
@@ -239,7 +239,7 @@ it("Should list store", async () => {
     const {storeService} = createStoreService();
     
     // Act
-    const res = await storeService.getMyStores(janekUserPubKey, contextId, undefined, listParams, "id");
+    const res = await storeService.getMyStores(janekUserPubKey, contextId, undefined, listParams, "id", "MEMBER");
     
     // Asserts
     expect(res).not.toBeNull();
@@ -252,7 +252,7 @@ it("Should fails on list stores from not exisitng context", async () => {
     
     // Act & Assert
     try {
-        await storeService.getMyStores(janekUserPubKey, notExistingContextId, undefined, listParams, "id");
+        await storeService.getMyStores(janekUserPubKey, notExistingContextId, undefined, listParams, "id", "MEMBER");
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);

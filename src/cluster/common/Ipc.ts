@@ -29,6 +29,12 @@ export interface IpcChannelMessage {
     data: unknown;
 }
 
+export interface IpcBatchState {
+    queue: IpcChannelMessage[];
+    debounceTimer: NodeJS.Timeout | null;
+    maxWaitTimer: NodeJS.Timeout | null;
+}
+
 export function isIpcRequest(message: any): message is IpcRequest {
     return message && typeof(message) === "object" && typeof(message.id) === "number" && typeof(message.method) === "string" && "params" in message;
 }

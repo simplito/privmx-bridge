@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as mongodb from "mongodb";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { BinaryRepository2 } from "../BinaryRepository";
 import { Binary } from "mongodb";
 import { MicroTimeUtils } from "../../utils/MicroTimeUtils";

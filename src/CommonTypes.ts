@@ -15,12 +15,19 @@ import { Subidentity } from "./service/login/UserLoginService";
 import * as mongodb from "mongodb";
 import * as db from "./db/Model";
 import { WsChannelName } from "./types/core";
+import * as WebRtcTypes from "./service/webrtc/v2/WebRtcTypes";
+import { JanusVideoRoomPluginApi } from "./service/webrtc/v2/janus/videoroom/JanusVideoRoomPluginApi";
+import { JanusApi } from "./service/webrtc/v2/janus/JanusApi";
+import { JanusRequester } from "./service/webrtc/v2/janus/JanusRequester";
 import type { IOC } from "./service/ioc/IOC";
+import { EncoderType } from "./utils/Encoder";
+import type { JanusContext } from "./service/cloud/JanusContext";
+import { Publisher, StreamId } from "./service/webrtc/v2/WebRtcTypes";
 
 export { mongodb };
 export type Whenable<T> = T|Promise<T>;
 export type WithLockedSession = <T>(locks: string|string[], func: (session: mongodb.ClientSession) => Promise<T>) => Promise<T>;
-
+export type Dictionary = {[key: string]: unknown};
 export interface Requester {
     request<T>(method: string, params: unknown): Promise<T>;
 }
@@ -67,6 +74,9 @@ export interface WebSocketSession {
     deviceId: types.core.DeviceId|null;
     channels: types.cloud.ChannelScheme[];
     instanceHost: types.core.Host;
+    encoder: EncoderType;
+    plainCommunication: boolean;
+    eventBucket: types.core.Event<any, any>[];
 }
 
 export type SubscribedChannels = Map<WsChannelName, Set<types.cloud.SolutionId>>;
@@ -75,6 +85,8 @@ export interface WebSocketInfo {
     connectionId?: string;
     isAlive: boolean;
     sessions: WebSocketSession[];
+    flushTimer?: NodeJS.Timeout;
+    batchStartTime?: types.core.Timestamp
     plainUserInfo?: {
         connectionId: types.core.WsConnectionId;
         plainApiChannels: SubscribedChannels;
@@ -88,6 +100,37 @@ export interface WebSocketEx extends WebSocket {
     ex: WebSocketInfo;
 }
 
+export interface JanusConnection {
+    janusApi: JanusApi;
+    janusVideoRoomPluginApi: JanusVideoRoomPluginApi;
+    janusRequester: JanusRequester;
+    janusWs: WebSocket;
+}
+
+export interface JanusSession {
+    source: string;
+    type: JanusSessionType;
+    streamRoomId: types.stream.StreamRoomId;
+    session: WebRtcTypes.JanusVideoRoomSession;
+    keepAlivePinger: NodeJS.Timeout;
+    streamsToAccept: number[];
+    // streamIds: number[];
+    publishedStreams: Publisher[];
+    janusPublisherId?: WebRtcTypes.VideoRoomPublisherId;
+    userId: types.cloud.UserId;
+    addStreamsOffer: (streamIds: WebRtcTypes.StreamId[]) => void;
+    acceptStreamsOffer: () => number[];
+    keepPublishedStream: (stream: Publisher) => void;
+    removePublishedStream: (streamId: StreamId) => void;
+}
+
+export type JanusSessionType = "main"|"subscriber";
+
+export interface WebSocketExtendedWithJanus extends WebSocketEx {
+    ex: WebSocketInfo&{
+        janus?: {[wsId: types.core.WsId]: {janusContextPromise: Promise<JanusContext>}};
+    };
+}
 export type RawMongoX<T, X extends keyof T> = Omit<T, X>&{_id: T[X]};
 export type RawMongo<T extends {id: T[X]}, X extends keyof T = "id"> = RawMongoX<T, X>;
 
