@@ -1,19 +1,46 @@
+# VCS / CI
+.git/
+.gitignore
+.gitattributes
+.gitlab-ci.yml
+.github/
+
+# Docker
 Dockerfile
+.dockerignore
 scripts/build-docker.sh
 scripts/build-docker-for-platform.sh
-conf/
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local env / secrets
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
 coverage/
-docker/work
-docs/
-node_modules/
 out/
-main/
-plugins/
-slatedocs/includes
+node_modules/
+**/node_modules/
+docker/work
 slatedocsbuild
+slatedocs/includes
 src/docs/docs.json
 storage/
-updater/
 zip/
+*.log
+
+# Repo-local / unused at build time
+conf/
+docs/
+main/
+plugins/
+updater/
 version
 unix.sockv
