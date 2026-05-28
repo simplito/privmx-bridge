@@ -289,6 +289,24 @@ export class KvdbService extends BaseContainerService {
         return {kvdb, item};
     }
     
+    async findKvdbEntry(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKey: types.kvdb.KvdbEntryKey) {
+        const item = await this.repositoryFactory.createKvdbEntryRepository().get(kvdbId, entryKey);
+        if (!item) {
+            return null;
+        }
+        const kvdb = await this.repositoryFactory.createKvdbRepository().get(item.kvdbId);
+        if (!kvdb) {
+            throw new DbInconsistencyError(`kvdb=${item.kvdbId} does not exist, from item=${entryKey}`);
+        }
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
+            if (!this.policy.canReadItem(user, context, kvdb, item)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryGet", ["kvdbId=" + kvdb.id, "entryKey=" + entryKey]);
+        });
+        return {kvdb, item};
+    }
+    
     async deleteItem(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKey: types.kvdb.KvdbEntryKey) {
         const item = await this.repositoryFactory.createKvdbEntryRepository().get(kvdbId, entryKey);
         if (!item) {
