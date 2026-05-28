@@ -29,6 +29,7 @@ import { Callbacks } from "../../service/event/Callbacks";
 import { MetricsContainer } from "./ipcServices/MetricsContainer";
 import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
 import { LockService } from "./ipcServices/LockService";
+import { CloudLockService } from "./ipcServices/CloudLockService";
 import { WebsocketCommunicationManger } from "./ipcServices/WebsocketCommunicationManager";
 import { IBrokerClient } from "../common/BrokerClient";
 import { MetricsCollector } from "../../service/misc/MetricsCollector";
@@ -56,6 +57,7 @@ export class MasterRegistry {
     private callbacks?: Callbacks;
     private plugins: MasterPlugin[] = [];
     private lockService?: LockService;
+    private cloudLockService?: CloudLockService;
     private websocketCommunicationManager?: WebsocketCommunicationManger;
     private aggregatedNotificationsService?: AggregatedNotificationsService;
     private metricsCollector?: MetricsCollector;
@@ -146,6 +148,7 @@ export class MasterRegistry {
         methodExecutor.register(this.getActiveUsersMap());
         methodExecutor.register(this.getJanusRoomsWatcherCache());
         methodExecutor.register(this.getLockService());
+        methodExecutor.register(this.getCloudLockService());
         methodExecutor.register(this.getWebsocketCommunicationManager());
         methodExecutor.register(this.getAggregatedNotificationsService());
         this.getCallbacks().triggerSync("registerIpcServices", []);
@@ -242,6 +245,13 @@ export class MasterRegistry {
             this.lockService = new LockService();
         }
         return this.lockService;
+    }
+    
+    getCloudLockService() {
+        if (this.cloudLockService == null) {
+            this.cloudLockService = new CloudLockService();
+        }
+        return this.cloudLockService;
     }
     
     getActiveUsersMap() {
