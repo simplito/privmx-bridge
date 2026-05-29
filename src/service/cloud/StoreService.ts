@@ -279,6 +279,32 @@ export class StoreService extends BaseContainerService {
         return {file, store};
     }
     
+    async pullStoreFileRandomWriteMeta(executor: Executor, fileId: types.store.StoreFileId, rwVersion: types.store.StoreFileRwVersion, version: types.store.StoreFileVersion|undefined) {
+        const file = await this.repositoryFactory.createStoreFileRepository().get(fileId);
+        if (!file) {
+            throw new AppException("STORE_FILE_DOES_NOT_EXIST");
+        }
+        const store = await this.repositoryFactory.createStoreRepository().get(file.storeId);
+        if (!store) {
+            throw new DbInconsistencyError(`store=${file.storeId} does not exist, from file=${fileId}`);
+        }
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+            this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGet", ["storeId=" + store.id, "fileId=" + fileId]);
+            if (!this.policy.canReadItem(user, context, store, file)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+        });
+        if (!file.randomWriteMeta) {
+            throw new AppException("UNSUPPORTED_OPERATION", "File does not have randomWriteMeta");
+        }
+        const randomWriteMeta = file.randomWriteMeta;
+        const checksums = randomWriteMeta.rwVersion > rwVersion
+            ? await this.storageService.getStorageService("randomWrite").read(file.fileId, {type: "checksum"})
+            : null;
+        const versionChanged = typeof version === "number" && this.getFileVersion(file) !== version;
+        return {randomWriteMeta, checksums, file: versionChanged ? file : null, store: versionChanged ? store : null};
+    }
+    
     async getStoreFileMany(executor: Executor, storeId: types.store.StoreId, fileIds: types.store.StoreFileId[], failOnError: boolean) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
@@ -416,6 +442,35 @@ export class StoreService extends BaseContainerService {
         }
     }
     
+    async createStoreFileRandomWrite(cloudUser: CloudUser, model: storeApi.StoreFileRwCreateModel) {
+        const {user, context, store} = await this.getStoreAndUser(cloudUser, model.storeId);
+        if (!this.policy.canCreateItem(user, context, store)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileCreate", ["storeId=" + model.storeId]);
+        if (model.keyId !== store.keyId) {
+            throw new AppException("INVALID_KEY");
+        }
+        const fileId = this.repositoryFactory.generateId() as types.request.FileId;
+        const storageService = this.storageService.getStorageService("randomWrite");
+        await storageService.create(fileId);
+        await storageService.setChecksumAndClose(fileId, Buffer.alloc(0), 1);
+        await storageService.commit(fileId);
+        try {
+            const file = await this.repositoryFactory.createStoreFileRepository().createRandomWrite(model.storeId, model.resourceId || null, user.userId, model.meta, model.keyId, fileId, {rwVersion: 1 as types.store.StoreFileRwVersion, rwMeta: model.rwMeta});
+            await this.repositoryFactory.createStoreRepository().increaseFilesCounter(store.id, file.createDate);
+            this.storeNotificationService.sendStoreFileCreated(store, file, context.solution);
+            this.storeNotificationService.sendStoreStatsChanged({...store, files: store.files + 1, lastFileDate: file.createDate}, context.solution);
+            return {file, store, user};
+        }
+        catch (err) {
+            if (err instanceof DbDuplicateError) {
+                throw new AppException("DUPLICATE_RESOURCE_ID");
+            }
+            throw err;
+        }
+    }
+    
     async writeStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileWriteModelByRequest) {
         const oldFile = await this.repositoryFactory.createStoreFileRepository().get(model.fileId);
         if (!oldFile) {
@@ -487,6 +542,34 @@ export class StoreService extends BaseContainerService {
             return await this.repositoryFactory.withTransaction(async (session) => {
                 const {newFileSize, newChecksumSize} = await this.storageService.getStorageService(oldFile.supportsRandomWrite ? "randomWrite" : "regular").randomWriteCommit(randomWriteContext, session);
                 const file = await this.repositoryFactory.createStoreFileRepository(session).updateMetaWithSize(oldFile, user.userId, model.meta, model.keyId, {newFileSize, newChecksumSize});
+                return {file, store, user, context};
+            });
+        });
+        this.storeNotificationService.sendStoreFileUpdated(rStore, rFile, rContext.solution, model.operations);
+        return {file: rFile, store: rStore, user: rUser};
+    }
+    
+    async randomWriteWithMeta(cloudUser: CloudUser, model: storeApi.StoreFileRwWriteModel) {
+        const {file: rFile, store: rStore, user: rUser, context: rContext} = await this.lockHelper.withLock(`random-write-${model.fileId}`, async () => {
+            const oldFile = await this.repositoryFactory.createStoreFileRepository().get(model.fileId);
+            if (!oldFile) {
+                throw new AppException("STORE_FILE_DOES_NOT_EXIST");
+            }
+            const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
+            this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
+            if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            if (!oldFile.supportsRandomWrite) {
+                throw new AppException("UNSUPPORTED_OPERATION", "Random write can be only executed on files supporting this operation");
+            }
+            if (oldFile.randomWriteMeta !== undefined && oldFile.randomWriteMeta.rwVersion !== model.rwVersion) {
+                throw new AppException("INVALID_VERSION", `randomWriteMeta version does not match, got: ${model.rwVersion}, expected: ${oldFile.randomWriteMeta.rwVersion}`);
+            }
+            const randomWriteContext = await this.storageService.getStorageService("randomWrite").randomWritePrepare(oldFile.fileId, model.operations);
+            return await this.repositoryFactory.withTransaction(async (session) => {
+                const {newFileSize, newChecksumSize} = await this.storageService.getStorageService("randomWrite").randomWriteCommit(randomWriteContext, session);
+                const file = await this.repositoryFactory.createStoreFileRepository(session).updateRandomWriteMeta(oldFile, {newFileSize, newChecksumSize}, model.rwMeta);
                 return {file, store, user, context};
             });
         });
@@ -627,7 +710,7 @@ export class StoreService extends BaseContainerService {
         return this.deleteManyStoreFiles(executor, storeFiles.map(file => file.id), false);
     }
     
-    async readStoreFile(cloudUser: CloudUser, fileId: types.store.StoreFileId, thumb: boolean, version: types.store.StoreFileVersion|undefined, range: types.store.BufferReadRange) {
+    async readStoreFile(cloudUser: CloudUser, fileId: types.store.StoreFileId, thumb: boolean, version: types.store.StoreFileVersion|undefined, rwVersion: types.store.StoreFileRwVersion|undefined, range: types.store.BufferReadRange) {
         const file = await this.repositoryFactory.createStoreFileRepository().get(fileId);
         if (!file) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
@@ -639,6 +722,9 @@ export class StoreService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileRead", ["storeId=" + store.id, "fileId=" + fileId]);
         if (typeof(version) === "number" && this.getFileVersion(file) !== version) {
             throw new AppException("STORE_FILE_VERSION_MISMATCH");
+        }
+        if (typeof(rwVersion) === "number" && file.randomWriteMeta?.rwVersion !== rwVersion) {
+            throw new AppException("STORE_FILE_RW_VERSION_MISMATCH");
         }
         const fileIdToRead = (() => {
             if (thumb) {

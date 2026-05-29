@@ -98,6 +98,18 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     }
     
     @ApiMethod({})
+    async storeFileRwPull(model: storeApi.StoreFileRwPullModel): Promise<storeApi.StoreFileRwPullResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {randomWriteMeta, checksums, file, store} = await this.storeService.pullStoreFileRandomWriteMeta(cloudUser, model.fileId, model.rwVersion, model.version);
+        return {
+            meta: randomWriteMeta,
+            checksums,
+            store: store ? this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store) : null,
+            file: file && store ? this.storeConverter.convertFile(store, file) : null,
+        };
+    }
+    
+    @ApiMethod({})
     async storeFileGetMany(model: storeApi.StoreFileGetManyModel): Promise<storeApi.StoreFileGetManyResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const {store, files} = await this.storeService.getStoreFileMany(cloudUser, model.storeId, model.fileIds, model.failOnError);
@@ -138,9 +150,17 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     }
     
     @ApiMethod({})
+    async storeFileRwCreate(model: storeApi.StoreFileRwCreateModel): Promise<storeApi.StoreFileCreateResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {store, file} = await this.storeService.createStoreFileRandomWrite(cloudUser, model);
+        this.requestLogger.setContextId(store.contextId);
+        return {fileId: file.id};
+    }
+    
+    @ApiMethod({})
     async storeFileRead(model: storeApi.StoreFileReadModel): Promise<storeApi.StoreFileReadResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, data} = await this.storeService.readStoreFile(cloudUser, model.fileId, model.thumb, model.version, model.range);
+        const {store, data} = await this.storeService.readStoreFile(cloudUser, model.fileId, model.thumb, model.version, model.rwVersion, model.range);
         this.requestLogger.setContextId(store.contextId);
         return {data: data};
     }
@@ -151,6 +171,14 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
         const {store} = "requestId" in model ?
             await this.storeService.writeStoreFile(cloudUser, model) :
             await this.storeService.randomWrite(cloudUser, model);
+        this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async storeFileRwWrite(model: storeApi.StoreFileRwWriteModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {store} = await this.storeService.randomWriteWithMeta(cloudUser, model);
         this.requestLogger.setContextId(store.contextId);
         return "OK";
     }

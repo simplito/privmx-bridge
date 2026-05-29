@@ -66,6 +66,11 @@ export class StoreApiValidator extends BaseValidator {
         this.registerMethod("storeFileGet", this.builder.createObject({
             fileId: this.tv.storeFileId,
         }));
+        this.registerMethod("storeFileRwPull", this.builder.createObject({
+            fileId: this.tv.storeFileId,
+            rwVersion: this.tv.intNonNegative,
+            version: this.builder.optional(this.tv.intNonNegative),
+        }));
         this.registerMethod("storeFileGetMany", this.builder.createObject({
             storeId: this.tv.storeId,
             fileIds: this.builder.createListWithMaxLength(this.tv.storeFileId, 100),
@@ -88,10 +93,18 @@ export class StoreApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             thumbIndex: this.builder.optional(this.builder.int),
         }));
+        this.registerMethod("storeFileRwCreate", this.builder.createObject({
+            storeId: this.tv.storeId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            meta: this.tv.storeFileMeta,
+            keyId: this.tv.keyId,
+            rwMeta: this.tv.unknown4Kb,
+        }));
         this.registerMethod("storeFileRead", this.builder.createObject({
             fileId: this.tv.storeFileId,
             thumb: this.builder.bool,
             version: this.builder.optional(this.tv.intNonNegative),
+            rwVersion: this.builder.optional(this.tv.intNonNegative),
             range: this.tv.bufferReadRange,
         }));
         this.registerMethod("storeFileWrite", this.builder.createOneOf([
@@ -114,6 +127,12 @@ export class StoreApiValidator extends BaseValidator {
                 force: this.builder.bool,
             }),
         ]));
+        this.registerMethod("storeFileRwWrite", this.builder.createObject({
+            fileId: this.tv.storeFileId,
+            operations: this.tv.storeFileOperations,
+            rwVersion: this.tv.intNonNegative,
+            rwMeta: this.tv.unknown4Kb,
+        }));
         this.registerMethod("storeFileUpdate", this.builder.createObject({
             fileId: this.tv.storeFileId,
             resourceId: this.builder.optional(this.tv.uuidv4),
