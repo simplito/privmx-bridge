@@ -43,6 +43,10 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
         return this.request("store.storeFileGet", model);
     }
     
+    storeFileRwPull(model: storeApi.StoreFileRwPullModel): Promise<storeApi.StoreFileRwPullResult> {
+        return this.request("store.storeFileRwPull", model);
+    }
+    
     storeFileGetMany(model: storeApi.StoreFileGetManyModel): Promise<storeApi.StoreFileGetManyResult> {
         return this.request("store.storeFileGetMany", model);
     }
@@ -59,12 +63,20 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
         return this.request("store.storeFileCreate", model);
     }
     
+    storeFileRwCreate(model: storeApi.StoreFileRwCreateModel): Promise<storeApi.StoreFileCreateResult> {
+        return this.request("store.storeFileRwCreate", model);
+    }
+    
     storeFileRead(model: storeApi.StoreFileReadModel): Promise<storeApi.StoreFileReadResult> {
         return this.request("store.storeFileRead", model);
     }
     
     storeFileWrite(model: storeApi.StoreFileWriteModel): Promise<types.core.OK> {
         return this.request("store.storeFileWrite", model);
+    }
+    
+    storeFileRwWrite(model: storeApi.StoreFileRwWriteModel): Promise<types.core.OK> {
+        return this.request("store.storeFileRwWrite", model);
     }
     
     storeFileUpdate(model: storeApi.StoreFileUpdateModel): Promise<types.core.OK> {
