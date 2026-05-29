@@ -103,6 +103,7 @@ export const API_ERROR_CODES = {
     "KVDB_ENTRY_DOES_NOT_EXIST"              : {code: 0x613D, message: "Kvdb item does not exist"},
     "FIRST_API_KEY_ALREADY_EXISTS"          : {code: 0x613E, message: "First api key was already created"},
     "INITIALIZATION_TOKEN_MISSMATCH"        : {code: 0x613F, message: "Initialization token is invalid or not set"},
+    "STORE_FILE_RW_VERSION_MISMATCH"        : {code: 0x6140, message: "Store file random write version mismatch"},
     "FAILED_TO_SEND_MEDIA_EVENT"            : {code: 0x6200, message: "Failed to send Janus Event - no session found"},
     "NOT_SUBSCRIBED_FOR_STREAMS"            : {code: 0x6201, message: "Failed to leave streams - no session found"},
     "NOT_CONNECTED_TO_THE_ROOM"             : {code: 0x6202, message: "Failed to subscribe to stream/strams - not connected to the room"},

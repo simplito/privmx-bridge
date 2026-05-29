@@ -189,6 +189,19 @@ export interface StoreFileGetResult {
     file: StoreFile;
 }
 
+export interface StoreFileRwPullModel {
+    fileId: types.store.StoreFileId;
+    rwVersion: types.store.StoreFileRwVersion;
+    version?: types.store.StoreFileVersion;
+}
+
+export interface StoreFileRwPullResult {
+    meta: types.store.StoreFileRandomWriteMeta;
+    checksums: Buffer | null;
+    store: Store | null;
+    file: StoreFile | null;
+}
+
 export interface StoreFileGetManyModel {
     storeId: types.store.StoreId;
     fileIds: types.store.StoreFileId[];
@@ -226,6 +239,14 @@ export interface StoreFileCreateModel {
     thumbIndex?: number;
 }
 
+export interface StoreFileRwCreateModel {
+    storeId: types.store.StoreId;
+    resourceId?: types.core.ClientResourceId;
+    meta: types.store.StoreFileMeta;
+    keyId: types.core.KeyId;
+    rwMeta: types.store.StoreFileRwMeta;
+}
+
 export interface StoreFileCreateResult {
     fileId: types.store.StoreFileId;
 }
@@ -234,6 +255,7 @@ export interface StoreFileReadModel {
     fileId: types.store.StoreFileId;
     thumb: boolean;
     version?: types.store.StoreFileVersion;
+    rwVersion?: types.store.StoreFileRwVersion;
     range: types.store.BufferReadRange;
 }
 
@@ -261,6 +283,13 @@ export interface StoreFileWriteModelByOperations {
     keyId: types.core.KeyId;
     version: types.store.StoreFileVersion;
     force: boolean;
+}
+
+export interface StoreFileRwWriteModel {
+    fileId: types.store.StoreFileId;
+    operations: types.store.StoreFileRandomWriteOperation[];
+    rwVersion: types.store.StoreFileRwVersion;
+    rwMeta: types.store.StoreFileRwMeta;
 }
 
 export interface StoreFileUpdateModel {
@@ -327,12 +356,15 @@ export interface IStoreApi {
     storeList(model: StoreListModel): Promise<StoreListResult>;
     storeListAll(model: StoreListAllModel): Promise<StoreListAllResult>
     storeFileGet(model: StoreFileGetModel): Promise<StoreFileGetResult>;
+    storeFileRwPull(model: StoreFileRwPullModel): Promise<StoreFileRwPullResult>;
     storeFileGetMany(model: StoreFileGetManyModel): Promise<StoreFileGetManyResult>;
     storeFileList(model: StoreFileListModel): Promise<StoreFileListResult>;
     storeFileListMy(model: StoreFileListMyModel): Promise<StoreFileListMyResult>;
     storeFileCreate(model: StoreFileCreateModel): Promise<StoreFileCreateResult>;
+    storeFileRwCreate(model: StoreFileRwCreateModel): Promise<StoreFileCreateResult>;
     storeFileRead(model: StoreFileReadModel): Promise<StoreFileReadResult>;
     storeFileWrite(model: StoreFileWriteModel): Promise<types.core.OK>;
+    storeFileRwWrite(model: StoreFileRwWriteModel): Promise<types.core.OK>;
     storeFileUpdate(model: StoreFileUpdateModel): Promise<types.core.OK>;
     storeFileDelete(model: StoreFileDeleteModel): Promise<types.core.OK>;
     storeFileDeleteMany(model: StoreFileDeleteManyModel): Promise<StoreFileDeleteManyResult>;
