@@ -68,6 +68,11 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             userId: x.userId,
             acl: x.acl,
             policy: context.policy || {},
+            created: context.created,
+            modified: context.modified,
+            name: context.name,
+            description: context.description,
+            scope: context.scope,
         };
         return res;
     }
@@ -79,6 +84,11 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             userId: contextUser.userId,
             acl: contextUser.acl,
             policy: x.policy || {},
+            created: x.created,
+            modified: x.modified,
+            name: x.name,
+            description: x.description,
+            scope: x.scope,
         };
         return res;
     }
