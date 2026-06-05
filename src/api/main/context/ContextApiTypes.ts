@@ -24,6 +24,11 @@ export interface ContextInfo {
     contextId: types.context.ContextId;
     acl: types.cloud.ContextAcl;
     policy: types.context.ContextPolicy;
+    created: types.core.Timestamp;
+    modified: types.core.Timestamp;
+    name: types.context.ContextName;
+    description: types.context.ContextDescription;
+    scope: types.context.ContextScope;
 }
 
 export type ContextListModel = types.core.ListModel;
