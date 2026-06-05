@@ -283,6 +283,6 @@ export type TrickleRequest = {
     plugin: "janus.plugin.videoroom";
     session_id: WebRtcTypes.SessionId;
     handle_id: WebRtcTypes.VideoRoomPluginHandleId;
-    body: {candidate: WebRtcTypes.RTCIceCandidate};
+    candidate: WebRtcTypes.RTCIceCandidate;
 };
 
