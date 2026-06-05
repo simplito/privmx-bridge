@@ -49,7 +49,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async authorizeWebSocket(model: {key: types.core.Base64, addWsChannelId: boolean}): Promise<{wsChannelId: types.core.WsChannelId}> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         const wsChannelId = await this.webSocketConnectionManager.authorizeWebSocket(
             this.getSession(), this.webSocket as WebSocketEx, !!model.addWsChannelId, model.key);
@@ -60,7 +60,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async unauthorizeWebSocket(): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         await this.webSocketConnectionManager.unauthorizeWebSocket(this.getSession(), this.webSocket as WebSocketEx);
         return "OK";
@@ -70,7 +70,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async subscribeToChannel(model: {channel: types.core.WsChannelName}): Promise<userApi.SubscribeToChannelResult> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         const subscriptionId = await this.webSocketConnectionManager.subscribeToChannelOld(this.getSession(), this.webSocket as WebSocketEx, model.channel);
         return {subscriptionId};
@@ -80,7 +80,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async unsubscribeFromChannel(model: {channel: types.core.WsChannelName}): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         await this.webSocketConnectionManager.unsubscribeFromChannelOld(this.getSession(), this.webSocket as WebSocketEx, model.channel);
         return "OK";
@@ -90,7 +90,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async subscribeToChannels(model: userApi.SubscribeToChannelsModel): Promise<userApi.SubscribeToChannelsResult> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         const subscriptionsIds = await this.webSocketConnectionManager.subscribeToChannels(this.getSession(), this.webSocket as WebSocketEx, model.channels);
         return {subscriptions: subscriptionsIds};
@@ -100,7 +100,7 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     async unsubscribeFromChannels(model: userApi.UnsubscribeFromChannelsModel): Promise<types.core.OK> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
-            throw new AppException("WEBSOCKET_REQUIRED");
+            throw new AppException("WEBSOCKET_REQUIRED", "This method requires a WebSocket connection");
         }
         await this.webSocketConnectionManager.unsubscribeFromChannels(this.getSession(), this.webSocket as WebSocketEx, model.subscriptionsIds);
         return "OK";

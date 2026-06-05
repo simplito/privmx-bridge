@@ -67,7 +67,7 @@ export class StoreService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -92,7 +92,7 @@ export class StoreService extends BaseContainerService {
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, [...oldStore.history.map(x => x.keyId), keyId], oldStore.keys, keys, keyId, users, managers);
             if (oldStore.clientResourceId && resourceId && oldStore.clientResourceId !== resourceId) {
-                throw new AppException("RESOURCE_ID_MISSMATCH");
+                throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
             }
             try {
                 const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
@@ -100,7 +100,7 @@ export class StoreService extends BaseContainerService {
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
-                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                    throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
                 }
                 throw err;
             }
@@ -162,7 +162,7 @@ export class StoreService extends BaseContainerService {
             const toNotify: db.store.Store[] = [];
             for (const store of stores) {
                 if (store.contextId !== contextId) {
-                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
+                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS", "All resources must belong to the same context");
                 }
                 if (!additionalAccessCheck(store)) {
                     resultMap.set(store.id, "ACCESS_DENIED");
@@ -223,7 +223,7 @@ export class StoreService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeListAll", []);
         if (!this.policy.canListAllContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
         }
         const stores = await this.repositoryFactory.createStoreRepository().getAllStores(contextId, type, listParams, sortBy);
         return {user, stores};
@@ -234,12 +234,12 @@ export class StoreService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeList", []);
         if (scope === "ALL") {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
         }
         else {
             if (!this.policy.canListMyContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own containers");
             }
         }
         const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
@@ -253,7 +253,7 @@ export class StoreService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, ctx, (user, context) => {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeList", []);
         });
@@ -273,7 +273,7 @@ export class StoreService extends BaseContainerService {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGet", ["storeId=" + store.id, "fileId=" + fileId]);
             if (!this.policy.canReadItem(user, context, store, file)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this item");
             }
         });
         return {file, store};
@@ -287,7 +287,7 @@ export class StoreService extends BaseContainerService {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGetMany", ["storeId=" + storeId]);
             if (!this.policy.canListAllItems(user, context, store)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
         });
         const files: (db.store.StoreFile|types.store.StoreFileFetchError)[] = [];
@@ -331,7 +331,7 @@ export class StoreService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, store)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
         });
@@ -346,7 +346,7 @@ export class StoreService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             if (!this.policy.canListMyItems(user, context, store)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileListMy", ["storeId=" + storeId]);
         });
@@ -361,7 +361,7 @@ export class StoreService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, store)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
         });
@@ -372,23 +372,23 @@ export class StoreService extends BaseContainerService {
     async createStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileCreateModel) {
         const {user, context, store} = await this.getStoreAndUser(cloudUser, model.storeId);
         if (!this.policy.canCreateItem(user, context, store)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied item creation in this container");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileCreate", ["storeId=" + model.storeId]);
         if (model.keyId !== store.keyId) {
-            throw new AppException("INVALID_KEY");
+            throw new AppException("INVALID_KEY", "Key ID does not match the store key");
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
         const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
-            throw new AppException("INVALID_FILE_INDEX");
+            throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
         }
         if (typeof(model.thumbIndex) === "number") {
             if (!request.files[model.thumbIndex]) {
-                throw new AppException("INVALID_FILE_INDEX");
+                throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
             }
             if (model.thumbIndex === model.fileIndex) {
-                throw new AppException("FILE_ALREADY_USED");
+                throw new AppException("FILE_ALREADY_USED", "File index is already assigned to another file");
             }
         }
         const uploadedFile = request.files[model.fileIndex];
@@ -410,7 +410,7 @@ export class StoreService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -424,10 +424,10 @@ export class StoreService extends BaseContainerService {
         const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
         if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied update of this item");
         }
         if (model.keyId !== store.keyId) {
-            throw new AppException("INVALID_KEY");
+            throw new AppException("INVALID_KEY", "Key ID does not match the store key");
         }
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
@@ -436,14 +436,14 @@ export class StoreService extends BaseContainerService {
         const requestRepository = this.repositoryFactory.createRequestRepository();
         const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
-            throw new AppException("INVALID_FILE_INDEX");
+            throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
         }
         if (typeof(model.thumbIndex) === "number") {
             if (!request.files[model.thumbIndex]) {
-                throw new AppException("INVALID_FILE_INDEX");
+                throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
             }
             if (model.thumbIndex === model.fileIndex) {
-                throw new AppException("FILE_ALREADY_USED");
+                throw new AppException("FILE_ALREADY_USED", "File index is already assigned to another file");
             }
         }
         const uploadedFile = request.files[model.fileIndex];
@@ -471,10 +471,10 @@ export class StoreService extends BaseContainerService {
             const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
             if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied update of this item");
             }
             if (model.keyId !== store.keyId) {
-                throw new AppException("INVALID_KEY");
+                throw new AppException("INVALID_KEY", "Key ID does not match the store key");
             }
             if (!oldFile.supportsRandomWrite) {
                 throw new AppException("UNSUPPORTED_OPERATION", "Random write can be only executed on files supporting this operation");
@@ -502,17 +502,17 @@ export class StoreService extends BaseContainerService {
         const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileUpdate", ["storeId=" + store.id, "fileId=" + model.fileId]);
         if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied update of this item");
         }
         if (model.keyId !== store.keyId) {
-            throw new AppException("INVALID_KEY");
+            throw new AppException("INVALID_KEY", "Key ID does not match the store key");
         }
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
         }
         if (oldFile.clientResourceId && model.resourceId && oldFile.clientResourceId !== model.resourceId) {
-            throw new AppException("RESOURCE_ID_MISSMATCH");
+            throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
         }
         try {
             const file = await this.repositoryFactory.createStoreFileRepository().updateMeta(oldFile, user.userId, model.meta, model.keyId, model.resourceId || null);
@@ -521,7 +521,7 @@ export class StoreService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -539,7 +539,7 @@ export class StoreService extends BaseContainerService {
         const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileDelete", ["storeId=" + store.id, "fileId=" + fileId]);
             if (!this.policy.canDeleteItem(user, context, store, file)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied deletion of this item");
             }
         });
         const deletedAt = DateUtils.now();
@@ -634,7 +634,7 @@ export class StoreService extends BaseContainerService {
         }
         const {user, context, store} = await this.getStoreAndUser(cloudUser, file.storeId);
         if (!this.policy.canReadItem(user, context, store, file)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied read access to this item");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileRead", ["storeId=" + store.id, "fileId=" + fileId]);
         if (typeof(version) === "number" && this.getFileVersion(file) !== version) {
@@ -661,10 +661,10 @@ export class StoreService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, store.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeSendCustomNotification", ["storeId=" + storeId]);
         if (!this.policy.canSendCustomNotification(user, context, store)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied custom notification");
         }
         if (users && users.some(element => !store.users.includes(element))) {
-            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER", "One or more users do not have access to this container");
         }
         this.storeNotificationService.sendStoreCustomEvent(store, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
         return store;

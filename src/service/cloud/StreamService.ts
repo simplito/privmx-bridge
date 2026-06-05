@@ -125,7 +125,7 @@ export class StreamService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -155,7 +155,7 @@ export class StreamService extends BaseContainerService {
             
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, [...oldStreamRoom.history.map(x => x.keyId), keyId], oldStreamRoom.keys, keys, keyId, users, managers);
             if (oldStreamRoom.clientResourceId && resourceId && oldStreamRoom.clientResourceId !== resourceId) {
-                throw new AppException("RESOURCE_ID_MISSMATCH");
+                throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
             }
             try {
                 const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
@@ -163,7 +163,7 @@ export class StreamService extends BaseContainerService {
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
-                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                    throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
                 }
                 throw err;
             }
@@ -188,7 +188,7 @@ export class StreamService extends BaseContainerService {
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomDelete", ["streamRoomId=" + id]);
                 if (!this.policy.canDeleteContainer(user, context, streamRoom)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Policy denied container deletion");
                 }
             });
             await streamRoomRepository.deleteStreamRoom(streamRoom.id);
@@ -223,7 +223,7 @@ export class StreamService extends BaseContainerService {
             const toNotify: db.stream.StreamRoom[] = [];
             for (const streamRoom of streamRooms) {
                 if (streamRoom.contextId !== contextId) {
-                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
+                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS", "All resources must belong to the same context");
                 }
                 if (!additionalAccessCheck(streamRoom)) {
                     resultMap.set(streamRoom.id, "ACCESS_DENIED");
@@ -352,7 +352,7 @@ export class StreamService extends BaseContainerService {
         
         const existingJanusSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.SUBSCRIBER, streamRoom.janusRoomId);
         if (!existingJanusSession) {
-            throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY");
+            throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY", "No active subscriptions to modify");
         }
         
         const mappedStreamsToAdd = subscriptionsToAdd.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));
@@ -383,7 +383,7 @@ export class StreamService extends BaseContainerService {
                 res = await ctx.ws.janusVideoRoomPluginApi.unsubscribeOnExisting(baseRequest as UnsubscribeOnExistingRequest);
             }
             else {
-                throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY");
+                throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY", "No active subscriptions to modify");
             }
         }
         catch {
@@ -608,7 +608,7 @@ export class StreamService extends BaseContainerService {
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamUnpublish", ["streamRoomId=" + streamRoom.id]);
         if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied container update");
         }
         
         await ctx.ws.janusVideoRoomPluginApi.unpublish({
@@ -714,7 +714,7 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomListAll", []);
         if (!this.policy.canListAllContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
         }
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getAllStreams(contextId, type, listParams, sortBy);
         return { user, streamRooms };
@@ -729,7 +729,7 @@ export class StreamService extends BaseContainerService {
             : this.policy.canListMyContainers(user, context);
         
         if (!canList) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing stream rooms");
         }
         
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
@@ -744,7 +744,7 @@ export class StreamService extends BaseContainerService {
         
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, ctx, (user, context) => {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomList", []);
         });
@@ -754,7 +754,7 @@ export class StreamService extends BaseContainerService {
             case "all": return { streamRooms: await repo.getPageByContext(contextId, listParams) };
             case "active": return { streamRooms: await repo.getPageOfActiveStreamsByContext(contextId, listParams) };
             case "closed": return { streamRooms: await repo.getPageOfClosedStreamsByContext(contextId, listParams) };
-            default: throw new AppException("INVALID_PARAMS");
+            default: throw new AppException("INVALID_PARAMS", "Invalid state parameter, expected: all, active, or closed");
         }
     }
     
@@ -764,10 +764,10 @@ export class StreamService extends BaseContainerService {
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamSendCustomNotification", ["streamRoomId=" + streamRoomId]);
         if (!this.policy.canSendCustomNotification(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied custom notification");
         }
         if (users && users.some(element => !streamRoom.users.includes(element))) {
-            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER", "One or more users do not have access to this container");
         }
         
         this.streamNotificationService.sendStreamCustomEvent(streamRoom, keyId, data, { id: user.userId, pub: user.userPubKey }, customChannelName, users);
@@ -778,12 +778,12 @@ export class StreamService extends BaseContainerService {
         const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamRoomEnableRecording");
         
         if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied container update");
         }
         
         const existingSignalingSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.MAIN, streamRoom.janusRoomId);
         if (!existingSignalingSession) {
-            throw new AppException("MAIN_MEDIA_SESSION_FOR_USER_MISSING");
+            throw new AppException("MAIN_MEDIA_SESSION_FOR_USER_MISSING", "No main media session found for this user");
         }
         
         const janusSession = existingSignalingSession.session;
@@ -817,7 +817,7 @@ export class StreamService extends BaseContainerService {
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomClose", ["streamRoomId=" + id]);
         if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied container update");
         }
         
         await this.repositoryFactory.createStreamRoomRepository().closeStreamRoom(id);
@@ -896,7 +896,7 @@ export class StreamService extends BaseContainerService {
         return await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, requiredAcl, ["streamRoomId=" + streamRoom.id]);
             if (!this.policy.canReadContainer(user, context, streamRoom)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this container");
             }
         });
     }
@@ -910,7 +910,7 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, requiredAcl, ["streamRoomId=" + streamRoom.id]);
         if (!this.policy.canReadContainer(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied read access to this container");
         }
         
         const ctx = await this.janusContextFactory.prepareJanusContext(websocket, wsId);

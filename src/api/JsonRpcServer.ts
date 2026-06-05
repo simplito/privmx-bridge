@@ -129,13 +129,13 @@ export class JsonRpcServer {
             return JSON.parse(typeof(body) === "string" ? body : body.toString("utf8"));
         }
         catch {
-            throw new AppException("PARSE_ERROR");
+            throw new AppException("PARSE_ERROR", "Failed to parse JSON request body");
         }
     }
     
     private async process(jRpc: any) {
         if (!this.isJsonRpcRequest(jRpc)) {
-            throw new AppException("PARSE_ERROR");
+            throw new AppException("PARSE_ERROR", "Request is not a valid JSON-RPC object");
         }
         this.id = jRpc.id;
         this.reportData(jRpc);

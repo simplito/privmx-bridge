@@ -37,14 +37,14 @@ export class AuthService {
     async authByApiKeyCredentials(apiKeyId: types.auth.ApiKeyId, apiKeySecret: types.auth.ApiKeySecret, scope: types.auth.Scope[]|undefined): Promise<managerApi.AuthResult> {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(apiKeyId);
         if (!apiKey || !apiKey.enabled) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key not found");
         }
         const user = await this.repositoryFactory.createApiUserRepository().get(apiKey.user);
         if (!user || !user.enabled) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key owner account not found");
         }
         if (apiKey.secret !== apiKeySecret) {
-            throw new AppException("INVALID_CREDENTIALS");
+            throw new AppException("INVALID_CREDENTIALS", "Invalid API key secret");
         }
         const key = await this.tokenEncryptionKeyProvider.getCurrentKey();
         const parsedScope = this.prepareScope(apiKey, scope, key.refreshTokenTTL);
@@ -55,7 +55,7 @@ export class AuthService {
     async authByRefreshToken(refreshToken: types.auth.ApiRefreshToken): Promise<managerApi.AuthResult> {
         const tokenData = await this.tokenEncryptionService.decryptToken(refreshToken);
         if (!tokenData || tokenData.type !== "refreshToken") {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "Token is invalid or not a refresh token");
         }
         const session = await (async () => {
             if (tokenData.connectionId) {
@@ -64,18 +64,18 @@ export class AuthService {
             return this.repositoryFactory.createTokenSessionRepository().get(tokenData.sessionId);
         })();
         if (!session || session.expiry < DateUtils.now()) {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "Session not found or expired");
         }
         if (session.seq !== tokenData.seq) {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "Token sequence number does not match");
         }
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(session.apiKey);
         if (!apiKey || !apiKey.enabled || apiKey.user !== session.user) {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "API key not found, or session mismatch");
         }
         const user = await this.repositoryFactory.createApiUserRepository().get(session.user);
         if (!user || !user.enabled) {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "API key owner account not found or disabled");
         }
         const key = await this.tokenEncryptionKeyProvider.getCurrentKey();
         if (session.id === "websocket") {
@@ -90,14 +90,14 @@ export class AuthService {
     async authByApiKeySignature(apiKeyId: types.auth.ApiKeyId, scope: types.auth.Scope[]|undefined, timestamp: types.core.Timestamp, nonce: string, signature: types.core.Base64, data: string) {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(apiKeyId);
         if (!apiKey || !apiKey.enabled) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key not found");
         }
         const user = await this.repositoryFactory.createApiUserRepository().get(apiKey.user);
         if (!user || !user.enabled) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key owner account not found");
         }
         if (!await this.isValidClientSignature(apiKey, timestamp, nonce, signature, data)) {
-            throw new AppException("INVALID_SIGNATURE");
+            throw new AppException("INVALID_SIGNATURE", "Signature verification failed");
         }
         const key = await this.tokenEncryptionKeyProvider.getCurrentKey();
         const parsedScope = this.prepareScope(apiKey, scope, key.refreshTokenTTL);

@@ -53,7 +53,7 @@ export class KvdbService extends BaseContainerService {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbGet", ["kvdbId=" + kvdbId]);
             if (!this.policy.canReadContainer(user, context, kvdb)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this container");
             }
         });
         return kvdb;
@@ -64,12 +64,12 @@ export class KvdbService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbList", []);
         if (scope === "ALL") {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
         }
         else {
             if (!this.policy.canListMyContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own containers");
             }
         }
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
@@ -80,7 +80,7 @@ export class KvdbService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListAll", []);
         if (!this.policy.canListAllContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
         }
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getAllKvdbs(contextId, type, listParams, sortBy);
         return {user, kvdbs};
@@ -99,7 +99,7 @@ export class KvdbService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -124,7 +124,7 @@ export class KvdbService extends BaseContainerService {
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, [...oldKvdb.history.map(x => x.keyId), keyId], oldKvdb.keys, keys, keyId, users, managers);
             if (oldKvdb.clientResourceId !== resourceId) {
-                throw new AppException("RESOURCE_ID_MISSMATCH");
+                throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
             }
             const kvdb = await kvdbRepository.updateKvdb(oldKvdb, user.userId, managers, users, data, keyId, newKeys, policy);
             return {kvdb, context, oldKvdb};
@@ -147,7 +147,7 @@ export class KvdbService extends BaseContainerService {
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldKvdb.contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbDelete", ["kvdbId=" + id]);
                 if (!this.policy.canDeleteContainer(user, context, oldKvdb)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Policy denied container deletion");
                 }
             });
             await kvdbRepository.deleteKvdb(oldKvdb.id);
@@ -181,7 +181,7 @@ export class KvdbService extends BaseContainerService {
             const toNotify: db.kvdb.Kvdb[] = [];
             for (const kvdb of kvdbs) {
                 if (kvdb.contextId !== contextId) {
-                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
+                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS", "All resources must belong to the same context");
                 }
                 if (!additionalAccessCheck(kvdb)) {
                     resultMap.set(kvdb.id, "ACCESS_DENIED");
@@ -217,7 +217,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, ctx, (user, context) => {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbList", []);
         });
@@ -233,7 +233,7 @@ export class KvdbService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, kvdb.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntrySet", ["kvdbId=" + kvdbId, "entryKey=" + kvdbEntryKey]);
         if (kvdb.keyId !== keyId) {
-            throw new AppException("INVALID_KEY_ID");
+            throw new AppException("INVALID_KEY_ID", "Key ID does not match the kvdb key");
         }
         const item = await (async () => {
             const entryRepository = this.repositoryFactory.createKvdbEntryRepository();
@@ -241,7 +241,7 @@ export class KvdbService extends BaseContainerService {
             
             if (!entry && (version === 0 || force)) {
                 if (!this.policy.canCreateItem(user, context, kvdb)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Policy denied item creation in this container");
                 }
                 return await entryRepository.createEntry(kvdbEntryKey, user.userId, kvdbId, kvdbEntryValue, keyId);
             }
@@ -252,7 +252,7 @@ export class KvdbService extends BaseContainerService {
                 throw new AppException("INVALID_VERSION", "Version missmatch");
             }
             if (!this.policy.canUpdateItem(user, context, kvdb, entry)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied update of this item");
             }
             return await entryRepository.updateEntry(entry, user.userId, kvdbEntryValue, keyId);
         })();
@@ -282,7 +282,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             if (!this.policy.canReadItem(user, context, kvdb, item)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this item");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryGet", ["kvdbId=" + kvdb.id, "entryKey=" + entryKey]);
         });
@@ -301,7 +301,7 @@ export class KvdbService extends BaseContainerService {
         const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryDelete", ["itemId=" + entryKey, "kvdbId=" + kvdb.id]);
             if (!this.policy.canDeleteItem(user, context, kvdb, item)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied deletion of this item");
             }
         });
         await this.repositoryFactory.createKvdbEntryRepository().deleteEntry(kvdbId, entryKey);
@@ -322,7 +322,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, kvdb)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
         });
@@ -338,7 +338,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, kvdb)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
         });
@@ -358,7 +358,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, kvdb)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
         });
@@ -374,7 +374,7 @@ export class KvdbService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, kvdb)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
         });

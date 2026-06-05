@@ -251,10 +251,10 @@ export class WebSocketInnerManager {
     subscribeToChannel(wsEx: WebSocketEx, wsId: types.core.WsId, channel: types.cloud.ChannelScheme) {
         const wsSession = wsEx.ex.sessions.find(x => x.wsId == wsId);
         if (!wsSession) {
-            throw new AppException("WS_SESSION_DOES_NOT_EXISTS");
+            throw new AppException("WS_SESSION_DOES_NOT_EXISTS", "WebSocket session not found for the given ID");
         }
         if (wsSession.channels.length >= this.config.maximumChannelsPerSession) {
-            throw new AppException("TOO_MANY_CHANNELS_IN_SESSION");
+            throw new AppException("TOO_MANY_CHANNELS_IN_SESSION", "Maximum number of channels per session exceeded");
         }
         wsSession.channels.push(channel);
     }
@@ -262,7 +262,7 @@ export class WebSocketInnerManager {
     unsubscribeFromChannels(wsEx: WebSocketEx, wsId: types.core.WsId, subscriptionIds: types.core.SubscriptionId[]) {
         const wsSession = wsEx.ex.sessions.find(x => x.wsId == wsId);
         if (!wsSession) {
-            throw new AppException("WS_SESSION_DOES_NOT_EXISTS");
+            throw new AppException("WS_SESSION_DOES_NOT_EXISTS", "WebSocket session not found for the given ID");
         }
         const removeSet = new Set(subscriptionIds);
         wsSession.channels =  wsSession.channels.filter(channel => !removeSet.has(channel.subscriptionId));

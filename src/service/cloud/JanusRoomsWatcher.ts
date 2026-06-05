@@ -215,7 +215,7 @@ export class JanusRoomsWatcher {
         catch (e) {
             this.logger.debug(e, "JanusRoomsWatcher: Failed to connect.");
             this.cleanup();
-            throw new AppException("MEDIA_SERVER_ERROR");
+            throw new AppException("MEDIA_SERVER_ERROR", "Failed to connect to media server");
         }
     }
     

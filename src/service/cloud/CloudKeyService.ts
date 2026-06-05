@@ -64,7 +64,7 @@ export class CloudKeyService {
         });
         for (const insert of inserts) {
             if (!availableKeyIds.includes(insert.keyId)) {
-                throw new AppException("INVALID_KEY_ID");
+                throw new AppException("INVALID_KEY_ID", "Key ID is not available in this context");
             }
             let userEntry = newKeys.find(x => x.user === insert.user);
             if (!userEntry) {

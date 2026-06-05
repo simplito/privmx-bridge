@@ -30,10 +30,10 @@ export class ApiKeyService {
         return this.lockHelper.withLock("first-api-key-creation", async () => {
             const apiKeyCount = await this.repositoryFactory.createApiKeyRepository().getApiKeyCount();
             if (apiKeyCount !== 0) {
-                throw new AppException("FIRST_API_KEY_ALREADY_EXISTS");
+                throw new AppException("FIRST_API_KEY_ALREADY_EXISTS", "An API key already exists; initialization can only create the first key");
             }
             if (!this.config.server.initializationToken || initializationToken !== this.config.server.initializationToken) {
-                throw new AppException("INITIALIZATION_TOKEN_MISSMATCH");
+                throw new AppException("INITIALIZATION_TOKEN_MISSMATCH", "Initialization token does not match");
             }
             const user = await this.repositoryFactory.createApiUserRepository().create();
             return await this.repositoryFactory.createApiKeyRepository().create(user.id, name as types.auth.ApiKeyName, [
@@ -45,7 +45,7 @@ export class ApiKeyService {
     async createApiKey(userId: types.auth.ApiUserId, name: types.auth.ApiKeyName, scope: types.auth.Scope[], publicKey: types.core.EccPubKeyPEM|undefined) {
         const apiKeys = await this.repositoryFactory.createApiKeyRepository().listForUser(userId);
         if (apiKeys.length > 10) {
-            throw new AppException("API_KEYS_LIMIT_EXCEEDED");
+            throw new AppException("API_KEYS_LIMIT_EXCEEDED", "Maximum number of API keys exceeded");
         }
         AuthoriationUtils.parseScope(scope, "disabled");
         return this.repositoryFactory.createApiKeyRepository().create(userId, name, scope, false, publicKey);
@@ -54,10 +54,10 @@ export class ApiKeyService {
     async updateApiKey(userId: types.auth.ApiUserId, model: managerApi.UpdateApiKeyModel) {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(model.id);
         if (!apiKey) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key does not exist");
         }
         if (apiKey.user !== userId) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "API key belongs to a different user");
         }
         if (model.scope) {
             AuthoriationUtils.parseScope(model.scope, "disabled");
@@ -68,10 +68,10 @@ export class ApiKeyService {
     async deleteApiKey(userId: types.auth.ApiUserId, apiKeyId: types.auth.ApiKeyId) {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(apiKeyId);
         if (!apiKey) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key does not exist");
         }
         if (apiKey.user !== userId) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "API key belongs to a different user");
         }
         await this.repositoryFactory.createApiKeyRepository().delete(apiKeyId);
     }
@@ -83,10 +83,10 @@ export class ApiKeyService {
     async getApiKey(userId: types.auth.ApiUserId, apiKeyId: types.auth.ApiKeyId) {
         const apiKey = await this.repositoryFactory.createApiKeyRepository().get(apiKeyId);
         if (!apiKey) {
-            throw new AppException("API_KEY_DOES_NOT_EXIST");
+            throw new AppException("API_KEY_DOES_NOT_EXIST", "API key does not exist");
         }
         if (apiKey.user !== userId) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "API key belongs to a different user");
         }
         return apiKey;
     }

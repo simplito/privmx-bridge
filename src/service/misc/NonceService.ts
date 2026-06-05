@@ -53,10 +53,10 @@ export class NonceService {
     
     async simpleNonceCheck(nonce: types.core.Nonce, timestamp: types.core.Timestamp) {
         if (!this.validateTimestamp(timestamp)) {
-            throw new AppException("INVALID_TIMESTAMP");
+            throw new AppException("INVALID_TIMESTAMP", "Timestamp is outside the allowed window");
         }
         if (nonce == null || nonce.length < 32 || nonce.length > 64 || !(await this.nonceIsUnique(nonce, timestamp))) {
-            throw new AppException("INVALID_NONCE");
+            throw new AppException("INVALID_NONCE", "Nonce is missing, invalid, or already used");
         }
     }
     
@@ -64,14 +64,14 @@ export class NonceService {
         await this.simpleNonceCheck(nonce, timestamp);
         const message = this.getMessage(data, nonce, timestamp);
         if (!ECUtils.verifySignature(key, signature, message)) {
-            throw new AppException("INVALID_SIGNATURE");
+            throw new AppException("INVALID_SIGNATURE", "Signature verification failed");
         }
     }
     
     async nonceCheck2(data: Buffer, key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature) {
         const eccKey = ECUtils.publicFromBase58DER(key);
         if (!eccKey) {
-            throw new AppException("INVALID_SIGNATURE");
+            throw new AppException("INVALID_SIGNATURE", "Provided key is not a valid ECC public key");
         }
         await this.nonceCheck(data, eccKey, nonce, timestamp, Base64.toBuf(signature));
     }

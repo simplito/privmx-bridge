@@ -36,25 +36,25 @@ export class SessionLoginService {
     
     private checkRestoreKeyInSession(session: Session, clientKey: elliptic.ec.KeyPair) {
         if (session.get("state") != "exchange") {
-            throw new AppException("UNKNOWN_SESSION");
+            throw new AppException("UNKNOWN_SESSION", "Session state is not 'exchange'");
         }
         const restoreKey = session.get("restoreKey");
         const pub = ECUtils.publicToBase58DER(clientKey);
         if (pub != restoreKey) {
-            throw new AppException("UNKNOWN_SESSION");
+            throw new AppException("UNKNOWN_SESSION", "Session restore key does not match");
         }
     }
     
     private async getSession(sessionId: types.core.SessionId) {
         try {
             if (!sessionId) {
-                throw new AppException("UNKNOWN_SESSION");
+                throw new AppException("UNKNOWN_SESSION", "No session ID provided");
             }
             return await this.sessionHolder.closeCurrentSessionAndRestoreGiven(undefined, sessionId);
         }
         catch (e) {
             this.logger.error(e);
-            throw new AppException("UNKNOWN_SESSION");
+            throw new AppException("UNKNOWN_SESSION", "Session ID not found or could not be restored");
         }
     }
 }

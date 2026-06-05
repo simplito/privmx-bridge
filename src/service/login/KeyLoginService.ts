@@ -48,17 +48,17 @@ export class KeyLoginService {
     async init(out: {user?: string}, pub: types.core.EccPubKey, properties: types.user.LoginProperties): Promise<KeyInitResult> {
         const user = await this.userLoginService.getKeyUser(pub);
         if (user == null) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User not found for the given public key");
         }
         out.user = user.I;
         if (user.subidentity && user.subidentity.deviceIdRequired) {
             if (!user.subidentity.deviceId || properties.deviceId == null || user.subidentity.deviceId != properties.deviceId) {
-                throw new AppException("INVALID_DEVICE_ID");
+                throw new AppException("INVALID_DEVICE_ID", "Device ID is required or does not match");
             }
         }
         const proxy: types.core.Host|null = null;
         if (user.loginByProxy != null && (this.requestInfoHolder.serverSession == null || user.loginByProxy != this.requestInfoHolder.serverSession.host)) {
-            throw new AppException("INVALID_PROXY_SESSION");
+            throw new AppException("INVALID_PROXY_SESSION", "Request does not originate from the required proxy host");
         }
         const priv = ECUtils.generateRandom();
         
@@ -94,21 +94,21 @@ export class KeyLoginService {
         }
         catch (e) {
             this.logger.error(e);
-            throw new AppException("UNKNOWN_SESSION");
+            throw new AppException("UNKNOWN_SESSION", "Session ID not found or could not be restored");
         }
         if (session.get("state") != "keyInit") {
-            throw new AppException("INVALID_SESSION_STATE");
+            throw new AppException("INVALID_SESSION_STATE", "Session is not in the expected 'keyInit' state");
         }
         out.user = session.get("username");
         const proxy = session.get("proxy");
         if (proxy != null && (this.requestInfoHolder.serverSession == null || proxy != this.requestInfoHolder.serverSession.host)) {
             await this.sessionHolder.destroy(undefined, session);
-            throw new AppException("INVALID_PROXY_SESSION");
+            throw new AppException("INVALID_PROXY_SESSION", "Request does not originate from the required proxy host");
         }
         const keyLoginData = session.get("keyLogin");
         const pub = ECUtils.publicFromBase58DER(keyLoginData.pub);
         if (!pub) {
-            throw new AppException("INVALID_SESSION_STATE");
+            throw new AppException("INVALID_SESSION_STATE", "Session public key data is invalid or missing");
         }
         try {
             await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), pub, nonce, timestamp, signature);
@@ -120,7 +120,7 @@ export class KeyLoginService {
         
         const priv = ECUtils.fromWIF(keyLoginData.priv);
         if (!priv) {
-            throw new AppException("INVALID_SESSION_STATE");
+            throw new AppException("INVALID_SESSION_STATE", "Session private key data is missing");
         }
         const ecies = new ECIES(priv, pub);
         const newK = ecies.decrypt(Base64.toBuf(K));

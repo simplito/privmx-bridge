@@ -53,7 +53,7 @@ export class SolutionService {
         }
         const contexts = await this.repositoryFactory.createContextRepository().getAllBySolution(solutionId);
         if (contexts.length > 0) {
-            throw new AppException("SOLUTION_HAS_CONTEXTS");
+            throw new AppException("SOLUTION_HAS_CONTEXTS", "Solution cannot be deleted because it has associated contexts");
         }
         await this.repositoryFactory.createSolutionRepository().remove(solutionId);
     }

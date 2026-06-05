@@ -87,7 +87,7 @@ export class EcdheLoginService {
         }
         const pub = ECUtils.publicFromBase58DER(key);
         if (!pub) {
-            throw new AppException("INVALID_SIGNATURE");
+            throw new AppException("INVALID_SIGNATURE", "Provided key is not a valid ECC public key");
         }
         await this.nonceService.nonceCheck2P(Buffer.from("ecdhexlogin", "utf8"), pub, nonce, timestamp, signature);
         return this.loginUsingKey(key, solutionId, encoderType, plain);
@@ -96,7 +96,7 @@ export class EcdheLoginService {
     async loginUsingKey(key: types.core.EccPubKey, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean) {
         const keyExists = await this.repositoryFactory.createContextUserRepository().userPubKeyExists(key);
         if (!keyExists) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "No user found for the given public key");
         }
         
         const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);

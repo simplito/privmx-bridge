@@ -37,7 +37,7 @@ export class ApiResolver<Context> {
     async execute(ctx: Context, method: string, params: unknown): Promise<unknown> {
         const methodEntry = this.methods.get(method);
         if (!methodEntry) {
-            throw new AppException("METHOD_NOT_FOUND");
+            throw new AppException("METHOD_NOT_FOUND", `Method '${method}' not found`);
         }
         const api = methodEntry.factory(ctx);
         return await api.execute(methodEntry.method, params);

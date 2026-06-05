@@ -317,7 +317,7 @@ export class CloudAclChecker {
             this.validateAcl(acl, 100);
         }
         catch {
-            throw new AppException("INVALID_ACL");
+            throw new AppException("INVALID_ACL", "ACL string failed validation");
         }
     }
     
@@ -362,7 +362,7 @@ export class CloudAclChecker {
     
     verifyAccess(acl: types.cloud.ContextAcl, fnName: AclFunctionNameX, args: string[]) {
         if (!this.hasAccess(acl, fnName, args)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", `ACL denied access to '${fnName}'`);
         }
     }
     
