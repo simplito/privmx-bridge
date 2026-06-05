@@ -17,7 +17,7 @@ import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
-import { JanusContextFactory } from "./JanusContextFactory";
+import { JanusConnector } from "./JanusConnector";
 import { JobService } from "../job/JobService";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 
@@ -48,7 +48,7 @@ export class JanusRoomsWatcher {
     constructor(
         private cache: JanusRoomsWatcherCache,
         private logger: Logger,
-        private janusContextFactory: JanusContextFactory,
+        private janusConnector: JanusConnector,
         private jobService: JobService,
         private repositoryFactory: RepositoryFactory,
     ) {
@@ -59,12 +59,12 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeavingOrUnpublishing(evt)) {
+        if (!this.isPublisherLeaving(evt)) {
             return;
         }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving ?? data.unpublished;
+        const rawPublisherId = data.leaving;
         
         // Janus sends "ok" to the person who clicked leave, we ignore it.
         if (rawPublisherId === "ok") {
@@ -192,7 +192,7 @@ export class JanusRoomsWatcher {
     private async connectAndSetup() {
         this.logger.debug({}, "JanusRoomsWatcher: Connecting to Janus...");
         try {
-            this.janusConnection = await this.janusContextFactory.openWs(undefined, async (notification) => {
+            this.janusConnection = await this.janusConnector.openWs(undefined, async (notification) => {
                 try {
                     await this.onJanusEvent(notification);
                 }
@@ -299,12 +299,15 @@ export class JanusRoomsWatcher {
         );
     }
     
-    private isPublisherLeavingOrUnpublishing(evt: VideoPluginEvent): boolean {
+    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
         const data = evt.plugindata.data as Record<string, unknown>;
+        // Only `leaving` means the publisher actually left the room. `unpublished`
+        // means they stopped media but are still a room participant, so the watcher
+        // must not treat it as a departure (it would wrongly close the room).
         return (
             typeof data === "object" && data !== null &&
             "room" in data &&
-            ("leaving" in data || "unpublished" in data)
+            "leaving" in data
         );
     }
 }

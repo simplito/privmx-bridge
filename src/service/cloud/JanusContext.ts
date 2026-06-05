@@ -15,6 +15,10 @@ import { AppException } from "../../api/AppException";
 import * as WebRtcTypes from "../webrtc/v2/WebRtcTypes";
 import { Logger } from "../log/Logger";
 
+export function isPublishingSession(session: JanusSession): boolean {
+    return session.type === "main" && session.janusPublisherId !== undefined && session.publishedStreams.length > 0;
+}
+
 export class JanusContext {
     
     private static readonly KEEPALIVE_INTERVAL_MS = 25000;
@@ -101,11 +105,15 @@ export class JanusContext {
     }
     
     findJanusSession(sessionId: WebRtcTypes.SessionId): JanusSession {
-        const session = this.janusSessions.find(x => x.session.id === sessionId);
+        const session = this.findJanusSessionByIdOrReturnNull(sessionId);
         if (!session) {
             throw new AppException("INVALID_PARAMS", `Janus session ${sessionId} not found`);
         }
         return session;
+    }
+    
+    findJanusSessionByIdOrReturnNull(sessionId: WebRtcTypes.SessionId): JanusSession | undefined {
+        return this.janusSessions.find(x => x.session.id === sessionId);
     }
     
     findJanusSessionBySourceOrReturnNull(source: string): JanusSession | undefined {

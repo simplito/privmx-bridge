@@ -128,8 +128,23 @@ export class WebSocketInnerManager {
         return {matchingSubscriptions, options};
     }
     
+    /** Single-session counterpart of the broadcast path; returns false if the session isn't subscribed. */
+    sendEventToSession<T extends types.core.Event<any, any>>(socket: WebSocketEx, session: WebSocketSession, targetChannel: TargetChannel, event: T): boolean {
+        const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
+        if (matchingSubscriptions.length === 0) {
+            return false;
+        }
+        const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
+        sessionEventCopy.subscriptions = matchingSubscriptions;
+        sessionEventCopy.version = options.version;
+        this.webSocketOutboundHandler.sendToWsSession(socket, session, sessionEventCopy);
+        return true;
+    }
+    
     private isPathPrefix(parent: string, child: string): boolean {
-        return child.startsWith(parent);
+        // Segment-aware: a subscription path only matches on "/" boundaries (or exactly),
+        // so e.g. "streamroom/stream" does not accidentally match "streamroom/streams/publish".
+        return child === parent || child.startsWith(parent + "/");
     }
     
     hasOpenConnectionWithUsername(host: types.core.Host, username: types.core.Username): boolean {
