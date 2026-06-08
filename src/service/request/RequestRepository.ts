@@ -28,10 +28,10 @@ export class RequestRepository {
     async getWithAccessCheck(user: types.core.Username|types.core.EccPubKey, requestId: types.request.RequestId) {
         const request = await this.repository.get(requestId);
         if (!request) {
-            throw new AppException("REQUEST_DOES_NOT_EXIST");
+            throw new AppException("REQUEST_DOES_NOT_EXIST", "Upload request does not exist");
         }
         if (request.author !== user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Upload request belongs to a different user");
         }
         return request;
     }
@@ -65,7 +65,7 @@ export class RequestRepository {
         const request = await this.getWithAccessCheck(user, requestId);
         for (const f of request.files) {
             if (!f.closed) {
-                throw new AppException("REQUEST_NOT_READY_YET");
+                throw new AppException("REQUEST_NOT_READY_YET", "Upload request is not ready: some files are still pending");
             }
         }
         return request;
@@ -74,7 +74,7 @@ export class RequestRepository {
     async markRequestAsProcessing(requestId: types.request.RequestId) {
         const oldReq = await this.repository.get(requestId);
         if (!oldReq) {
-            throw new AppException("REQUEST_DOES_NOT_EXIST");
+            throw new AppException("REQUEST_DOES_NOT_EXIST", "Upload request does not exist");
         }
         const newReq: db.request.Request = {
             ...oldReq,

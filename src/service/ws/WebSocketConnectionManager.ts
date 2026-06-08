@@ -71,16 +71,16 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         const wsId = session.getWsId();
         const properties = session.get("properties");
         if (wsEx.ex.sessions.some(x => x.wsId == wsId)) {
-            throw new AppException("WEBSOCKET_ALREADY_AUTHORIZED");
+            throw new AppException("WEBSOCKET_ALREADY_AUTHORIZED", "This WebSocket session ID is already authorized");
         }
         if (wsEx.ex.sessions.length > 1024) {
-            throw new AppException("EXCEEDED_LIMIT_OF_WEBSOCKET_CHANNELS");
+            throw new AppException("EXCEEDED_LIMIT_OF_WEBSOCKET_CHANNELS", "Maximum number of WebSocket channels exceeded");
         }
         if (wsEx.ex.sessions.length > 0 && !addWsChannelId) {
-            throw new AppException("ADD_WS_CHANNEL_ID_REQUIRED_ON_MULTI_CHANNEL_WEBSOCKET");
+            throw new AppException("ADD_WS_CHANNEL_ID_REQUIRED_ON_MULTI_CHANNEL_WEBSOCKET", "A channel ID is required when adding to a multi-channel WebSocket");
         }
         if (wsEx.ex.sessions.some(x => !x.addWsChannelId)) {
-            throw new AppException("CANNOT_ADD_CHANNEL_TO_SINGLE_CHANNEL_WEBSOCKET");
+            throw new AppException("CANNOT_ADD_CHANNEL_TO_SINGLE_CHANNEL_WEBSOCKET", "Cannot add a channel to a single-channel WebSocket");
         }
         const wsChannelId = this.generateWsChannelId(wsEx.ex.sessions);
         const username = session.get("username");

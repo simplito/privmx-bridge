@@ -30,7 +30,7 @@ export class ManagementBaseApi extends BaseApi {
     async validateAccess() {
         await this.authorizationDetector.authorizeByRequest();
         if (!this.authorizationHolder.isAuthorized()) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
     }
     
@@ -42,7 +42,7 @@ export class ManagementBaseApi extends BaseApi {
         const solutions: types.cloud.SolutionId[] = [];
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("INSUFFICIENT_SCOPE");
+            throw new AppException("INSUFFICIENT_SCOPE", "Authorization token is missing or invalid");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         for (const scope of scopes) {
@@ -51,7 +51,7 @@ export class ManagementBaseApi extends BaseApi {
             }
         }
         if (solutions.length === 0) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "No solutions found in authorization scope");
         }
         return solutions;
     }
@@ -59,7 +59,7 @@ export class ManagementBaseApi extends BaseApi {
     protected validateScope(scope: string) {
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         if (!scopes.includes(scope as types.auth.Scope)) {

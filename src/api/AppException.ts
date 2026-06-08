@@ -183,7 +183,7 @@ export class AppException extends Error {
         if (ex instanceof AppException) {
             throw ex;
         }
-        throw new AppException("INTERNAL_ERROR");
+        throw new AppException("INTERNAL_ERROR", "An unexpected internal error occurred");
     }
     
     static is(e: any, errorName: ErrorCode): e is AppException {

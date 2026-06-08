@@ -74,7 +74,7 @@ export class InboxService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -88,7 +88,7 @@ export class InboxService extends BaseContainerService {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);
             const oldInbox = await inboxRepository.get(model.id);
             if (!oldInbox) {
-                throw new AppException("STORE_DOES_NOT_EXIST");
+                throw new AppException("STORE_DOES_NOT_EXIST", "Inbox not found");
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxUpdate", ["inboxId=" + model.id]);
@@ -106,7 +106,7 @@ export class InboxService extends BaseContainerService {
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, [...oldInbox.history.map(x => x.keyId), model.keyId], oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
             if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
-                throw new AppException("RESOURCE_ID_MISSMATCH");
+                throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
             }
             try {
                 const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null);
@@ -114,7 +114,7 @@ export class InboxService extends BaseContainerService {
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
-                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                    throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
                 }
                 throw err;
             }
@@ -135,7 +135,7 @@ export class InboxService extends BaseContainerService {
             }
             const userContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
                 if (!this.policy.canDeleteContainer(user, context, inbox)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Policy denied container deletion");
                 }
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDelete", ["inboxId=" + id]);
             });
@@ -168,7 +168,7 @@ export class InboxService extends BaseContainerService {
             const toNotify: db.inbox.Inbox[] = [];
             for (const inbox of inboxes) {
                 if (inbox.contextId !== contextId) {
-                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
+                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS", "All resources must belong to the same context");
                 }
                 if (!additionalAccessCheck(inbox)) {
                     resultMap.set(inbox.id, "ACCESS_DENIED");
@@ -211,7 +211,7 @@ export class InboxService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
             if (!this.policy.canReadContainer(user, context, inbox)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this container");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxGet", ["inboxId=" + inboxId]);
         });
@@ -240,7 +240,7 @@ export class InboxService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxListAll", []);
         if (!this.policy.canListAllContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
         }
         const inboxes = await this.repositoryFactory.createInboxRepository().getAllInboxes(contextId, type, listParams, sortBy);
         return {user, inboxes};
@@ -251,12 +251,12 @@ export class InboxService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxList", []);
         if (scope === "ALL") {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
         }
         else {
             if (!this.policy.canListMyContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own containers");
             }
         }
         const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
@@ -270,7 +270,7 @@ export class InboxService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, ctx, (user, context) => {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxList", []);
         });
@@ -291,12 +291,12 @@ export class InboxService extends BaseContainerService {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
         if (model.version > inbox.history.length) {
-            throw new AppException("INVALID_VERSION");
+            throw new AppException("INVALID_VERSION", "Inbox version is higher than current");
         }
         const last = inbox.history[inbox.history.length - 1];
         const store = await this.repositoryFactory.createStoreRepository().get(last.data.storeId);
         if (!store) {
-            throw new AppException("STORE_DOES_NOT_EXIST");
+            throw new AppException("STORE_DOES_NOT_EXIST", "Inbox not found");
         }
         const thread = await this.repositoryFactory.createThreadRepository().get(last.data.threadId);
         if (!thread) {
@@ -304,7 +304,7 @@ export class InboxService extends BaseContainerService {
         }
         const requestRepository = this.repositoryFactory.createRequestRepository();
         if (model.files.length > 0 && !model.requestId) {
-            throw new AppException("REQUEST_DOES_NOT_EXIST");
+            throw new AppException("REQUEST_DOES_NOT_EXIST", "No request ID provided for file uploads");
         }
         const request = model.requestId && model.files.length > 0 ? await requestRepository.getReadyForUser(username, model.requestId) : null;
         const files = this.checkFilesIndexesAndCountAndSize(last.data.fileConfig, request, model);
@@ -332,7 +332,7 @@ export class InboxService extends BaseContainerService {
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
-                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                    throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
                 }
                 throw err;
             }
@@ -356,10 +356,10 @@ export class InboxService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, inbox.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxSendCustomNotification", ["inboxId=" + inboxId]);
         if (!this.policy.canSendCustomNotification(user, context, inbox)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied custom notification");
         }
         if (users && users.some(element => !inbox.users.includes(element))) {
-            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER", "One or more specified users are not members of this inbox");
         }
         this.inboxNotificationService.sendInboxCustomEvent(inbox, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
         return inbox;
@@ -373,26 +373,26 @@ export class InboxService extends BaseContainerService {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
         if (!thread.managers.includes(user.userId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a manager of this thread");
         }
     }
     
     private async validateAccessToStore(storeId: types.store.StoreId, user: db.context.ContextUser) {
         const store = await this.repositoryFactory.createStoreRepository().get(storeId);
         if (!store) {
-            throw new AppException("STORE_DOES_NOT_EXIST");
+            throw new AppException("STORE_DOES_NOT_EXIST", "Inbox not found");
         }
         if (!store.managers.includes(user.userId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a manager of this store");
         }
     }
     
     private checkFilesIndexesAndCountAndSize(fileConfig: types.inbox.InboxFileConfig, request: db.request.Request|null, model: inboxApi.InboxSendModel) {
         if (model.files.length > fileConfig.maxCount) {
-            throw new AppException("TOO_MANY_FILES_IN_REQUEST");
+            throw new AppException("TOO_MANY_FILES_IN_REQUEST", "Number of files exceeds the maximum allowed");
         }
         if (model.files.length < fileConfig.minCount) {
-            throw new AppException("NOT_ENOUGH_FILES_IN_REQUEST");
+            throw new AppException("NOT_ENOUGH_FILES_IN_REQUEST", "Number of files is below the minimum required");
         }
         const usedIndexes: number[] = [];
         const result: FileDefinition[] = [];
@@ -402,25 +402,25 @@ export class InboxService extends BaseContainerService {
             }
             const reqFile = request.files[file.fileIndex];
             if (!reqFile) {
-                throw new AppException("INVALID_FILE_INDEX");
+                throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
             }
             if (usedIndexes.includes(file.fileIndex)) {
-                throw new AppException("FILE_ALREADY_USED");
+                throw new AppException("FILE_ALREADY_USED", "File index is already assigned to another file");
             }
             if (reqFile.size > fileConfig.maxFileSize) {
-                throw new AppException("REQUEST_FILE_SIZE_EXCEEDED");
+                throw new AppException("REQUEST_FILE_SIZE_EXCEEDED", "File size exceeds the allowed limit");
             }
             usedIndexes.push(file.fileIndex);
             const reqThumb = typeof(file.thumbIndex) === "number" ? request.files[file.thumbIndex] : undefined;
             if (typeof(file.thumbIndex) === "number") {
                 if (!reqThumb) {
-                    throw new AppException("INVALID_FILE_INDEX");
+                    throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
                 }
                 if (usedIndexes.includes(file.thumbIndex)) {
-                    throw new AppException("FILE_ALREADY_USED");
+                    throw new AppException("FILE_ALREADY_USED", "File index is already assigned to another file");
                 }
                 if (reqThumb.size > fileConfig.maxFileSize) {
-                    throw new AppException("REQUEST_FILE_SIZE_EXCEEDED");
+                    throw new AppException("REQUEST_FILE_SIZE_EXCEEDED", "File size exceeds the allowed limit");
                 }
                 usedIndexes.push(file.thumbIndex);
             }
@@ -428,7 +428,7 @@ export class InboxService extends BaseContainerService {
         }
         const wholeSize = result.reduce((sum, x) => sum + x.file.sent + (x.thumb ? x.thumb.size : 0), 0);
         if (wholeSize > fileConfig.maxWholeUploadSize) {
-            throw new AppException("REQUEST_FILE_SIZE_EXCEEDED");
+            throw new AppException("REQUEST_FILE_SIZE_EXCEEDED", "File size exceeds the allowed limit");
         }
         return result;
     }

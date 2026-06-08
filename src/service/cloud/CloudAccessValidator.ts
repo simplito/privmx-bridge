@@ -26,22 +26,22 @@ export class CloudAccessValidator {
         const context = await this.getContext(contextInfo);
         if (executor.type === "context") {
             if (executor.contextId !== context.id) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Executor context does not match");
             }
         }
         else if (executor.type === "plain") {
             if (!executor.solutions.includes(context.solution) && !executor.solutions.includes("*" as types.cloud.SolutionId)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Executor is not authorized for this context's solution");
             }
         }
         else if (executor.type === "cloud") {
             const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(executor.pub, context.id);
             if (!user) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "User is not a member of this context");
             }
             if (executor.solutionId) {
                 if (context.solution !== executor.solutionId && !context.shares.includes(executor.solutionId)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Executor solution is not authorized for this context");
                 }
             }
             await onCloudUser(user, context);
@@ -54,11 +54,11 @@ export class CloudAccessValidator {
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
         if (!user || !context) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         if (cloudUser.solutionId) {
             if (context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "User's solution is not authorized for this context");
             }
         }
         return {user, context};

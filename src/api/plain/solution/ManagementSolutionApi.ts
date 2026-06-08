@@ -34,7 +34,7 @@ export class ManagementSolutionApi extends BaseApi implements managementSolution
     async validateAccess() {
         await this.authorizationDetector.authorize();
         if (!this.authorizationHolder.isAuthorized()) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
     }
     
@@ -76,7 +76,7 @@ export class ManagementSolutionApi extends BaseApi implements managementSolution
     private validateScope(scope: string) {
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         if (!scopes.includes(scope as types.auth.Scope)) {

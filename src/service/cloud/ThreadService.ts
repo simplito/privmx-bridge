@@ -52,7 +52,7 @@ export class ThreadService extends BaseContainerService {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadGet", ["threadId=" + threadId]);
             if (!this.policy.canReadContainer(user, context, thread)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this container");
             }
         });
         return thread;
@@ -63,12 +63,12 @@ export class ThreadService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadList", []);
         if (scope === "ALL") {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
         }
         else {
             if (!this.policy.canListMyContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own containers");
             }
         }
         const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
@@ -79,7 +79,7 @@ export class ThreadService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadListAll", []);
         if (!this.policy.canListAllContainers(user, context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
         }
         const threads = await this.repositoryFactory.createThreadRepository().getAllThreads(contextId, type, listParams, sortBy);
         return {user, threads};
@@ -92,7 +92,7 @@ export class ThreadService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, ctx, (user, context) => {
             if (!this.policy.canListAllContainers(user, context)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all containers");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadList", []);
         });
@@ -111,7 +111,7 @@ export class ThreadService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             if (!this.policy.canReadItem(user, context, thread, message)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied read access to this item");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageGet", ["threadId=" + thread.id, "messageId=" + messageId]);
         });
@@ -125,7 +125,7 @@ export class ThreadService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, thread)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
         });
@@ -140,7 +140,7 @@ export class ThreadService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             if (!this.policy.canListMyItems(user, context, thread)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing own items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGetMy", ["threadId=" + thread.id]);
         });
@@ -155,7 +155,7 @@ export class ThreadService extends BaseContainerService {
         }
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             if (!this.policy.canListAllItems(user, context, thread)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied listing all items");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
         });
@@ -176,7 +176,7 @@ export class ThreadService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -201,7 +201,7 @@ export class ThreadService extends BaseContainerService {
             }
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, [...oldThread.history.map(x => x.keyId), keyId], oldThread.keys, keys, keyId, users, managers);
             if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
-                throw new AppException("RESOURCE_ID_MISSMATCH");
+                throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
             }
             try {
                 const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
@@ -209,7 +209,7 @@ export class ThreadService extends BaseContainerService {
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
-                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                    throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
                 }
                 throw err;
             }
@@ -232,7 +232,7 @@ export class ThreadService extends BaseContainerService {
             const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldThread.contextId, (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "thread/threadDelete", ["threadId=" + id]);
                 if (!this.policy.canDeleteContainer(user, context, oldThread)) {
-                    throw new AppException("ACCESS_DENIED");
+                    throw new AppException("ACCESS_DENIED", "Policy denied container deletion");
                 }
             });
             const inboxes = await this.repositoryFactory.createInboxRepository(session).getInboxesWithThread(id);
@@ -271,7 +271,7 @@ export class ThreadService extends BaseContainerService {
             const toNotify: db.thread.Thread[] = [];
             for (const thread of threads) {
                 if (thread.contextId !== contextId) {
-                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS");
+                    throw new AppException("RESOURCES_HAVE_DIFFERENT_CONTEXTS", "All resources must belong to the same context");
                 }
                 if (!additionalAccessCheck(thread)) {
                     resultMap.set(thread.id, "ACCESS_DENIED");
@@ -323,10 +323,10 @@ export class ThreadService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageSend", ["threadId=" + threadId]);
         if (!this.policy.canCreateItem(user, context, thread)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied item creation in this container");
         }
         if (thread.keyId !== keyId) {
-            throw new AppException("INVALID_THREAD_KEY");
+            throw new AppException("INVALID_THREAD_KEY", "Key ID does not match the thread key");
         }
         try {
             const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
@@ -340,7 +340,7 @@ export class ThreadService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -358,17 +358,17 @@ export class ThreadService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageUpdate", ["messageId=" + messageId, "threadId=" + thread.id]);
         if (!this.policy.canUpdateItem(user, context, thread, message)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied update of this item");
         }
         if (thread.keyId !== keyId) {
-            throw new AppException("INVALID_THREAD_KEY");
+            throw new AppException("INVALID_THREAD_KEY", "Key ID does not match the thread key");
         }
         const currentVersion = ((message.updates || []).length + 1) as types.thread.ThreadMessageVersion;
         if (typeof(version) === "number" && currentVersion !== version && force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${version}, expected: ${currentVersion}`);
         }
         if (message.clientResourceId && resourceId && message.clientResourceId !== resourceId) {
-            throw new AppException("RESOURCE_ID_MISSMATCH");
+            throw new AppException("RESOURCE_ID_MISSMATCH", "Resource ID does not match the original");
         }
         try {
             const newMessage = await this.repositoryFactory.createThreadMessageRepository().updateMessage(message, user.userId, data, keyId, resourceId);
@@ -377,7 +377,7 @@ export class ThreadService extends BaseContainerService {
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
-                throw new AppException("DUPLICATE_RESOURCE_ID");
+                throw new AppException("DUPLICATE_RESOURCE_ID", "A resource with this ID already exists");
             }
             throw err;
         }
@@ -395,7 +395,7 @@ export class ThreadService extends BaseContainerService {
         const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageDelete", ["messageId=" + messageId, "threadId=" + thread.id]);
             if (!this.policy.canDeleteItem(user, context, thread, message)) {
-                throw new AppException("ACCESS_DENIED");
+                throw new AppException("ACCESS_DENIED", "Policy denied deletion of this item");
             }
         });
         await this.repositoryFactory.createThreadMessageRepository().deleteMessage(messageId);
@@ -492,10 +492,10 @@ export class ThreadService extends BaseContainerService {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadSendCustomNotification", ["threadId=" + threadId]);
         if (!this.policy.canSendCustomNotification(user, context, thread)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied custom notification");
         }
         if (users && users.some(element => !thread.users.includes(element))) {
-            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER", "One or more users do not have access to this container");
         }
         this.threadNotificationService.sendThreadCustomEvent(thread, keyId, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
         return thread;

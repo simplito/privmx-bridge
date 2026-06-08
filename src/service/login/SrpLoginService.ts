@@ -70,21 +70,21 @@ export class SrpLoginService {
     async init(I: types.user.UserLogin, host: types.core.Host, properties: types.user.LoginProperties): Promise<SrpInitResult> {
         this.logger.debug({I: I, host: host, properties: properties}, "init");
         if (this.maintenanceService.isMaintenanceModeEnabled()) {
-            throw new AppException("MAINTENANCE_MODE");
+            throw new AppException("MAINTENANCE_MODE", "Server is in maintenance mode");
         }
         if (await this.loginLogService.detectAttack(this.requestInfoHolder.ip)) {
             await this.loginLogService.saveSrpLoginAttempt(null, I, false, "LOGIN_REJECTED", this.requestInfoHolder.ip, properties);
             await Utils.sleep(2000);
-            throw new AppException("LOGIN_REJECTED");
+            throw new AppException("LOGIN_REJECTED", "Login attempt rejected due to too many failures");
         }
         const user = await this.userLoginService.getSrpUser(I, host);
         if (user == null) {
             await this.loginLogService.saveSrpLoginAttempt(null, I, false, "USER_DOESNT_EXIST", this.requestInfoHolder.ip, properties);
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User not found");
         }
         const proxy: types.core.Host|null = null;
         if (user.loginByProxy != null && (this.requestInfoHolder.serverSession == null || user.loginByProxy != this.requestInfoHolder.serverSession.host)) {
-            throw new AppException("INVALID_PROXY_SESSION");
+            throw new AppException("INVALID_PROXY_SESSION", "Request does not originate from the required proxy host");
         }
         
         const N = this.srpConfigService.config.N;
@@ -135,10 +135,10 @@ export class SrpLoginService {
         }
         catch (e) {
             this.logger.error(e);
-            throw new AppException("UNKNOWN_SESSION");
+            throw new AppException("UNKNOWN_SESSION", "Session ID not found or could not be restored");
         }
         if (session.get("state") != "init") {
-            throw new AppException("INVALID_SESSION_STATE");
+            throw new AppException("INVALID_SESSION_STATE", "Session is not in the expected 'init' state");
         }
         const username = out.user = session.get("username");
         const srpData = session.get("srp");
@@ -147,12 +147,12 @@ export class SrpLoginService {
             await this.sessionHolder.destroy(undefined, session);
             await this.loginLogService.saveSrpLoginAttempt(username, srpData.I, false, "LOGIN_REJECTED", this.requestInfoHolder.ip, properties);
             await Utils.sleep(2000);
-            throw new AppException("LOGIN_REJECTED");
+            throw new AppException("LOGIN_REJECTED", "Login attempt rejected due to too many failures");
         }
         const proxy = session.get("proxy");
         if (proxy != null && (this.requestInfoHolder.serverSession == null || proxy != this.requestInfoHolder.serverSession.host)) {
             await this.sessionHolder.destroy(undefined, session);
-            throw new AppException("INVALID_PROXY_SESSION");
+            throw new AppException("INVALID_PROXY_SESSION", "Request does not originate from the required proxy host");
         }
         const N = this.deserializeBigInteger(srpData.N);
         // let g = this.deserializeBigInteger(srpData.g);
@@ -162,7 +162,7 @@ export class SrpLoginService {
         const bigB = this.deserializeBigInteger(srpData.B);
         if (SrpLogic.valid_A(A, N) == false) {
             await this.sessionHolder.destroy(undefined, session);
-            throw new AppException("INVALID_A");
+            throw new AppException("INVALID_A", "SRP parameter A is invalid");
         }
         const u = SrpLogic.get_u(A, bigB, N);
         const S = SrpLogic.getServer_S(A, v, u, b, N);

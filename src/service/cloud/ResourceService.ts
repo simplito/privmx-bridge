@@ -174,7 +174,7 @@ export class ResourceService {
     private async getUserFromContext(userPubKey: types.core.EccPubKey, contextId: types.context.ContextId) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(userPubKey, contextId);
         if (!user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         return user;
     }
@@ -236,7 +236,7 @@ export class ResourceService {
                 throw new AppException("RESOURCE_DOES_NOT_EXIST", {type: type.ref, id: acl.ref});
             }
             if (resource.last.keyId != keyId) {
-                throw new AppException("INVALID_KEY");
+                throw new AppException("INVALID_KEY", "Key ID does not match the resource key");
             }
             this.validateAccessToResource(resource, user); // TODO should check rights to create sub objects not normal access
             const result: types.resource.RefResourceAcl = {
@@ -250,7 +250,7 @@ export class ResourceService {
     
     private validateAccessToResource(resource: db.resource.Resource, user: db.context.ContextUser) {
         if (resource.acl.type !== "embedded" || !resource.acl.users.includes(user.userId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User does not have access to this resource");
         }
     }
     
@@ -346,10 +346,10 @@ export class ResourceService {
                     throw new AppException("INVALID_PARAMS", "props");
                 }
                 if (!request) {
-                    throw new AppException("REQUEST_DOES_NOT_EXIST");
+                    throw new AppException("REQUEST_DOES_NOT_EXIST", "Upload request does not exist");
                 }
                 if (!request.files[value]) {
-                    throw new AppException("INVALID_FILE_INDEX");
+                    throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
                 }
             }
         }
@@ -395,11 +395,11 @@ export class ResourceService {
                     throw new AppException("INVALID_PARAMS", "props");
                 }
                 if (!request) {
-                    throw new AppException("REQUEST_DOES_NOT_EXIST");
+                    throw new AppException("REQUEST_DOES_NOT_EXIST", "Upload request does not exist");
                 }
                 const file = request.files[value];
                 if (!file) {
-                    throw new AppException("INVALID_FILE_INDEX");
+                    throw new AppException("INVALID_FILE_INDEX", "File index not found in the request");
                 }
                 await this.storageService.commit(file.id);
                 return {fileId: file.id, size: file.size};

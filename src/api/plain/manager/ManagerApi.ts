@@ -38,7 +38,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     async validateAccess(method: string) {
         await this.authorizationDetector.authorize();
         if (method !== "auth" && method !== "bindAccessToken" && method !== "createFirstApiKey" && !this.authorizationHolder.isAuthorized()) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
     }
     
@@ -110,7 +110,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async subscribeToChannel(model: managerApi.SubscribeToChannelModel): Promise<types.core.OK> {
         if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires an active WebSocket connection with a plain user");
         }
         for (const channel of model.channels) {
             this.validateScope(channel);
@@ -131,7 +131,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     @ApiMethod({errorCodes: ["METHOD_CALLABLE_WITH_WEBSOCKET_ONLY"]})
     async unsubscribeFromChannel(model: managerApi.UnsubscribeFromChannelModel): Promise<types.core.OK> {
         if (!this.webSocketEx || !this.webSocketEx.ex.plainUserInfo) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires an active WebSocket connection with a plain user");
         }
         for (const channel of model.channels) {
             this.validateScope(channel);
@@ -153,7 +153,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     private validateScope(scope: string) {
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "Authorization required");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         if (!scopes.includes(scope as types.auth.Scope)) {
@@ -165,7 +165,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
         const solutions: types.cloud.SolutionId[] = [];
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("INSUFFICIENT_SCOPE");
+            throw new AppException("INSUFFICIENT_SCOPE", "Authorization token is missing or invalid");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         for (const scope of scopes) {

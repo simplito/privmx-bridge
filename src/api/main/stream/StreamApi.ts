@@ -104,7 +104,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamPublish(model: streamApi.StreamPublishModel): Promise<streamApi.StreamPublishResult> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -115,7 +115,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamUpdate(model: streamApi.StreamUpdateModel): Promise<streamApi.StreamUpdateResult> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -126,7 +126,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamsSubscribeToRemote(model: streamApi.StreamsSubscribeModel): Promise<streamApi.StreamSubscribeResult> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -137,7 +137,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamsModifyRemoteSubscriptions(model: streamApi.StreamModifySubscriptionModel): Promise<streamApi.StreamSubscribeResult> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -148,7 +148,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamsUnsubscribeFromRemote(model: streamApi.StreamsUnsubscribeModel): Promise<streamApi.StreamSubscribeResult> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -159,7 +159,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamTrickle(model: streamApi.StreamTrickleModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -170,7 +170,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamAcceptOffer(model: streamApi.StreamAcceptOfferModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -181,7 +181,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -198,7 +198,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamUnpublish(model: streamApi.StreamUnpublishModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -217,7 +217,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomJoin(model: streamApi.StreamRoomJoinModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -228,7 +228,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomLeave(model: streamApi.StreamRoomJoinModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
@@ -239,7 +239,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomEnableRecording(model: streamApi.StreamRoomRecordingModel): Promise<types.core.OK> {
         if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires usage of Websocket only request");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();

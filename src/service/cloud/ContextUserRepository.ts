@@ -42,7 +42,7 @@ export class ContextUserRepository {
             if (oldUser.userId === userId) {
                 return oldUser;
             }
-            throw new AppException("PUB_KEY_ALREADY_IN_USE");
+            throw new AppException("PUB_KEY_ALREADY_IN_USE", "Public key is already associated with a different user");
         }
         const user: db.context.ContextUser = {
             id: this.getUserId(contextId, userId),

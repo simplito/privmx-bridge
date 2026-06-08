@@ -171,7 +171,7 @@ export class SessionService {
         const session = this.getSession();
         const ecdhe = session ? session.get("ecdhe") : null;
         if (!session || session.get("type") !== "ecdhe" || !ecdhe || !ecdhe.contextUser) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "A valid ECDHE context session is required");
         }
         return new CloudUser(ecdhe.pub, session.get("solution"));
     }

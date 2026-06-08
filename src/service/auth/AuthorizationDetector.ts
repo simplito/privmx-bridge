@@ -45,11 +45,11 @@ export class AuthorizationDetector {
     
     async bindAccessTokenToWebsocket(token: types.auth.ApiAccessToken) {
         if (!this.webSocket || !this.webSocket.ex.plainUserInfo) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
+            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY", "This method requires an active WebSocket connection with a plain user");
         }
         const res = await this.isApiAccessTokenValid(token);
         if (res === false) {
-            throw new AppException("INVALID_TOKEN");
+            throw new AppException("INVALID_TOKEN", "Access token is invalid or expired");
         }
         this.webSocket.ex.plainUserInfo.token = token;
     }

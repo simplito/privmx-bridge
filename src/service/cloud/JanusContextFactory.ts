@@ -73,7 +73,7 @@ export class JanusContextFactory {
         catch (e) {
             this.logger.error(e, "Error during request to media server (Admin Task)");
             this.destroyAdminContext();
-            throw new AppException("ERROR_DURING_REQUEST_TO_MEDIA_SERVER");
+            throw new AppException("ERROR_DURING_REQUEST_TO_MEDIA_SERVER", "An error occurred during a request to the media server");
         }
     }
     

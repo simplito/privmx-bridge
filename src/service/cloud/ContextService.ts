@@ -80,7 +80,7 @@ export class ContextService {
             this.policyService.validateContextPolicy(rest.policy);
         }
         if (rest.scope && context.shares.length > 0 && rest.scope === "private") {
-            throw new AppException("CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE");
+            throw new AppException("CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE", "Context with connected solutions cannot be switched to private scope");
         }
         await this.repositoryFactory.createContextRepository().updateContext(contextId, rest);
     }
@@ -109,7 +109,7 @@ export class ContextService {
             throw new AppException("SOLUTION_DOES_NOT_EXIST");
         }
         if (context.scope === "private") {
-            throw new AppException("CANNOT_ASSIGN_PRIVATE_CONTEXT");
+            throw new AppException("CANNOT_ASSIGN_PRIVATE_CONTEXT", "Private contexts cannot be shared with other solutions");
         }
         if (context.solution === solutionId) {
             return;
@@ -127,7 +127,7 @@ export class ContextService {
             throw new AppException("SOLUTION_DOES_NOT_EXIST");
         }
         if (context.solution === solutionId) {
-            throw new AppException("CANNOT_UNASSIGN_CONTEXT_FROM_ITS_PARENT");
+            throw new AppException("CANNOT_UNASSIGN_CONTEXT_FROM_ITS_PARENT", "Cannot remove the context's own parent solution");
         }
         await this.repositoryFactory.createContextRepository().removeSolutionFromContext(contextId, solutionId);
     }
@@ -152,7 +152,7 @@ export class ContextService {
         }
         const user = await this.repositoryFactory.createContextUserRepository().get(contextId, userId);
         if (!user) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
         }
         await this.repositoryFactory.createContextUserRepository().remove(contextId, userId);
         void this.contextNotificationService.sendUserRemoved(userId, context.id, user.userPubKey);
@@ -168,7 +168,7 @@ export class ContextService {
         }
         const users = await this.repositoryFactory.createContextUserRepository().getAllByContextAndUserPubKey(contextId, userPubKey);
         if (users.length === 0) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
         }
         await this.repositoryFactory.createContextUserRepository().removeAllByUserPub(contextId, userPubKey);
     }
@@ -177,7 +177,7 @@ export class ContextService {
         if (listParams.lastId) {
             const context = await this.repositoryFactory.createContextRepository().get(listParams.lastId as types.context.ContextId);
             if (!context) {
-                throw new AppException("NO_MATCH_FOR_LAST_ID");
+                throw new AppException("NO_MATCH_FOR_LAST_ID", "No context found for the given pagination cursor");
             }
         }
         return cloudUser.solutionId ?
@@ -196,14 +196,14 @@ export class ContextService {
     async getContext(cloudUser: CloudUser, contextId: types.context.ContextId) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
         if (!user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!context) {
             throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`);
         }
         if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User's solution is not authorized for this context");
         }
         return {context, user};
     }
@@ -217,7 +217,7 @@ export class ContextService {
     async getUser(contextId: types.context.ContextId, userId: types.cloud.UserId) {
         const user = await this.repositoryFactory.createContextUserRepository().get(contextId, userId);
         if (!user) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
         }
         return user;
     }
@@ -225,7 +225,7 @@ export class ContextService {
     async getUserByPub(contextId: types.context.ContextId, userPubKey: types.cloud.UserPubKey) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(userPubKey, contextId);
         if (!user) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
         }
         return user;
     }
@@ -238,7 +238,7 @@ export class ContextService {
         this.cloudAclChecker.checkAcl(acl);
         const user = await this.repositoryFactory.createContextUserRepository().get(contextId, userId);
         if (!user) {
-            throw new AppException("USER_DOESNT_EXIST");
+            throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
         }
         await this.repositoryFactory.createContextUserRepository().updateAcl(contextId, userId, acl);
     }
@@ -246,7 +246,7 @@ export class ContextService {
     async getAllContextUsers(cloudUser: CloudUser, contextId: types.context.ContextId) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
         if (!user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "context/contextGetUsers", ["contextId=" + contextId]);
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
@@ -254,10 +254,10 @@ export class ContextService {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
         }
         if (!this.policy.canListUsers(context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing context users");
         }
         if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User's solution is not authorized for this context");
         }
         const users = await this.repositoryFactory.createContextUserRepository().getAllContextUsers(contextId);
         const usersState = await this.activeUsersMap.getUsersState({host: this.host, userPubkeys: users.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
@@ -267,7 +267,7 @@ export class ContextService {
     async getPageOfContextUsersWithStatus(cloudUser: CloudUser, contextId: types.context.ContextId, listParams: types.core.ListModel) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
         if (!user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "context/contextListUsers", ["contextId=" + contextId]);
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
@@ -275,10 +275,10 @@ export class ContextService {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
         }
         if (!this.policy.canListUsers(context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied listing context users");
         }
         if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User's solution is not authorized for this context");
         }
         const users = await this.repositoryFactory.createContextUserRepository().getUsersPageWithActivityFromContext(contextId, context.solution, listParams);
         const usersState = await this.activeUsersMap.getUsersState({host: this.host, userPubkeys: users.list.map(u => u.userPubKey), solutionIds: [context.solution, ...context.shares]});
@@ -288,7 +288,7 @@ export class ContextService {
     async sendCustomNotification(cloudUser: CloudUser, contextId: types.context.ContextId, data: unknown, customChannelName: types.core.WsChannelName,  usersWithEncryptionKey: {id: types.cloud.UserId, key: types.core.UserKeyData}[]) {
         const user = await this.repositoryFactory.createContextUserRepository().getUserFromContext(cloudUser.pub, contextId);
         if (!user) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User is not a member of this context");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "context/contextSendCustomNotification", ["contextId=" + contextId]);
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
@@ -296,10 +296,10 @@ export class ContextService {
             throw new DbInconsistencyError(`Context=${contextId} does not exist, contextUser=${user.id}`);
         }
         if (!this.policy.canSendContextCustomNotification(context)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "Policy denied context custom notification");
         }
         if (cloudUser.solutionId && context.solution !== cloudUser.solutionId && !context.shares.includes(cloudUser.solutionId)) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User's solution is not authorized for this context");
         }
         const usersWithPubKey = await this.repositoryFactory.createContextUserRepository().getUsers(contextId, usersWithEncryptionKey.map(e => e.id));
         const users = this.mergeUsersArrays(usersWithPubKey, usersWithEncryptionKey);
@@ -310,7 +310,7 @@ export class ContextService {
         return usersWithEncryptionKey.map(user => {
             const userWithPubKey = usersWithPubKey.find(x => x.userId === user.id);
             if (!userWithPubKey) {
-                throw new AppException("USER_DOESNT_EXIST");
+                throw new AppException("USER_DOESNT_EXIST", "User does not exist in this context");
             }
             return {
                 id: user.id,

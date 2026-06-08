@@ -34,7 +34,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
     async validateAccess() {
         await this.authorizationDetector.authorize();
         if (!this.authorizationHolder.isAuthorized()) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
     }
     
@@ -179,7 +179,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
             return;
         }
         if (!solList.every(x => solutions.includes(x))) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User does not have access to one or more of the requested solutions");
         }
     }
     
@@ -191,7 +191,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
         }
         const context = await this.contextService.getContextWithCheckingExistance(contextId);
         if (!solutions.includes(context.solution) && !context.shares.find(x => solutions.includes(x))) {
-            throw new AppException("ACCESS_DENIED");
+            throw new AppException("ACCESS_DENIED", "User does not have access to this context's solution");
         }
     }
     
@@ -199,7 +199,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
         const solutions: types.cloud.SolutionId[] = [];
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("INSUFFICIENT_SCOPE");
+            throw new AppException("INSUFFICIENT_SCOPE", "Authorization token is missing or invalid");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         for (const scope of scopes) {
@@ -213,7 +213,7 @@ export class ManagementContextApi extends BaseApi implements managementContextAp
     private validateScope(scope: string) {
         const auth = this.authorizationHolder.getAuth();
         if (!auth) {
-            throw new AppException("UNAUTHORIZED");
+            throw new AppException("UNAUTHORIZED", "No valid API key or access token was provided");
         }
         const scopes = auth.session ? auth.session.scopes : auth.apiKey.scopes;
         if (!scopes.includes(scope as types.auth.Scope)) {
