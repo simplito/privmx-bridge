@@ -124,6 +124,7 @@ import { LockHelper } from "../misc/LockHelper";
 import { UserStatusManager } from "../cloud/UserStatusManager";
 import { JanusContextFactory } from "../cloud/JanusContextFactory";
 import { JanusConnector } from "../cloud/JanusConnector";
+import { FakeJanusConnector } from "../cloud/FakeJanusConnector";
 import { JanusVideoRoomMapper } from "../cloud/JanusVideoRoomMapper";
 import { JanusNotificationParser } from "../cloud/JanusNotificationParser";
 import { AdminJanusConnection } from "../cloud/AdminJanusConnection";
@@ -1251,10 +1252,12 @@ export class IOC {
     
     getJanusConnector() {
         if (this.janusConnector == null) {
-            this.janusConnector = new JanusConnector(
-                this.getLoggerFactory(),
-                this.workerRegistry.getConfig(),
-            );
+            const config = this.workerRegistry.getConfig();
+            // `fake` swaps the real media-server transport for canned responses, so the whole
+            // stream pipeline runs without Janus (used by e2e tests).
+            this.janusConnector = config.streams?.mediaServer?.fake
+                ? new FakeJanusConnector(this.getLoggerFactory(), config)
+                : new JanusConnector(this.getLoggerFactory(), config);
         }
         return this.janusConnector;
     }
