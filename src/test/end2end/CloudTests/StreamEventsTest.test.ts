@@ -43,7 +43,7 @@ export class StreamEventsTest extends BaseTestSet {
         
         await this.apis.streamApi.streamRoomJoin({ streamRoomId });
         const published = await this.apis.streamApi.streamPublish({ streamRoomId, offer: { type: "offer", sdp: "x" } });
-        await this.apis.connection.call("stream.streamUpdate", { streamRoomId, offer: { type: "offer", sdp: "y" } }, { channelType: "websocket" });
+        await this.apis.streamApi.streamUpdate({ streamRoomId, offer: { type: "offer", sdp: "y" } });
         await this.apis.streamApi.streamsSubscribeToRemote({ streamRoomId, subscriptionsToAdd: [{ streamId: 7 as types.stream.StreamId }] });
         await this.apis.streamApi.streamsUnsubscribeFromRemote({ streamRoomId, subscriptionsToRemove: [{ streamId: 7 as types.stream.StreamId }] });
         await this.apis.streamApi.streamUnpublish({ sessionId: published.sessionId });

@@ -328,6 +328,7 @@ export interface IStreamApi {
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
     streamList(model: StreamListModel): Promise<StreamListResult>;
     streamPublish(model: StreamPublishModel): Promise<StreamPublishResult>;
+    streamUpdate(model: StreamUpdateModel): Promise<StreamUpdateResult>;
     streamsSubscribeToRemote(model: StreamsSubscribeModel): Promise<StreamSubscribeResult>;
     streamsModifyRemoteSubscriptions(model: StreamModifySubscriptionModel): Promise<StreamSubscribeResult>;
     streamsUnsubscribeFromRemote(model: StreamsUnsubscribeModel): Promise<StreamSubscribeResult>

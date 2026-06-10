@@ -116,6 +116,8 @@ export interface JanusSession {
     streamsToAccept: number[];
     // streamIds: number[];
     publishedStreams: Publisher[];
+    /** Guards against emitting streamPublished more than once for a single publish (duplicate webrtcup). */
+    publishedAnnounced: boolean;
     janusPublisherId?: WebRtcTypes.VideoRoomPublisherId;
     userId: types.cloud.UserId;
     addStreamsOffer: (streamIds: WebRtcTypes.StreamId[]) => void;

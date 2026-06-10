@@ -33,6 +33,7 @@ export class AdminJanusConnection {
     private adminContext: AdminContext | null = null;
     private adminContextPromise: Promise<AdminContext> | null = null;
     private adminKeepAliveInterval: NodeJS.Timeout | null = null;
+    private opChain: Promise<unknown> = Promise.resolve();
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -41,7 +42,18 @@ export class AdminJanusConnection {
         this.logger = this.loggerFactory.createLogger(AdminJanusConnection);
     }
     
+    /**
+     * Serializes admin tasks: there is a single shared admin session+handle, and some tasks
+     * (e.g. listing a room's publishers) join/leave a videoroom on it — running two concurrently
+     * would corrupt that one handle's state.
+     */
     async withJanus<T>(func: (videoApi: JanusVideoRoomPluginApi, sessionId: WebRtcTypes.SessionId, handleId: WebRtcTypes.VideoRoomPluginHandleId) => Promise<T>): Promise<T> {
+        const run = this.opChain.then(() => this.runWithJanus(func), () => this.runWithJanus(func));
+        this.opChain = run.then(() => undefined, () => undefined);
+        return run;
+    }
+    
+    private async runWithJanus<T>(func: (videoApi: JanusVideoRoomPluginApi, sessionId: WebRtcTypes.SessionId, handleId: WebRtcTypes.VideoRoomPluginHandleId) => Promise<T>): Promise<T> {
         try {
             const ctx = await this.getAdminContext();
             return await func(ctx.connection.janusVideoRoomPluginApi, ctx.sessionId, ctx.handleId);

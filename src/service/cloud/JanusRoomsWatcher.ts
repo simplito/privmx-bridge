@@ -43,6 +43,7 @@ export class JanusRoomsWatcher {
     private mainSessionId: SessionId | undefined;
     
     private roomHandles: Map<number, webRtcTypes.VideoRoomPluginHandleId> = new Map();
+    private attachingRooms: Map<number, Promise<void>> = new Map();
     private initializationPromise: Promise<void> | null = null;
     
     constructor(
@@ -144,14 +145,26 @@ export class JanusRoomsWatcher {
         if (this.roomHandles.has(model.janusRoomId)) {
             return;
         }
-        
-        try {
-            await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
+        // Coalesce concurrent first-watchers for the same room into one attach, so two callers
+        // can't both pass the has()-check above and double-attach (leaking a handle).
+        const inFlight = this.attachingRooms.get(model.janusRoomId);
+        if (inFlight) {
+            return inFlight;
         }
-        catch (error) {
-            this.logger.debug({ error, model }, "Failed to attach watcher to room");
-            await this.cache.removePublisher(model);
-        }
+        const attach = (async () => {
+            try {
+                await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
+            }
+            catch (error) {
+                this.logger.debug({ error, model }, "Failed to attach watcher to room");
+                await this.cache.removePublisher(model);
+            }
+            finally {
+                this.attachingRooms.delete(model.janusRoomId);
+            }
+        })();
+        this.attachingRooms.set(model.janusRoomId, attach);
+        return attach;
     }
     
     async removeSessionFromWatch(model: JanusRoomWatch) {

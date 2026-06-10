@@ -64,7 +64,7 @@ class FakeMediaWs {
 class FakeJanusRequester extends JanusRequester {
     private idSeq = 1000;
     
-    constructor(logger: Logger, ws: WebSocket, config: Config) {
+    constructor(logger: Logger, ws: WebSocket, config: Config, private onMessage?: (notification: unknown) => unknown) {
         super(logger, ws, config, () => undefined, () => undefined);
     }
     
@@ -72,7 +72,17 @@ class FakeJanusRequester extends JanusRequester {
         return Promise.resolve(this.buildResponse(payload) as unknown as T);
     }
     public requestAsync<T>(payload: object): Promise<T> {
+        this.maybeEmitWebrtcUp(payload);
         return Promise.resolve(this.buildResponse(payload) as unknown as T);
+    }
+    
+    // Real Janus pushes `webrtcup` once the publisher's PeerConnection is established; the dispatcher
+    // emits streamPublished on it. Simulate it shortly after a publish so the event path is exercised.
+    private maybeEmitWebrtcUp(payload: any) {
+        if (this.onMessage && payload?.body?.request === "publish") {
+            const notification = { janus: "webrtcup", session_id: payload.session_id, sender: payload.handle_id };
+            setTimeout(() => this.onMessage?.(notification), 5);
+        }
     }
     public createJanusCall<T>(method: string, body: unknown, _sessionId: any, _handleId: any): Promise<T> {
         return Promise.resolve(this.buildResponse({ janus: method, body }) as unknown as T);
@@ -131,9 +141,9 @@ export class FakeJanusConnector extends JanusConnector {
         super(fakeLoggerFactory, fakeConfig);
     }
     
-    async openWs(): Promise<JanusConnection> {
+    async openWs(onUnhandledMessage?: (notification: unknown) => unknown): Promise<JanusConnection> {
         const ws = new FakeMediaWs() as unknown as WebSocket;
-        const requester = new FakeJanusRequester(this.fakeLoggerFactory.createLogger(JanusRequester), ws, this.fakeConfig);
+        const requester = new FakeJanusRequester(this.fakeLoggerFactory.createLogger(JanusRequester), ws, this.fakeConfig, onUnhandledMessage);
         return {
             janusRequester: requester,
             janusApi: new JanusApi(requester, this.fakeLoggerFactory.createLogger(JanusApi)),

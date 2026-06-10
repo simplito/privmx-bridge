@@ -18,10 +18,12 @@ import { LoggerFactory } from "../log/LoggerFactory";
 import { Logger } from "../log/Logger";
 import { StreamNotificationService } from "./StreamNotificationService";
 import { JanusNotificationParser } from "./JanusNotificationParser";
+import { JanusVideoRoomMapper } from "./JanusVideoRoomMapper";
 import { isPublishingSession } from "./JanusContext";
 
 const JanusEvents = {
     UPDATED: "updated",
+    WEBRTCUP: "webrtcup",
 } as const;
 
 /**
@@ -40,6 +42,7 @@ export class JanusEventDispatcher {
         private repositoryFactory: RepositoryFactory,
         private streamNotificationService: StreamNotificationService,
         private parser: JanusNotificationParser,
+        private mapper: JanusVideoRoomMapper,
     ) {
         this.logger = loggerFactory.createLogger(JanusEventDispatcher);
     }
@@ -68,9 +71,13 @@ export class JanusEventDispatcher {
                 return;
             }
             
-            if (!this.tryDispatchSubscriberReoffer(janusSession, streamRoom, notification, websocket, wsId)) {
-                this.logger.debug({ eventType: notification.janus }, "Ignoring untranslated Janus event");
+            if (this.tryDispatchSubscriberReoffer(janusSession, streamRoom, notification, websocket, wsId)) {
+                return;
             }
+            if (this.tryDispatchPublisherReady(janusSession, streamRoom, notification)) {
+                return;
+            }
+            this.logger.debug({ eventType: notification.janus }, "Ignoring untranslated Janus event");
         }
         catch (error) {
             this.logger.error(error, "Error processing Janus notification");
@@ -84,6 +91,27 @@ export class JanusEventDispatcher {
             return true;
         }
         return false;
+    }
+    
+    /**
+     * A publisher's media is only subscribable once its PeerConnection is up (Janus `webrtcup`),
+     * not when the offer was accepted — so streamPublished is emitted here, from the streams cached
+     * at publish time, to avoid peers racing the publisher's ICE setup.
+     */
+    private tryDispatchPublisherReady(session: JanusSession, streamRoom: db.stream.StreamRoom, event: any): boolean {
+        if (session.type !== "main" || this.parser.extractAndValidateEventType(event) !== JanusEvents.WEBRTCUP) {
+            return false;
+        }
+        const publisher = session.publishedStreams[session.publishedStreams.length - 1];
+        if (publisher && !session.publishedAnnounced) {
+            session.publishedAnnounced = true;
+            this.streamNotificationService.sendStreamPublishedEvent(streamRoom, {
+                streamRoomId: streamRoom.id,
+                stream: this.mapper.convertPublisherToPublisherAsStream(publisher),
+                userId: session.userId,
+            });
+        }
+        return true;
     }
     
     /**

@@ -24,12 +24,26 @@ export class JanusContext {
     private static readonly KEEPALIVE_INTERVAL_MS = 25000;
     private static readonly JANUS_PLUGIN_VIDEOROOM = "janus.plugin.videoroom";
     
+    private opChains = new Map<string, Promise<unknown>>();
+    
     constructor(
         public readonly ws: JanusConnection,
         public janusSessions: JanusSession[],
         private readonly isClosed: () => boolean,
         private readonly logger: Logger,
     ) {}
+    
+    /**
+     * Serializes session-lifecycle operations sharing a `key` (e.g. one room on this ws). Without
+     * it, find-then-create flows race across `await`s and produce duplicate Janus sessions, and
+     * leave/publish can interleave. Each call runs after the previous one for the same key settles.
+     */
+    runExclusive<T>(key: string, func: () => Promise<T>): Promise<T> {
+        const previous = this.opChains.get(key) ?? Promise.resolve();
+        const next = previous.then(() => func(), () => func());
+        this.opChains.set(key, next.then(() => undefined, () => undefined));
+        return next;
+    }
     
     async createJanusSession(source: string, streamRoomId: types.stream.StreamRoomId, type: JanusSessionType, userId: types.cloud.UserId): Promise<JanusSession> {
         if (this.isClosed()) {
@@ -62,6 +76,7 @@ export class JanusContext {
             },
             
             publishedStreams: [],
+            publishedAnnounced: false,
             
             keepPublishedStream: function(stream: WebRtcTypes.Publisher): void {
                 const streamToAdd = structuredClone(stream);
@@ -121,12 +136,13 @@ export class JanusContext {
     }
     
     async deleteJanusSession(sessionId: WebRtcTypes.SessionId): Promise<void> {
-        const session = this.janusSessions.find(x => x.session.id === sessionId);
-        if (!session) {
+        const index = this.janusSessions.findIndex(x => x.session.id === sessionId);
+        if (index < 0) {
             return;
         }
-        
-        this.janusSessions = this.janusSessions.filter(x => x.session.id !== sessionId);
+        // Mutate in place — the same array instance is shared with the ws-cleanup handler, so
+        // reassigning here would desync it (leaking pingers / Janus sessions on close).
+        const [session] = this.janusSessions.splice(index, 1);
         
         if (session.keepAlivePinger) {
             clearInterval(session.keepAlivePinger);
@@ -150,8 +166,13 @@ export class JanusContext {
     
     async deleteAllJanusSessionsByRoom(streamRoomId: types.stream.StreamRoomId) {
         const sessionsToRemove = this.janusSessions.filter(x => x.streamRoomId === streamRoomId);
-        
-        this.janusSessions = this.janusSessions.filter(x => x.streamRoomId !== streamRoomId);
+        // Remove in place (see deleteJanusSession) rather than reassigning the shared array.
+        for (const sess of sessionsToRemove) {
+            const index = this.janusSessions.indexOf(sess);
+            if (index > -1) {
+                this.janusSessions.splice(index, 1);
+            }
+        }
         
         await Promise.all(sessionsToRemove.map(async (sess) => {
             if (sess.keepAlivePinger) {

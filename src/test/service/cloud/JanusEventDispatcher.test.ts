@@ -14,6 +14,7 @@ limitations under the License.
 import "q2-test";
 import { JanusEventDispatcher } from "../../../service/cloud/JanusEventDispatcher";
 import { JanusNotificationParser } from "../../../service/cloud/JanusNotificationParser";
+import { JanusVideoRoomMapper } from "../../../service/cloud/JanusVideoRoomMapper";
 import { isPublishingSession } from "../../../service/cloud/JanusContext";
 import { JanusSession } from "../../../CommonTypes";
 import { Logger } from "../../../service/log/Logger";
@@ -34,11 +35,12 @@ function build() {
     const repositoryFactory = createMock<RepositoryFactory>({ createStreamRoomRepository: mockFn(() => streamRoomRepo) as any });
     const notifications = createMock<StreamNotificationService>({
         sendStreamRoomReofferSingleEvent: mockFn(empty),
+        sendStreamPublishedEvent: mockFn(empty),
         sendStreamUnpublishedEvent: mockFn(empty),
         sendStreamRoomLeftEvent: mockFn(empty),
     });
     const parser = new JanusNotificationParser(loggerFactory);
-    const dispatcher = new JanusEventDispatcher(loggerFactory, repositoryFactory, notifications, parser);
+    const dispatcher = new JanusEventDispatcher(loggerFactory, repositoryFactory, notifications, parser, new JanusVideoRoomMapper());
     return { dispatcher, notifications };
 }
 
@@ -52,6 +54,7 @@ function session(type: "main" | "subscriber", overrides: Partial<JanusSession> =
         keepAlivePinger: null as any,
         streamsToAccept: [],
         publishedStreams: [],
+        publishedAnnounced: false,
         janusPublisherId: undefined,
         addStreamsOffer: empty as any,
         acceptStreamsOffer: empty as any,
@@ -73,6 +76,14 @@ function websocketWith(sess: JanusSession | undefined) {
 
 function notification(videoroom: string, extra: Record<string, unknown> = {}) {
     return { janus: "event", session_id: 5, plugindata: { data: { videoroom, ...extra } }, jsep: { type: "offer", sdp: "x" } };
+}
+
+function webrtcup() {
+    return { janus: "webrtcup", session_id: 5 };
+}
+
+function publishingMain(): JanusSession {
+    return session("main", { janusPublisherId: 1 as any, publishedStreams: [{ id: 1, display: "U", streams: [{ type: "audio", mid: "0", mindex: 0 }] } as any] });
 }
 
 describe("isPublishingSession", () => {
@@ -97,6 +108,18 @@ describe("JanusEventDispatcher.handleJanusNotification", () => {
             await dispatcher.handleJanusNotification(data, websocketWith(session("main")), "ws1" as any);
             hasNoCalls(notifications.sendStreamRoomReofferSingleEvent as any);
         }
+    });
+    
+    it("emits streamPublished when a publishing main session reports webrtcup", async () => {
+        const { dispatcher, notifications } = build();
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(publishingMain()), "ws1" as any);
+        hasOneCall(notifications.sendStreamPublishedEvent as any);
+    });
+    
+    it("does not emit streamPublished on webrtcup before anything was published", async () => {
+        const { dispatcher, notifications } = build();
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(session("main")), "ws1" as any);
+        hasNoCalls(notifications.sendStreamPublishedEvent as any);
     });
     
     it("does not translate `updated` for a main (publisher) session", async () => {
