@@ -804,7 +804,7 @@ export class IOC {
         return this.workerRegistry.getWebSocketInnerManager();
     }
     
-    getWebSocketConnectionManager() {
+    getWebSocketConnectionManager(): WebSocketConnectionManager {
         if (this.webSocketConnectionManager == null) {
             this.webSocketConnectionManager = this.getSimpleWebSocketConnectionManager();
         }
@@ -832,7 +832,7 @@ export class IOC {
         return this.userStatusManager;
     }
     
-    getSimpleWebSocketConnectionManager() {
+    getSimpleWebSocketConnectionManager(): SimpleWebSocketConnectionManager {
         if (this.simpleWebSocketConnectionManager == null) {
             this.simpleWebSocketConnectionManager = new SimpleWebSocketConnectionManager(
                 this.getJobService(),
@@ -842,6 +842,7 @@ export class IOC {
                 this.getUserStatusManager(),
                 this.getInstanceHost(),
                 this.getRepositoryFactory(),
+                () => this.getJanusContextFactory(),
             );
         }
         return this.simpleWebSocketConnectionManager;

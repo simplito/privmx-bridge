@@ -94,6 +94,27 @@ export class StreamEventsTest extends BaseTestSet {
         this.assertEvent("streamUnpublished", streamRoomId);
     }
     
+    @Test(streamsEnabledFake)
+    async shouldEmitLeftAndUnpublishedWhenAPublisherUnauthorizes() {
+        const streamRoomId = await this.createStreamRoom();
+        this.captureNotifications();
+        await this.helpers.subscribeToChannels([`streamroom|containerId=${streamRoomId}`]);
+        
+        const other = await this.helpers.createNewConnection(testData.userPrivKey, testData.solutionId);
+        const otherStreamApi = new StreamApiClient(other);
+        await otherStreamApi.streamRoomJoin({ streamRoomId });
+        await otherStreamApi.streamPublish({ streamRoomId, offer: { type: "offer", sdp: "x" } });
+        await PromiseUtils.wait(300);
+        // Unauthorize (not socket close) must still tear down the user's media for the room.
+        // Must run over the websocket channel so the session being de-authorized is the ws session.
+        await other.call("unauthorizeWebSocket", {}, { channelType: "websocket" });
+        
+        await PromiseUtils.wait(1500);
+        
+        this.assertEvent("streamRoomLeft", streamRoomId);
+        this.assertEvent("streamUnpublished", streamRoomId);
+    }
+    
     private async createStreamRoom(): Promise<types.stream.StreamRoomId> {
         const res = await this.apis.streamApi.streamRoomCreate({
             contextId: testData.contextId,

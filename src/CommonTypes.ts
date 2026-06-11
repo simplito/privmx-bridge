@@ -130,7 +130,7 @@ export type JanusSessionType = "main"|"subscriber";
 
 export interface WebSocketExtendedWithJanus extends WebSocketEx {
     ex: WebSocketInfo&{
-        janus?: {[wsId: types.core.WsId]: {janusContextPromise: Promise<JanusContext>}};
+        janus?: {[wsId: types.core.WsId]: {janusContextPromise: Promise<JanusContext>; cleanup?: () => void}};
     };
 }
 export type RawMongoX<T, X extends keyof T> = Omit<T, X>&{_id: T[X]};

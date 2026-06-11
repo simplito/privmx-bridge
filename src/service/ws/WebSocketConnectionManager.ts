@@ -14,7 +14,8 @@ import * as db from "../../db/Model";
 import { IWorker2Service, NotificationBrokerInterface } from "../../cluster/common/Worker2Service";
 import { ConfigService } from "../config/ConfigService";
 import { JobService } from "../job/JobService";
-import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
+import { WebSocketEx, WebSocketExtendedWithJanus, WebSocketSession } from "../../CommonTypes";
+import { JanusContextFactory } from "../cloud/JanusContextFactory";
 import { WebSocketInnerManager } from "./WebSocketInnerManager";
 import { AppException } from "../../api/AppException";
 import { Base64 } from "../../utils/Base64";
@@ -64,6 +65,7 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         private userStatusManager: UserStatusManager,
         private host: types.core.Host,
         private repositoryFactory: RepositoryFactory,
+        private janusContextFactoryProvider: () => JanusContextFactory,
     ) {
     }
     
@@ -110,6 +112,10 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
     }
     
     async unauthorizeWebSocket(session: Session, wsEx: WebSocketEx) {
+        // De-authorizing a session removes it without closing the socket, so the socket "close"
+        // handler that normally tears down Janus media never fires. Run that teardown explicitly
+        // for this wsId, or the user stays "joined"/"publishing" to peers and their media leaks.
+        this.janusContextFactoryProvider().cleanupJanusForWsId(wsEx as WebSocketExtendedWithJanus, session.getWsId());
         await this.webSocketInnerManager.removeSessionByWsId(wsEx, session.getWsId());
     }
     
