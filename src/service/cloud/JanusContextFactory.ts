@@ -163,12 +163,14 @@ export class JanusContextFactory {
     }
     
     /**
-     * Cleans up a single de-authorized session's Janus context. unauthorizeWebSocket removes the
-     * session without closing the underlying socket, so the socket "close" handler never fires —
-     * this runs the same teardown for that one wsId and drops its entry. Safe to call when streams
-     * are off or the session never touched media (no entry / no cleanup → no-op).
+     * Cleans up a single removed session's Janus context. De-authorizing or force-disconnecting a
+     * session removes it without closing the underlying socket, so the socket "close" handler never
+     * fires — this runs the same teardown for that one wsId and drops its entry. Static because the
+     * teardown closure lives on the ws entry, not the factory, so session-removal code (which has no
+     * factory handle) can call it. Safe when streams are off or the session never touched media
+     * (no entry / no cleanup → no-op).
      */
-    cleanupJanusForWsId(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId): void {
+    static cleanupJanusForWsId(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId): void {
         if (!websocket.ex.janus) {
             return;
         }

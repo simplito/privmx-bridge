@@ -118,12 +118,21 @@ export interface JanusSession {
     publishedStreams: Publisher[];
     /** Guards against emitting streamPublished more than once for a single publish (duplicate webrtcup). */
     publishedAnnounced: boolean;
+    /** Live set of feeds this subscriber session is subscribed to; lets teardown emit an exact streamUnsubscribed. */
+    subscriptions: StreamSubscription[];
     janusPublisherId?: WebRtcTypes.VideoRoomPublisherId;
     userId: types.cloud.UserId;
     addStreamsOffer: (streamIds: WebRtcTypes.StreamId[]) => void;
     acceptStreamsOffer: () => number[];
     keepPublishedStream: (stream: Publisher) => void;
     removePublishedStream: (streamId: StreamId) => void;
+    addSubscriptions: (subscriptions: StreamSubscription[]) => void;
+    removeSubscriptions: (subscriptions: StreamSubscription[]) => void;
+}
+
+export interface StreamSubscription {
+    streamId: types.stream.StreamId;
+    streamTrackId?: types.stream.StreamTrackId;
 }
 
 export type JanusSessionType = "main"|"subscriber";

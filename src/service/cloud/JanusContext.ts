@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { JanusConnection, JanusSession, JanusSessionType } from "../../CommonTypes";
+import { JanusConnection, JanusSession, JanusSessionType, StreamSubscription } from "../../CommonTypes";
 import * as types from "../../types";
 import { AppException } from "../../api/AppException";
 import * as WebRtcTypes from "../webrtc/v2/WebRtcTypes";
@@ -77,6 +77,7 @@ export class JanusContext {
             
             publishedStreams: [],
             publishedAnnounced: false,
+            subscriptions: [],
             
             keepPublishedStream: function(stream: WebRtcTypes.Publisher): void {
                 const streamToAdd = structuredClone(stream);
@@ -90,6 +91,24 @@ export class JanusContext {
                 const found = this.publishedStreams.findIndex(x => x.id === streamId);
                 if (found > -1) {
                     this.publishedStreams.splice(found, 1);
+                }
+            },
+            
+            addSubscriptions: function(subscriptions: StreamSubscription[]): void {
+                for (const sub of subscriptions) {
+                    const exists = this.subscriptions.some(s => s.streamId === sub.streamId && s.streamTrackId === sub.streamTrackId);
+                    if (!exists) {
+                        this.subscriptions.push({ streamId: sub.streamId, streamTrackId: sub.streamTrackId });
+                    }
+                }
+            },
+            
+            removeSubscriptions: function(subscriptions: StreamSubscription[]): void {
+                for (const sub of subscriptions) {
+                    const index = this.subscriptions.findIndex(s => s.streamId === sub.streamId && s.streamTrackId === sub.streamTrackId);
+                    if (index > -1) {
+                        this.subscriptions.splice(index, 1);
+                    }
                 }
             },
         };

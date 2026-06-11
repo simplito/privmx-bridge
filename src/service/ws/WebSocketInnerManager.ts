@@ -11,7 +11,8 @@ limitations under the License.
 
 import * as WebSocket from "ws";
 import * as types from "../../types";
-import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
+import { WebSocketEx, WebSocketExtendedWithJanus, WebSocketSession } from "../../CommonTypes";
+import { JanusContextFactory } from "../cloud/JanusContextFactory";
 import { PlainApiEvent } from "../../api/plain/Types";
 import { TargetChannel } from "./WebSocketConnectionManager";
 import { Config } from "../../cluster/common/ConfigUtils";
@@ -187,6 +188,9 @@ export class WebSocketInnerManager {
                 ws.ex.sessions = ws.ex.sessions.filter(session => {
                     if (session.host === host && func(session)) {
                         this.webSocketOutboundHandler.sendToWsSession(ws, session, {type: "disconnected", data: {}});
+                        // Force-disconnect removes the session without closing the socket, so the socket
+                        // "close" handler won't tear down this session's Janus media — do it here.
+                        JanusContextFactory.cleanupJanusForWsId(ws as WebSocketExtendedWithJanus, session.wsId);
                         usersToCheck.add(session.username);
                         void (async () => {
                             const hostContext = await ws.ex.contextFactory(session.instanceHost);
@@ -256,6 +260,9 @@ export class WebSocketInnerManager {
         const index = wsEx.ex.sessions.findIndex(x => x.wsId === wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
+            // De-authorizing removes the session without closing the socket, so the socket "close"
+            // handler won't tear down this session's Janus media — do it here.
+            JanusContextFactory.cleanupJanusForWsId(wsEx as WebSocketExtendedWithJanus, wsId);
             wsEx.ex.sessions.splice(index, 1);
             const hostContext = await wsEx.ex.contextFactory(session.host);
             await hostContext.getUserStatusManager().decrementUserActiveSessions(session.instanceHost, session.username as unknown as types.core.EccPubKey, session.solution);

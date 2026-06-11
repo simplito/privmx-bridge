@@ -334,6 +334,7 @@ export class StreamService extends BaseContainerService {
             if (this.hasStreamsArray(res)) {
                 existingJanusSession.addStreamsOffer(res.plugindata.data.streams.map((p: any) => p.feed_id) as types.stream.StreamId[]);
             }
+            existingJanusSession.addSubscriptions(subscriptions);
             return { sessionId: janusSession.id, offer: res.jsep ? res.jsep : undefined };
         }
         
@@ -356,6 +357,7 @@ export class StreamService extends BaseContainerService {
                 },
             });
             janusSessionX.addStreamsOffer(res.plugindata.data.streams.map((p: any) => p.feed_id as WebRtcTypes.StreamId));
+            janusSessionX.addSubscriptions(subscriptions);
             return { sessionId: janusSession.id, offer: res.jsep };
         }
         catch (e) {
@@ -443,6 +445,8 @@ export class StreamService extends BaseContainerService {
         if (this.hasStreamsArray(res)) {
             existingJanusSession.addStreamsOffer(res.plugindata.data.streams.map((p: any) => p.feed_id) as types.stream.StreamId[]);
         }
+        existingJanusSession.addSubscriptions(subscriptionsToAdd);
+        existingJanusSession.removeSubscriptions(subscriptionsToRemove);
         return { sessionId: janusSession.id, offer: res.jsep ? res.jsep : undefined };
     }
     
@@ -783,6 +787,16 @@ export class StreamService extends BaseContainerService {
                     streamRoomId: streamRoom.id,
                     streamId: Number(mainSession.janusPublisherId),
                     userId: user.userId,
+                });
+            }
+            
+            // If subscribed, report the viewer gone before the leave so peers drop them from any viewer list.
+            const subscriberSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.SUBSCRIBER, streamRoom.janusRoomId);
+            if (subscriberSession && subscriberSession.subscriptions.length > 0) {
+                this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, {
+                    streamRoomId: streamRoom.id,
+                    userId: user.userId,
+                    subscriptions: [...subscriberSession.subscriptions],
                 });
             }
             

@@ -115,9 +115,10 @@ export class JanusEventDispatcher {
     }
     
     /**
-     * On a dropped client ws there is no unpublish/leave API call, so synthesize the same
-     * broadcast events here: `streamUnpublished` for publishing sessions, then `streamRoomLeft`
-     * (deduplicated per room+user).
+     * On a dropped/de-authorized client session there is no unpublish/leave/unsubscribe API call,
+     * so synthesize the same broadcast events here: `streamUnpublished` for publishing sessions,
+     * `streamUnsubscribed` for subscriber sessions (with the feeds they still held), then
+     * `streamRoomLeft` (deduplicated per room+user).
      */
     emitDisconnectEventsForSessions(sessions: JanusSession[]): void {
         const leftEmitted = new Set<string>();
@@ -134,6 +135,7 @@ export class JanusEventDispatcher {
             const streamRoomId = sess.streamRoomId;
             const userId = sess.userId;
             const wasPublishing = isPublishingSession(sess);
+            const subscriptions = sess.type === "subscriber" ? [...sess.subscriptions] : [];
             const leftKey = `${streamRoomId}/${userId}`;
             const emitLeft = !leftEmitted.has(leftKey);
             if (emitLeft) {
@@ -146,6 +148,9 @@ export class JanusEventDispatcher {
                 }
                 if (wasPublishing) {
                     this.streamNotificationService.sendStreamUnpublishedEvent(streamRoom, { streamRoomId, streamId: Number(sess.janusPublisherId), userId });
+                }
+                if (subscriptions.length > 0) {
+                    this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, { streamRoomId, userId, subscriptions });
                 }
                 if (emitLeft) {
                     this.streamNotificationService.sendStreamRoomLeftEvent(streamRoom, { streamRoomId, userId });

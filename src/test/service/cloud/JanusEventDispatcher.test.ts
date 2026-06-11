@@ -37,6 +37,7 @@ function build() {
         sendStreamRoomReofferSingleEvent: mockFn(empty),
         sendStreamPublishedEvent: mockFn(empty),
         sendStreamUnpublishedEvent: mockFn(empty),
+        sendStreamUnsubscribedEvent: mockFn(empty),
         sendStreamRoomLeftEvent: mockFn(empty),
     });
     const parser = new JanusNotificationParser(loggerFactory);
@@ -55,11 +56,14 @@ function session(type: "main" | "subscriber", overrides: Partial<JanusSession> =
         streamsToAccept: [],
         publishedStreams: [],
         publishedAnnounced: false,
+        subscriptions: [],
         janusPublisherId: undefined,
         addStreamsOffer: empty as any,
         acceptStreamsOffer: empty as any,
         keepPublishedStream: empty as any,
         removePublishedStream: empty as any,
+        addSubscriptions: empty as any,
+        removeSubscriptions: empty as any,
         ...overrides,
     };
 }
@@ -147,5 +151,20 @@ describe("JanusEventDispatcher.emitDisconnectEventsForSessions", () => {
         await PromiseUtils.wait(50);
         hasNoCalls(notifications.sendStreamUnpublishedEvent as any);
         hasOneCall(notifications.sendStreamRoomLeftEvent as any);
+    });
+    
+    it("emits streamUnsubscribed for a subscriber session that still held subscriptions", async () => {
+        const { dispatcher, notifications } = build();
+        dispatcher.emitDisconnectEventsForSessions([session("subscriber", { subscriptions: [{ streamId: 7 as any }] })]);
+        await PromiseUtils.wait(50);
+        hasOneCall(notifications.sendStreamUnsubscribedEvent as any);
+        hasOneCall(notifications.sendStreamRoomLeftEvent as any);
+    });
+    
+    it("does not emit streamUnsubscribed for a subscriber with no remaining subscriptions", async () => {
+        const { dispatcher, notifications } = build();
+        dispatcher.emitDisconnectEventsForSessions([session("subscriber")]);
+        await PromiseUtils.wait(50);
+        hasNoCalls(notifications.sendStreamUnsubscribedEvent as any);
     });
 });

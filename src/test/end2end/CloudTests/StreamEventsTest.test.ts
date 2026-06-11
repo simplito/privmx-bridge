@@ -115,6 +115,46 @@ export class StreamEventsTest extends BaseTestSet {
         this.assertEvent("streamUnpublished", streamRoomId);
     }
     
+    @Test(streamsEnabledFake)
+    async shouldEmitUnsubscribedWhenASubscriberLeavesTheRoom() {
+        const streamRoomId = await this.createStreamRoom();
+        this.captureNotifications();
+        await this.helpers.subscribeToChannels([`streamroom|containerId=${streamRoomId}`]);
+        
+        const other = await this.helpers.createNewConnection(testData.userPrivKey, testData.solutionId);
+        const otherStreamApi = new StreamApiClient(other);
+        await otherStreamApi.streamRoomJoin({ streamRoomId });
+        await otherStreamApi.streamsSubscribeToRemote({ streamRoomId, subscriptionsToAdd: [{ streamId: 7 as types.stream.StreamId }] });
+        await PromiseUtils.wait(300);
+        // Leaving while subscribed must report the viewer gone (streamUnsubscribed), not just streamRoomLeft.
+        await otherStreamApi.streamRoomLeave({ streamRoomId });
+        
+        await PromiseUtils.wait(1500);
+        
+        this.assertEvent("streamUnsubscribed", streamRoomId);
+        this.assertEvent("streamRoomLeft", streamRoomId);
+    }
+    
+    @Test(streamsEnabledFake)
+    async shouldEmitUnsubscribedWhenASubscriberDisconnects() {
+        const streamRoomId = await this.createStreamRoom();
+        this.captureNotifications();
+        await this.helpers.subscribeToChannels([`streamroom|containerId=${streamRoomId}`]);
+        
+        const other = await this.helpers.createNewConnection(testData.userPrivKey, testData.solutionId);
+        const otherStreamApi = new StreamApiClient(other);
+        await otherStreamApi.streamRoomJoin({ streamRoomId });
+        await otherStreamApi.streamsSubscribeToRemote({ streamRoomId, subscriptionsToAdd: [{ streamId: 7 as types.stream.StreamId }] });
+        await PromiseUtils.wait(300);
+        // Disconnecting while subscribed must also report the viewer gone.
+        other.destroy();
+        
+        await PromiseUtils.wait(1500);
+        
+        this.assertEvent("streamUnsubscribed", streamRoomId);
+        this.assertEvent("streamRoomLeft", streamRoomId);
+    }
+    
     private async createStreamRoom(): Promise<types.stream.StreamRoomId> {
         const res = await this.apis.streamApi.streamRoomCreate({
             contextId: testData.contextId,
