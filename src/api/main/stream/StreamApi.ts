@@ -102,6 +102,13 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
+    async streamRoomListParticipants(model: streamApi.StreamRoomListParticipantsModel): Promise<streamApi.StreamRoomListParticipantsResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const list = await this.streamService.listParticipants(cloudUser, model.streamRoomId);
+        return {list};
+    }
+    
+    @ApiMethod({})
     async streamPublish(model: streamApi.StreamPublishModel): Promise<streamApi.StreamPublishResult> {
         if (!this.websocket) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");

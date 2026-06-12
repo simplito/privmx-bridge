@@ -20,6 +20,7 @@ import { StreamNotificationService } from "./StreamNotificationService";
 import { JanusNotificationParser } from "./JanusNotificationParser";
 import { JanusVideoRoomMapper } from "./JanusVideoRoomMapper";
 import { isPublishingSession } from "./JanusContext";
+import { JanusRoomsWatcher } from "./JanusRoomsWatcher";
 
 const JanusEvents = {
     UPDATED: "updated",
@@ -36,6 +37,8 @@ export class JanusEventDispatcher {
         private streamNotificationService: StreamNotificationService,
         private parser: JanusNotificationParser,
         private mapper: JanusVideoRoomMapper,
+        private janusRoomsWatcher: JanusRoomsWatcher,
+        private host: types.core.Host,
     ) {
         this.logger = loggerFactory.createLogger(JanusEventDispatcher);
     }
@@ -118,6 +121,10 @@ export class JanusEventDispatcher {
                 leftEmitted.add(leftKey);
             }
             void (async () => {
+                if (emitLeft) {
+                    await this.janusRoomsWatcher.removeSubscriber(this.host, streamRoomId, userId).catch(e =>
+                        this.logger.error({ streamRoomId, userId, error: e }, "Failed to remove subscriber from cache on disconnect"));
+                }
                 const streamRoom = await getRoom(streamRoomId);
                 if (!streamRoom) {
                     return;

@@ -58,4 +58,20 @@ export class ManagementStreamApi extends ManagementBaseApi implements management
         const {results} = await this.streamService.deleteManyStreamRooms(this.getPlainUser(), model.streamRoomIds);
         return {results};
     }
+    
+    @ApiMethod({errorCodes: ["STREAM_ROOM_DOES_NOT_EXIST"] })
+    async listStreamRoomParticipants(model: managementStreamApi.ListStreamRoomParticipantsModel): Promise<managementStreamApi.ListStreamRoomParticipantsResult> {
+        this.validateScope("stream");
+        const participants = await this.streamService.listParticipants(this.getPlainUser(), model.streamRoomId);
+        const list: managementStreamApi.StreamSubscriber[] = participants.map(p => ({
+            userId: p.userId,
+            subscriptions: p.subscriptions,
+            publishedStream: p.publishedStream ? {
+                streamId: p.publishedStream.id,
+                userId: p.publishedStream.userId,
+                tracks: p.publishedStream.tracks,
+            } : undefined,
+        }));
+        return { list };
+    }
 }

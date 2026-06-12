@@ -303,6 +303,7 @@ export class StreamService extends BaseContainerService {
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
             const result = await this.subscribeToRemoteInternal(user.userId, streamRoom, ctx, subscriptions);
             if (subscriptions.length > 0) {
+                await this.janusRoomsWatcher.addSubscriptions(this.host, streamRoom.id, user.userId, subscriptions);
                 this.streamNotificationService.sendStreamSubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions });
             }
             return result;
@@ -373,9 +374,11 @@ export class StreamService extends BaseContainerService {
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
             const result = await this._modifyRemoteSubscriptionsInternal(streamRoom, ctx, subscriptionsToAdd, subscriptionsToRemove);
             if (subscriptionsToAdd.length > 0) {
+                await this.janusRoomsWatcher.addSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToAdd);
                 this.streamNotificationService.sendStreamSubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToAdd });
             }
             if (subscriptionsToRemove.length > 0) {
+                await this.janusRoomsWatcher.removeSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToRemove);
                 this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToRemove });
             }
             return result;
@@ -387,6 +390,7 @@ export class StreamService extends BaseContainerService {
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
             const result = await this._modifyRemoteSubscriptionsInternal(streamRoom, ctx, [], subscriptionsToRemove);
             if (subscriptionsToRemove.length > 0) {
+                await this.janusRoomsWatcher.removeSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToRemove);
                 this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToRemove });
             }
             return result;
@@ -751,6 +755,7 @@ export class StreamService extends BaseContainerService {
                     janusRoomId: streamRoom.janusRoomId as number,
                     publisherId: Number(newSession.janusPublisherId),
                 });
+                await this.janusRoomsWatcher.addSubscriber(this.host, streamRoom.id, user.userId);
             }
             catch {
                 throw new AppException("MEDIA_SERVER_ERROR", "Failed to join room");
@@ -789,12 +794,26 @@ export class StreamService extends BaseContainerService {
             }
             
             await ctx.deleteAllJanusSessionsByRoom(streamRoom.id);
-            
+            await this.janusRoomsWatcher.removeSubscriber(this.host, streamRoom.id, user.userId);
             this.streamNotificationService.sendStreamRoomLeftEvent(streamRoom, {
                 streamRoomId: streamRoom.id,
                 userId: user.userId,
             });
         });
+    }
+    
+    async listParticipants(executor: Executor, streamRoomId: types.stream.StreamRoomId) {
+        const streamRoom = await this.getDbStreamRoom(streamRoomId);
+        await this.verifyRoomAccess(executor, streamRoom, "stream/streamList");
+        const [subscribers, publishedStreams] = await Promise.all([
+            this.janusRoomsWatcher.getRoomSubscribers(this.host, streamRoom.id),
+            this.listStreamsInternal(streamRoom),
+        ]);
+        const publishedByUser = new Map(publishedStreams.map(s => [s.userId, s]));
+        return subscribers.map(sub => ({
+            ...sub,
+            publishedStream: publishedByUser.get(sub.userId),
+        }));
     }
     
     async listStreams(executor: Executor, streamRoomId: types.stream.StreamRoomId) {

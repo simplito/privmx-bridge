@@ -1296,6 +1296,8 @@ export class IOC {
                 this.getStreamNotificationService(),
                 this.getJanusNotificationParser(),
                 this.getJanusVideoRoomMapper(),
+                this.getJanusRoomsWatcher(),
+                this.getInstanceHost(),
             );
         }
         return this.janusEventDispatcher;

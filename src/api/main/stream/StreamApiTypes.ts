@@ -156,6 +156,20 @@ export interface StreamUpdateResult {
 // for API consumers that import it from the stream API types.
 export type { StreamSubscription };
 
+export interface StreamSubscriber {
+    userId: types.cloud.UserId;
+    subscriptions: StreamSubscription[];
+    publishedStream?: PublisherAsStream;
+}
+
+export interface StreamRoomListParticipantsModel {
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface StreamRoomListParticipantsResult {
+    list: StreamSubscriber[];
+}
+
 export interface StreamsSubscribeModel {
     streamRoomId: types.stream.StreamRoomId;
     subscriptionsToAdd: StreamSubscription[];
@@ -327,6 +341,7 @@ export interface IStreamApi {
     streamRoomList(model: StreamRoomListModel): Promise<StreamRoomListResult>;
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
     streamList(model: StreamListModel): Promise<StreamListResult>;
+    streamRoomListParticipants(model: StreamRoomListParticipantsModel): Promise<StreamRoomListParticipantsResult>;
     streamPublish(model: StreamPublishModel): Promise<StreamPublishResult>;
     streamUpdate(model: StreamUpdateModel): Promise<StreamUpdateResult>;
     streamsSubscribeToRemote(model: StreamsSubscribeModel): Promise<StreamSubscribeResult>;
