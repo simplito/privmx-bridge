@@ -55,7 +55,7 @@ function session(type: "main" | "subscriber", overrides: Partial<JanusSession> =
         keepAlivePinger: null as any,
         streamsToAccept: [],
         publishedStreams: [],
-        publishedAnnounced: false,
+        streamPublishedEventEmitted: false,
         subscriptions: [],
         janusPublisherId: undefined,
         addStreamsOffer: empty as any,

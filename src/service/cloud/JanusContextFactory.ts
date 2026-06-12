@@ -22,7 +22,6 @@ import { JanusEventDispatcher } from "./JanusEventDispatcher";
 
 const JANUS_PLUGIN = "janus.plugin.videoroom";
 
-/** Per-ws JanusContext lifecycle (create/cache/cleanup); transport via JanusConnector, inbound events via JanusEventDispatcher. */
 export class JanusContextFactory {
     
     private logger: Logger;
@@ -91,12 +90,6 @@ export class JanusContextFactory {
         }
     }
     
-    /**
-     * Tears down the Janus context for one wsId: emit leave/unpublish events, clear pingers,
-     * gracefully leave + destroy the Janus sessions, close the media ws. Invoked both when the
-     * client socket closes and when a single session is de-authorized (see cleanupJanusForWsId),
-     * so the body is idempotent — the cleanedUp guard makes a second call a no-op.
-     */
     private registerJanusCleanupHandlers(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, conn: JanusConnection, janusSessions: JanusSession[], cleanupCallback: () => void): void {
         let cleanedUp = false;
         
@@ -108,9 +101,6 @@ export class JanusContextFactory {
             const sessionsToClean = [...janusSessions];
             cleanupCallback();
             janusSessions.splice(0);
-            // The session went away (socket drop or de-auth): emit streamUnpublished (for publishing
-            // sessions) + streamRoomLeft, mirroring an explicit unpublish/leave, so peers tear down
-            // media and roster without an API call.
             this.dispatcher.emitDisconnectEventsForSessions(sessionsToClean);
             void (async () => {
                 try {
@@ -162,14 +152,6 @@ export class JanusContextFactory {
         });
     }
     
-    /**
-     * Cleans up a single removed session's Janus context. De-authorizing or force-disconnecting a
-     * session removes it without closing the underlying socket, so the socket "close" handler never
-     * fires — this runs the same teardown for that one wsId and drops its entry. Static because the
-     * teardown closure lives on the ws entry, not the factory, so session-removal code (which has no
-     * factory handle) can call it. Safe when streams are off or the session never touched media
-     * (no entry / no cleanup → no-op).
-     */
     static cleanupJanusForWsId(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId): void {
         if (!websocket.ex.janus) {
             return;

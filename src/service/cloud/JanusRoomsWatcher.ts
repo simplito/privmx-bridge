@@ -67,8 +67,7 @@ export class JanusRoomsWatcher {
         const data = evt.plugindata.data as Record<string, unknown>;
         const rawPublisherId = data.leaving;
         
-        // Janus sends "ok" to the person who clicked leave, we ignore it.
-        if (rawPublisherId === "ok") {
+        if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
         }
         
@@ -142,29 +141,9 @@ export class JanusRoomsWatcher {
         await this.ensureConnection();
         await this.cache.addPublisher(model);
         
-        if (this.roomHandles.has(model.janusRoomId)) {
-            return;
+        if (!this.roomHandles.has(model.janusRoomId)) {
+            return this.startOrJoinRoomAttachment(model);
         }
-        // Coalesce concurrent first-watchers for the same room into one attach, so two callers
-        // can't both pass the has()-check above and double-attach (leaking a handle).
-        const inFlight = this.attachingRooms.get(model.janusRoomId);
-        if (inFlight) {
-            return inFlight;
-        }
-        const attach = (async () => {
-            try {
-                await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
-            }
-            catch (error) {
-                this.logger.debug({ error, model }, "Failed to attach watcher to room");
-                await this.cache.removePublisher(model);
-            }
-            finally {
-                this.attachingRooms.delete(model.janusRoomId);
-            }
-        })();
-        this.attachingRooms.set(model.janusRoomId, attach);
-        return attach;
     }
     
     async removeSessionFromWatch(model: JanusRoomWatch) {
@@ -312,15 +291,37 @@ export class JanusRoomsWatcher {
         );
     }
     
+    private startOrJoinRoomAttachment(model: JanusRoomWatch): Promise<void> {
+        const inFlight = this.attachingRooms.get(model.janusRoomId);
+        if (inFlight) {
+            return inFlight;
+        }
+        const attach = (async () => {
+            try {
+                await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
+            }
+            catch (error) {
+                this.logger.debug({ error, model }, "Failed to attach watcher to room");
+                await this.cache.removePublisher(model);
+            }
+            finally {
+                this.attachingRooms.delete(model.janusRoomId);
+            }
+        })();
+        this.attachingRooms.set(model.janusRoomId, attach);
+        return attach;
+    }
+    
     private isPublisherLeaving(evt: VideoPluginEvent): boolean {
         const data = evt.plugindata.data as Record<string, unknown>;
-        // Only `leaving` means the publisher actually left the room. `unpublished`
-        // means they stopped media but are still a room participant, so the watcher
-        // must not treat it as a departure (it would wrongly close the room).
         return (
             typeof data === "object" && data !== null &&
             "room" in data &&
             "leaving" in data
         );
+    }
+    
+    private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {
+        return publisherId === "ok";
     }
 }

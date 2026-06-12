@@ -26,7 +26,6 @@ interface AdminContext {
     handleId: WebRtcTypes.VideoRoomPluginHandleId;
 }
 
-/** The single persistent "admin" Janus session for bridge-initiated calls (`withJanus`), kept separate from per-ws contexts. */
 export class AdminJanusConnection {
     
     private logger: Logger;
@@ -42,11 +41,6 @@ export class AdminJanusConnection {
         this.logger = this.loggerFactory.createLogger(AdminJanusConnection);
     }
     
-    /**
-     * Serializes admin tasks: there is a single shared admin session+handle, and some tasks
-     * (e.g. listing a room's publishers) join/leave a videoroom on it — running two concurrently
-     * would corrupt that one handle's state.
-     */
     async withJanus<T>(func: (videoApi: JanusVideoRoomPluginApi, sessionId: WebRtcTypes.SessionId, handleId: WebRtcTypes.VideoRoomPluginHandleId) => Promise<T>): Promise<T> {
         const run = this.opChain.then(() => this.runWithJanus(func), () => this.runWithJanus(func));
         this.opChain = run.then(() => undefined, () => undefined);
@@ -69,8 +63,6 @@ export class AdminJanusConnection {
         if (this.adminContext && !this.adminContext.connection.janusWs.CLOSED && this.adminContext.connection.janusWs.readyState === WebSocket.OPEN) {
             return this.adminContext;
         }
-        // Guard against the cold-start race: concurrent callers share one in-flight
-        // creation instead of each opening (and leaking) its own admin connection.
         if (!this.adminContextPromise) {
             this.adminContextPromise = this.createAdminContext().finally(() => {
                 this.adminContextPromise = null;
@@ -122,8 +114,6 @@ export class AdminJanusConnection {
         }
         if (this.adminContext) {
             const { connection, sessionId } = this.adminContext;
-            // Cheap explicit destroy so Janus reclaims the session immediately instead of
-            // waiting for a keepalive timeout; then close the ws.
             void connection.janusApi.destroy({ janus: "destroy", session_id: sessionId }).catch(() => { /* ignore */ });
             try {
                 connection.janusWs.close();

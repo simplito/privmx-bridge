@@ -63,7 +63,6 @@ const JanusConstants = {
     },
 } as const;
 
-/** Lock key serializing session-lifecycle operations for one room on a single ws connection. */
 function roomLockKey(streamRoomId: types.stream.StreamRoomId): string {
     return `room/${streamRoomId}`;
 }
@@ -133,8 +132,6 @@ export class StreamService extends BaseContainerService {
             return streamRoom;
         }
         catch (err) {
-            // The Janus room was already allocated; if the DB row can't be created, destroy it so it
-            // doesn't leak (best-effort; skipped for the fake/no-media-server room).
             if (!this.config.streams.mediaServer.fake) {
                 void this.destroyJanusRoom(janusRoomId);
             }
@@ -488,7 +485,6 @@ export class StreamService extends BaseContainerService {
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
         
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            // Re-resolve under the lock: a concurrent leave/disconnect may have destroyed the session.
             const current = ctx.findJanusSessionByIdOrReturnNull(sessionId);
             if (!current) {
                 throw new AppException("INVALID_PARAMS", "Stream session no longer available");
@@ -592,12 +588,8 @@ export class StreamService extends BaseContainerService {
                 const publisher: Publisher = { id: publisherId, streams: res.plugindata.data.streams, display: janusSessionX.userId };
                 const convertedPublisher = this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(publisher);
                 
-                // streamPublished is emitted when the publisher's PeerConnection is actually up
-                // (Janus `webrtcup` on this session, handled by JanusEventDispatcher) — not here, where
-                // Janus has only accepted the offer and the feed isn't subscribable yet. Cache the
-                // tracks and reset the announce flag so this publish gets exactly one streamPublished.
                 janusSessionX.keepPublishedStream(publisher);
-                janusSessionX.publishedAnnounced = false;
+                janusSessionX.streamPublishedEventEmitted = false;
                 
                 return {
                     sessionId: janusSession.id,
@@ -630,8 +622,6 @@ export class StreamService extends BaseContainerService {
         const janusSession = janusSessionX.session;
         const publisherId = janusSessionX.janusPublisherId as unknown as StreamId;
         
-        // Diff against the cached published tracks rather than re-listing from Janus: the old
-        // admin join/leave round-trip caused spurious `publishers` events and a duplicate update.
         const beforePublisher = [...janusSessionX.publishedStreams].reverse().find(p => Number(p.id) === Number(publisherId));
         const beforeTracks: WebRtcTypes.Stream[] = beforePublisher ? beforePublisher.streams : [];
         
@@ -706,7 +696,6 @@ export class StreamService extends BaseContainerService {
         }
         
         await ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            // Re-resolve under the lock: a concurrent leave/disconnect may have destroyed the session.
             const current = ctx.findJanusSessionByIdOrReturnNull(sessionId);
             if (!current) {
                 return;
@@ -719,8 +708,6 @@ export class StreamService extends BaseContainerService {
                 body: { request: JanusConstants.REQUEST.UNPUBLISH },
             });
             
-            // Janus `unpublish` only stops the media — the publisher stays joined — so reuse the
-            // session and just clear its published state rather than destroying/recreating it.
             for (const published of [...current.publishedStreams]) {
                 current.removePublishedStream(published.id as unknown as WebRtcTypes.StreamId);
             }
@@ -768,7 +755,6 @@ export class StreamService extends BaseContainerService {
             catch {
                 throw new AppException("MEDIA_SERVER_ERROR", "Failed to join room");
             }
-            // First join only: this is the moment the participant starts listening on the room ws.
             this.streamNotificationService.sendStreamRoomJoinedEvent(streamRoom, {
                 streamRoomId: streamRoom.id,
                 userId: user.userId,
@@ -784,7 +770,6 @@ export class StreamService extends BaseContainerService {
         const ctx = await this.janusContextFactory.prepareJanusContext(websocket, wsId);
         
         await ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            // If publishing, report the stream stopped before the leave so peers drop the tile too.
             const mainSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.MAIN, streamRoom.janusRoomId);
             if (mainSession && isPublishingSession(mainSession)) {
                 this.streamNotificationService.sendStreamUnpublishedEvent(streamRoom, {
@@ -794,7 +779,6 @@ export class StreamService extends BaseContainerService {
                 });
             }
             
-            // If subscribed, report the viewer gone before the leave so peers drop them from any viewer list.
             const subscriberSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.SUBSCRIBER, streamRoom.janusRoomId);
             if (subscriberSession && subscriberSession.subscriptions.length > 0) {
                 this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, {

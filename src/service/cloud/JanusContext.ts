@@ -33,11 +33,6 @@ export class JanusContext {
         private readonly logger: Logger,
     ) {}
     
-    /**
-     * Serializes session-lifecycle operations sharing a `key` (e.g. one room on this ws). Without
-     * it, find-then-create flows race across `await`s and produce duplicate Janus sessions, and
-     * leave/publish can interleave. Each call runs after the previous one for the same key settles.
-     */
     runExclusive<T>(key: string, func: () => Promise<T>): Promise<T> {
         const previous = this.opChains.get(key) ?? Promise.resolve();
         const next = previous.then(() => func(), () => func());
@@ -76,7 +71,7 @@ export class JanusContext {
             },
             
             publishedStreams: [],
-            publishedAnnounced: false,
+            streamPublishedEventEmitted: false,
             subscriptions: [],
             
             keepPublishedStream: function(stream: WebRtcTypes.Publisher): void {
@@ -84,8 +79,6 @@ export class JanusContext {
                 if (!streamToAdd.display) {
                     streamToAdd.display = this.userId;
                 }
-                // Upsert by publisher id: streamUpdate re-publishes the same feed, so replace its
-                // cached entry instead of appending (a long session would otherwise grow unbounded).
                 const existing = this.publishedStreams.findIndex(x => x.id === streamToAdd.id);
                 if (existing > -1) {
                     this.publishedStreams[existing] = streamToAdd;
@@ -167,8 +160,6 @@ export class JanusContext {
         if (index < 0) {
             return;
         }
-        // Mutate in place — the same array instance is shared with the ws-cleanup handler, so
-        // reassigning here would desync it (leaking pingers / Janus sessions on close).
         const [session] = this.janusSessions.splice(index, 1);
         
         if (session.keepAlivePinger) {
@@ -193,7 +184,6 @@ export class JanusContext {
     
     async deleteAllJanusSessionsByRoom(streamRoomId: types.stream.StreamRoomId) {
         const sessionsToRemove = this.janusSessions.filter(x => x.streamRoomId === streamRoomId);
-        // Remove in place (see deleteJanusSession) rather than reassigning the shared array.
         for (const sess of sessionsToRemove) {
             const index = this.janusSessions.indexOf(sess);
             if (index > -1) {

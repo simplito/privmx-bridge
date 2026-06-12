@@ -26,13 +26,6 @@ const JanusEvents = {
     WEBRTCUP: "webrtcup",
 } as const;
 
-/**
- * Routes a raw Janus notification to the bridge event it maps to. Only two are translated: a
- * subscriber `updated` → `streamRoomReoffer`, and a publisher `webrtcup` → `streamPublished`.
- * Every other Janus push is either already conveyed by a broadcast event (publish/unpublish/leave)
- * or is internal signaling we don't expose — those are ignored, not forwarded. This is the inbound
- * half of the per-ws Janus integration; it knows nothing about connection lifecycle.
- */
 export class JanusEventDispatcher {
     
     private logger: Logger;
@@ -49,7 +42,7 @@ export class JanusEventDispatcher {
     
     async handleJanusNotification(notification: any, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId): Promise<void> {
         if (!websocket.ex.janus || !websocket.ex.janus[wsId]) {
-            return; // Drop packet, context mismatch or already deleted
+            return;
         }
         
         if (!this.parser.isValidJanusNotification(notification)) {
@@ -65,8 +58,6 @@ export class JanusEventDispatcher {
                 return;
             }
             
-            // Only two Janus events translate to a bridge event; decide that first so we skip the
-            // stream-room DB lookup for the high-frequency noise (talking/slowlink/media/…).
             const eventType = this.parser.extractAndValidateEventType(notification);
             const isSubscriberReoffer = janusSession.type === "subscriber" && eventType === JanusEvents.UPDATED;
             const isPublisherReady = janusSession.type === "main" && eventType === JanusEvents.WEBRTCUP;
@@ -82,7 +73,6 @@ export class JanusEventDispatcher {
             }
             
             if (isSubscriberReoffer) {
-                // A subscriber whose upstream changed gets a fresh Janus offer; forward only the jsep to renegotiate.
                 this.streamNotificationService.sendStreamRoomReofferSingleEvent(websocket, wsId, streamRoom, notification.jsep as WebRtcTypes.RTCSessionDescriptionOffer | undefined);
             }
             else {
@@ -94,15 +84,10 @@ export class JanusEventDispatcher {
         }
     }
     
-    /**
-     * A publisher's media is only subscribable once its PeerConnection is up (Janus `webrtcup`),
-     * not when the offer was accepted — so streamPublished is emitted here, from the streams cached
-     * at publish time, to avoid peers racing the publisher's ICE setup.
-     */
     private dispatchPublisherReady(session: JanusSession, streamRoom: db.stream.StreamRoom): void {
         const publisher = session.publishedStreams[session.publishedStreams.length - 1];
-        if (publisher && !session.publishedAnnounced) {
-            session.publishedAnnounced = true;
+        if (publisher && !session.streamPublishedEventEmitted) {
+            session.streamPublishedEventEmitted = true;
             this.streamNotificationService.sendStreamPublishedEvent(streamRoom, {
                 streamRoomId: streamRoom.id,
                 stream: this.mapper.convertPublisherToPublisherAsStream(publisher),
@@ -111,12 +96,6 @@ export class JanusEventDispatcher {
         }
     }
     
-    /**
-     * On a dropped/de-authorized client session there is no unpublish/leave/unsubscribe API call,
-     * so synthesize the same broadcast events here: `streamUnpublished` for publishing sessions,
-     * `streamUnsubscribed` for subscriber sessions (with the feeds they still held), then
-     * `streamRoomLeft` (deduplicated per room+user).
-     */
     emitDisconnectEventsForSessions(sessions: JanusSession[]): void {
         const leftEmitted = new Set<string>();
         const roomCache = new Map<types.stream.StreamRoomId, Promise<db.stream.StreamRoom | null>>();

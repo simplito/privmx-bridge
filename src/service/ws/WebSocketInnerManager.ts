@@ -121,7 +121,7 @@ export class WebSocketInnerManager {
             if (userChannel.containerType && userChannel.containerType !== targetChannel.containerType) {
                 continue;
             }
-            if (!this.isPathPrefix(userChannel.path, targetChannel.channel)) {
+            if (!this.isSubscriptionPathMatch(userChannel.path, targetChannel.channel)) {
                 continue;
             }
             matchingSubscriptions.push(userChannel.subscriptionId);
@@ -129,7 +129,6 @@ export class WebSocketInnerManager {
         return {matchingSubscriptions, options};
     }
     
-    /** Single-session counterpart of the broadcast path; returns false if the session isn't subscribed. */
     sendEventToSession<T extends types.core.Event<any, any>>(socket: WebSocketEx, session: WebSocketSession, targetChannel: TargetChannel, event: T): boolean {
         const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
         if (matchingSubscriptions.length === 0) {
@@ -142,10 +141,8 @@ export class WebSocketInnerManager {
         return true;
     }
     
-    private isPathPrefix(parent: string, child: string): boolean {
-        // Segment-aware: a subscription path only matches on "/" boundaries (or exactly),
-        // so e.g. "streamroom/stream" does not accidentally match "streamroom/streams/publish".
-        return child === parent || child.startsWith(parent + "/");
+    private isSubscriptionPathMatch(subscriptionPath: string, eventChannel: string): boolean {
+        return eventChannel === subscriptionPath || eventChannel.startsWith(subscriptionPath + "/");
     }
     
     hasOpenConnectionWithUsername(host: types.core.Host, username: types.core.Username): boolean {
@@ -188,8 +185,6 @@ export class WebSocketInnerManager {
                 ws.ex.sessions = ws.ex.sessions.filter(session => {
                     if (session.host === host && func(session)) {
                         this.webSocketOutboundHandler.sendToWsSession(ws, session, {type: "disconnected", data: {}});
-                        // Force-disconnect removes the session without closing the socket, so the socket
-                        // "close" handler won't tear down this session's Janus media — do it here.
                         JanusContextFactory.cleanupJanusForWsId(ws as WebSocketExtendedWithJanus, session.wsId);
                         usersToCheck.add(session.username);
                         void (async () => {
@@ -260,8 +255,6 @@ export class WebSocketInnerManager {
         const index = wsEx.ex.sessions.findIndex(x => x.wsId === wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
-            // De-authorizing removes the session without closing the socket, so the socket "close"
-            // handler won't tear down this session's Janus media — do it here.
             JanusContextFactory.cleanupJanusForWsId(wsEx as WebSocketExtendedWithJanus, wsId);
             wsEx.ex.sessions.splice(index, 1);
             const hostContext = await wsEx.ex.contextFactory(session.host);

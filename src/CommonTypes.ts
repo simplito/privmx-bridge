@@ -114,11 +114,8 @@ export interface JanusSession {
     session: WebRtcTypes.JanusVideoRoomSession;
     keepAlivePinger: NodeJS.Timeout;
     streamsToAccept: number[];
-    // streamIds: number[];
     publishedStreams: Publisher[];
-    /** Guards against emitting streamPublished more than once for a single publish (duplicate webrtcup). */
-    publishedAnnounced: boolean;
-    /** Live set of feeds this subscriber session is subscribed to; lets teardown emit an exact streamUnsubscribed. */
+    streamPublishedEventEmitted: boolean;
     subscriptions: StreamSubscription[];
     janusPublisherId?: WebRtcTypes.VideoRoomPublisherId;
     userId: types.cloud.UserId;
