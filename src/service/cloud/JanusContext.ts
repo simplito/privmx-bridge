@@ -9,16 +9,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { JanusConnection, JanusSession, JanusSessionType } from "../../CommonTypes";
+import { JanusConnection, JanusSession, JanusSessionType, StreamSubscription } from "../../CommonTypes";
 import * as types from "../../types";
 import { AppException } from "../../api/AppException";
 import * as WebRtcTypes from "../webrtc/v2/WebRtcTypes";
 import { Logger } from "../log/Logger";
 
+export function isPublishingSession(session: JanusSession): boolean {
+    return session.type === "main" && session.janusPublisherId !== undefined && session.publishedStreams.length > 0;
+}
+
 export class JanusContext {
     
     private static readonly KEEPALIVE_INTERVAL_MS = 25000;
     private static readonly JANUS_PLUGIN_VIDEOROOM = "janus.plugin.videoroom";
+    
+    private opChains = new Map<string, Promise<unknown>>();
     
     constructor(
         public readonly ws: JanusConnection,
@@ -26,6 +32,13 @@ export class JanusContext {
         private readonly isClosed: () => boolean,
         private readonly logger: Logger,
     ) {}
+    
+    runExclusive<T>(key: string, func: () => Promise<T>): Promise<T> {
+        const previous = this.opChains.get(key) ?? Promise.resolve();
+        const next = previous.then(() => func(), () => func());
+        this.opChains.set(key, next.then(() => undefined, () => undefined));
+        return next;
+    }
     
     async createJanusSession(source: string, streamRoomId: types.stream.StreamRoomId, type: JanusSessionType, userId: types.cloud.UserId): Promise<JanusSession> {
         if (this.isClosed()) {
@@ -58,19 +71,45 @@ export class JanusContext {
             },
             
             publishedStreams: [],
+            streamPublishedEventEmitted: false,
+            subscriptions: [],
             
             keepPublishedStream: function(stream: WebRtcTypes.Publisher): void {
                 const streamToAdd = structuredClone(stream);
                 if (!streamToAdd.display) {
                     streamToAdd.display = this.userId;
                 }
-                this.publishedStreams.push(streamToAdd);
+                const existing = this.publishedStreams.findIndex(x => x.id === streamToAdd.id);
+                if (existing > -1) {
+                    this.publishedStreams[existing] = streamToAdd;
+                }
+                else {
+                    this.publishedStreams.push(streamToAdd);
+                }
             },
             
             removePublishedStream: function(streamId: WebRtcTypes.StreamId): void {
                 const found = this.publishedStreams.findIndex(x => x.id === streamId);
                 if (found > -1) {
                     this.publishedStreams.splice(found, 1);
+                }
+            },
+            
+            addSubscriptions: function(subscriptions: StreamSubscription[]): void {
+                for (const sub of subscriptions) {
+                    const exists = this.subscriptions.some(s => s.streamId === sub.streamId && s.streamTrackId === sub.streamTrackId);
+                    if (!exists) {
+                        this.subscriptions.push({ streamId: sub.streamId, streamTrackId: sub.streamTrackId });
+                    }
+                }
+            },
+            
+            removeSubscriptions: function(subscriptions: StreamSubscription[]): void {
+                for (const sub of subscriptions) {
+                    const index = this.subscriptions.findIndex(s => s.streamId === sub.streamId && s.streamTrackId === sub.streamTrackId);
+                    if (index > -1) {
+                        this.subscriptions.splice(index, 1);
+                    }
                 }
             },
         };
@@ -101,11 +140,15 @@ export class JanusContext {
     }
     
     findJanusSession(sessionId: WebRtcTypes.SessionId): JanusSession {
-        const session = this.janusSessions.find(x => x.session.id === sessionId);
+        const session = this.findJanusSessionByIdOrReturnNull(sessionId);
         if (!session) {
             throw new AppException("INVALID_PARAMS", `Janus session ${sessionId} not found`);
         }
         return session;
+    }
+    
+    findJanusSessionByIdOrReturnNull(sessionId: WebRtcTypes.SessionId): JanusSession | undefined {
+        return this.janusSessions.find(x => x.session.id === sessionId);
     }
     
     findJanusSessionBySourceOrReturnNull(source: string): JanusSession | undefined {
@@ -113,12 +156,11 @@ export class JanusContext {
     }
     
     async deleteJanusSession(sessionId: WebRtcTypes.SessionId): Promise<void> {
-        const session = this.janusSessions.find(x => x.session.id === sessionId);
-        if (!session) {
+        const index = this.janusSessions.findIndex(x => x.session.id === sessionId);
+        if (index < 0) {
             return;
         }
-        
-        this.janusSessions = this.janusSessions.filter(x => x.session.id !== sessionId);
+        const [session] = this.janusSessions.splice(index, 1);
         
         if (session.keepAlivePinger) {
             clearInterval(session.keepAlivePinger);
@@ -142,8 +184,12 @@ export class JanusContext {
     
     async deleteAllJanusSessionsByRoom(streamRoomId: types.stream.StreamRoomId) {
         const sessionsToRemove = this.janusSessions.filter(x => x.streamRoomId === streamRoomId);
-        
-        this.janusSessions = this.janusSessions.filter(x => x.streamRoomId !== streamRoomId);
+        for (const sess of sessionsToRemove) {
+            const index = this.janusSessions.indexOf(sess);
+            if (index > -1) {
+                this.janusSessions.splice(index, 1);
+            }
+        }
         
         await Promise.all(sessionsToRemove.map(async (sess) => {
             if (sess.keepAlivePinger) {

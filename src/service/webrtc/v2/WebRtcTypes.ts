@@ -24,7 +24,6 @@ export type VideoRoomPublisherId = number & {_videoRoomPublisherId: never};
 export type StreamTrackId = string & {__streamTrackId: never};
 export type StreamId = types.stream.StreamId;
 export type StreamRoomId = types.stream.StreamRoomId;
-export type JanusRoomStreamsUpdatedData = UpdateSubscriptionsData&{jsep?: RTCSessionDescriptionOffer};
 
 export interface JanusVideoRoomCurrentPublishersRaw {
     room: VideoRoomId;
@@ -655,11 +654,6 @@ export interface VideoRoomParticipant {
 export interface NewPublisherEventRaw {
     id: VideoRoomPublisherId;
     streams: Publisher[];
-}
-
-export interface NewStreamsEventData {
-    room: VideoRoomId;
-    streams: PublisherAsStream[];
 }
 
 export interface Credentials {

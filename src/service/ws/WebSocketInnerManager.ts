@@ -11,7 +11,8 @@ limitations under the License.
 
 import * as WebSocket from "ws";
 import * as types from "../../types";
-import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
+import { WebSocketEx, WebSocketExtendedWithJanus, WebSocketSession } from "../../CommonTypes";
+import { JanusContextFactory } from "../cloud/JanusContextFactory";
 import { PlainApiEvent } from "../../api/plain/Types";
 import { TargetChannel } from "./WebSocketConnectionManager";
 import { Config } from "../../cluster/common/ConfigUtils";
@@ -120,7 +121,7 @@ export class WebSocketInnerManager {
             if (userChannel.containerType && userChannel.containerType !== targetChannel.containerType) {
                 continue;
             }
-            if (!this.isPathPrefix(userChannel.path, targetChannel.channel)) {
+            if (!this.isSubscriptionPathMatch(userChannel.path, targetChannel.channel)) {
                 continue;
             }
             matchingSubscriptions.push(userChannel.subscriptionId);
@@ -128,8 +129,20 @@ export class WebSocketInnerManager {
         return {matchingSubscriptions, options};
     }
     
-    private isPathPrefix(parent: string, child: string): boolean {
-        return child.startsWith(parent);
+    sendEventToSession<T extends types.core.Event<any, any>>(socket: WebSocketEx, session: WebSocketSession, targetChannel: TargetChannel, event: T): boolean {
+        const {matchingSubscriptions, options} = this.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
+        if (matchingSubscriptions.length === 0) {
+            return false;
+        }
+        const sessionEventCopy = this.createShallowEventCopy(event, options.version !== 1);
+        sessionEventCopy.subscriptions = matchingSubscriptions;
+        sessionEventCopy.version = options.version;
+        this.webSocketOutboundHandler.sendToWsSession(socket, session, sessionEventCopy);
+        return true;
+    }
+    
+    private isSubscriptionPathMatch(subscriptionPath: string, eventChannel: string): boolean {
+        return eventChannel === subscriptionPath || eventChannel.startsWith(subscriptionPath + "/");
     }
     
     hasOpenConnectionWithUsername(host: types.core.Host, username: types.core.Username): boolean {
@@ -172,6 +185,7 @@ export class WebSocketInnerManager {
                 ws.ex.sessions = ws.ex.sessions.filter(session => {
                     if (session.host === host && func(session)) {
                         this.webSocketOutboundHandler.sendToWsSession(ws, session, {type: "disconnected", data: {}});
+                        JanusContextFactory.cleanupJanusForWsId(ws as WebSocketExtendedWithJanus, session.wsId);
                         usersToCheck.add(session.username);
                         void (async () => {
                             const hostContext = await ws.ex.contextFactory(session.instanceHost);
@@ -241,6 +255,7 @@ export class WebSocketInnerManager {
         const index = wsEx.ex.sessions.findIndex(x => x.wsId === wsId);
         if (index != -1) {
             const session = wsEx.ex.sessions[index];
+            JanusContextFactory.cleanupJanusForWsId(wsEx as WebSocketExtendedWithJanus, wsId);
             wsEx.ex.sessions.splice(index, 1);
             const hostContext = await wsEx.ex.contextFactory(session.host);
             await hostContext.getUserStatusManager().decrementUserActiveSessions(session.instanceHost, session.username as unknown as types.core.EccPubKey, session.solution);

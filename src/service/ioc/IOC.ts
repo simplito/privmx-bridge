@@ -123,6 +123,12 @@ import { MongoStorageService } from "../cloud/MongoStorageService";
 import { LockHelper } from "../misc/LockHelper";
 import { UserStatusManager } from "../cloud/UserStatusManager";
 import { JanusContextFactory } from "../cloud/JanusContextFactory";
+import { JanusConnector } from "../cloud/JanusConnector";
+import { FakeJanusConnector } from "../cloud/FakeJanusConnector";
+import { JanusVideoRoomMapper } from "../cloud/JanusVideoRoomMapper";
+import { JanusNotificationParser } from "../cloud/JanusNotificationParser";
+import { AdminJanusConnection } from "../cloud/AdminJanusConnection";
+import { JanusEventDispatcher } from "../cloud/JanusEventDispatcher";
 import { JanusRoomsWatcher } from "../cloud/JanusRoomsWatcher";
 export class IOC {
     
@@ -228,6 +234,11 @@ export class IOC {
     protected lockHelper?: LockHelper;
     protected userStatusManager?: UserStatusManager;
     protected janusContextFactory?: JanusContextFactory;
+    protected janusConnector?: JanusConnector;
+    protected janusVideoRoomMapper?: JanusVideoRoomMapper;
+    protected janusNotificationParser?: JanusNotificationParser;
+    protected adminJanusConnection?: AdminJanusConnection;
+    protected janusEventDispatcher?: JanusEventDispatcher;
     protected janusRoomsWatcher?: JanusRoomsWatcher;
     
     constructor(instanceHost: types.core.Host, workerRegistry: WorkerRegistry) {
@@ -1212,7 +1223,6 @@ export class IOC {
                 this.getStreamConverter(),
                 this.getRepositoryFactory(),
                 this.getManagementStreamConverter(),
-                this.workerRegistry.getWebSocketOutboundHandler(),
                 this.workerRegistry.getWebSocketInnerManager(),
             );
         }
@@ -1232,20 +1242,71 @@ export class IOC {
                 this.getCloudAccessValidator(),
                 this.workerRegistry.getConfig(),
                 this.getJanusContextFactory(),
+                this.getAdminJanusConnection(),
+                this.getJanusVideoRoomMapper(),
                 this.getJanusRoomsWatcher(),
             );
         }
         return this.streamService;
     }
     
+    getJanusConnector() {
+        if (this.janusConnector == null) {
+            const config = this.workerRegistry.getConfig();
+            // `fake` swaps the real media-server transport for canned responses, so the whole
+            // stream pipeline runs without Janus (used by e2e tests).
+            this.janusConnector = config.streams?.mediaServer?.fake
+                ? new FakeJanusConnector(this.getLoggerFactory(), config)
+                : new JanusConnector(this.getLoggerFactory(), config);
+        }
+        return this.janusConnector;
+    }
+    
+    getJanusVideoRoomMapper() {
+        if (this.janusVideoRoomMapper == null) {
+            this.janusVideoRoomMapper = new JanusVideoRoomMapper();
+        }
+        return this.janusVideoRoomMapper;
+    }
+    
+    getJanusNotificationParser() {
+        if (this.janusNotificationParser == null) {
+            this.janusNotificationParser = new JanusNotificationParser(
+                this.getLoggerFactory(),
+            );
+        }
+        return this.janusNotificationParser;
+    }
+    
+    getAdminJanusConnection() {
+        if (this.adminJanusConnection == null) {
+            this.adminJanusConnection = new AdminJanusConnection(
+                this.getLoggerFactory(),
+                this.getJanusConnector(),
+            );
+        }
+        return this.adminJanusConnection;
+    }
+    
+    getJanusEventDispatcher() {
+        if (this.janusEventDispatcher == null) {
+            this.janusEventDispatcher = new JanusEventDispatcher(
+                this.getLoggerFactory(),
+                this.getRepositoryFactory(),
+                this.getStreamNotificationService(),
+                this.getJanusNotificationParser(),
+                this.getJanusVideoRoomMapper(),
+            );
+        }
+        return this.janusEventDispatcher;
+    }
+    
     getJanusContextFactory() {
         if (this.janusContextFactory == null) {
             this.janusContextFactory = new JanusContextFactory(
                 this.getLoggerFactory(),
-                this.workerRegistry.getWebSocketOutboundHandler(),
-                this.getStreamNotificationService(),
-                this.getRepositoryFactory(),
-                this.workerRegistry.getConfig(),
+                this.getJanusConnector(),
+                this.getJanusEventDispatcher(),
             );
         }
         return this.janusContextFactory;
@@ -1350,7 +1411,7 @@ export class IOC {
             this.janusRoomsWatcher = new JanusRoomsWatcher(
                 this.workerRegistry.getJanusRoomsWatcherCache(),
                 this.getLoggerFactory().createLogger(JanusRoomsWatcher),
-                this.getJanusContextFactory(),
+                this.getJanusConnector(),
                 this.getJobService(),
                 this.getRepositoryFactory(),
             );

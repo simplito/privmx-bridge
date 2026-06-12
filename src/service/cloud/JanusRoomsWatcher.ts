@@ -17,7 +17,7 @@ import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
-import { JanusContextFactory } from "./JanusContextFactory";
+import { JanusConnector } from "./JanusConnector";
 import { JobService } from "../job/JobService";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 
@@ -43,12 +43,13 @@ export class JanusRoomsWatcher {
     private mainSessionId: SessionId | undefined;
     
     private roomHandles: Map<number, webRtcTypes.VideoRoomPluginHandleId> = new Map();
+    private attachingRooms: Map<number, Promise<void>> = new Map();
     private initializationPromise: Promise<void> | null = null;
     
     constructor(
         private cache: JanusRoomsWatcherCache,
         private logger: Logger,
-        private janusContextFactory: JanusContextFactory,
+        private janusConnector: JanusConnector,
         private jobService: JobService,
         private repositoryFactory: RepositoryFactory,
     ) {
@@ -59,15 +60,14 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeavingOrUnpublishing(evt)) {
+        if (!this.isPublisherLeaving(evt)) {
             return;
         }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving ?? data.unpublished;
+        const rawPublisherId = data.leaving;
         
-        // Janus sends "ok" to the person who clicked leave, we ignore it.
-        if (rawPublisherId === "ok") {
+        if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
         }
         
@@ -141,16 +141,8 @@ export class JanusRoomsWatcher {
         await this.ensureConnection();
         await this.cache.addPublisher(model);
         
-        if (this.roomHandles.has(model.janusRoomId)) {
-            return;
-        }
-        
-        try {
-            await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
-        }
-        catch (error) {
-            this.logger.debug({ error, model }, "Failed to attach watcher to room");
-            await this.cache.removePublisher(model);
+        if (!this.roomHandles.has(model.janusRoomId)) {
+            return this.startOrJoinRoomAttachment(model);
         }
     }
     
@@ -192,7 +184,7 @@ export class JanusRoomsWatcher {
     private async connectAndSetup() {
         this.logger.debug({}, "JanusRoomsWatcher: Connecting to Janus...");
         try {
-            this.janusConnection = await this.janusContextFactory.openWs(undefined, async (notification) => {
+            this.janusConnection = await this.janusConnector.openWs(undefined, async (notification) => {
                 try {
                     await this.onJanusEvent(notification);
                 }
@@ -299,12 +291,37 @@ export class JanusRoomsWatcher {
         );
     }
     
-    private isPublisherLeavingOrUnpublishing(evt: VideoPluginEvent): boolean {
+    private startOrJoinRoomAttachment(model: JanusRoomWatch): Promise<void> {
+        const inFlight = this.attachingRooms.get(model.janusRoomId);
+        if (inFlight) {
+            return inFlight;
+        }
+        const attach = (async () => {
+            try {
+                await this.attachAndJoinRoom(model.janusRoomId as webRtcTypes.VideoRoomId);
+            }
+            catch (error) {
+                this.logger.debug({ error, model }, "Failed to attach watcher to room");
+                await this.cache.removePublisher(model);
+            }
+            finally {
+                this.attachingRooms.delete(model.janusRoomId);
+            }
+        })();
+        this.attachingRooms.set(model.janusRoomId, attach);
+        return attach;
+    }
+    
+    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
         const data = evt.plugindata.data as Record<string, unknown>;
         return (
             typeof data === "object" && data !== null &&
             "room" in data &&
-            ("leaving" in data || "unpublished" in data)
+            "leaving" in data
         );
+    }
+    
+    private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {
+        return publisherId === "ok";
     }
 }

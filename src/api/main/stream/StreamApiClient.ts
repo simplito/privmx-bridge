@@ -55,6 +55,10 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.requestWS("stream.streamPublish", model);
     }
     
+    streamUpdate(model: streamApi.StreamUpdateModel): Promise<streamApi.StreamUpdateResult> {
+        return this.requestWS("stream.streamUpdate", model);
+    }
+    
     streamAcceptOffer(model: streamApi.StreamAcceptOfferModel): Promise<types.core.OK> {
         return this.requestWS("stream.streamAcceptOffer", model);
     }

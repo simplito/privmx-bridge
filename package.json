@@ -1,6 +1,6 @@
 {
   "name": "privmx-bridge",
-  "version": "2.42.1",
+  "version": "3.0.0",
   "description": "Zero-knowledge server for secure storage and transfer of E2E encrypted data.",
   "scripts": {
     "types-gen": "rm -rf out && tsc --emitDeclarationOnly --declaration && touch out/index.d.ts && ~/scripts/types.sh",
@@ -83,7 +83,7 @@
     "svg-captcha": "^1.4.0",
     "thirty-two": "^1.0.2",
     "uniqid": "^5.2.0",
-    "uuid": "^8.3.2",
+    "uuid": "^14.0.0",
     "ws": "^8.18.3",
     "zeromq": "^6.5.0"
   },

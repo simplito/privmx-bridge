@@ -22,7 +22,6 @@ import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { DateUtils } from "../../utils/DateUtils";
 import { UserIdentityWithStatus } from "../../types/cloud";
 import { TargetChannel } from "../ws/WebSocketConnectionManager";
-import { WebSocketOutboundHandler } from "../ws/WebSocketOutboundHandler";
 import { WebSocketExtendedWithJanus } from "../../CommonTypes";
 import { AppException } from "../../api/AppException";
 import { WebSocketInnerManager } from "../ws/WebSocketInnerManager";
@@ -32,14 +31,16 @@ export enum StreamRoomChannelType {
     CREATE = "streamroom/create",
     UPDATE = "streamroom/update",
     DELETE = "streamroom/delete",
-    INTERNAL = "streamroom/internal",
+    JOIN = "streamroom/join",
+    LEAVE = "streamroom/leave",
+    SUBSCRIBE = "streamroom/subscribers/subscribe",
+    UNSUBSCRIBE = "streamroom/subscribers/unsubscribe",
+    REOFFER = "streamroom/internal/reoffer",
 }
 
 export enum StreamRoomStreamChannelType {
     PUBLISH = "streamroom/streams/publish",
     UNPUBLISH = "streamroom/streams/unpublish",
-    JOIN = "streamroom/streams/join",
-    LEAVE = "streamroom/streams/leave",
     UPDATE = "streamroom/streams/update",
 }
 export class StreamNotificationService {
@@ -51,26 +52,8 @@ export class StreamNotificationService {
         private streamConverter: StreamConverter,
         private repositoryFactory: RepositoryFactory,
         private managementStreamConverter: ManagementStreamConverter,
-        private webSocketOutboundHandler: WebSocketOutboundHandler,
         private webSocketInnerManager: WebSocketInnerManager,
     ) {
-    }
-    
-    public convertJanusRoomIdToBridgeRoomId(mappedRoom: db.stream.StreamRoom, evt: any) {
-        const convertedEvt = {...evt};
-        if (convertedEvt.data && typeof(convertedEvt.data) === "object" && "room" in convertedEvt.data) {
-            convertedEvt.data.room = mappedRoom.id;
-        }
-        else if (convertedEvt.data && typeof(convertedEvt.data) === "object" && "roomId" in convertedEvt.data) {
-            convertedEvt.data.roomId = mappedRoom.id;
-        }
-        else if (convertedEvt.data && typeof(convertedEvt.data) === "object" && "plugindata" in convertedEvt.data && typeof(convertedEvt.data.plugindata) === "object" && "data" in convertedEvt.data.plugindata && "room" in convertedEvt.data.plugindata.data) {
-            convertedEvt.data.plugindata.data.room = mappedRoom.id;
-        }
-        else {
-            throw new Error("No conversion made on janus room -> stream room on event: " + JSON.stringify(evt, null, 2));
-        }
-        return convertedEvt;
     }
     
     private safe(errorMessage: string, func: () => Promise<void>) {
@@ -104,115 +87,55 @@ export class StreamNotificationService {
         });
     }
     
-    sendStreamLeftEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamLeftEventData) {
-        this.safe("streamLeftEvent", async () => {
+    /** Every media stream event has this exact shape — only channel, type, and data differ. */
+    private broadcastStreamEvent(streamRoom: db.stream.StreamRoom, channel: StreamRoomChannelType | StreamRoomStreamChannelType, type: string, data: unknown) {
+        this.safe(`${type}Event`, async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().
-                getUsers(streamRoom.contextId, streamRoom.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamLeftEvent>([user.userPubKey],
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            this.webSocketSender.sendCloudEventAtChannel(
+                contextUsers.map(u => u.userPubKey),
                 {
                     containerId: streamRoom.id,
                     contextId: streamRoom.contextId,
-                    channel: StreamRoomStreamChannelType.LEAVE as types.core.WsChannelName,
+                    channel: channel as types.core.WsChannelName,
                     containerType: streamRoom.type,
                 },
                 {
                     channel: "stream",
-                    type: "streamLeft",
-                    data: notificationData,
+                    type,
+                    data,
                     timestamp: now,
-                });
-            }
+                },
+            );
         });
     }
     
-    sendStreamJoinedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamJoinedEventData) {
-        this.safe("streamJoinedEvent", async () => {
-            const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamJoinedEvent>([user.userPubKey],
-                {
-                    containerId: streamRoom.id,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomStreamChannelType.JOIN as types.core.WsChannelName,
-                    containerType: streamRoom.type,
-                },
-                {
-                    channel: "stream",
-                    type: "streamJoined",
-                    data: notificationData,
-                    timestamp: now,
-                });
-            }
-        });
+    sendStreamRoomLeftEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamRoomLeftEventData) {
+        this.broadcastStreamEvent(streamRoom, StreamRoomChannelType.LEAVE, "streamRoomLeft", notificationData);
+    }
+    
+    sendStreamRoomJoinedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamRoomJoinedEventData) {
+        this.broadcastStreamEvent(streamRoom, StreamRoomChannelType.JOIN, "streamRoomJoined", notificationData);
     }
     
     sendStreamPublishedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamPublishedEventData) {
-        this.safe("streamPublishedEvent", async () => {
-            const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamPublishedEvent>([user.userPubKey],
-                {
-                    containerId: streamRoom.id,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomStreamChannelType.PUBLISH as types.core.WsChannelName,
-                    containerType: streamRoom.type,
-                },
-                {
-                    channel: "stream",
-                    type: "streamPublished",
-                    data: notificationData,
-                    timestamp: now,
-                });
-            }
-        });
+        this.broadcastStreamEvent(streamRoom, StreamRoomStreamChannelType.PUBLISH, "streamPublished", notificationData);
     }
     
     sendStreamUpdatedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamUpdatedEventData) {
-        this.safe("streamUpdatedEvent", async () => {
-            const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamUpdatedEvent>([user.userPubKey],
-                {
-                    containerId: streamRoom.id,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomChannelType.UPDATE as types.core.WsChannelName,
-                    containerType: streamRoom.type,
-                },
-                {
-                    channel: "stream",
-                    type: "streamUpdated",
-                    data: notificationData,
-                    timestamp: now,
-                });
-            }
-        });
+        this.broadcastStreamEvent(streamRoom, StreamRoomStreamChannelType.UPDATE, "streamUpdated", notificationData);
     }
     
     sendStreamUnpublishedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamUnpublishedEventData) {
-        this.safe("streamUnpublishedEvent", async () => {
-            const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, streamRoom.users);
-            for (const user of contextUsers) {
-                this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamUnpublishedEvent>([user.userPubKey],
-                {
-                    containerId: streamRoom.id,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomStreamChannelType.UNPUBLISH as types.core.WsChannelName,
-                    containerType: streamRoom.type,
-                },
-                {
-                    channel: "stream",
-                    type: "streamUnpublished",
-                    data: notificationData,
-                    timestamp: now,
-                });
-            }
-        });
+        this.broadcastStreamEvent(streamRoom, StreamRoomStreamChannelType.UNPUBLISH, "streamUnpublished", notificationData);
+    }
+    
+    sendStreamSubscribedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamSubscribedEventData) {
+        this.broadcastStreamEvent(streamRoom, StreamRoomChannelType.SUBSCRIBE, "streamSubscribed", notificationData);
+    }
+    
+    sendStreamUnsubscribedEvent(streamRoom: db.stream.StreamRoom, notificationData: streamApi.StreamUnsubscribedEventData) {
+        this.broadcastStreamEvent(streamRoom, StreamRoomChannelType.UNSUBSCRIBE, "streamUnsubscribed", notificationData);
     }
     
     sendStreamRoomCreated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId) {
@@ -330,104 +253,24 @@ export class StreamNotificationService {
         });
     }
     
-    sendNewStreamsSingleEvent(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, streamRoom: db.stream.StreamRoom, data: WebRtcTypes.NewStreamsEventData) {
-        const eventType = "remoteStreamsChanged";
-        this.safe(`${eventType}Event`, async () => {
+    sendStreamRoomReofferSingleEvent(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, streamRoom: db.stream.StreamRoom, jsep: WebRtcTypes.RTCSessionDescriptionOffer | undefined) {
+        this.safe("streamRoomReofferEvent", async () => {
             const session = websocket.ex.sessions.find(x => x.wsId === wsId);
-            if (session) {
-                const targetChannel: TargetChannel = {
-                    containerId: streamRoom.id,
-                    containerType: streamRoom.type,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomChannelType.UPDATE as types.core.WsChannelName,
-                };
-                
-                const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
-                if (matchingSubscriptions.length === 0) {
-                    return;
-                }
-                const convertedEvent = this.convertJanusRoomIdToBridgeRoomId(streamRoom, {
-                    type: eventType,
-                    data: data,
-                    timestamp: DateUtils.now(),
-                    subscriptions: matchingSubscriptions,
-                    version: 2,
-                });
-                this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
+            if (!session) {
+                throw new AppException("FAILED_TO_SEND_MEDIA_EVENT", "streamRoomReoffer");
             }
-            else {
-                throw new AppException("FAILED_TO_SEND_MEDIA_EVENT", `${eventType}`);
-            }
-            
+            const targetChannel: TargetChannel = {
+                containerId: streamRoom.id,
+                containerType: streamRoom.type,
+                contextId: streamRoom.contextId,
+                channel: StreamRoomChannelType.REOFFER as types.core.WsChannelName,
+            };
+            const data: streamApi.StreamRoomReofferEventData = { streamRoomId: streamRoom.id, jsep };
+            this.webSocketInnerManager.sendEventToSession(websocket, session, targetChannel, {
+                type: "streamRoomReoffer",
+                data,
+                timestamp: DateUtils.now(),
+            });
         });
-        
-    }
-    
-    sendSubscriberStreamsUpdatedSingleEvent(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, streamRoom: db.stream.StreamRoom, data: WebRtcTypes.JanusRoomStreamsUpdatedData) {
-        const eventType = "streamsUpdated";
-        this.safe(`${eventType}Event`, async () => {
-            const session = websocket.ex.sessions.find(x => x.wsId === wsId);
-            if (session) {
-                const targetChannel: TargetChannel = {
-                    containerId: streamRoom.id,
-                    containerType: streamRoom.type,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomChannelType.INTERNAL as types.core.WsChannelName,
-                };
-                
-                const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
-                if (matchingSubscriptions.length === 0) {
-                    return;
-                }
-                const now = DateUtils.now();
-                const convertedEvent = this.convertJanusRoomIdToBridgeRoomId(streamRoom, {
-                    type: eventType,
-                    data: data,
-                    timestamp: now,
-                    subscriptions: matchingSubscriptions,
-                    version: 2,
-                });
-                
-                this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
-            }
-            else {
-                throw new AppException("FAILED_TO_SEND_MEDIA_EVENT", `${eventType}`);
-            }
-            
-        });
-    }
-    
-    sendUnpublishedSingleEvent(websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, streamRoom: db.stream.StreamRoom, leavingPublisher: WebRtcTypes.StreamId) {
-        const eventType = "streamUnpublished";
-        this.safe(`${eventType}Event`, async () => {
-            const session = websocket.ex.sessions.find(x => x.wsId === wsId);
-            if (session) {
-                const targetChannel: TargetChannel = {
-                    containerId: streamRoom.id,
-                    containerType: streamRoom.type,
-                    contextId: streamRoom.contextId,
-                    channel: StreamRoomStreamChannelType.UNPUBLISH as types.core.WsChannelName,
-                };
-                
-                const {matchingSubscriptions} = this.webSocketInnerManager.getMatchingsubscriptionsAndOptions(targetChannel, session.channels);
-                if (matchingSubscriptions.length === 0) {
-                    return;
-                }
-                const convertedEvent = {
-                    type: eventType,
-                    data: {streamRoomId: streamRoom.id, streamId: leavingPublisher},
-                    timestamp: DateUtils.now(),
-                    subscriptions: matchingSubscriptions,
-                    version: 2,
-                };
-                
-                this.webSocketOutboundHandler.sendToWsSession(websocket, session, convertedEvent);
-            }
-            else {
-                throw new AppException("FAILED_TO_SEND_MEDIA_EVENT", `${eventType}`);
-            }
-            
-        });
-        
     }
 }

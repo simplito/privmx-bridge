@@ -10,9 +10,10 @@ limitations under the License.
 */
 
 import { StreamRoomId } from "privmx-cloud-server-api/src/context";
-import { PublisherAsStream, RTCIceCandidate, StreamTrackModification} from "../../../service/webrtc/v2/WebRtcTypes";
+import { PublisherAsStream, RTCIceCandidate, RTCSessionDescriptionOffer, Stream } from "../../../service/webrtc/v2/WebRtcTypes";
 import * as types from "../../../types";
 import { UserId } from "../../../types/cloud";
+import { StreamSubscription } from "../../../CommonTypes";
 
 export interface StreamRoom {
     id: types.stream.StreamRoomId
@@ -151,10 +152,9 @@ export interface StreamUpdateResult {
     }
 }
 
-export interface StreamSubscription {
-    streamId: types.stream.StreamId;
-    streamTrackId?: types.stream.StreamTrackId;
-}
+// Canonical definition lives in CommonTypes (shared with the core JanusSession); re-exported here
+// for API consumers that import it from the stream API types.
+export type { StreamSubscription };
 
 export interface StreamsSubscribeModel {
     streamRoomId: types.stream.StreamRoomId;
@@ -226,16 +226,16 @@ export interface StreamRoomDeletedEventData {
     type?: types.stream.StreamRoomType;
 }
 
-export type JanusGenericEvent = types.cloud.Event<"janus", "stream", unknown>;
-export type JanusCloseEvent = types.cloud.Event<"janusclose", "stream", true>;
-
 export type StreamRoomCustomEvent = types.cloud.Event<"custom", `stream/${types.stream.StreamRoomId}/${types.core.WsChannelName}`, StreamRoomCustomEventData>;
 
 export type StreamPublishedEvent = types.cloud.Event<"streamPublished", "stream", StreamPublishedEventData>;
 export type StreamUpdatedEvent = types.cloud.Event<"streamUpdated", "stream", StreamUpdatedEventData>;
-export type StreamJoinedEvent = types.cloud.Event<"streamJoined", "stream", StreamJoinedEventData>;
+export type StreamRoomJoinedEvent = types.cloud.Event<"streamRoomJoined", "stream", StreamRoomJoinedEventData>;
 export type StreamUnpublishedEvent = types.cloud.Event<"streamUnpublished", "stream", StreamUnpublishedEventData>;
-export type StreamLeftEvent = types.cloud.Event<"streamLeft", "stream", StreamLeftEventData>;
+export type StreamRoomLeftEvent = types.cloud.Event<"streamRoomLeft", "stream", StreamRoomLeftEventData>;
+export type StreamSubscribedEvent = types.cloud.Event<"streamSubscribed", "stream", StreamSubscribedEventData>;
+export type StreamUnsubscribedEvent = types.cloud.Event<"streamUnsubscribed", "stream", StreamUnsubscribedEventData>;
+export type StreamRoomReofferEvent = types.cloud.Event<"streamRoomReoffer", "stream", StreamRoomReofferEventData>;
 
 export interface StreamPublishedEventData {
     streamRoomId: types.stream.StreamRoomId;
@@ -244,13 +244,14 @@ export interface StreamPublishedEventData {
 }
 export interface StreamUpdatedEventData {
     streamRoomId: types.stream.StreamRoomId;
-    streamsAdded: PublisherAsStream[];
-    streamsRemoved: PublisherAsStream[];
-    streamsModified: StreamTrackModification[];
+    streamId: number;
+    userId: types.cloud.UserId;
+    tracksAdded: Stream[];
+    tracksRemoved: Stream[];
+    tracksModified: { before: Stream; after: Stream }[];
 }
-export interface StreamJoinedEventData {
+export interface StreamRoomJoinedEventData {
     streamRoomId: types.stream.StreamRoomId;
-    stream: PublisherAsStream;
     userId: types.cloud.UserId;
 }
 export interface StreamUnpublishedEventData {
@@ -258,10 +259,23 @@ export interface StreamUnpublishedEventData {
     streamId: number;
     userId: types.cloud.UserId;
 }
-export interface StreamLeftEventData {
+export interface StreamRoomLeftEventData {
     streamRoomId: types.stream.StreamRoomId;
-    streamId: number;
     userId: types.cloud.UserId;
+}
+export interface StreamSubscribedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    userId: types.cloud.UserId;
+    subscriptions: StreamSubscription[];
+}
+export interface StreamUnsubscribedEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    userId: types.cloud.UserId;
+    subscriptions: StreamSubscription[];
+}
+export interface StreamRoomReofferEventData {
+    streamRoomId: types.stream.StreamRoomId;
+    jsep?: RTCSessionDescriptionOffer;
 }
 
 export interface StreamRoomCustomEventData {
@@ -314,6 +328,7 @@ export interface IStreamApi {
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
     streamList(model: StreamListModel): Promise<StreamListResult>;
     streamPublish(model: StreamPublishModel): Promise<StreamPublishResult>;
+    streamUpdate(model: StreamUpdateModel): Promise<StreamUpdateResult>;
     streamsSubscribeToRemote(model: StreamsSubscribeModel): Promise<StreamSubscribeResult>;
     streamsModifyRemoteSubscriptions(model: StreamModifySubscriptionModel): Promise<StreamSubscribeResult>;
     streamsUnsubscribeFromRemote(model: StreamsUnsubscribeModel): Promise<StreamSubscribeResult>
