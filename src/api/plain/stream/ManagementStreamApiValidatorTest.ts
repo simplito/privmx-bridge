@@ -74,4 +74,19 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
             },
         ],
     });
+    call("listStreamRoomParticipants", api => api.listStreamRoomParticipants({
+        streamRoomId: "664775ddb5d9a3f95b619ef0" as types.stream.StreamRoomId,
+    })).setResult({
+        list: [
+            {
+                userId: "john" as types.cloud.UserId,
+                subscriptions: [
+                    {
+                        streamId: 1234 as types.stream.StreamId,
+                        streamTrackId: "0" as types.stream.StreamTrackId,
+                    },
+                ],
+            },
+        ],
+    });
 });

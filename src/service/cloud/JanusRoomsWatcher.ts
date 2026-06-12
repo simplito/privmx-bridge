@@ -15,6 +15,8 @@ import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
 import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
+import { UserId } from "../../types/cloud";
+import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
 import { JanusConnector } from "./JanusConnector";
@@ -155,6 +157,26 @@ export class JanusRoomsWatcher {
     
     async removeRoomWatcher(host: string, streamRoomId: StreamRoomId) {
         await this.cache.removeRoomWatcher({host, streamRoomId});
+    }
+    
+    async addSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.addSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async removeSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.removeSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async addSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
+        await this.cache.addSubscriber({host, streamRoomId, userId});
+    }
+    
+    async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
+        await this.cache.removeSubscriber({host, streamRoomId, userId});
+    }
+    
+    async getRoomSubscribers(host: string, streamRoomId: StreamRoomId) {
+        return this.cache.getRoomSubscribers({host, streamRoomId});
     }
     
     async stopWatchingJanusRoom(janusRoomId: number) {

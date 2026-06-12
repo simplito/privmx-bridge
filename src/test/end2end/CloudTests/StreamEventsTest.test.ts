@@ -155,6 +155,25 @@ export class StreamEventsTest extends BaseTestSet {
         this.assertEvent("streamRoomLeft", streamRoomId);
     }
     
+    @Test(streamsEnabledFake)
+    async shouldListSubscribersAndTheirSubscriptions() {
+        const streamRoomId = await this.createStreamRoom();
+        
+        await this.apis.streamApi.streamRoomJoin({ streamRoomId });
+        await this.apis.streamApi.streamPublish({ streamRoomId, offer: { type: "offer", sdp: "x" } });
+        await this.apis.streamApi.streamsSubscribeToRemote({ streamRoomId, subscriptionsToAdd: [{ streamId: 7 as types.stream.StreamId }] });
+        
+        const subscribed = await this.apis.streamApi.streamRoomListParticipants({ streamRoomId });
+        assert(subscribed.list.length === 1, `expected one subscriber, got ${subscribed.list.length}`);
+        assert(subscribed.list[0].userId === testData.userId, `subscriber userId mismatch (got ${subscribed.list[0].userId})`);
+        assert(subscribed.list[0].subscriptions.length === 1 && Number(subscribed.list[0].subscriptions[0].streamId) === 7, "expected the subscription to stream 7");
+        
+        await this.apis.streamApi.streamsUnsubscribeFromRemote({ streamRoomId, subscriptionsToRemove: [{ streamId: 7 as types.stream.StreamId }] });
+        
+        const afterUnsubscribe = await this.apis.streamApi.streamRoomListParticipants({ streamRoomId });
+        assert(afterUnsubscribe.list.length === 0, `expected no subscribers after unsubscribe, got ${afterUnsubscribe.list.length}`);
+    }
+    
     private async createStreamRoom(): Promise<types.stream.StreamRoomId> {
         const res = await this.apis.streamApi.streamRoomCreate({
             contextId: testData.contextId,

@@ -49,6 +49,51 @@ export interface DeleteManyStreamRoomsResult {
     results: types.stream.StreamRoomDeleteStatus[];
 }
 
+export interface StreamSubscription {
+    /** Subscribed stream ID */
+    streamId: types.stream.StreamId;
+    /** Optional specific track ID of the subscribed stream */
+    streamTrackId?: types.stream.StreamTrackId;
+}
+
+export interface StreamTrack {
+    type: "audio" | "video" | "data";
+    mindex: number;
+    mid: string;
+    disabled?: boolean;
+    codec?: string;
+    description?: string;
+    moderated?: boolean;
+    simulcast?: boolean;
+    svc?: boolean;
+    talking?: boolean;
+}
+
+export interface PublishedStream {
+    streamId: number;
+    userId: string;
+    tracks: StreamTrack[];
+}
+
+export interface StreamSubscriber {
+    /** Subscriber user ID */
+    userId: types.cloud.UserId;
+    /** Subscriptions held by the user in the room */
+    subscriptions: StreamSubscription[];
+    /** Published stream info if the participant is also publishing */
+    publishedStream?: PublishedStream;
+}
+
+export interface ListStreamRoomParticipantsModel {
+    /** Stream room ID */
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface ListStreamRoomParticipantsResult {
+    /** List of participants and their subscriptions */
+    list: StreamSubscriber[];
+}
+
 export interface StreamRoom {
     /** Stream room ID */
     id: types.stream.StreamRoomId
@@ -132,4 +177,11 @@ export interface IStreamApi {
      * @returns List of ID and status for every deletion attempt
      */
     deleteManyStreamRooms(model: DeleteManyStreamRoomsModel): Promise<DeleteManyStreamRoomsResult>;
+    
+    /**
+     * Lists subscribers and their current subscriptions in a given stream room
+     * @param model stream room's ID
+     * @returns List of subscribers with their subscriptions
+     */
+    listStreamRoomParticipants(model: ListStreamRoomParticipantsModel): Promise<ListStreamRoomParticipantsResult>;
 }

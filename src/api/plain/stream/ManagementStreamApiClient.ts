@@ -34,4 +34,8 @@ export class ManagementStreamApiClient implements streamApi.IStreamApi {
     async deleteManyStreamRooms(model: streamApi.DeleteManyStreamRoomsModel): Promise<streamApi.DeleteManyStreamRoomsResult> {
         return await this.requester.request("stream/deleteManyStreamRooms", model);
     }
+    
+    async listStreamRoomParticipants(model: streamApi.ListStreamRoomParticipantsModel): Promise<streamApi.ListStreamRoomParticipantsResult> {
+        return await this.requester.request("stream/listStreamRoomParticipants", model);
+    }
 }

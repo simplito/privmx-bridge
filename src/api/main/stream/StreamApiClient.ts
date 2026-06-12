@@ -51,6 +51,10 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.request("stream.streamList", model);
     }
     
+    streamRoomListParticipants(model: streamApi.StreamRoomListParticipantsModel): Promise<streamApi.StreamRoomListParticipantsResult> {
+        return this.request("stream.streamRoomListParticipants", model);
+    }
+    
     streamPublish(model: streamApi.StreamPublishModel): Promise<streamApi.StreamPublishResult> {
         return this.requestWS("stream.streamPublish", model);
     }

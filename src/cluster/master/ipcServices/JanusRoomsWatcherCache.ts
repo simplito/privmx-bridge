@@ -14,15 +14,23 @@ import { ApiMethod } from "../../../api/Decorators";
 import { Logger } from "../../../service/log/Logger";
 import { StreamRoomId } from "../../../types/stream";
 import { JanusRoomWatch } from "../../../service/cloud/JanusRoomsWatcher";
+import { StreamSubscription } from "../../../api/main/stream/StreamApiTypes";
+import { UserId } from "../../../types/cloud";
 
 export interface RoomLookup {
     streamRoomId: StreamRoomId;
     host: string;
 }
 
+export interface RoomSubscriber {
+    userId: UserId;
+    subscriptions: StreamSubscription[];
+}
+
 interface RoomState {
     janusRoomId: number;
     publishers: Map<number, JanusRoomWatch>;
+    subscribers: Map<UserId, StreamSubscription[]>;
 }
 
 @IpcService
@@ -114,6 +122,7 @@ export class JanusRoomsWatcherCache {
             roomState = {
                 janusRoomId: janusRoomId,
                 publishers: new Map<number, JanusRoomWatch>(),
+                subscribers: new Map<UserId, StreamSubscription[]>(),
             };
             hostRooms.set(model.streamRoomId, roomState);
             this.janusRoomIdToStreamRoomIdMap.set(janusRoomId, { host: model.host, streamRoomId: model.streamRoomId });
@@ -168,6 +177,87 @@ export class JanusRoomsWatcherCache {
         
         this.logger.debug({}, "[CACHE] removePublisher: Room still has publishers. Returning FALSE.");
         return false;
+    }
+    
+    @ApiMethod({})
+    async addSubscriptions(model: { host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[] }) {
+        const roomState = this.getRoomState(model.host, model.streamRoomId);
+        if (!roomState) {
+            this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] addSubscriptions: roomState missing, ignoring");
+            return;
+        }
+        const current = roomState.subscribers.get(model.userId) ?? [];
+        for (const sub of model.subscriptions) {
+            if (!current.some(s => this.subscriptionsEqual(s, sub))) {
+                current.push(sub);
+            }
+        }
+        roomState.subscribers.set(model.userId, current);
+        this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId, count: current.length }, "[CACHE] addSubscriptions completed");
+    }
+    
+    @ApiMethod({})
+    async removeSubscriptions(model: { host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[] }) {
+        const roomState = this.getRoomState(model.host, model.streamRoomId);
+        if (!roomState) {
+            return;
+        }
+        const current = roomState.subscribers.get(model.userId);
+        if (!current) {
+            return;
+        }
+        const remaining = current.filter(s => !model.subscriptions.some(toRemove => this.subscriptionsEqual(s, toRemove)));
+        if (remaining.length === 0) {
+            roomState.subscribers.delete(model.userId);
+        }
+        else {
+            roomState.subscribers.set(model.userId, remaining);
+        }
+        this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId, remaining: remaining.length }, "[CACHE] removeSubscriptions completed");
+    }
+    
+    @ApiMethod({})
+    async addSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }) {
+        const roomState = this.getRoomState(model.host, model.streamRoomId);
+        if (!roomState) {
+            return;
+        }
+        if (!roomState.subscribers.has(model.userId)) {
+            roomState.subscribers.set(model.userId, []);
+        }
+        this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId }, "[CACHE] addSubscriber completed");
+    }
+    
+    @ApiMethod({})
+    async removeSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }) {
+        const roomState = this.getRoomState(model.host, model.streamRoomId);
+        if (!roomState) {
+            return;
+        }
+        const wasDeleted = roomState.subscribers.delete(model.userId);
+        this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId, wasDeleted }, "[CACHE] removeSubscriber completed");
+    }
+    
+    @ApiMethod({})
+    async getRoomSubscribers(model: { host: string, streamRoomId: StreamRoomId }): Promise<RoomSubscriber[]> {
+        const roomState = this.getRoomState(model.host, model.streamRoomId);
+        if (!roomState) {
+            return [];
+        }
+        const result: RoomSubscriber[] = [];
+        for (const [userId, subscriptions] of roomState.subscribers.entries()) {
+            result.push({ userId, subscriptions });
+        }
+        this.logger.debug({ streamRoomId: model.streamRoomId, count: result.length }, "[CACHE] getRoomSubscribers returning");
+        return result;
+    }
+    
+    private getRoomState(host: string, streamRoomId: StreamRoomId): RoomState | undefined {
+        return this.hostsMap.get(host)?.get(streamRoomId);
+    }
+    
+    private subscriptionsEqual(a: StreamSubscription, b: StreamSubscription): boolean {
+        return a.streamId === b.streamId && a.streamTrackId === b.streamTrackId;
     }
     
     @ApiMethod({})
