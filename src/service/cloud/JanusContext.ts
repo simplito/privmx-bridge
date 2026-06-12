@@ -84,7 +84,15 @@ export class JanusContext {
                 if (!streamToAdd.display) {
                     streamToAdd.display = this.userId;
                 }
-                this.publishedStreams.push(streamToAdd);
+                // Upsert by publisher id: streamUpdate re-publishes the same feed, so replace its
+                // cached entry instead of appending (a long session would otherwise grow unbounded).
+                const existing = this.publishedStreams.findIndex(x => x.id === streamToAdd.id);
+                if (existing > -1) {
+                    this.publishedStreams[existing] = streamToAdd;
+                }
+                else {
+                    this.publishedStreams.push(streamToAdd);
+                }
             },
             
             removePublishedStream: function(streamId: WebRtcTypes.StreamId): void {

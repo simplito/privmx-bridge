@@ -27,11 +27,11 @@ const JanusEvents = {
 } as const;
 
 /**
- * Routes a raw Janus notification to the bridge event it maps to. The only event translated is
- * the subscriber re-offer; every other Janus push is either already conveyed by a broadcast event
- * (publish/unpublish/leave) or is internal signaling we don't expose — those are ignored, not
- * forwarded. This is the inbound half of the per-ws Janus integration; it knows nothing about
- * connection lifecycle.
+ * Routes a raw Janus notification to the bridge event it maps to. Only two are translated: a
+ * subscriber `updated` → `streamRoomReoffer`, and a publisher `webrtcup` → `streamPublished`.
+ * Every other Janus push is either already conveyed by a broadcast event (publish/unpublish/leave)
+ * or is internal signaling we don't expose — those are ignored, not forwarded. This is the inbound
+ * half of the per-ws Janus integration; it knows nothing about connection lifecycle.
  */
 export class JanusEventDispatcher {
     
@@ -65,32 +65,33 @@ export class JanusEventDispatcher {
                 return;
             }
             
+            // Only two Janus events translate to a bridge event; decide that first so we skip the
+            // stream-room DB lookup for the high-frequency noise (talking/slowlink/media/…).
+            const eventType = this.parser.extractAndValidateEventType(notification);
+            const isSubscriberReoffer = janusSession.type === "subscriber" && eventType === JanusEvents.UPDATED;
+            const isPublisherReady = janusSession.type === "main" && eventType === JanusEvents.WEBRTCUP;
+            if (!isSubscriberReoffer && !isPublisherReady) {
+                this.logger.debug({ eventType }, "Ignoring untranslated Janus event");
+                return;
+            }
+            
             const streamRoom = await this.repositoryFactory.createStreamRoomRepository().get(janusSession.streamRoomId);
             if (!streamRoom) {
                 this.logger.error({ sessionId, streamRoomId: janusSession.streamRoomId }, "Stream room missing for active session");
                 return;
             }
             
-            if (this.tryDispatchSubscriberReoffer(janusSession, streamRoom, notification, websocket, wsId)) {
-                return;
+            if (isSubscriberReoffer) {
+                // A subscriber whose upstream changed gets a fresh Janus offer; forward only the jsep to renegotiate.
+                this.streamNotificationService.sendStreamRoomReofferSingleEvent(websocket, wsId, streamRoom, notification.jsep as WebRtcTypes.RTCSessionDescriptionOffer | undefined);
             }
-            if (this.tryDispatchPublisherReady(janusSession, streamRoom, notification)) {
-                return;
+            else {
+                this.dispatchPublisherReady(janusSession, streamRoom);
             }
-            this.logger.debug({ eventType: notification.janus }, "Ignoring untranslated Janus event");
         }
         catch (error) {
             this.logger.error(error, "Error processing Janus notification");
         }
-    }
-    
-    /** A subscriber whose upstream changed gets a fresh Janus offer; forward only the jsep to renegotiate. */
-    private tryDispatchSubscriberReoffer(session: JanusSession, streamRoom: db.stream.StreamRoom, event: any, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId): boolean {
-        if (session.type === "subscriber" && this.parser.extractAndValidateEventType(event) === JanusEvents.UPDATED) {
-            this.streamNotificationService.sendStreamRoomReofferSingleEvent(websocket, wsId, streamRoom, event.jsep as WebRtcTypes.RTCSessionDescriptionOffer | undefined);
-            return true;
-        }
-        return false;
     }
     
     /**
@@ -98,10 +99,7 @@ export class JanusEventDispatcher {
      * not when the offer was accepted — so streamPublished is emitted here, from the streams cached
      * at publish time, to avoid peers racing the publisher's ICE setup.
      */
-    private tryDispatchPublisherReady(session: JanusSession, streamRoom: db.stream.StreamRoom, event: any): boolean {
-        if (session.type !== "main" || this.parser.extractAndValidateEventType(event) !== JanusEvents.WEBRTCUP) {
-            return false;
-        }
+    private dispatchPublisherReady(session: JanusSession, streamRoom: db.stream.StreamRoom): void {
         const publisher = session.publishedStreams[session.publishedStreams.length - 1];
         if (publisher && !session.publishedAnnounced) {
             session.publishedAnnounced = true;
@@ -111,7 +109,6 @@ export class JanusEventDispatcher {
                 userId: session.userId,
             });
         }
-        return true;
     }
     
     /**

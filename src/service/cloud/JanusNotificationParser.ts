@@ -39,7 +39,9 @@ export class JanusNotificationParser {
         if (data && "videoroom" in data) {
             return data.videoroom;
         }
-        this.logger.warning({ raw }, "Unknown event type structure");
+        // Called per inbound frame to classify events; most "unknown" shapes are benign Janus
+        // noise we deliberately ignore, so keep this at debug to avoid log spam.
+        this.logger.debug({ raw }, "Unknown event type structure");
         return "unknown";
     }
 }

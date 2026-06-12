@@ -13,6 +13,7 @@ import { StreamRoomId } from "privmx-cloud-server-api/src/context";
 import { PublisherAsStream, RTCIceCandidate, RTCSessionDescriptionOffer, Stream } from "../../../service/webrtc/v2/WebRtcTypes";
 import * as types from "../../../types";
 import { UserId } from "../../../types/cloud";
+import { StreamSubscription } from "../../../CommonTypes";
 
 export interface StreamRoom {
     id: types.stream.StreamRoomId
@@ -151,10 +152,9 @@ export interface StreamUpdateResult {
     }
 }
 
-export interface StreamSubscription {
-    streamId: types.stream.StreamId;
-    streamTrackId?: types.stream.StreamTrackId;
-}
+// Canonical definition lives in CommonTypes (shared with the core JanusSession); re-exported here
+// for API consumers that import it from the stream API types.
+export type { StreamSubscription };
 
 export interface StreamsSubscribeModel {
     streamRoomId: types.stream.StreamRoomId;

@@ -488,7 +488,11 @@ export class StreamService extends BaseContainerService {
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
         
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            const current = ctx.findJanusSession(sessionId);
+            // Re-resolve under the lock: a concurrent leave/disconnect may have destroyed the session.
+            const current = ctx.findJanusSessionByIdOrReturnNull(sessionId);
+            if (!current) {
+                throw new AppException("INVALID_PARAMS", "Stream session no longer available");
+            }
             const janusSession = current.session;
             let res;
             try {
