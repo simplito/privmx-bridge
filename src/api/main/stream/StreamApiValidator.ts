@@ -103,25 +103,7 @@ export class StreamApiValidator extends BaseValidator {
         this.registerMethod("streamRoomLeave", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
-        this.registerMethod("streamsSubscribeToRemote", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-            subscriptionsToAdd: this.builder.createList(
-                this.builder.createObject({
-                    streamId: this.tv.streamId,
-                    streamTrackId: this.builder.optional(this.builder.string),
-                }),
-            ),
-        }));
-        this.registerMethod("streamsUnsubscribeFromRemote", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-            subscriptionsToRemove: this.builder.createList(
-                this.builder.createObject({
-                    streamId: this.tv.streamId,
-                    streamTrackId: this.builder.optional(this.builder.string),
-                }),
-            ),
-        }));
-        this.registerMethod("streamsModifyRemoteSubscriptions", this.builder.createObject({
+        this.registerMethod("streamsUpdateRemoteSubscriptions", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
             subscriptionsToAdd: this.builder.createListWithMinLength(
                 this.builder.createObject({

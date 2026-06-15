@@ -40,9 +40,7 @@ export class StreamTests extends BaseTestSet {
         await this.tryStreamTrickle();
         await this.tryStreamGetTurnCredentials();
         await this.tryStreamRoomSendCustomEvent();
-        await this.tryStreamsSubscribeToRemote();
-        await this.tryStreamsUnsubscribeFromRemote();
-        await this.tryStreamsModifyRemoteSubscriptions();
+        await this.tryStreamsUpdateRemoteSubscriptions();
         await this.tryStreamUnpublish();
         await this.tryStreamRoomJoin();
         await this.tryStreamRoomLeave();
@@ -64,8 +62,7 @@ export class StreamTests extends BaseTestSet {
         // 1. Verify that media/signaling methods fail with STREAM_ROOM_CLOSED
         await this.tryStreamPublishOnClosedRoom();
         await this.tryStreamListOnClosedRoom();
-        await this.tryStreamsSubscribeToRemoteOnClosedRoom();
-        await this.tryStreamsModifyRemoteSubscriptionsOnClosedRoom();
+        await this.tryStreamsUpdateRemoteSubscriptionsOnClosedRoom();
         await this.tryStreamRoomJoinOnClosedRoom();
         
         // 2. Verify that CRUD methods still work
@@ -126,25 +123,13 @@ export class StreamTests extends BaseTestSet {
         }), "STREAM_ROOM_CLOSED");
     }
     
-    private async tryStreamsSubscribeToRemoteOnClosedRoom() {
+    private async tryStreamsUpdateRemoteSubscriptionsOnClosedRoom() {
         if (!this.streamRoomId) {
             throw new Error("StreamRoom not initialized");
         }
-        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsSubscribeToRemote({
+        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsUpdateRemoteSubscriptions({
             streamRoomId: this.streamRoomId!,
             subscriptionsToAdd: [{ streamId: 123 as types.stream.StreamId }],
-        }), "STREAM_ROOM_CLOSED");
-    }
-    
-    private async tryStreamsModifyRemoteSubscriptionsOnClosedRoom() {
-        if (!this.streamRoomId) {
-            throw new Error("StreamRoom not initialized");
-        }
-        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsModifyRemoteSubscriptions({
-            streamRoomId: this.streamRoomId!,
-            subscriptionsToAdd: [{
-                streamId: 1 as types.stream.StreamId,
-            }],
             subscriptionsToRemove: [],
         }), "STREAM_ROOM_CLOSED");
     }
@@ -305,24 +290,10 @@ export class StreamTests extends BaseTestSet {
         });
     }
     
-    private async tryStreamsSubscribeToRemote() {
-        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsSubscribeToRemote({
+    private async tryStreamsUpdateRemoteSubscriptions() {
+        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsUpdateRemoteSubscriptions({
             streamRoomId: testData.streamRoomId,
             subscriptionsToAdd: [{ streamId: 123 as types.stream.StreamId }],
-        }), "CANNOT_CONNECT_TO_MEDIA_SERVER");
-    }
-    
-    private async tryStreamsUnsubscribeFromRemote() {
-        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsUnsubscribeFromRemote({
-            streamRoomId: testData.streamRoomId,
-            subscriptionsToRemove: [{ streamId: 123 as types.stream.StreamId }],
-        }), "CANNOT_CONNECT_TO_MEDIA_SERVER");
-    }
-    
-    private async tryStreamsModifyRemoteSubscriptions() {
-        await shouldThrowErrorWithCode2(() => this.apis.streamApi.streamsModifyRemoteSubscriptions({
-            streamRoomId: testData.streamRoomId,
-            subscriptionsToAdd: [],
             subscriptionsToRemove: [],
         }), "CANNOT_CONNECT_TO_MEDIA_SERVER");
     }
