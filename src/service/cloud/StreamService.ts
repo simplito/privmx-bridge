@@ -452,7 +452,7 @@ export class StreamService extends BaseContainerService {
         const session = ctx.findJanusSession(sessionId);
         
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(cloudUser, streamRoom, "stream/streamAcceptOffer");
@@ -516,7 +516,7 @@ export class StreamService extends BaseContainerService {
         const session = ctx.findJanusSession(sessionId);
         
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(cloudUser, streamRoom, "stream/streamTrickle");
@@ -799,7 +799,7 @@ export class StreamService extends BaseContainerService {
     
     async listStreams(executor: Executor, streamRoomId: types.stream.StreamRoomId) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(executor, streamRoom, "stream/streamList");
@@ -865,7 +865,7 @@ export class StreamService extends BaseContainerService {
         return { user, streamRooms };
     }
     
-    async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "closed" | "all" | "active") {
+    async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "all" | types.stream.StreamRoomState) {
         const ctx = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!ctx) {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
@@ -881,8 +881,9 @@ export class StreamService extends BaseContainerService {
         const repo = this.repositoryFactory.createStreamRoomRepository();
         switch (state) {
             case "all": return { streamRooms: await repo.getPageByContext(contextId, listParams) };
-            case "active": return { streamRooms: await repo.getPageOfActiveStreamsByContext(contextId, listParams) };
-            case "closed": return { streamRooms: await repo.getPageOfClosedStreamsByContext(contextId, listParams) };
+            case "created":
+            case "open":
+            case "closed": return { streamRooms: await repo.getPageOfStreamsByContextAndState(contextId, state, listParams) };
             default: throw new AppException("INVALID_PARAMS");
         }
     }
@@ -1009,7 +1010,7 @@ export class StreamService extends BaseContainerService {
     
     private async ensureActiveStreamRoomWithAcl(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, requiredAcl: AclFunctionNameX) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         

@@ -15,6 +15,7 @@ export type StreamRoomId = string&{__streamRoomId: never};
 export type StreamRoomData = unknown;
 export type StreamRoomVersion = number&{__streamRoomVersion: never};
 export type StreamRoomType = string&{__streamRoomType: never};
+export type StreamRoomState = "created"|"open"|"closed";
 export type SessionId = number & {_sessionId: never};
 export type StreamId = number & {__streamId: never};
 export type StreamTrackId = string & {__streamTrackId: never};
