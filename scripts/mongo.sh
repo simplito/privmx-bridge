@@ -16,6 +16,7 @@ fi
 docker run \
     --rm \
     -it \
+    --ulimit nofile=65536:65536 \
     -p $MONGO_PORT:$MONGO_PORT \
     --health-cmd "echo 'try { rs.status() } catch (err) { rs.initiate({_id:\"$MONGO_RS_NAME\",members:[{_id:0,host:\"$MONGO_HOST_NAME:$MONGO_PORT\"}]}) }' | mongosh --port $MONGO_PORT --quiet" \
     --health-start-period 10s \
