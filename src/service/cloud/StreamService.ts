@@ -29,7 +29,7 @@ import { WebSocketExtendedWithJanus } from "../../CommonTypes";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { JanusContextFactory } from "./JanusContextFactory";
 import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
-import { Publisher, StreamId } from "../webrtc/v2/WebRtcTypes";
+import { StreamId } from "../webrtc/v2/WebRtcTypes";
 import { SubscribeOnExistingRequest, UnsubscribeOnExistingRequest, UpdateSubscriptionsRequest } from "../webrtc/v2/janus/videoroom/Types";
 import { JanusRoomsWatcher } from "./JanusRoomsWatcher";
 import { JanusContext, isPublishingSession } from "./JanusContext";
@@ -585,7 +585,7 @@ export class StreamService extends BaseContainerService {
             });
             
             if ("streams" in res.plugindata.data && Array.isArray(res.plugindata.data.streams)) {
-                const publisher: Publisher = { id: publisherId, streams: res.plugindata.data.streams, display: janusSessionX.userId };
+                const publisher = this.janusVideoRoomMapper.normalizePublisher({ id: publisherId, streams: res.plugindata.data.streams, display: janusSessionX.userId });
                 const convertedPublisher = this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(publisher);
                 
                 janusSessionX.keepPublishedStream(publisher);
@@ -641,8 +641,8 @@ export class StreamService extends BaseContainerService {
         }
         
         if ("streams" in res.plugindata.data && Array.isArray(res.plugindata.data.streams)) {
-            const afterTracks = res.plugindata.data.streams as WebRtcTypes.Stream[];
-            const publisher: Publisher = { id: publisherId, streams: afterTracks, display: janusSessionX.userId };
+            const afterTracks: WebRtcTypes.Stream[] = (res.plugindata.data.streams ?? []).map(s => this.janusVideoRoomMapper.normalizeStream(s));
+            const publisher = this.janusVideoRoomMapper.normalizePublisher({ id: publisherId, streams: afterTracks, display: janusSessionX.userId });
             const convertedPublisher = this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(publisher);
             
             const trackDiffs = this.diffTracks(beforeTracks, afterTracks);
@@ -825,7 +825,7 @@ export class StreamService extends BaseContainerService {
                 ? joinRes.plugindata.data.publishers
                 : [];
             
-            const publishersAsStreams = publishers.map(x => this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(x));
+            const publishersAsStreams = publishers.map(x => this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(this.janusVideoRoomMapper.normalizePublisher(x)));
             
             await janusVideoRoomPluginApi.leave({
                 janus: "message",
