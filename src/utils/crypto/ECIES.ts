@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import * as elliptic from "elliptic";
+import { EccKeyPair } from "./NobleEc";
 import { Crypto } from "./Crypto";
 
 export interface Options {
@@ -25,8 +25,8 @@ export class ECIES {
     private kM?: Buffer;
     
     constructor(
-        public privateKey: elliptic.ec.KeyPair,
-        public publicKey: elliptic.ec.KeyPair,
+        public privateKey: EccKeyPair,
+        public publicKey: EccKeyPair,
         public opts: Options = {noKey: true, shortTag: true},
     ) {
         this.privateKey = privateKey;

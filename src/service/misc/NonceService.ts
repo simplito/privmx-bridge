@@ -13,7 +13,7 @@ import { AppException } from "../../api/AppException";
 import { ConfigService } from "../config/ConfigService";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { ECUtils } from "../../utils/crypto/ECUtils";
-import * as elliptic from "elliptic";
+import { EccKeyPair } from "../../utils/crypto/NobleEc";
 import * as types from "../../types";
 import { DateUtils } from "../../utils/DateUtils";
 import { Base64 } from "../../utils/Base64";
@@ -28,7 +28,7 @@ export class NonceService {
     ) {
     }
     
-    signWithNonce(data: Buffer, key: elliptic.ec.KeyPair) {
+    signWithNonce(data: Buffer, key: EccKeyPair) {
         const nonce = <types.core.Nonce><string>Hex.from(Crypto.randomBytes(16));
         const timestamp = DateUtils.now();
         return {
@@ -38,7 +38,7 @@ export class NonceService {
         };
     }
     
-    signWithNonceCore(data: Buffer, key: elliptic.ec.KeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp) {
+    signWithNonceCore(data: Buffer, key: EccKeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp) {
         const message = this.getMessage(data, nonce, timestamp);
         return ECUtils.signToCompactSignature(key, message);
     }
@@ -60,7 +60,7 @@ export class NonceService {
         }
     }
     
-    async nonceCheck(data: Buffer, key: elliptic.ec.KeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: Buffer) {
+    async nonceCheck(data: Buffer, key: EccKeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: Buffer) {
         await this.simpleNonceCheck(nonce, timestamp);
         const message = this.getMessage(data, nonce, timestamp);
         if (!ECUtils.verifySignature(key, signature, message)) {
@@ -76,7 +76,7 @@ export class NonceService {
         await this.nonceCheck(data, eccKey, nonce, timestamp, Base64.toBuf(signature));
     }
     
-    async nonceCheck2P(data: Buffer, key: elliptic.ec.KeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature) {
+    async nonceCheck2P(data: Buffer, key: EccKeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature) {
         await this.nonceCheck(data, key, nonce, timestamp, Base64.toBuf(signature));
     }
     

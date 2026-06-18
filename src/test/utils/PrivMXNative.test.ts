@@ -14,7 +14,7 @@ import * as PrivmxNative from "../../utils/crypto/PrivMXNative";
 import * as base58 from "bs58";
 import * as base58check from "bs58check";
 import * as types from "../../types";
-import * as elliptic from "elliptic";
+import { ec } from "../../utils/crypto/NobleEc";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { ECIES } from "../../utils/crypto/ECIES";
 import { StringLogger } from "../testUtils/logger/StringLogger";
@@ -141,7 +141,7 @@ describe("base58_decode_with_checksum", () => {
     });
 });
 
-const secp256k1 = elliptic.ec("secp256k1");
+const secp256k1 = ec("secp256k1");
 
 it("elliptic import public from uncompressed buffer", () => {
     const pubBuffer = Buffer.from("040dab1baa2684afaeaff496180bf7619b2afb0759e6223a8d975a535f28b9e06a915981e033696e3ab8ba723e2a24108b81635fdf97cc5ad0ae68200d3bdc83d6", "hex");

@@ -18,7 +18,7 @@ import { Crypto } from "../../utils/crypto/Crypto";
 import { Utils } from "../../utils/Utils";
 import { Hex } from "../../utils/Hex";
 import { Base64 } from "../../utils/Base64";
-import * as elliptic from "elliptic";
+import { ec as createEc, EccKeyPair } from "../../utils/crypto/NobleEc";
 import { SrpLogic } from "../../utils/crypto/SrpLogic";
 import * as pki from "privmx-pki2";
 import * as types from "../../types";
@@ -36,7 +36,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     session: Session;
     tickets: {[ticketId: string]: Ticket};
     passwordMixer: PasswordMixer;
-    ecKey: elliptic.ec.KeyPair|null;
+    ecKey: EccKeyPair|null;
     
     constructor(
         logger: Logger,
@@ -53,9 +53,9 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const responseProcessing = this.connectionType == ConnectionType.ONE_SHOT;
         if (raw.type == "ecdhe") {
             const packet = <types.packet.EcdheResponsePacket>raw;
-            const ec = elliptic.ec("secp256k1");
+            const ec = createEc("secp256k1");
             
-            let ecKey: elliptic.ec.KeyPair;
+            let ecKey: EccKeyPair;
             if (this.session.contains("ecdhe_key")) {
                 // Jeżeli mamy klucz w sesji to znaczy, że to odpowiedź na zainicjowany przez nas handshake
                 // pobieramy i usuwamy klucz z sesji bo handshake właśnie się kończy
@@ -114,7 +114,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         if (this.session.contains("ecdhe_key")) {
             throw new Error("Invalid handshake state");
         }
-        const ec = elliptic.ec("secp256k1");
+        const ec = createEc("secp256k1");
         const ecKey = ec.genKeyPair();
         this.ecKey = ecKey;
         
@@ -135,7 +135,7 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
     }
     
     ecdhefHandshake(key: pki.common.Types.keystore.IKeyPair2) {
-        const ec = elliptic.ec("secp256k1");
+        const ec = createEc("secp256k1");
         const ecKey = ec.genKeyPair();
         this.ecKey = ecKey;
         
@@ -148,7 +148,8 @@ export class PrivmxConnectionClient extends PrivmxConnectionBase {
         const serializedPayload = this.getEncoder().encode(packet);
         
         this.send(serializedPayload, ContentType.HANDSHAKE);
-        const der = Buffer.from(ecKey.derive((<pki.common.keystore.EccKeyPair>key).keyPair.getPublic()).toString("hex", 2), "hex");
+        const serverKey = createEc().fromElliptic((<pki.common.keystore.EccKeyPair>key).keyPair);
+        const der = Buffer.from(ecKey.derive(serverKey.getPublic()).toString("hex", 2), "hex");
         const z = Utils.fillTo32(der);
         this.setPreMasterSecret(z);
         this.changeWriteCipherSpec();
