@@ -15,7 +15,7 @@ import { RWState } from "./RWState";
 import { ContentType } from "./ContentType";
 import { Utils } from "../../utils/Utils";
 import { Hex } from "../../utils/Hex";
-import { ec as createEc } from "../../utils/crypto/NobleEc";
+import { EccKeyPair } from "../../utils/crypto/NobleEc";
 import * as pki from "privmx-pki2";
 import { TicketsDb, TicketData, TicketId } from "./TicketsDb";
 import { PrivmxConnectionBase } from "./PrivmxConnectionBase";
@@ -70,8 +70,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         if (raw.type == "ecdhe") {
             const packet = <types.packet.EcdheRequestPacket>raw;
             this.validators.validate("handshake_ecdhe", packet);
-            const ec = createEc("secp256k1");
-            const ecKey = ec.genKeyPair();
+            const ecKey = EccKeyPair.generate();
             const response: types.packet.EcdheResponsePacket = {
                 type: "ecdhe",
                 key: Buffer.from(ecKey.getPublic(true, "binary")),
@@ -86,7 +85,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             if (packet.agent != null) {
                 this.clientAgent = packet.agent;
             }
-            const clientKey = ec.keyFromPublic(packet.key);
+            const clientKey = EccKeyPair.fromPublic(packet.key);
             const sessionId = await this.ecdheLoginService.onLogin(ECUtils.publicToBase58DER(clientKey), this.getEncoderType(), packet.solution);
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
@@ -97,8 +96,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
         else if (raw.type == "ecdhex") {
             const packet = <types.packet.EcdhexRequestPacket>raw;
             this.validators.validate("handshake_ecdhex", packet);
-            const ec = createEc("secp256k1");
-            const ecKey = ec.genKeyPair();
+            const ecKey = EccKeyPair.generate();
             const response: types.packet.EcdhexResponsePacket = {
                 type: "ecdhex",
                 key: Buffer.from(ecKey.getPublic(true, "binary")),
@@ -114,7 +112,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             if (packet.agent != null) {
                 this.clientAgent = packet.agent;
             }
-            const clientKey = ec.keyFromPublic(packet.key);
+            const clientKey = EccKeyPair.fromPublic(packet.key);
             const sessionId = await this.ecdheLoginService.onLoginX(ECUtils.publicToBase58DER(clientKey), packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution, this.getEncoderType());
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
@@ -131,7 +129,6 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.sessionId = packet.sessionId;
                 methodInfo.method = "session";
                 methodInfo.params = packet;
-                const ec = createEc("secp256k1");
                 const clientKey = ECUtils.publicFromBase58DER(packet.sessionKey);
                 if (!clientKey) {
                     throw new RpcError("Invalid client key");
@@ -139,7 +136,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 const session = await this.sessionLoginService.onSession(packet.sessionId, clientKey, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature);
                 methodInfo.user = session.get("username");
                 this.sessionId = session.id;
-                const ecKey = ec.genKeyPair();
+                const ecKey = EccKeyPair.generate();
                 const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
                 const z = Utils.fillTo32(der);
                 const response: types.packet.SessionResponsePacket = {
@@ -276,10 +273,9 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
             if (key === null) {
                 throw new RpcError("Cannot find key with id " + packet.key_id);
             }
-            const ec = createEc("secp256k1");
-            const ecKey = ec.keyFromPublic(packet.key);
+            const ecKey = EccKeyPair.fromPublic(packet.key);
             this.logger.debug("derive");
-            const serverKey = createEc().fromElliptic((<pki.common.keystore.EccKeyPair>key.keyPair).keyPair);
+            const serverKey = EccKeyPair.fromElliptic((<pki.common.keystore.EccKeyPair>key.keyPair).keyPair);
             const der = Buffer.from(serverKey.derive(ecKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
             this.setPreMasterSecret(z);

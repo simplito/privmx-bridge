@@ -14,7 +14,7 @@ import * as types from "../../types";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { ECIES } from "../../utils/crypto/ECIES";
 import { Crypto } from "../../utils/crypto/Crypto";
-import { getNativeEcProvider, setNativeEcProvider } from "../../utils/crypto/NobleEc";
+import { getEcEngine, NobleEcEngine, setEcEngine } from "../../utils/crypto/NobleEc";
 
 // --- Key A (signing / address) — private key 683641...a41b ---
 const KEY_A_WIF = "KziHVv9Cr2awhHFDmo1NbQukX12ha1d3unM8AoyRLK4MEWPLK7GN" as types.core.EccWif;
@@ -104,14 +104,14 @@ describe("EC golden vectors - public key encoding", () => {
 
 describe("EC golden vectors - signatures", () => {
     it("signToCompactSignature is deterministic (RFC 6979) and byte-stable", () => {
-        const prev = getNativeEcProvider();
-        setNativeEcProvider(null);
+        const prev = getEcEngine();
+        setEcEngine(new NobleEcEngine());
         try {
             const sig = ECUtils.signToCompactSignature(privKey(KEY_A_WIF), MSG);
             expect(sig.toString("hex")).toBe(KEY_A_COMPACT_SIG);
         }
         finally {
-            setNativeEcProvider(prev);
+            setEcEngine(prev);
         }
     });
     it("verifySignature accepts a valid signature", () => {

@@ -11,9 +11,7 @@ limitations under the License.
 
 import "q2-test";
 import * as BN from "bn.js";
-import { ec, EccKeyPair, getNativeEcProvider, NativeEcProvider, setNativeEcProvider } from "../../utils/crypto/NobleEc";
-
-const secp256k1 = ec("secp256k1");
+import { EccKeyPair, getEcEngine, NobleEcEngine, recoverPublicKey, setEcEngine } from "../../utils/crypto/NobleEc";
 
 // Fixtures (recorded from elliptic in Phase 0)
 const A_PRIV_HEX = "683641b0c8a09ad848c12bd29e3f18342e4db4999cd98ad9e808b6c1ade8a41b";
@@ -38,7 +36,7 @@ const V_SIG = Buffer.from(
 );
 
 function keyA(): EccKeyPair {
-    return secp256k1.keyFromPrivate(Buffer.from(A_PRIV_HEX, "hex"));
+    return EccKeyPair.fromPrivate(Buffer.from(A_PRIV_HEX, "hex"));
 }
 
 // signToCompactSignature, re-implemented exactly as ECUtils does it, on top of the adapter
@@ -73,21 +71,21 @@ describe("NobleEc - public key derivation & encoding", () => {
     it("getPrivate(hex) round-trips", () => {
         expect(keyA().getPrivate("hex")).toBe(A_PRIV_HEX);
     });
-    it("keyFromPublic point eq matches", () => {
+    it("fromPublic point eq matches", () => {
         const fromPriv = keyA().getPublic();
-        const fromPub = secp256k1.keyFromPublic(Buffer.from(A_PUB_COMPRESSED, "hex")).getPublic();
+        const fromPub = EccKeyPair.fromPublic(Buffer.from(A_PUB_COMPRESSED, "hex")).getPublic();
         expect(fromPriv.eq(fromPub)).toBe(true);
     });
 });
 
 function forceNoble<T>(fn: () => T): T {
-    const prev = getNativeEcProvider();
-    setNativeEcProvider(null);
+    const prev = getEcEngine();
+    setEcEngine(new NobleEcEngine());
     try {
         return fn();
     }
     finally {
-        setNativeEcProvider(prev);
+        setEcEngine(prev);
     }
 }
 
@@ -111,71 +109,72 @@ describe("NobleEc - signatures", () => {
         expect(keyA().verify(tampered, { r: sig.slice(1, 33).toString("hex"), s: sig.slice(33).toString("hex") })).toBe(false);
     });
     it("verify matches elliptic on the legacy vector (true)", () => {
-        const key = secp256k1.keyFromPublic(Buffer.from(V_PUB, "hex"));
+        const key = EccKeyPair.fromPublic(Buffer.from(V_PUB, "hex"));
         expect(key.verify(MSG, { r: V_SIG.slice(1, 33).toString("hex"), s: V_SIG.slice(33).toString("hex") })).toBe(true);
     });
     it("verify matches elliptic on the legacy vector (false / wrong key)", () => {
-        const key = secp256k1.keyFromPublic(Buffer.from(V_PUB_WRONG, "hex"));
+        const key = EccKeyPair.fromPublic(Buffer.from(V_PUB_WRONG, "hex"));
         expect(key.verify(MSG, { r: V_SIG.slice(1, 33).toString("hex"), s: V_SIG.slice(33).toString("hex") })).toBe(false);
     });
-    it("recoverPubKey recovers the signing key", () => {
+    it("recoverPublicKey recovers the signing key", () => {
         const sig = Buffer.from(A_COMPACT_SIG, "hex");
         const recParam = sig[0] - 27;
-        const point = secp256k1.recoverPubKey(MSG, { r: sig.slice(1, 33).toString("hex"), s: sig.slice(33).toString("hex") }, recParam);
+        const point = recoverPublicKey(MSG, { r: sig.slice(1, 33).toString("hex"), s: sig.slice(33).toString("hex") }, recParam);
         expect(point.encodeCompressed().toString("hex")).toBe(A_PUB_COMPRESSED);
     });
 });
 
 describe("NobleEc - ECDH derive", () => {
     it("derive returns the shared X coordinate as a BN matching elliptic", () => {
-        const priv = secp256k1.keyFromPrivate(Buffer.from(B_PRIV_HEX, "hex"));
-        const pub = secp256k1.keyFromPublic(Buffer.from(C_PUB_UNCOMPRESSED, "hex"));
+        const priv = EccKeyPair.fromPrivate(Buffer.from(B_PRIV_HEX, "hex"));
+        const pub = EccKeyPair.fromPublic(Buffer.from(C_PUB_UNCOMPRESSED, "hex"));
         const shared = priv.derive(pub.getPublic());
         expect(Buffer.from(shared.toArray("be", 32)).toString("hex")).toBe(BC_SHARED_X);
         expect(Buffer.from(shared.toString("hex", 2), "hex").toString("hex")).toBe(BC_SHARED_X);
     });
 });
 
-describe("NobleEc - genKeyPair", () => {
+describe("NobleEc - generate", () => {
     it("generates a usable keypair (sign -> verify round-trip)", () => {
-        const key = secp256k1.genKeyPair();
+        const key = EccKeyPair.generate();
         expect((key.getPrivate() as BN).toArrayLike(Buffer, "be", 32).length).toBe(32);
         const sig = key.sign(MSG);
         expect(key.verify(MSG, { r: sig.r, s: sig.s })).toBe(true);
     });
 });
 
-describe("NobleEc - native provider hook", () => {
-    it("routes sign / verify / derive through a registered provider, then restores noble", () => {
+describe("NobleEc - engine hook", () => {
+    it("routes sign / verify / derive through the active engine, then restores noble", () => {
         const calls: string[] = [];
-        const fake: NativeEcProvider = {
-            sign: (_msg, _priv) => {
+        // A swapped engine: overrides the digest ops, inherits keygen/encoding from noble.
+        class FakeEngine extends NobleEcEngine {
+            sign(_msg: Buffer, _priv: Buffer) {
                 calls.push("sign");
                 return { r: Buffer.alloc(32, 0x11), s: Buffer.alloc(32, 0x22), recovery: 2 };
-            },
-            verify: (_msg, _sig, _pub) => {
+            }
+            verify(_msg: Buffer, _r: Buffer, _s: Buffer, _pub: Buffer) {
                 calls.push("verify");
                 return true;
-            },
-            sharedKey: (_priv, _pub) => {
-                calls.push("sharedKey");
+            }
+            sharedSecretX(_priv: Buffer, _pub: Buffer) {
+                calls.push("sharedSecretX");
                 return Buffer.alloc(32, 0x33);
-            },
-        };
-        const prev = getNativeEcProvider();
+            }
+        }
+        const prev = getEcEngine();
         try {
-            setNativeEcProvider(fake);
+            setEcEngine(new FakeEngine());
             const key = keyA();
             const sig = key.sign(MSG);
             expect(sig.recoveryParam).toBe(2);
             expect(sig.r.toArrayLike(Buffer, "be", 32).toString("hex")).toBe("11".repeat(32));
             expect(key.verify(MSG, { r: "00", s: "00" })).toBe(true);
-            const shared = key.derive(secp256k1.keyFromPublic(Buffer.from(C_PUB_UNCOMPRESSED, "hex")).getPublic());
+            const shared = key.derive(EccKeyPair.fromPublic(Buffer.from(C_PUB_UNCOMPRESSED, "hex")).getPublic());
             expect(Buffer.from(shared.toArray("be", 32)).toString("hex")).toBe("33".repeat(32));
-            expect(calls).toEqual(["sign", "verify", "sharedKey"]);
+            expect(calls).toEqual(["sign", "verify", "sharedSecretX"]);
         }
         finally {
-            setNativeEcProvider(prev);
+            setEcEngine(prev);
         }
         expect(forceNoble(() => compactSig(keyA(), MSG).toString("hex"))).toBe(A_COMPACT_SIG);
     });

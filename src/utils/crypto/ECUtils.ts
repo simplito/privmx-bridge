@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { ec, EccKeyPair } from "./NobleEc";
+import { EccKeyPair, recoverPublicKey } from "./NobleEc";
 import { Base58 } from "./Base58";
 import { Crypto } from "./Crypto";
 import * as types from "../../types";
@@ -21,7 +21,7 @@ export class ECUtils {
     
     static generateKeyPair() {
         // pki2 still emits elliptic keys; bridge to the noble-backed adapter at the boundary.
-        const keyPair = ec().fromElliptic(pki.common.keystore.EccKeyPair.generate().keyPair);
+        const keyPair = EccKeyPair.fromElliptic(pki.common.keystore.EccKeyPair.generate().keyPair);
         return {
             keyPair,
             pub58: ECUtils.publicToBase58DER(keyPair),
@@ -36,16 +36,16 @@ export class ECUtils {
         return keystore.serializeWithArmor();
     }
     
-    static generateRandom(curve: string = "secp256k1"): EccKeyPair {
-        return ec(curve).genKeyPair();
+    static generateRandom(): EccKeyPair {
+        return EccKeyPair.generate();
     }
     
     static toPublic(keyPair: EccKeyPair): EccKeyPair {
         const hex = keyPair.getPublic(true, "hex") as string;
-        return keyPair.ec.keyFromPublic(hex, "hex");
+        return EccKeyPair.fromPublic(hex, "hex");
     }
     
-    static fromWIF(wif: types.core.EccWif, curve: string = "secp256k1"): EccKeyPair|null {
+    static fromWIF(wif: types.core.EccWif): EccKeyPair|null {
         const payloadResult = Utils.try(() => Base58.decodeWithChecksum(wif));
         if (payloadResult.success === false) {
             return null;
@@ -60,7 +60,7 @@ export class ECUtils {
         if (payload.length != 32) {
             return null; // "Invalid WIF payload length"
         }
-        return ec(curve).keyFromPrivate(payload);
+        return EccKeyPair.fromPrivate(payload);
     }
     
     static toWIF(keyPair: EccKeyPair, network = "80", compressed = true): types.core.EccWif {
@@ -71,12 +71,12 @@ export class ECUtils {
         return <types.core.EccWif>Base58.encodeWithChecksum(Buffer.from(priv, "hex"));
     }
     
-    static publicFromBase58DER(base58: types.core.EccPubKey, curve: string = "secp256k1"): EccKeyPair|null {
+    static publicFromBase58DER(base58: types.core.EccPubKey): EccKeyPair|null {
         const result = Utils.try(() => Base58.decodeWithChecksum(base58));
         if (result.success === false || result.result.length === 0) {
             return null;
         }
-        return ec(curve).keyFromPublic(result.result.toString("hex"), "hex");
+        return EccKeyPair.fromPublic(result.result.toString("hex"), "hex");
     }
     
     static publicToBase58DER(keyPair: EccKeyPair, compressed: boolean = true): types.core.EccPubKey {
@@ -129,7 +129,7 @@ export class ECUtils {
         return Buffer.from(compact, "hex");
     }
     
-    static recoveryPubKey(message: Buffer, signature: Buffer, curve: string = "secp256k1") {
+    static recoveryPubKey(message: Buffer, signature: Buffer) {
         if (signature.length != 65) {
             throw new Error("Invalid signature buffer");
         }
@@ -138,8 +138,8 @@ export class ECUtils {
             s: signature.slice(33).toString("hex"),
         };
         const recoveryParam = ECUtils.getRecoveryParam(signature[0]);
-        const pubPoint = ec(curve).recoverPubKey(message, sig, recoveryParam);
-        return ec(curve).keyFromPublic(pubPoint);
+        const pubPoint = recoverPublicKey(message, sig, recoveryParam);
+        return EccKeyPair.fromPublic(pubPoint);
     }
     
     private static getRecoveryParam(value: number) {
