@@ -40,6 +40,7 @@ import { Migration066MongoStorage } from "./Migration066MongoStorage";
 import { Migration067AddNotificationCollection } from "./Migration067AddNotificationCollection";
 import { Migration068KnownPublicKeysCollection } from "./Migration068KnownPublicKeysCollection";
 import { Migration069IndexesForSession } from "./Migration069IndexesForSession";
+import { Migration070StreamRoomState } from "./Migration070StreamRoomState";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -85,6 +86,7 @@ export class MigrationManager {
         Migration067AddNotificationCollection,
         Migration068KnownPublicKeysCollection,
         Migration069IndexesForSession,
+        Migration070StreamRoomState,
     ];
     static DB_VERSION: string|null = null;
     

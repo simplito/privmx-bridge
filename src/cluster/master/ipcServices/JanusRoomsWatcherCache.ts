@@ -95,7 +95,7 @@ export class JanusRoomsWatcherCache {
     }
     
     @ApiMethod({})
-    async addPublisher(model: JanusRoomWatch) {
+    async addPublisher(model: JanusRoomWatch): Promise<boolean> {
         this.logger.debug({ model }, "[CACHE] addPublisher invoked");
         
         const janusRoomId = Number(model.janusRoomId);
@@ -119,6 +119,7 @@ export class JanusRoomsWatcherCache {
             this.janusRoomIdToStreamRoomIdMap.set(janusRoomId, { host: model.host, streamRoomId: model.streamRoomId });
         }
         
+        const wasEmpty = roomState.publishers.size === 0;
         roomState.publishers.set(publisherId, model);
         const wasRemovedFromPending = this.pendingEmptyRooms.delete(model.streamRoomId);
         
@@ -127,7 +128,10 @@ export class JanusRoomsWatcherCache {
             publisherIdAdded: publisherId,
             currentPublishersCount: roomState.publishers.size,
             wasRemovedFromPending: wasRemovedFromPending,
+            wasEmpty: wasEmpty,
         }, "[CACHE] addPublisher completed successfully");
+        
+        return wasEmpty;
     }
     
     @ApiMethod({})
