@@ -804,7 +804,7 @@ export class StreamService extends BaseContainerService {
     
     async listParticipants(executor: Executor, streamRoomId: types.stream.StreamRoomId) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        await this.verifyRoomAccess(executor, streamRoom, "stream/streamList");
+        await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomListParticipants");
         const [subscribers, publishedStreams] = await Promise.all([
             this.janusRoomsWatcher.getRoomSubscribers(this.host, streamRoom.id),
             this.listStreamsInternal(streamRoom),
