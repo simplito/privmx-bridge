@@ -31,7 +31,7 @@ export interface StreamRoom {
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;
-    closed: boolean;
+    state: types.stream.StreamRoomState;
 }
 
 export interface StreamRoomCreateModel {

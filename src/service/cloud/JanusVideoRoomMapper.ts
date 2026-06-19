@@ -10,6 +10,7 @@ limitations under the License.
 */
 
 import * as WebRtcTypes from "../webrtc/v2/WebRtcTypes";
+import * as videoroom from "../webrtc/v2/janus/videoroom/Types";
 
 export class JanusVideoRoomMapper {
     
@@ -19,5 +20,25 @@ export class JanusVideoRoomMapper {
             throw new Error("convertPublisherToPublisherAsStream(): Cannot convert Janus publisher to Endpoint's stream.");
         }
         return {...rest, userId: display, tracks: streams};
+    }
+    
+    normalizeStream(raw: videoroom.PublisherStream): WebRtcTypes.Stream {
+        return {
+            ...raw,
+            disabled: raw.disabled === true,
+            moderated: raw.moderated === true,
+            simulcast: raw.simulcast === true,
+            svc: raw.svc === true,
+            talking: raw.talking === true,
+        };
+    }
+    
+    normalizePublisher(raw: videoroom.Publisher): WebRtcTypes.Publisher {
+        return {
+            ...raw,
+            dummy: raw.dummy === true,
+            talking: raw.talking === true,
+            streams: (raw.streams ?? []).map(s => this.normalizeStream(s)),
+        };
     }
 }

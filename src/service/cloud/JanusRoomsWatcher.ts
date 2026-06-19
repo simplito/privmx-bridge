@@ -106,7 +106,7 @@ export class JanusRoomsWatcher {
             const repo = this.repositoryFactory.createStreamRoomRepository(session);
             const streamRoom = await repo.get(id);
             
-            if (!streamRoom || streamRoom.closed) {
+            if (!streamRoom || streamRoom.state === "closed") {
                 return;
             }
             
@@ -141,11 +141,29 @@ export class JanusRoomsWatcher {
     
     async addSessionToWatch(model: JanusRoomWatch) {
         await this.ensureConnection();
-        await this.cache.addPublisher(model);
+        const wasEmpty = await this.cache.addPublisher(model);
+        
+        if (wasEmpty) {
+            await this.openDbRoom(model.streamRoomId);
+        }
         
         if (!this.roomHandles.has(model.janusRoomId)) {
             return this.startOrJoinRoomAttachment(model);
         }
+    }
+    
+    private async openDbRoom(id: StreamRoomId) {
+        await this.repositoryFactory.withTransaction(async (session) => {
+            const repo = this.repositoryFactory.createStreamRoomRepository(session);
+            const streamRoom = await repo.get(id);
+            
+            if (!streamRoom || streamRoom.state !== "created") {
+                return;
+            }
+            
+            this.logger.debug("FIRST PUBLISHER JOINED. SETTING ROOM TO OPEN", id);
+            await repo.openStreamRoom(id);
+        });
     }
     
     async removeSessionFromWatch(model: JanusRoomWatch) {

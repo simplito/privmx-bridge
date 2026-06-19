@@ -163,21 +163,30 @@ export interface JoinedAsPublisherData {
     description: string; // <description of the room, if available>,
     id: number; // <unique ID of the participant>,
     private_id: number; // <a different unique ID associated to the participant; meant to be private>,
-    publishers: WebRtcTypes.Publisher[];
+    publishers: Publisher[];
     attendees: Ateendee[];
+}
+
+export interface Publisher {
+    id: number; // <unique ID of active publisher>,
+    display?: string; // "<display name of active publisher, if any>",
+    metadata?: Record<string, any>; // <valid JSON object of metadata, if any>,
+    dummy?: boolean; // <true if this participant is a dummy publisher>,
+    streams?: PublisherStream[]; // <list of published streams>,
+    talking?: boolean; // <whether the publisher is talking or not (deprecated field)>,
 }
 
 export interface PublisherStream {
     type: "audio"|"video"|"data"; // "<type of published stream #1 (audio|video|data)">,
     mindex: number; // "<unique mindex of published stream #1>",
-    mid: number; // "<unique mid of of published stream #1>",
-    disabled: boolean; // <if true, it means this stream is currently inactive/disabled (and so codec, description, etc. will be missing)>,
-    codec: string; // "<codec used for published stream #1>",
-    description: string; // "<text description of published stream #1, if any>",
-    moderated: boolean; // <true if this stream audio has been moderated for this participant>,
-    simulcast: boolean; // "<true if published stream #1 uses simulcast>",
-    svc: boolean; // "<true if published stream #1 uses SVC (VP9 and AV1 only)>",
-    talking: boolean; // <true|false, whether the publisher stream has audio activity or not (only if audio levels are used)>,
+    mid: string; // "<unique mid of of published stream #1>",
+    disabled?: boolean; // <if true, it means this stream is currently inactive/disabled (and so codec, description, etc. will be missing)>,
+    codec?: string; // "<codec used for published stream #1>",
+    description?: string; // "<text description of published stream #1, if any>",
+    moderated?: boolean; // <true if this stream audio has been moderated for this participant>,
+    simulcast?: boolean; // "<true if published stream #1 uses simulcast>",
+    svc?: boolean; // "<true if published stream #1 uses SVC (VP9 and AV1 only)>",
+    talking?: boolean; // <true|false, whether the publisher stream has audio activity or not (only if audio levels are used)>,
 }
 export interface Ateendee {
     id: number; // <unique ID of attendee #1>,
@@ -250,6 +259,7 @@ export type PublishRequest = JanusRequest<{
 export type PublishResponse = AsyncJanusResponse<{
     videoroom: "event";
     configured: "ok";
+    streams?: PublisherStream[];
 }>&{jsep: WebRtcTypes.RTCSessionDescriptionAnswer};
 
 export type ConfigureRequest = JanusRequest<{
@@ -259,6 +269,7 @@ export type ConfigureRequest = JanusRequest<{
 export type ConfigureResponse = AsyncJanusResponse<{
     videoroom: "event";
     started: "ok";
+    streams?: PublisherStream[];
 }>&{jsep: WebRtcTypes.RTCSessionDescriptionAnswer};
 
 export type UnpublishRequest = JanusRequest<{

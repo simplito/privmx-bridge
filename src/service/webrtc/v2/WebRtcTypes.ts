@@ -337,11 +337,11 @@ export interface Publisher {
     /** valid JSON object of metadata, if any */
     metadata?: Record<string, any>;
     /** true if this participant is a dummy publisher */
-    dummy?: boolean;
+    dummy: boolean;
     /** list of published streams */
     streams: Stream[];
     /** whether the publisher is talking or not (deprecated field) */
-    talking?: boolean;
+    talking: boolean;
 }
 
 export interface Stream {
@@ -351,19 +351,19 @@ export interface Stream {
     /** unique mid of published stream */
     mid: string;
     /** true if stream is currently inactive/disabled */
-    disabled?: boolean;
+    disabled: boolean;
     /** codec used for this stream */
     codec?: string;
     /** optional description of this stream */
     description?: string;
     /** true if stream has been moderated for this participant */
-    moderated?: boolean;
+    moderated: boolean;
     /** true if this stream uses simulcast */
-    simulcast?: boolean;
+    simulcast: boolean;
     /** true if this stream uses SVC (VP9 and AV1 only) */
-    svc?: boolean;
+    svc: boolean;
     /** whether the publisher stream has audio activity or not */
-    talking?: boolean;
+    talking: boolean;
 }
 
 export type PublisherAsStream = Omit<Publisher, "display" | "streams"> & {userId: string, tracks: Stream[]};

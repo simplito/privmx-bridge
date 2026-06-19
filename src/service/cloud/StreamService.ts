@@ -29,7 +29,7 @@ import { WebSocketExtendedWithJanus } from "../../CommonTypes";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { JanusContextFactory } from "./JanusContextFactory";
 import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
-import { Publisher, StreamId } from "../webrtc/v2/WebRtcTypes";
+import { StreamId } from "../webrtc/v2/WebRtcTypes";
 import { SubscribeOnExistingRequest, UnsubscribeOnExistingRequest, UpdateSubscriptionsRequest } from "../webrtc/v2/janus/videoroom/Types";
 import { JanusRoomsWatcher } from "./JanusRoomsWatcher";
 import { JanusContext, isPublishingSession } from "./JanusContext";
@@ -456,7 +456,7 @@ export class StreamService extends BaseContainerService {
         const session = ctx.findJanusSession(sessionId);
         
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(cloudUser, streamRoom, "stream/streamAcceptOffer");
@@ -520,7 +520,7 @@ export class StreamService extends BaseContainerService {
         const session = ctx.findJanusSession(sessionId);
         
         const streamRoom = await this.getDbStreamRoom(session.streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(cloudUser, streamRoom, "stream/streamTrickle");
@@ -589,7 +589,7 @@ export class StreamService extends BaseContainerService {
             });
             
             if ("streams" in res.plugindata.data && Array.isArray(res.plugindata.data.streams)) {
-                const publisher: Publisher = { id: publisherId, streams: res.plugindata.data.streams, display: janusSessionX.userId };
+                const publisher = this.janusVideoRoomMapper.normalizePublisher({ id: publisherId, streams: res.plugindata.data.streams, display: janusSessionX.userId });
                 const convertedPublisher = this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(publisher);
                 
                 janusSessionX.keepPublishedStream(publisher);
@@ -645,8 +645,8 @@ export class StreamService extends BaseContainerService {
         }
         
         if ("streams" in res.plugindata.data && Array.isArray(res.plugindata.data.streams)) {
-            const afterTracks = res.plugindata.data.streams as WebRtcTypes.Stream[];
-            const publisher: Publisher = { id: publisherId, streams: afterTracks, display: janusSessionX.userId };
+            const afterTracks: WebRtcTypes.Stream[] = (res.plugindata.data.streams ?? []).map(s => this.janusVideoRoomMapper.normalizeStream(s));
+            const publisher = this.janusVideoRoomMapper.normalizePublisher({ id: publisherId, streams: afterTracks, display: janusSessionX.userId });
             const convertedPublisher = this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(publisher);
             
             const trackDiffs = this.diffTracks(beforeTracks, afterTracks);
@@ -818,7 +818,7 @@ export class StreamService extends BaseContainerService {
     
     async listStreams(executor: Executor, streamRoomId: types.stream.StreamRoomId) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         await this.verifyRoomAccess(executor, streamRoom, "stream/streamList");
@@ -844,7 +844,7 @@ export class StreamService extends BaseContainerService {
                 ? joinRes.plugindata.data.publishers
                 : [];
             
-            const publishersAsStreams = publishers.map(x => this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(x));
+            const publishersAsStreams = publishers.map(x => this.janusVideoRoomMapper.convertPublisherToPublisherAsStream(this.janusVideoRoomMapper.normalizePublisher(x)));
             
             await janusVideoRoomPluginApi.leave({
                 janus: "message",
@@ -884,7 +884,7 @@ export class StreamService extends BaseContainerService {
         return { user, streamRooms };
     }
     
-    async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "closed" | "all" | "active") {
+    async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "all" | types.stream.StreamRoomState) {
         const ctx = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!ctx) {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
@@ -900,8 +900,9 @@ export class StreamService extends BaseContainerService {
         const repo = this.repositoryFactory.createStreamRoomRepository();
         switch (state) {
             case "all": return { streamRooms: await repo.getPageByContext(contextId, listParams) };
-            case "active": return { streamRooms: await repo.getPageOfActiveStreamsByContext(contextId, listParams) };
-            case "closed": return { streamRooms: await repo.getPageOfClosedStreamsByContext(contextId, listParams) };
+            case "created":
+            case "open":
+            case "closed": return { streamRooms: await repo.getPageOfStreamsByContextAndState(contextId, state, listParams) };
             default: throw new AppException("INVALID_PARAMS");
         }
     }
@@ -1028,7 +1029,7 @@ export class StreamService extends BaseContainerService {
     
     private async ensureActiveStreamRoomWithAcl(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, requiredAcl: AclFunctionNameX) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        if (streamRoom.closed) {
+        if (streamRoom.state === "closed") {
             throw new AppException("STREAM_ROOM_CLOSED");
         }
         
