@@ -116,6 +116,7 @@ export interface JanusSession {
     streamsToAccept: number[];
     publishedStreams: Publisher[];
     streamPublishedEventEmitted: boolean;
+    peerConnectionEstablished: boolean;
     subscriptions: StreamSubscription[];
     janusPublisherId?: WebRtcTypes.VideoRoomPublisherId;
     userId: types.cloud.UserId;

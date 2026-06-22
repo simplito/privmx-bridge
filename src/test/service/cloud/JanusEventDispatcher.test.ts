@@ -58,6 +58,7 @@ function session(type: "main" | "subscriber", overrides: Partial<JanusSession> =
         streamsToAccept: [],
         publishedStreams: [],
         streamPublishedEventEmitted: false,
+        peerConnectionEstablished: false,
         subscriptions: [],
         janusPublisherId: undefined,
         addStreamsOffer: empty as any,
@@ -126,6 +127,28 @@ describe("JanusEventDispatcher.handleJanusNotification", () => {
         const { dispatcher, notifications } = build();
         await dispatcher.handleJanusNotification(webrtcup(), websocketWith(session("main")), "ws1" as any);
         hasNoCalls(notifications.sendStreamPublishedEvent as any);
+    });
+    
+    it("marks the session's PeerConnection established on webrtcup", async () => {
+        const { dispatcher } = build();
+        const sess = publishingMain();
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(sess), "ws1" as any);
+        expect(sess.peerConnectionEstablished).toBe(true);
+    });
+    
+    it("emits this session's published stream, not the last array element", async () => {
+        const { dispatcher, notifications } = build();
+        const sess = session("main", {
+            janusPublisherId: 1 as any,
+            publishedStreams: [
+                { id: 1, display: "U", streams: [{ type: "audio", mid: "0", mindex: 0 }] } as any,
+                { id: 99, display: "U", streams: [{ type: "video", mid: "1", mindex: 1 }] } as any,
+            ],
+        });
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(sess), "ws1" as any);
+        hasOneCall(notifications.sendStreamPublishedEvent as any);
+        const emitted = (notifications.sendStreamPublishedEvent as any).mock.calls[0][1];
+        expect(emitted.stream.id).toBe(1);
     });
     
     it("does not translate `updated` for a main (publisher) session", async () => {

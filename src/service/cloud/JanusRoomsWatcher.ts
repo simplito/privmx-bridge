@@ -62,12 +62,12 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeaving(evt)) {
-            return;
-        }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving;
+        const rawPublisherId = this.extractDepartingPublisherId(data);
+        if (rawPublisherId === undefined) {
+            return;
+        }
         
         if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
@@ -190,7 +190,10 @@ export class JanusRoomsWatcher {
     }
     
     async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
-        await this.cache.removeSubscriber({host, streamRoomId, userId});
+        const isRoomEmpty = await this.cache.removeSubscriber({host, streamRoomId, userId});
+        if (isRoomEmpty) {
+            await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
+        }
     }
     
     async getRoomSubscribers(host: string, streamRoomId: StreamRoomId) {
@@ -352,13 +355,17 @@ export class JanusRoomsWatcher {
         return attach;
     }
     
-    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
-        const data = evt.plugindata.data as Record<string, unknown>;
-        return (
-            typeof data === "object" && data !== null &&
-            "room" in data &&
-            "leaving" in data
-        );
+    private extractDepartingPublisherId(data: Record<string, unknown>): unknown {
+        if (typeof data !== "object" || data === null || !("room" in data)) {
+            return undefined;
+        }
+        if ("leaving" in data) {
+            return data.leaving;
+        }
+        if ("unpublished" in data) {
+            return data.unpublished;
+        }
+        return undefined;
     }
     
     private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {

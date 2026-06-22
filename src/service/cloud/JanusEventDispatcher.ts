@@ -88,7 +88,9 @@ export class JanusEventDispatcher {
     }
     
     private dispatchPublisherReady(session: JanusSession, streamRoom: db.stream.StreamRoom): void {
-        const publisher = session.publishedStreams[session.publishedStreams.length - 1];
+        session.peerConnectionEstablished = true;
+        const publisher = session.publishedStreams.find(p => Number(p.id) === Number(session.janusPublisherId))
+            ?? session.publishedStreams[session.publishedStreams.length - 1];
         if (publisher && !session.streamPublishedEventEmitted) {
             session.streamPublishedEventEmitted = true;
             this.streamNotificationService.sendStreamPublishedEvent(streamRoom, {
