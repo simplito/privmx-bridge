@@ -66,9 +66,12 @@ export class InboxService extends BaseContainerService {
         this.policy.makeCreateContainerCheck(user, context, model.managers, policy);
         await this.validateAccessToThread(model.data.threadId, user);
         await this.validateAccessToStore(model.data.storeId, user);
+        const groups = model.groups || [];
+        const groupManagers = model.groupManagers || [];
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(model.contextId, model.keys, model.keyId, model.users, model.managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(model.contextId, [model.keyId], [], model.groupKeys || [], model.keyId, groups, groupManagers);
         try {
-            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy);
+            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
             this.inboxNotificationService.sendInboxCreated(inbox, context.solution);
             return inbox;
         }
@@ -104,12 +107,16 @@ export class InboxService extends BaseContainerService {
             if (currentVersion !== model.version && !model.force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, [...oldInbox.history.map(x => x.keyId), model.keyId], oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
+            const groups = model.groups || [];
+            const groupManagers = model.groupManagers || [];
+            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups, groupManagers);
             if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null);
+                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null, {groups, groupManagers, groupKeys: newGroupKeys});
                 return {inbox, context, oldInbox};
             }
             catch (err) {
@@ -209,8 +216,9 @@ export class InboxService extends BaseContainerService {
         if (!inbox) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
-            if (!this.policy.canReadContainer(user, context, inbox)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxGet", ["inboxId=" + inboxId]);
@@ -259,7 +267,8 @@ export class InboxService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
         return {user, inboxes};
     }
     

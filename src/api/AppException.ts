@@ -128,6 +128,9 @@ export const API_ERROR_CODES = {
     "MEDIA_INVALID_SDP_TYPE"                : {code: 0x6216, message: "The provided SDP type is invalid or unsupported"},
     "MEDIA_NOT_PUBLISHING"                  : {code: 0x6217, message: "User is not currently publishing a stream"},
     "MEDIA_PARTICIPANT_ID_EXISTS"           : {code: 0x6218, message: "The provided participant ID is already in use"},
+    "GROUP_DOES_NOT_EXIST"                  : {code: 0x6219, message: "Group does not exist"},
+    "GROUP_IN_USE"                          : {code: 0x621A, message: "Group is still a member of a container"},
+    "GROUP_VERSION_MISMATCH"                : {code: 0x621B, message: "Group version mismatch or broken signature chain"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

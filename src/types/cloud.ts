@@ -23,6 +23,7 @@ export type AclGroupName = string&{__aclGroupName: never};
 export type AclGroups =  Record<AclGroupName, AclFunctions>;
 export type AppPubKey = types.core.EccPubKey;
 export type UserPubKey = types.core.EccPubKey;
+export type GroupPubKey = types.core.EccPubKey;
 export type KnownKeyId = string&{__knownKeyId: never};
 export type KnownKeyStatus = "login"|"logout";
 export type ChannelSchemeOptions = Pick<ChannelScheme, "containerType"|"limitedBy"|"objectId">;
@@ -69,6 +70,25 @@ export interface KeyEntrySet {
     user: UserId;
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
+}
+
+/** Container key blobs distributed to a group grantee (the container key encrypted to the group's pubkey). */
+export interface GroupKeysEntry {
+    group: types.group.GroupId;
+    keys: types.core.KeyEntry[];
+}
+
+export interface GroupKeyEntrySet {
+    group: types.group.GroupId;
+    keyId: types.core.KeyId;
+    data: types.core.UserKeyData;
+}
+
+/** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
+export interface ContainerGrantees {
+    groups?: types.group.GroupId[];
+    groupManagers?: types.group.GroupId[];
+    groupKeys?: GroupKeysEntry[];
 }
 
 export interface Event<T extends string, C extends string, D> {

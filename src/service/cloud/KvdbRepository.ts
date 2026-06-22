@@ -47,12 +47,12 @@ export class KvdbRepository {
         }
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope, userGroupIds: types.group.GroupId[] = []) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
         return this.repository.getMatchingPage([
-            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope, userGroupIds),
         ], listParams, sortBy);
     }
     
@@ -71,8 +71,10 @@ export class KvdbRepository {
     }
     
     async createKvdb(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId, type: types.kvdb.KvdbType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
+        data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, grantees?: types.cloud.ContainerGrantees) {
         const now = DateUtils.now();
+        const groups = grantees?.groups || [];
+        const groupManagers = grantees?.groupManagers || [];
         const entry: db.kvdb.KvdbHistoryEntry = {
             created: now,
             author: creator,
@@ -80,6 +82,8 @@ export class KvdbRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
+            groupManagers: groupManagers,
         };
         const kvdb: db.kvdb.Kvdb = {
             id: this.repository.generateId(),
@@ -95,6 +99,9 @@ export class KvdbRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupManagers: groupManagers,
+            groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
@@ -106,7 +113,9 @@ export class KvdbRepository {
     }
     
     async updateKvdb(oldKvdb: db.kvdb.Kvdb, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined) {
+        data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
+        const groupManagers = grantees?.groupManagers || [];
         const entry: db.kvdb.KvdbHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -114,6 +123,8 @@ export class KvdbRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
+            groupManagers: groupManagers,
         };
         const updatedKvdb: db.kvdb.Kvdb = {
             id: oldKvdb.id,
@@ -129,6 +140,9 @@ export class KvdbRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupManagers: groupManagers,
+            groupKeys: grantees?.groupKeys || [],
             history: [...oldKvdb.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldKvdb.allTimeUsers, entry.users, entry.managers),
             entries: oldKvdb.entries,
@@ -141,6 +155,12 @@ export class KvdbRepository {
     
     async deleteKvdb(id: types.kvdb.KvdbId) {
         return this.repository.delete(id);
+    }
+    
+    /** True if any kvdb still grants access to the given group (Phase 2 referential integrity). */
+    async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
+        const found = await this.repository.query(q => q.or(q.includes("groups", groupId), q.includes("groupManagers", groupId))).limit(1).array();
+        return found.length > 0;
     }
     
     async deleteManyKvdbs(ids: types.kvdb.KvdbId[]) {

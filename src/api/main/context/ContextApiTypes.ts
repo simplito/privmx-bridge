@@ -101,10 +101,137 @@ export interface ContextUsersStatusChangeData {
     }[],
 }
 
+// ===================
+//        GROUP
+// ===================
+
+export interface GroupCreateModel {
+    contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
+    type?: types.group.GroupType;
+    groupPubKey: types.cloud.GroupPubKey;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    data: types.group.GroupData;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    policy?: types.cloud.ContainerPolicy;
+    signature: types.core.EccSignature;
+}
+
+export interface GroupCreateResult {
+    groupId: types.group.GroupId;
+}
+
+export interface GroupUpdateModel {
+    id: types.group.GroupId;
+    groupPubKey: types.cloud.GroupPubKey;
+    resourceId?: types.core.ClientResourceId;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    data: types.group.GroupData;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    version: types.group.GroupVersion;
+    force: boolean;
+    policy?: types.cloud.ContainerPolicy;
+    signature: types.core.EccSignature;
+    prevSignature: types.core.EccSignature;
+}
+
+export interface GroupModifyMembersModel {
+    id: types.group.GroupId;
+    usersToAddOrUpdate: types.cloud.UserId[];
+    usersToRemove: types.cloud.UserId[];
+    managersToAddOrUpdate: types.cloud.UserId[];
+    managersToRemove: types.cloud.UserId[];
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    signature: types.core.EccSignature;
+    prevSignature: types.core.EccSignature;
+}
+
+export interface GroupDeleteModel {
+    groupId: types.group.GroupId;
+}
+
+export interface GroupGetModel {
+    groupId: types.group.GroupId;
+    type?: types.group.GroupType;
+}
+
+export interface GroupGetResult {
+    group: GroupInfo;
+}
+
+export interface GroupListModel extends types.core.ListModel {
+    contextId: types.context.ContextId;
+    sortBy?: "createDate"|"lastModificationDate";
+}
+
+export interface GroupListResult {
+    groups: GroupInfo[];
+    count: number;
+}
+
+export interface GroupDataEntry {
+    keyId: types.core.KeyId;
+    data: types.group.GroupData;
+}
+
+/** A signed, chained membership-log entry — the endpoint verifies the chain client-side. */
+export interface GroupSignedEntry {
+    keyId: types.core.KeyId;
+    groupPubKey: types.cloud.GroupPubKey;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    created: types.core.Timestamp;
+    author: types.cloud.UserId;
+    authorPubKey: types.cloud.UserPubKey;
+    op: types.group.GroupSignatureOp;
+    delta?: types.group.GroupMembersDelta;
+    prevSignature: types.core.EccSignature|null;
+    signature: types.core.EccSignature;
+}
+
+export interface GroupInfo {
+    id: types.group.GroupId;
+    groupPubKey: types.cloud.GroupPubKey;
+    contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
+    type?: types.group.GroupType;
+    createDate: types.core.Timestamp;
+    creator: types.cloud.UserId;
+    lastModificationDate: types.core.Timestamp;
+    lastModifier: types.cloud.UserId;
+    data: GroupDataEntry[];
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    keys: types.core.KeyEntry[];
+    version: types.group.GroupVersion;
+    policy: types.cloud.ContainerPolicy;
+    history: GroupSignedEntry[];
+}
+
+export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupInfo>;
+export type GroupUpdatedEvent = types.cloud.Event<"groupUpdated", "context", GroupInfo>;
+export type GroupDeletedEvent = types.cloud.Event<"groupDeleted", "context", GroupDeletedEventData>;
+
+export interface GroupDeletedEventData {
+    groupId: types.group.GroupId;
+    contextId: types.context.ContextId;
+}
+
 export interface IContextApi {
     contextGet(model: ContextGetModel): Promise<ContextGetResult>;
     contextList(model: ContextListModel): Promise<ContextListResult>;
     contextGetUsers(model: ContextGetUsersModel): Promise<ContextGetUserResult>;
     contextListUsers(model: ContextListUsersModel): Promise<ContextListUsersResult>
     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
+    groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
+    groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
+    groupModifyMembers(model: GroupModifyMembersModel): Promise<types.core.OK>;
+    groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
+    groupGet(model: GroupGetModel): Promise<GroupGetResult>;
+    groupList(model: GroupListModel): Promise<GroupListResult>;
 }

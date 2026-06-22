@@ -54,14 +54,15 @@ export class StoreService extends BaseContainerService {
         this.policy = new StorePolicy(this.policyService);
     }
     
-    async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups, groupManagers);
         try {
-            const store = await this.repositoryFactory.createStoreRepository().createStore(resourceId, contextId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            const store = await this.repositoryFactory.createStoreRepository().createStore(resourceId, contextId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
             this.storeNotificationService.sendStoreCreated(store, context.solution);
             return store;
         }
@@ -73,7 +74,7 @@ export class StoreService extends BaseContainerService {
         }
     }
     
-    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -90,12 +91,14 @@ export class StoreService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, [...oldStore.history.map(x => x.keyId), keyId], oldStore.keys, keys, keyId, users, managers);
+            const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, users, managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, groups, groupManagers);
             if (oldStore.clientResourceId && resourceId && oldStore.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupManagers, groupKeys: newGroupKeys});
                 return {store, context, oldStore};
             }
             catch (err) {
@@ -207,9 +210,10 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeGet", ["storeId=" + storeId]);
-            if (!this.policy.canReadContainer(user, context, store)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED", "policy is not met");
             }
         });
@@ -242,7 +246,8 @@ export class StoreService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
         return {user, stores};
     }
     

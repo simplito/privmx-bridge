@@ -13,6 +13,7 @@ export * as auth from "./auth";
 export * as cloud from "./cloud";
 export * as context from "./context";
 export * as core from "./core";
+export * as group from "./group";
 export * as inbox from "./inbox";
 export * as packet from "./packet";
 export * as request from "./request";

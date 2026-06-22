@@ -29,6 +29,9 @@ export class InboxApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerWithoutItemPolicy),
+            groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, 16384)),
+            groupManagers: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, 16384)),
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
         }));
         this.registerMethod("inboxUpdate", this.builder.createObject({
             id: this.tv.inboxId,
@@ -41,6 +44,9 @@ export class InboxApiValidator extends BaseValidator {
             version: this.tv.intNonNegative,
             force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerWithoutItemPolicy),
+            groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, 16384)),
+            groupManagers: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, 16384)),
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
         }));
         this.registerMethod("inboxDelete", this.builder.createObject({
             inboxId: this.tv.inboxId,

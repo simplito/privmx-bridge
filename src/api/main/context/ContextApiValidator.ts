@@ -40,5 +40,55 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("contextListUsers", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
         }));
+        this.registerMethod("groupCreate", this.builder.createObject({
+            contextId: this.tv.cloudContextId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            type: this.tv.optResourceType,
+            groupPubKey: this.tv.groupPubKey,
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            policy: this.builder.optional(this.tv.containerPolicy),
+            signature: this.tv.eccSignature,
+        }));
+        this.registerMethod("groupUpdate", this.builder.createObject({
+            id: this.tv.groupId,
+            groupPubKey: this.tv.groupPubKey,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            version: this.builder.int,
+            force: this.builder.bool,
+            policy: this.builder.optional(this.tv.containerPolicy),
+            signature: this.tv.eccSignature,
+            prevSignature: this.tv.eccSignature,
+        }));
+        this.registerMethod("groupModifyMembers", this.builder.createObject({
+            id: this.tv.groupId,
+            usersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            usersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            keyId: this.tv.keyId,
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            signature: this.tv.eccSignature,
+            prevSignature: this.tv.eccSignature,
+        }));
+        this.registerMethod("groupDelete", this.builder.createObject({
+            groupId: this.tv.groupId,
+        }));
+        this.registerMethod("groupGet", this.builder.createObject({
+            groupId: this.tv.groupId,
+            type: this.tv.optResourceType,
+        }));
+        this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {
+            contextId: this.tv.cloudContextId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+        }));
     }
 }

@@ -21,6 +21,9 @@ export interface KvdbCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.group.GroupId[];
+    groupManagers?: types.group.GroupId[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface KvdbUpdateModel {
@@ -34,6 +37,9 @@ export interface KvdbUpdateModel {
     version: types.kvdb.KvdbVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.group.GroupId[];
+    groupManagers?: types.group.GroupId[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface KvdbDeleteModel {
@@ -65,6 +71,9 @@ export interface KvdbInfo {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
+    groups: types.group.GroupId[];
+    groupManagers: types.group.GroupId[];
+    groupKeys: types.cloud.GroupKeysEntry[];
     version: types.kvdb.KvdbVersion;
     type?: types.kvdb.KvdbType;
     policy: types.cloud.ContainerPolicy;

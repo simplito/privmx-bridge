@@ -32,6 +32,7 @@ import { Logger } from "../../../service/log/Logger";
 import { CloudAclChecker } from "../../../service/cloud/CloudAclChecker";
 import { PolicyService } from "../../../service/cloud/PolicyService";
 import { ContextRepository } from "../../../service/cloud/ContextRepository";
+import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { StorageServiceProvider } from "../../../service/cloud/StorageServiceProvider";
@@ -659,6 +660,7 @@ function createStoreService() {
     const requestRepository = createMock<RequestRepository>({});
     const contextUserRepository = createMock<ContextUserRepository>({});
     const contextRepository = createMock<ContextRepository>({});
+    const groupRepository = createMock<GroupRepository>({});
     const jobService = createMock<JobService>({});
     const logger = createMock<Logger>({});
     const cloudAclChecker = new CloudAclChecker();
@@ -678,6 +680,8 @@ function createStoreService() {
     mock(storageService, "read", async () => Buffer.alloc(1024));
     
     mock(repositoryFactory, "createStoreRepository", () => storeRepository);
+    mock(repositoryFactory, "createGroupRepository", () => groupRepository);
+    mock(groupRepository, "getGroupsOfUser", async () => []);
     mock(repositoryFactory, "createStoreFileRepository", () => storeFileRepository);
     mock(repositoryFactory, "createRequestRepository", () => requestRepository);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
@@ -686,6 +690,7 @@ function createStoreService() {
     mock(jobService, "addJob", () => {});
     mock(cloudKeyService, "checkKeysAndClients", async () => []);
     mock(cloudKeyService, "checkKeysAndUsersDuringCreation", async () => []);
+    mock(cloudKeyService, "checkGroupKeysAndGrantees", async () => []);
     
     mock(contextUserRepository, "getUserFromContext", async (pub, ctx) =>
         pub === janekUserPubKey.pub && ctx == contextId ? janekUser : (pub === aliceUserPubKey.pub && ctx == contextId ? aliceUser : null));

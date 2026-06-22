@@ -60,6 +60,10 @@ export class TypesValidator {
     threadData: Validator;
     threadMessageData: Validator;
     cloudKeyEntrySet: Validator;
+    groupId: Validator;
+    groupData: Validator;
+    groupPubKey: Validator;
+    cloudGroupKeyEntrySet: Validator;
     storeId: Validator;
     storeData: Validator;
     storeFileId: Validator;
@@ -229,6 +233,14 @@ export class TypesValidator {
         this.threadMessageData = this.unknown16Kb;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
+            keyId: this.keyId,
+            data: this.userKeyData,
+        });
+        this.groupId = id;
+        this.groupData = this.unknown16Kb;
+        this.groupPubKey = this.eccPub;
+        this.cloudGroupKeyEntrySet = this.builder.createObject({
+            group: this.groupId,
             keyId: this.keyId,
             data: this.userKeyData,
         });

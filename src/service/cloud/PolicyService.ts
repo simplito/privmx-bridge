@@ -120,6 +120,20 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             delete: "itemOwner&user,manager",
         },
     },
+    group: {
+        get: "user",
+        listMy: "all",
+        listAll: "all",
+        create: "all",
+        update: "manager",
+        delete: "manager",
+        updatePolicy: "manager",
+        creatorHasToBeManager: "yes",
+        updaterCanBeRemovedFromManagers: "no",
+        ownerCanBeRemovedFromManagers: "yes",
+        canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
+    },
 };
 
 export class PolicyService {
@@ -139,6 +153,9 @@ export class PolicyService {
         }
         if (policy.stream) {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
+        }
+        if (policy.group) {
+            this.validateContainerPolicyForContext("policy.group", policy.group);
         }
     }
     

@@ -167,6 +167,9 @@ export namespace thread {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: ThreadHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
         // state
@@ -179,6 +182,8 @@ export namespace thread {
         data: types.thread.ThreadData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -192,6 +197,45 @@ export namespace thread {
         data: types.thread.ThreadMessageData;
         keyId: types.core.KeyId;
         updates?: types.thread.ThreadMessageUpdate[];
+    }
+}
+
+export namespace group {
+    
+    export interface Group {
+        id: types.group.GroupId;
+        clientResourceId?: types.core.ClientResourceId;
+        contextId: types.context.ContextId;
+        type?: types.group.GroupType;
+        groupPubKey: types.cloud.GroupPubKey;
+        createDate: types.core.Timestamp;
+        creator: types.cloud.UserId;
+        lastModificationDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        keyId: types.core.KeyId;
+        data: types.group.GroupData;
+        allTimeUsers: types.cloud.UserId[];
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        keys: types.cloud.UserKeysEntry[];
+        history: GroupHistoryEntry[];
+        policy?: types.cloud.ContainerPolicy;
+    }
+    
+    export interface GroupHistoryEntry {
+        keyId: types.core.KeyId;
+        data: types.group.GroupData;
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        groupPubKey: types.cloud.GroupPubKey;
+        created: types.core.Timestamp;
+        author: types.cloud.UserId;
+        // signed membership log
+        op: types.group.GroupSignatureOp;
+        delta?: types.group.GroupMembersDelta;
+        authorPubKey: types.cloud.UserPubKey;
+        prevSignature: types.core.EccSignature|null;
+        signature: types.core.EccSignature;
     }
 }
 
@@ -212,6 +256,9 @@ export namespace store {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: StoreHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
         // state
@@ -224,6 +271,8 @@ export namespace store {
         data: types.store.StoreData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -282,6 +331,9 @@ export namespace inbox {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: InboxHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
     }
@@ -291,6 +343,8 @@ export namespace inbox {
         data: types.inbox.InboxData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -313,6 +367,9 @@ export namespace stream {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: StreamRoomHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
         janusRoomId: number;
@@ -324,6 +381,8 @@ export namespace stream {
         data: types.stream.StreamRoomData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -436,6 +495,9 @@ export namespace kvdb {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: KvdbHistoryEntry[];
         entries: number;
         lastEntryDate: types.core.Timestamp;
@@ -447,6 +509,8 @@ export namespace kvdb {
         data: types.stream.StreamRoomData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.group.GroupId[];
+        groupManagers?: types.group.GroupId[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }

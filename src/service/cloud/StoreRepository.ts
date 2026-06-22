@@ -47,12 +47,12 @@ export class StoreRepository {
         }
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.store.StoreType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.store.StoreType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope, userGroupIds: types.group.GroupId[] = []) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
         return this.repository.getMatchingPage([
-            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope, userGroupIds),
         ], listParams, sortBy);
     }
     
@@ -71,7 +71,9 @@ export class StoreRepository {
     }
     
     async createStore(resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
+        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
+        const groupManagers = grantees?.groupManagers || [];
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -79,6 +81,8 @@ export class StoreRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
+            groupManagers: groupManagers,
         };
         const store: db.store.Store = {
             id: this.repository.generateId(),
@@ -93,6 +97,9 @@ export class StoreRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupManagers: groupManagers,
+            groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             lastFileDate: entry.created,
@@ -107,7 +114,9 @@ export class StoreRepository {
     }
     
     async updateStore(oldStore: db.store.Store, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
+        const groupManagers = grantees?.groupManagers || [];
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -115,6 +124,8 @@ export class StoreRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
+            groupManagers: groupManagers,
         };
         const updatedStore: db.store.Store = {
             id: oldStore.id,
@@ -129,6 +140,9 @@ export class StoreRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupManagers: groupManagers,
+            groupKeys: grantees?.groupKeys || [],
             history: [...oldStore.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldStore.allTimeUsers, entry.users, entry.managers),
             lastFileDate: oldStore.lastFileDate,
@@ -147,6 +161,12 @@ export class StoreRepository {
     
     async deleteStore(id: types.store.StoreId) {
         await this.repository.delete(id);
+    }
+    
+    /** True if any store still grants access to the given group (Phase 2 referential integrity). */
+    async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
+        const found = await this.repository.query(q => q.or(q.includes("groups", groupId), q.includes("groupManagers", groupId))).limit(1).array();
+        return found.length > 0;
     }
     
     async deleteManyStores(ids: types.store.StoreId[]) {

@@ -105,6 +105,78 @@ export class CloudKeyService {
         return oldClients.some(x => !newClients.includes(x));
     }
     
+    /**
+     * Verifies and builds the per-group key blobs of a container (the container key encrypted to each
+     * group grantee's pubkey). Mirrors checkKeysAndClients but keyed by group instead of user.
+     */
+    async checkGroupKeysAndGrantees(
+        contextId: types.context.ContextId,
+        availableKeyIds: types.core.KeyId[],
+        oldGroupKeys: types.cloud.GroupKeysEntry[],
+        inserts: types.cloud.GroupKeyEntrySet[],
+        keyId: types.core.KeyId,
+        groups: types.group.GroupId[],
+        groupManagers: types.group.GroupId[],
+    ) {
+        if (!Utils.isUnique(groups)) {
+            throw new AppException("INVALID_PARAMS", "groups not unique");
+        }
+        if (!Utils.isUnique(groupManagers)) {
+            throw new AppException("INVALID_PARAMS", "group managers not unique");
+        }
+        const allGroups = Utils.unique(groups.concat(groupManagers));
+        await this.repositoryFactory.createGroupRepository().checkGroupsExistence(contextId, allGroups);
+        const newGroupKeys = this.buildGroupKeys(availableKeyIds, oldGroupKeys, inserts);
+        this.verifyThatOnlyGivenGroupsHaveAccess(newGroupKeys, keyId, allGroups);
+        return newGroupKeys;
+    }
+    
+    buildGroupKeys(availableKeyIds: types.core.KeyId[], oldGroupKeys: types.cloud.GroupKeysEntry[], inserts: types.cloud.GroupKeyEntrySet[]) {
+        if (!Utils.isUnique(inserts.map(x => x.group + "/" + x.keyId))) {
+            throw new AppException("INVALID_PARAMS", "Some group key entries are duplicated");
+        }
+        const newGroupKeys = oldGroupKeys.map(x => {
+            const res: types.cloud.GroupKeysEntry = {
+                group: x.group,
+                keys: x.keys.slice(),
+            };
+            return res;
+        });
+        for (const insert of inserts) {
+            if (!availableKeyIds.includes(insert.keyId)) {
+                throw new AppException("INVALID_KEY_ID");
+            }
+            let groupEntry = newGroupKeys.find(x => x.group === insert.group);
+            if (!groupEntry) {
+                groupEntry = {group: insert.group, keys: []};
+                newGroupKeys.push(groupEntry);
+            }
+            const keyEntry = groupEntry.keys.find(x => x.keyId === insert.keyId);
+            if (!keyEntry) {
+                groupEntry.keys.push({keyId: insert.keyId, data: insert.data});
+            }
+            else {
+                keyEntry.data = insert.data;
+            }
+        }
+        return newGroupKeys;
+    }
+    
+    verifyThatOnlyGivenGroupsHaveAccess(groupKeys: types.cloud.GroupKeysEntry[], keyId: types.core.KeyId, groups: types.group.GroupId[]) {
+        for (const group of groups) {
+            const groupEntry = groupKeys.find(x => x.group === group);
+            if (!groupEntry || !groupEntry.keys.some(x => x.keyId === keyId)) {
+                throw new AppException("INVALID_PARAMS", `group '${group}' has not access to key '${keyId}'`);
+            }
+        }
+        for (const groupEntry of groupKeys) {
+            const hasAccess = groupEntry.keys.some(x => x.keyId === keyId);
+            if (hasAccess && !groups.includes(groupEntry.group)) {
+                throw new AppException("INVALID_PARAMS", `group '${groupEntry.group}' should not have access to key '${keyId}'`);
+            }
+        }
+    }
+    
     async checkUsersExistance(contextId: types.context.ContextId, users: types.cloud.UserId[]) {
         const existingUsersCount = await this.repositoryFactory.createContextUserRepository().getCountOfExistingUsersFromList(users, contextId);
         if (existingUsersCount !== users.length) {

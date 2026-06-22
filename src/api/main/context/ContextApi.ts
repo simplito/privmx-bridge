@@ -10,10 +10,13 @@ limitations under the License.
 */
 
 import { ContextService } from "../../../service/cloud/ContextService";
+import { GroupService } from "../../../service/cloud/GroupService";
 import { ApiMethod } from "../../Decorators";
 import { SessionService } from "../../session/SessionService";
 import { ContextApiValidator } from "./ContextApiValidator";
 import { BaseApi } from "../../BaseApi";
+import { GroupConverter } from "./GroupConverter";
+import { RequestLogger } from "../../../service/log/RequestLogger";
 import * as db from "../../../db/Model";
 import * as contextApi from "./ContextApiTypes";
 import * as types from "../../../types";
@@ -23,6 +26,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         contextApiValidator: ContextApiValidator,
         private contextService: ContextService,
         private sessionService: SessionService,
+        private groupService: GroupService,
+        private groupConverter: GroupConverter,
+        private requestLogger: RequestLogger,
     ) {
         super(contextApiValidator);
     }
@@ -60,6 +66,59 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         await this.contextService.sendCustomNotification(cloudUser, model.contextId, model.data, model.channel, model.users);
         return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.signature);
+        this.requestLogger.setContextId(group.contextId);
+        return {groupId: group.id};
+    }
+    
+    @ApiMethod({})
+    async groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.updateGroup(cloudUser, model.id, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.signature, model.prevSignature);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupModifyMembers(model: contextApi.GroupModifyMembersModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.modifyGroupMembers(cloudUser, model.id, {
+            usersToAddOrUpdate: model.usersToAddOrUpdate,
+            usersToRemove: model.usersToRemove,
+            managersToAddOrUpdate: model.managersToAddOrUpdate,
+            managersToRemove: model.managersToRemove,
+        }, model.keyId, model.keys, model.signature, model.prevSignature);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.deleteGroup(cloudUser, model.groupId);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupGet(model: contextApi.GroupGetModel): Promise<contextApi.GroupGetResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.getGroup(cloudUser, model.groupId, model.type);
+        this.requestLogger.setContextId(group.contextId);
+        return {group: this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group)};
+    }
+    
+    @ApiMethod({})
+    async groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {user, groups} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
+        this.requestLogger.setContextId(model.contextId);
+        return {groups: groups.list.map(x => this.groupConverter.convertGroup(user.userId, x)), count: groups.count};
     }
     
     private convertContext(x: db.context.ContextUser, context: db.context.Context) {

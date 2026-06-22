@@ -15,6 +15,11 @@ export type AclFunctionNameX =
     | "context/contextGetUsers"
     | "context/contextListUsers"
     | "context/contextSendCustomNotification"
+    | "context/groupGet"
+    | "context/groupList"
+    | "context/groupCreate"
+    | "context/groupUpdate"
+    | "context/groupDelete"
     | "context/READ"
     | "context/WRITE"
     | "context/ALL"
@@ -130,10 +135,15 @@ export class CloudAclChecker {
         const contextRead = {
             "context/contextGetUsers": ["contextId"],
             "context/contextListUsers": ["contextId"],
+            "context/groupGet": ["groupId"],
+            "context/groupList": [],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {
             "context/contextSendCustomNotification": ["contextId"],
+            "context/groupCreate": [],
+            "context/groupUpdate": ["groupId"],
+            "context/groupDelete": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
         const contextAll = {...contextRead, ...contextWrite};

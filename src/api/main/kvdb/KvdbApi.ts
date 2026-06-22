@@ -34,7 +34,7 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbCreate(model: kvdbApi.KvdbCreateModel): Promise<kvdbApi.KvdbCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const kvdb = await this.kvdbService.createKvdb(cloudUser, model.resourceId, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const kvdb = await this.kvdbService.createKvdb(cloudUser, model.resourceId, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.groups || [], model.groupManagers || [], model.groupKeys || []);
         this.requestLogger.setContextId(kvdb.contextId);
         return {kvdbId: kvdb.id};
     }
@@ -42,7 +42,7 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbUpdate(model: kvdbApi.KvdbUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const kvdb = await this.kvdbService.updateKvdb(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId);
+        const kvdb = await this.kvdbService.updateKvdb(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId, model.groups || [], model.groupManagers || [], model.groupKeys || []);
         this.requestLogger.setContextId(kvdb.contextId);
         return "OK";
     }

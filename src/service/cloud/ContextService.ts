@@ -21,6 +21,7 @@ import { ThreadService } from "./ThreadService";
 import { StoreService } from "./StoreService";
 import { InboxService } from "./InboxService";
 import { StreamService } from "./StreamService";
+import { GroupService } from "./GroupService";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 import * as db from "../../db/Model";
 import { ContextNotificationService } from "./ContextNotificationService";
@@ -38,6 +39,7 @@ export class ContextService {
         private storeService: StoreService,
         private inboxService: InboxService,
         private streamService: StreamService,
+        private groupService: GroupService,
         private contextNotificationService: ContextNotificationService,
         private activeUsersMap: ActiveUsersMap,
         private host: types.core.Host,
@@ -97,6 +99,7 @@ export class ContextService {
         await this.storeService.deleteStoresByContext(contextId, context.solution);
         await this.inboxService.deleteInboxesByContext(contextId, context.solution);
         await this.streamService.deleteStreamRoomsByContext(contextId, context.solution);
+        await this.groupService.deleteGroupsByContext(contextId, context.solution);
     }
     
     async addSolutionToContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {

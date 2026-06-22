@@ -49,9 +49,10 @@ export class ThreadService extends BaseContainerService {
         if (!thread || (type && thread.type !== type)) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadGet", ["threadId=" + threadId]);
-            if (!this.policy.canReadContainer(user, context, thread)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(thread, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -71,7 +72,8 @@ export class ThreadService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
         return {user, threads};
     }
     
@@ -163,14 +165,15 @@ export class ThreadService extends BaseContainerService {
         return {thread, messages};
     }
     
-    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups, groupManagers);
         try {
-            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
             this.threadNotificationService.sendCreatedThread(thread, context.solution);
             return thread;
         }
@@ -182,7 +185,7 @@ export class ThreadService extends BaseContainerService {
         }
     }
     
-    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -199,12 +202,14 @@ export class ThreadService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, [...oldThread.history.map(x => x.keyId), keyId], oldThread.keys, keys, keyId, users, managers);
+            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, users, managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, groups, groupManagers);
             if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupManagers, groupKeys: newGroupKeys});
                 return {thread, context, oldThread};
             }
             catch (err) {

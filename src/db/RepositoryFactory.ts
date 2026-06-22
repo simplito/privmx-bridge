@@ -25,6 +25,7 @@ import { ContextRepository } from "../service/cloud/ContextRepository";
 import { ContextUserRepository } from "../service/cloud/ContextUserRepository";
 import { ThreadRepository } from "../service/cloud/ThreadRepository";
 import { ThreadMessageRepository } from "../service/cloud/ThreadMessageRepository";
+import { GroupRepository } from "../service/cloud/GroupRepository";
 import { StoreRepository } from "../service/cloud/StoreRepository";
 import { StoreFileRepository } from "../service/cloud/StoreFileRepository";
 import { ResourceRepository } from "../service/cloud/ResourceRepository";
@@ -117,6 +118,10 @@ export class RepositoryFactory {
     
     createThreadMessageRepository(session?: mongodb.ClientSession) {
         return new ThreadMessageRepository(this.createObjectRepositoryFor(ThreadMessageRepository, session));
+    }
+    
+    createGroupRepository(session?: mongodb.ClientSession) {
+        return new GroupRepository(this.createObjectRepositoryFor(GroupRepository, session));
     }
     
     createStoreRepository(session?: mongodb.ClientSession) {
