@@ -303,6 +303,7 @@ export class StreamService extends BaseContainerService {
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
             const result = await this.subscribeToRemoteInternal(user.userId, streamRoom, ctx, subscriptions);
             if (subscriptions.length > 0) {
+                await this.janusRoomsWatcher.addSubscriptions(this.host, streamRoom.id, user.userId, subscriptions);
                 this.streamNotificationService.sendStreamSubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions });
             }
             return result;
@@ -371,11 +372,13 @@ export class StreamService extends BaseContainerService {
     async modifyRemoteSubscriptions(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, subscriptionsToAdd: StreamSubscription[], subscriptionsToRemove: StreamSubscription[], websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
         const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamModifySubscription");
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            const result = await this._modifyRemoteSubscriptionsInternal(streamRoom, ctx, subscriptionsToAdd, subscriptionsToRemove);
+            const result = await this._modifyRemoteSubscriptionsInternal(user.userId, streamRoom, ctx, subscriptionsToAdd, subscriptionsToRemove);
             if (subscriptionsToAdd.length > 0) {
+                await this.janusRoomsWatcher.addSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToAdd);
                 this.streamNotificationService.sendStreamSubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToAdd });
             }
             if (subscriptionsToRemove.length > 0) {
+                await this.janusRoomsWatcher.removeSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToRemove);
                 this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToRemove });
             }
             return result;
@@ -385,15 +388,16 @@ export class StreamService extends BaseContainerService {
     async unsubscribeFromRemoteStreams(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, subscriptionsToRemove: StreamSubscription[], websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
         const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUnsubscribe");
         return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
-            const result = await this._modifyRemoteSubscriptionsInternal(streamRoom, ctx, [], subscriptionsToRemove);
+            const result = await this._modifyRemoteSubscriptionsInternal(user.userId, streamRoom, ctx, [], subscriptionsToRemove);
             if (subscriptionsToRemove.length > 0) {
+                await this.janusRoomsWatcher.removeSubscriptions(this.host, streamRoom.id, user.userId, subscriptionsToRemove);
                 this.streamNotificationService.sendStreamUnsubscribedEvent(streamRoom, { streamRoomId: streamRoom.id, userId: user.userId, subscriptions: subscriptionsToRemove });
             }
             return result;
         });
     }
     
-    private async _modifyRemoteSubscriptionsInternal(streamRoom: db.stream.StreamRoom, ctx: JanusContext, subscriptionsToAdd: StreamSubscription[], subscriptionsToRemove: StreamSubscription[]) {
+    private async _modifyRemoteSubscriptionsInternal(userId: types.cloud.UserId, streamRoom: db.stream.StreamRoom, ctx: JanusContext, subscriptionsToAdd: StreamSubscription[], subscriptionsToRemove: StreamSubscription[]) {
         const existingSignalingSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.MAIN, streamRoom.janusRoomId);
         if (!existingSignalingSession) {
             throw new AppException("NOT_CONNECTED_TO_THE_ROOM");
@@ -401,7 +405,12 @@ export class StreamService extends BaseContainerService {
         
         const existingJanusSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.SUBSCRIBER, streamRoom.janusRoomId);
         if (!existingJanusSession) {
-            throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY");
+            // No subscriber session yet: a viewer subscribing for the first time (e.g. before any
+            // publisher exists). Adds create the session; with nothing to add there is nothing to do.
+            if (subscriptionsToAdd.length === 0) {
+                throw new AppException("NO_SUBSCRIPTIONS_TO_MODIFY");
+            }
+            return this.subscribeToRemoteInternal(userId, streamRoom, ctx, subscriptionsToAdd);
         }
         
         const mappedStreamsToAdd = subscriptionsToAdd.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));
@@ -591,6 +600,15 @@ export class StreamService extends BaseContainerService {
                 janusSessionX.keepPublishedStream(publisher);
                 janusSessionX.streamPublishedEventEmitted = false;
                 
+                if (janusSessionX.peerConnectionEstablished) {
+                    janusSessionX.streamPublishedEventEmitted = true;
+                    this.streamNotificationService.sendStreamPublishedEvent(streamRoom, {
+                        streamRoomId: streamRoom.id,
+                        stream: convertedPublisher,
+                        userId,
+                    });
+                }
+                
                 return {
                     sessionId: janusSession.id,
                     answer: res.jsep,
@@ -691,7 +709,7 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamUnpublish", ["streamRoomId=" + streamRoom.id]);
-        if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
+        if (!this.policy.canReadContainer(user, context, streamRoom)) {
             throw new AppException("ACCESS_DENIED");
         }
         
@@ -751,6 +769,7 @@ export class StreamService extends BaseContainerService {
                     janusRoomId: streamRoom.janusRoomId as number,
                     publisherId: Number(newSession.janusPublisherId),
                 });
+                await this.janusRoomsWatcher.addSubscriber(this.host, streamRoom.id, user.userId);
             }
             catch {
                 throw new AppException("MEDIA_SERVER_ERROR", "Failed to join room");
@@ -789,12 +808,26 @@ export class StreamService extends BaseContainerService {
             }
             
             await ctx.deleteAllJanusSessionsByRoom(streamRoom.id);
-            
+            await this.janusRoomsWatcher.removeSubscriber(this.host, streamRoom.id, user.userId);
             this.streamNotificationService.sendStreamRoomLeftEvent(streamRoom, {
                 streamRoomId: streamRoom.id,
                 userId: user.userId,
             });
         });
+    }
+    
+    async listParticipants(executor: Executor, streamRoomId: types.stream.StreamRoomId) {
+        const streamRoom = await this.getDbStreamRoom(streamRoomId);
+        await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomListParticipants");
+        const [subscribers, publishedStreams] = await Promise.all([
+            this.janusRoomsWatcher.getRoomSubscribers(this.host, streamRoom.id),
+            this.listStreamsInternal(streamRoom),
+        ]);
+        const publishedByUser = new Map(publishedStreams.map(s => [s.userId, s]));
+        return subscribers.map(sub => ({
+            ...sub,
+            publishedStream: publishedByUser.get(sub.userId),
+        }));
     }
     
     async listStreams(executor: Executor, streamRoomId: types.stream.StreamRoomId) {

@@ -21,6 +21,7 @@ import { Logger } from "../../../service/log/Logger";
 import { LoggerFactory } from "../../../service/log/LoggerFactory";
 import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { StreamNotificationService } from "../../../service/cloud/StreamNotificationService";
+import { JanusRoomsWatcher } from "../../../service/cloud/JanusRoomsWatcher";
 import { createMock, empty, hasNoCalls, hasOneCall } from "../../testUtils/TestUtils";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
 
@@ -41,8 +42,9 @@ function build() {
         sendStreamRoomLeftEvent: mockFn(empty),
     });
     const parser = new JanusNotificationParser(loggerFactory);
-    const dispatcher = new JanusEventDispatcher(loggerFactory, repositoryFactory, notifications, parser, new JanusVideoRoomMapper());
-    return { dispatcher, notifications };
+    const janusRoomsWatcher = createMock<JanusRoomsWatcher>({ removeSubscriber: mockFn(async () => undefined) as any });
+    const dispatcher = new JanusEventDispatcher(loggerFactory, repositoryFactory, notifications, parser, new JanusVideoRoomMapper(), janusRoomsWatcher, "localhost" as any);
+    return { dispatcher, notifications, janusRoomsWatcher };
 }
 
 function session(type: "main" | "subscriber", overrides: Partial<JanusSession> = {}): JanusSession {
@@ -56,6 +58,7 @@ function session(type: "main" | "subscriber", overrides: Partial<JanusSession> =
         streamsToAccept: [],
         publishedStreams: [],
         streamPublishedEventEmitted: false,
+        peerConnectionEstablished: false,
         subscriptions: [],
         janusPublisherId: undefined,
         addStreamsOffer: empty as any,
@@ -126,6 +129,28 @@ describe("JanusEventDispatcher.handleJanusNotification", () => {
         hasNoCalls(notifications.sendStreamPublishedEvent as any);
     });
     
+    it("marks the session's PeerConnection established on webrtcup", async () => {
+        const { dispatcher } = build();
+        const sess = publishingMain();
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(sess), "ws1" as any);
+        expect(sess.peerConnectionEstablished).toBe(true);
+    });
+    
+    it("emits this session's published stream, not the last array element", async () => {
+        const { dispatcher, notifications } = build();
+        const sess = session("main", {
+            janusPublisherId: 1 as any,
+            publishedStreams: [
+                { id: 1, display: "U", streams: [{ type: "audio", mid: "0", mindex: 0 }] } as any,
+                { id: 99, display: "U", streams: [{ type: "video", mid: "1", mindex: 1 }] } as any,
+            ],
+        });
+        await dispatcher.handleJanusNotification(webrtcup(), websocketWith(sess), "ws1" as any);
+        hasOneCall(notifications.sendStreamPublishedEvent as any);
+        const emitted = (notifications.sendStreamPublishedEvent as any).mock.calls[0][1];
+        expect(emitted.stream.id).toBe(1);
+    });
+    
     it("does not translate `updated` for a main (publisher) session", async () => {
         const { dispatcher, notifications } = build();
         await dispatcher.handleJanusNotification(notification("updated"), websocketWith(session("main")), "ws1" as any);
@@ -135,7 +160,7 @@ describe("JanusEventDispatcher.handleJanusNotification", () => {
 
 describe("JanusEventDispatcher.emitDisconnectEventsForSessions", () => {
     it("emits streamUnpublished for publishing sessions and one streamRoomLeft per room+user", async () => {
-        const { dispatcher, notifications } = build();
+        const { dispatcher, notifications, janusRoomsWatcher } = build();
         dispatcher.emitDisconnectEventsForSessions([
             session("main", { janusPublisherId: 9 as any, publishedStreams: [{ id: 9 } as any] }),
             session("subscriber"),
@@ -143,6 +168,7 @@ describe("JanusEventDispatcher.emitDisconnectEventsForSessions", () => {
         await PromiseUtils.wait(50);
         hasOneCall(notifications.sendStreamUnpublishedEvent as any);
         hasOneCall(notifications.sendStreamRoomLeftEvent as any);
+        hasOneCall(janusRoomsWatcher.removeSubscriber as any);
     });
     
     it("emits only streamRoomLeft when nothing was publishing", async () => {

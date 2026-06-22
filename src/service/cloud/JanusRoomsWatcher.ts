@@ -15,6 +15,8 @@ import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
 import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
+import { UserId } from "../../types/cloud";
+import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
 import { JanusConnector } from "./JanusConnector";
@@ -60,12 +62,12 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeaving(evt)) {
-            return;
-        }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving;
+        const rawPublisherId = this.extractDepartingPublisherId(data);
+        if (rawPublisherId === undefined) {
+            return;
+        }
         
         if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
@@ -173,6 +175,29 @@ export class JanusRoomsWatcher {
     
     async removeRoomWatcher(host: string, streamRoomId: StreamRoomId) {
         await this.cache.removeRoomWatcher({host, streamRoomId});
+    }
+    
+    async addSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.addSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async removeSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.removeSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async addSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
+        await this.cache.addSubscriber({host, streamRoomId, userId});
+    }
+    
+    async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
+        const isRoomEmpty = await this.cache.removeSubscriber({host, streamRoomId, userId});
+        if (isRoomEmpty) {
+            await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
+        }
+    }
+    
+    async getRoomSubscribers(host: string, streamRoomId: StreamRoomId) {
+        return this.cache.getRoomSubscribers({host, streamRoomId});
     }
     
     async stopWatchingJanusRoom(janusRoomId: number) {
@@ -330,13 +355,17 @@ export class JanusRoomsWatcher {
         return attach;
     }
     
-    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
-        const data = evt.plugindata.data as Record<string, unknown>;
-        return (
-            typeof data === "object" && data !== null &&
-            "room" in data &&
-            "leaving" in data
-        );
+    private extractDepartingPublisherId(data: Record<string, unknown>): unknown {
+        if (typeof data !== "object" || data === null || !("room" in data)) {
+            return undefined;
+        }
+        if ("leaving" in data) {
+            return data.leaving;
+        }
+        if ("unpublished" in data) {
+            return data.unpublished;
+        }
+        return undefined;
     }
     
     private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {
