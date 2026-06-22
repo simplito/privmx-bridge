@@ -62,12 +62,12 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeaving(evt)) {
-            return;
-        }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving;
+        const rawPublisherId = this.extractDepartingPublisherId(data);
+        if (rawPublisherId === undefined) {
+            return;
+        }
         
         if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
@@ -106,7 +106,7 @@ export class JanusRoomsWatcher {
             const repo = this.repositoryFactory.createStreamRoomRepository(session);
             const streamRoom = await repo.get(id);
             
-            if (!streamRoom || streamRoom.closed) {
+            if (!streamRoom || streamRoom.state === "closed") {
                 return;
             }
             
@@ -141,11 +141,29 @@ export class JanusRoomsWatcher {
     
     async addSessionToWatch(model: JanusRoomWatch) {
         await this.ensureConnection();
-        await this.cache.addPublisher(model);
+        const wasEmpty = await this.cache.addPublisher(model);
+        
+        if (wasEmpty) {
+            await this.openDbRoom(model.streamRoomId);
+        }
         
         if (!this.roomHandles.has(model.janusRoomId)) {
             return this.startOrJoinRoomAttachment(model);
         }
+    }
+    
+    private async openDbRoom(id: StreamRoomId) {
+        await this.repositoryFactory.withTransaction(async (session) => {
+            const repo = this.repositoryFactory.createStreamRoomRepository(session);
+            const streamRoom = await repo.get(id);
+            
+            if (!streamRoom || streamRoom.state !== "created") {
+                return;
+            }
+            
+            this.logger.debug("FIRST PUBLISHER JOINED. SETTING ROOM TO OPEN", id);
+            await repo.openStreamRoom(id);
+        });
     }
     
     async removeSessionFromWatch(model: JanusRoomWatch) {
@@ -172,7 +190,10 @@ export class JanusRoomsWatcher {
     }
     
     async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
-        await this.cache.removeSubscriber({host, streamRoomId, userId});
+        const isRoomEmpty = await this.cache.removeSubscriber({host, streamRoomId, userId});
+        if (isRoomEmpty) {
+            await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
+        }
     }
     
     async getRoomSubscribers(host: string, streamRoomId: StreamRoomId) {
@@ -334,13 +355,17 @@ export class JanusRoomsWatcher {
         return attach;
     }
     
-    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
-        const data = evt.plugindata.data as Record<string, unknown>;
-        return (
-            typeof data === "object" && data !== null &&
-            "room" in data &&
-            "leaving" in data
-        );
+    private extractDepartingPublisherId(data: Record<string, unknown>): unknown {
+        if (typeof data !== "object" || data === null || !("room" in data)) {
+            return undefined;
+        }
+        if ("leaving" in data) {
+            return data.leaving;
+        }
+        if ("unpublished" in data) {
+            return data.unpublished;
+        }
+        return undefined;
     }
     
     private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {

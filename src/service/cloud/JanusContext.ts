@@ -72,6 +72,7 @@ export class JanusContext {
             
             publishedStreams: [],
             streamPublishedEventEmitted: false,
+            peerConnectionEstablished: false,
             subscriptions: [],
             
             keepPublishedStream: function(stream: WebRtcTypes.Publisher): void {

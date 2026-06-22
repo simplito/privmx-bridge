@@ -74,6 +74,7 @@ export type AclFunctionNameX =
     | "stream/streamRoomList"
     | "stream/streamRoomListAll"
     | "stream/streamList"
+    | "stream/streamRoomListParticipants"
     | "stream/streamRoomEnableRecording"
     | "stream/READ"
     | "stream/streamRoomCreate"
@@ -224,6 +225,7 @@ export class CloudAclChecker {
             "stream/streamRoomList": [],
             "stream/streamRoomListAll": [],
             "stream/streamList": ["streamRoomId"],
+            "stream/streamRoomListParticipants": ["streamRoomId"],
         } as types.cloud.AclFunctions;
         this.groups.set("stream/READ" as types.cloud.AclGroupName, streamRead);
         

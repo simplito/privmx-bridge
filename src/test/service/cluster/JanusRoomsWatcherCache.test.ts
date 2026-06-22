@@ -33,7 +33,7 @@ function build() {
 }
 
 async function withRoom(cache: JanusRoomsWatcherCache) {
-    // A subscriber always has a publisher/main session in the room first, which creates the RoomState.
+    // Seed a publisher so the room exists; membership can also create it on its own (tested below).
     await cache.addPublisher({ host: HOST, streamRoomId: ROOM, janusRoomId: 1, publisherId: 100 });
 }
 
@@ -51,7 +51,7 @@ describe("JanusRoomsWatcherCache subscribers", () => {
         expect(a?.subscriptions.length).toBe(3); // 1, 2/t1, 3 — duplicate 1 not added twice
     });
     
-    it("removes individual subscriptions and drops the user when empty", async () => {
+    it("removes individual subscriptions but keeps the member after unsubscribing from everything", async () => {
         const cache = build();
         await withRoom(cache);
         await cache.addSubscriptions({ host: HOST, streamRoomId: ROOM, userId: USER_A, subscriptions: [sub(1), sub(2, "t1")] });
@@ -63,7 +63,9 @@ describe("JanusRoomsWatcherCache subscribers", () => {
         
         await cache.removeSubscriptions({ host: HOST, streamRoomId: ROOM, userId: USER_A, subscriptions: [sub(2, "t1")] });
         subscribers = await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM });
-        expect(subscribers.length).toBe(0);
+        // The viewer is still a room member, just no longer watching any stream.
+        expect(subscribers.length).toBe(1);
+        expect(subscribers[0]?.subscriptions.length).toBe(0);
     });
     
     it("removeSubscriber drops all of a user's subscriptions", async () => {
@@ -74,10 +76,12 @@ describe("JanusRoomsWatcherCache subscribers", () => {
         expect((await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM })).length).toBe(0);
     });
     
-    it("addSubscriptions is a no-op when the room state is missing", async () => {
+    it("creates room membership when a viewer subscribes before any publisher", async () => {
         const cache = build();
         await cache.addSubscriptions({ host: HOST, streamRoomId: ROOM, userId: USER_A, subscriptions: [sub(1)] });
-        expect((await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM })).length).toBe(0);
+        const subscribers = await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM });
+        expect(subscribers.length).toBe(1);
+        expect(subscribers[0]?.subscriptions.length).toBe(1);
     });
     
     it("removeRoomWatcher clears subscribers along with the room state", async () => {
@@ -86,5 +90,38 @@ describe("JanusRoomsWatcherCache subscribers", () => {
         await cache.addSubscriptions({ host: HOST, streamRoomId: ROOM, userId: USER_A, subscriptions: [sub(1)] });
         await cache.removeRoomWatcher({ host: HOST, streamRoomId: ROOM });
         expect((await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM })).length).toBe(0);
+    });
+});
+
+describe("JanusRoomsWatcherCache room emptiness", () => {
+    it("addSubscriber creates membership without any publisher", async () => {
+        const cache = build();
+        await cache.addSubscriber({ host: HOST, streamRoomId: ROOM, userId: USER_A });
+        expect((await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM })).length).toBe(1);
+    });
+    
+    it("removePublisher does not empty the room while a member remains", async () => {
+        const cache = build();
+        await cache.addPublisher({ host: HOST, streamRoomId: ROOM, janusRoomId: 1, publisherId: 100 });
+        await cache.addSubscriber({ host: HOST, streamRoomId: ROOM, userId: USER_A });
+        
+        // Last publisher leaves, but a viewer is still in the room.
+        expect(await cache.removePublisher({ host: HOST, streamRoomId: ROOM, janusRoomId: 1, publisherId: 100 })).toBe(false);
+        expect((await cache.getRoomSubscribers({ host: HOST, streamRoomId: ROOM })).length).toBe(1);
+        
+        // The viewer leaving is the transition that finally empties the room.
+        expect(await cache.removeSubscriber({ host: HOST, streamRoomId: ROOM, userId: USER_A })).toBe(true);
+    });
+    
+    it("removePublisher empties a publisher-only room (no members)", async () => {
+        const cache = build();
+        await cache.addPublisher({ host: HOST, streamRoomId: ROOM, janusRoomId: 1, publisherId: 100 });
+        expect(await cache.removePublisher({ host: HOST, streamRoomId: ROOM, janusRoomId: 1, publisherId: 100 })).toBe(true);
+    });
+    
+    it("removeSubscriber reports empty when the last member leaves a publisher-less room", async () => {
+        const cache = build();
+        await cache.addSubscriber({ host: HOST, streamRoomId: ROOM, userId: USER_A });
+        expect(await cache.removeSubscriber({ host: HOST, streamRoomId: ROOM, userId: USER_A })).toBe(true);
     });
 });

@@ -103,31 +103,15 @@ export class JanusRoomsWatcherCache {
     }
     
     @ApiMethod({})
-    async addPublisher(model: JanusRoomWatch) {
+    async addPublisher(model: JanusRoomWatch): Promise<boolean> {
         this.logger.debug({ model }, "[CACHE] addPublisher invoked");
         
         const janusRoomId = Number(model.janusRoomId);
         const publisherId = Number(model.publisherId);
         
-        let hostRooms = this.hostsMap.get(model.host);
-        if (!hostRooms) {
-            this.logger.debug({ host: model.host }, "[CACHE] addPublisher: Host not found, creating new Map for host");
-            hostRooms = new Map();
-            this.hostsMap.set(model.host, hostRooms);
-        }
+        const roomState = this.ensureRoomState(model.host, model.streamRoomId, janusRoomId);
         
-        let roomState = hostRooms.get(model.streamRoomId);
-        if (!roomState) {
-            this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] addPublisher: streamRoomId not found, creating new RoomState");
-            roomState = {
-                janusRoomId: janusRoomId,
-                publishers: new Map<number, JanusRoomWatch>(),
-                subscribers: new Map<UserId, StreamSubscription[]>(),
-            };
-            hostRooms.set(model.streamRoomId, roomState);
-            this.janusRoomIdToStreamRoomIdMap.set(janusRoomId, { host: model.host, streamRoomId: model.streamRoomId });
-        }
-        
+        const wasEmpty = roomState.publishers.size === 0;
         roomState.publishers.set(publisherId, model);
         const wasRemovedFromPending = this.pendingEmptyRooms.delete(model.streamRoomId);
         
@@ -136,7 +120,10 @@ export class JanusRoomsWatcherCache {
             publisherIdAdded: publisherId,
             currentPublishersCount: roomState.publishers.size,
             wasRemovedFromPending: wasRemovedFromPending,
+            wasEmpty: wasEmpty,
         }, "[CACHE] addPublisher completed successfully");
+        
+        return wasEmpty;
     }
     
     @ApiMethod({})
@@ -153,20 +140,16 @@ export class JanusRoomsWatcherCache {
         
         const roomState = hostRooms.get(model.streamRoomId);
         if (roomState) {
-            this.logger.debug({
-                streamRoomId: model.streamRoomId,
-                targetPublisherId: publisherId,
-            }, "[CACHE] removePublisher: Attempting to delete publisher from roomState");
-            
             const wasDeleted = roomState.publishers.delete(publisherId);
             
             this.logger.debug({
                 wasDeleted,
                 remainingPublishers: roomState.publishers.size,
+                remainingSubscribers: roomState.subscribers.size,
             }, "[CACHE] removePublisher: Deletion step completed");
             
-            if (roomState.publishers.size === 0) {
-                this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removePublisher: Room is now EMPTY. Adding to pendingEmptyRooms and returning TRUE.");
+            if (this.isRoomEmpty(roomState)) {
+                this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removePublisher: Room is now EMPTY (no publishers, no members). Queuing for close.");
                 this.pendingEmptyRooms.set(model.streamRoomId, model.host);
                 return true;
             }
@@ -175,17 +158,13 @@ export class JanusRoomsWatcherCache {
             this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removePublisher: streamRoomId not found in hostRooms. Returning FALSE.");
         }
         
-        this.logger.debug({}, "[CACHE] removePublisher: Room still has publishers. Returning FALSE.");
+        this.logger.debug({}, "[CACHE] removePublisher: Room still has publishers or members. Returning FALSE.");
         return false;
     }
     
     @ApiMethod({})
     async addSubscriptions(model: { host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[] }) {
-        const roomState = this.getRoomState(model.host, model.streamRoomId);
-        if (!roomState) {
-            this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] addSubscriptions: roomState missing, ignoring");
-            return;
-        }
+        const roomState = this.ensureRoomState(model.host, model.streamRoomId);
         const current = roomState.subscribers.get(model.userId) ?? [];
         for (const sub of model.subscriptions) {
             if (!current.some(s => this.subscriptionsEqual(s, sub))) {
@@ -207,21 +186,15 @@ export class JanusRoomsWatcherCache {
             return;
         }
         const remaining = current.filter(s => !model.subscriptions.some(toRemove => this.subscriptionsEqual(s, toRemove)));
-        if (remaining.length === 0) {
-            roomState.subscribers.delete(model.userId);
-        }
-        else {
-            roomState.subscribers.set(model.userId, remaining);
-        }
+        // Keep the (possibly empty) membership entry — the viewer is still in the room, just not
+        // watching any stream. It is removed only on leave/disconnect (removeSubscriber).
+        roomState.subscribers.set(model.userId, remaining);
         this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId, remaining: remaining.length }, "[CACHE] removeSubscriptions completed");
     }
     
     @ApiMethod({})
     async addSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }) {
-        const roomState = this.getRoomState(model.host, model.streamRoomId);
-        if (!roomState) {
-            return;
-        }
+        const roomState = this.ensureRoomState(model.host, model.streamRoomId);
         if (!roomState.subscribers.has(model.userId)) {
             roomState.subscribers.set(model.userId, []);
         }
@@ -229,13 +202,21 @@ export class JanusRoomsWatcherCache {
     }
     
     @ApiMethod({})
-    async removeSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }) {
+    async removeSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }): Promise<boolean> {
         const roomState = this.getRoomState(model.host, model.streamRoomId);
         if (!roomState) {
-            return;
+            return false;
         }
         const wasDeleted = roomState.subscribers.delete(model.userId);
         this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId, wasDeleted }, "[CACHE] removeSubscriber completed");
+        
+        // A leaving member can be the transition that empties the room (no publishers, no members).
+        if (this.isRoomEmpty(roomState)) {
+            this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removeSubscriber: Room is now EMPTY. Queuing for close.");
+            this.pendingEmptyRooms.set(model.streamRoomId, model.host);
+            return true;
+        }
+        return false;
     }
     
     @ApiMethod({})
@@ -254,6 +235,32 @@ export class JanusRoomsWatcherCache {
     
     private getRoomState(host: string, streamRoomId: StreamRoomId): RoomState | undefined {
         return this.hostsMap.get(host)?.get(streamRoomId);
+    }
+    
+    private ensureRoomState(host: string, streamRoomId: StreamRoomId, janusRoomId?: number): RoomState {
+        let hostRooms = this.hostsMap.get(host);
+        if (!hostRooms) {
+            hostRooms = new Map();
+            this.hostsMap.set(host, hostRooms);
+        }
+        let roomState = hostRooms.get(streamRoomId);
+        if (!roomState) {
+            roomState = {
+                janusRoomId: janusRoomId ?? 0,
+                publishers: new Map<number, JanusRoomWatch>(),
+                subscribers: new Map<UserId, StreamSubscription[]>(),
+            };
+            hostRooms.set(streamRoomId, roomState);
+        }
+        if (janusRoomId !== undefined) {
+            roomState.janusRoomId = janusRoomId;
+            this.janusRoomIdToStreamRoomIdMap.set(janusRoomId, { host, streamRoomId });
+        }
+        return roomState;
+    }
+    
+    private isRoomEmpty(roomState: RoomState): boolean {
+        return roomState.publishers.size === 0 && roomState.subscribers.size === 0;
     }
     
     private subscriptionsEqual(a: StreamSubscription, b: StreamSubscription): boolean {
