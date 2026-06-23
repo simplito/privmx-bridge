@@ -54,15 +54,15 @@ export class StoreService extends BaseContainerService {
         this.policy = new StorePolicy(this.policyService);
     }
     
-    async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
+    async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups, groupManagers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
-            const store = await this.repositoryFactory.createStoreRepository().createStore(resourceId, contextId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
+            const store = await this.repositoryFactory.createStoreRepository().createStore(resourceId, contextId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.storeNotificationService.sendStoreCreated(store, context.solution);
             return store;
         }
@@ -74,7 +74,7 @@ export class StoreService extends BaseContainerService {
         }
     }
     
-    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
+    async updateStore(cloudUser: CloudUser, id: types.store.StoreId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.store.StoreVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -93,12 +93,12 @@ export class StoreService extends BaseContainerService {
             }
             const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, users, managers);
-            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, groups, groupManagers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldStore.clientResourceId && resourceId && oldStore.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupManagers, groupKeys: newGroupKeys});
+                const store = await storeRepository.updateStore(oldStore, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupKeys: newGroupKeys});
                 return {store, context, oldStore};
             }
             catch (err) {

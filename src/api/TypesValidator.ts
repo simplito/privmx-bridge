@@ -63,6 +63,7 @@ export class TypesValidator {
     groupId: Validator;
     groupData: Validator;
     groupPubKey: Validator;
+    groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
     storeId: Validator;
     storeData: Validator;
@@ -239,6 +240,10 @@ export class TypesValidator {
         this.groupId = id;
         this.groupData = this.unknown16Kb;
         this.groupPubKey = this.eccPub;
+        this.groupGrant = this.builder.createObject({
+            groupId: this.groupId,
+            role: this.builder.createEnum(["user", "manager"]),
+        });
         this.cloudGroupKeyEntrySet = this.builder.createObject({
             group: this.groupId,
             keyId: this.keyId,

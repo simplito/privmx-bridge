@@ -41,7 +41,7 @@ export class StoreNotificationService {
     
     /** Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications). */
     private async getStoreMemberUserIds(store: db.store.Store): Promise<types.cloud.UserId[]> {
-        const groupIds = [...(store.groups || []), ...(store.groupManagers || [])];
+        const groupIds = (store.groups || []).map(g => g.groupId);
         const groupMembers = await this.repositoryFactory.createGroupRepository().getMembersOfGroups(groupIds);
         return Utils.unique([...store.users, ...store.managers, ...groupMembers]);
     }

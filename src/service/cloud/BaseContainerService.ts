@@ -17,8 +17,7 @@ import { Utils } from "../../utils/Utils";
 interface GranteeContainer {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
 }
 
 export class BaseContainerService {
@@ -41,9 +40,10 @@ export class BaseContainerService {
      * users/managers) account for group membership without changing the policy engine.
      */
     protected withGroupMembership<T extends GranteeContainer>(container: T, userId: types.cloud.UserId, userGroupIds: types.group.GroupId[]): T {
-        const inUserGroup = (container.groups || []).some(g => userGroupIds.includes(g));
-        const inManagerGroup = (container.groupManagers || []).some(g => userGroupIds.includes(g));
-        if (!inUserGroup && !inManagerGroup) {
+        const grants = container.groups || [];
+        const inAnyGroup = grants.some(g => userGroupIds.includes(g.groupId));
+        const inManagerGroup = grants.some(g => g.role === "manager" && userGroupIds.includes(g.groupId));
+        if (!inAnyGroup) {
             return container;
         }
         return {

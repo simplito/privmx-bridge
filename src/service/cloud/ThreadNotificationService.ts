@@ -41,7 +41,7 @@ export class ThreadNotificationService {
     
     /** Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications). */
     private async getThreadMemberUserIds(thread: db.thread.Thread): Promise<types.cloud.UserId[]> {
-        const groupIds = [...(thread.groups || []), ...(thread.groupManagers || [])];
+        const groupIds = (thread.groups || []).map(g => g.groupId);
         const groupMembers = await this.repositoryFactory.createGroupRepository().getMembersOfGroups(groupIds);
         return Utils.unique([...thread.users, ...thread.managers, ...groupMembers]);
     }

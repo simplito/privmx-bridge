@@ -34,7 +34,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadCreate(model: threadApi.ThreadCreateModel): Promise<threadApi.ThreadCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.createThread(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.groups || [], model.groupManagers || [], model.groupKeys || []);
+        const thread = await this.threadService.createThread(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.groups || [], model.groupKeys || []);
         this.requestLogger.setContextId(thread.contextId);
         return {threadId: thread.id};
     }
@@ -42,7 +42,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadUpdate(model: threadApi.ThreadUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.groups || [], model.groupManagers || [], model.groupKeys || []);
+        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.groups || [], model.groupKeys || []);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }

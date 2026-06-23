@@ -115,19 +115,14 @@ export class CloudKeyService {
         oldGroupKeys: types.cloud.GroupKeysEntry[],
         inserts: types.cloud.GroupKeyEntrySet[],
         keyId: types.core.KeyId,
-        groups: types.group.GroupId[],
-        groupManagers: types.group.GroupId[],
+        groupIds: types.group.GroupId[],
     ) {
-        if (!Utils.isUnique(groups)) {
+        if (!Utils.isUnique(groupIds)) {
             throw new AppException("INVALID_PARAMS", "groups not unique");
         }
-        if (!Utils.isUnique(groupManagers)) {
-            throw new AppException("INVALID_PARAMS", "group managers not unique");
-        }
-        const allGroups = Utils.unique(groups.concat(groupManagers));
-        await this.repositoryFactory.createGroupRepository().checkGroupsExistence(contextId, allGroups);
+        await this.repositoryFactory.createGroupRepository().checkGroupsExistence(contextId, groupIds);
         const newGroupKeys = this.buildGroupKeys(availableKeyIds, oldGroupKeys, inserts);
-        this.verifyThatOnlyGivenGroupsHaveAccess(newGroupKeys, keyId, allGroups);
+        this.verifyThatOnlyGivenGroupsHaveAccess(newGroupKeys, keyId, groupIds);
         return newGroupKeys;
     }
     

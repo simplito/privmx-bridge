@@ -72,7 +72,6 @@ export class InboxRepository {
     
     async createInbox(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -81,7 +80,6 @@ export class InboxRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const inbox: db.inbox.Inbox = {
             id: this.repository.generateId(),
@@ -97,7 +95,6 @@ export class InboxRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
@@ -112,7 +109,6 @@ export class InboxRepository {
     
     async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -121,7 +117,6 @@ export class InboxRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const updatedInbox: db.inbox.Inbox = {
             id: oldInbox.id,
@@ -137,7 +132,6 @@ export class InboxRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [...oldInbox.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldInbox.allTimeUsers, entry.users, entry.managers),
@@ -155,7 +149,7 @@ export class InboxRepository {
     
     /** True if any inbox still grants access to the given group (Phase 2 referential integrity). */
     async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
-        const found = await this.repository.query(q => q.or(q.includes("groups", groupId), q.includes("groupManagers", groupId))).limit(1).array();
+        const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
         return found.length > 0;
     }
     

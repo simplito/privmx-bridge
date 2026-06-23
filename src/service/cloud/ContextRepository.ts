@@ -111,7 +111,7 @@ export class ContextRepository {
             return {
                 $and: [
                     {contextId: contextId},
-                    {$or: [{managers: userId}, {groupManagers: {$in: userGroupIds}}]},
+                    {$or: [{managers: userId}, {groups: {$elemMatch: {groupId: {$in: userGroupIds}, role: "manager"}}}]},
                 ],
             };
         }
@@ -119,7 +119,7 @@ export class ContextRepository {
             return {
                 $and: [
                     {contextId: contextId},
-                    {$or: [{users: userId}, {groups: {$in: userGroupIds}}]},
+                    {$or: [{users: userId}, {groups: {$elemMatch: {groupId: {$in: userGroupIds}}}}]},
                 ],
             };
         }
@@ -139,8 +139,7 @@ export class ContextRepository {
                         $or: [
                             {users: userId},
                             {managers: userId},
-                            {groups: {$in: userGroupIds}},
-                            {groupManagers: {$in: userGroupIds}},
+                            {groups: {$elemMatch: {groupId: {$in: userGroupIds}}}},
                         ],
                     },
                 ],

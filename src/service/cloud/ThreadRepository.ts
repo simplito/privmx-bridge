@@ -73,7 +73,6 @@ export class ThreadRepository {
     async createThread(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -82,7 +81,6 @@ export class ThreadRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const thread: db.thread.Thread = {
             id: this.repository.generateId(),
@@ -98,7 +96,6 @@ export class ThreadRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
@@ -116,7 +113,6 @@ export class ThreadRepository {
     async updateThread(oldThread: db.thread.Thread, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -125,7 +121,6 @@ export class ThreadRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const updatedThread: db.thread.Thread = {
             id: oldThread.id,
@@ -141,7 +136,6 @@ export class ThreadRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [...oldThread.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldThread.allTimeUsers, entry.users, entry.managers),
@@ -165,7 +159,7 @@ export class ThreadRepository {
     
     /** True if any thread still grants access to the given group (Phase 2 referential integrity). */
     async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
-        const found = await this.repository.query(q => q.or(q.includes("groups", groupId), q.includes("groupManagers", groupId))).limit(1).array();
+        const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
         return found.length > 0;
     }
     

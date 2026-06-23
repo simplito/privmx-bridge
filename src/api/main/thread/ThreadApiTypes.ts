@@ -21,8 +21,7 @@ export interface ThreadCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -37,8 +36,7 @@ export interface ThreadUpdateModel {
     version: types.thread.ThreadVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -108,8 +106,7 @@ export interface ThreadInfo {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.group.GroupId[];
-    groupManagers: types.group.GroupId[];
+    groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.thread.ThreadVersion;
     lastMsgDate: types.core.Timestamp;

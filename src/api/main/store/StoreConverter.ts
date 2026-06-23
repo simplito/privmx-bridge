@@ -29,7 +29,6 @@ export class StoreConverter {
             data: store.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
             groups: store.groups || [],
-            groupManagers: store.groupManagers || [],
             groupKeys: store.groupKeys || [],
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,

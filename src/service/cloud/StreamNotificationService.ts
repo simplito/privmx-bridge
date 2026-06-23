@@ -63,7 +63,7 @@ export class StreamNotificationService {
     
     /** Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications). */
     private async getStreamRoomMemberUserIds(streamRoom: db.stream.StreamRoom): Promise<types.cloud.UserId[]> {
-        const groupIds = [...(streamRoom.groups || []), ...(streamRoom.groupManagers || [])];
+        const groupIds = (streamRoom.groups || []).map(g => g.groupId);
         const groupMembers = await this.repositoryFactory.createGroupRepository().getMembersOfGroups(groupIds);
         return Utils.unique([...streamRoom.users, ...streamRoom.managers, ...groupMembers]);
     }

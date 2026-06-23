@@ -42,7 +42,7 @@ export class InboxNotificationService {
     
     /** Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications). */
     private async getInboxMemberUserIds(inbox: db.inbox.Inbox): Promise<types.cloud.UserId[]> {
-        const groupIds = [...(inbox.groups || []), ...(inbox.groupManagers || [])];
+        const groupIds = (inbox.groups || []).map(g => g.groupId);
         const groupMembers = await this.repositoryFactory.createGroupRepository().getMembersOfGroups(groupIds);
         return Utils.unique([...inbox.users, ...inbox.managers, ...groupMembers]);
     }

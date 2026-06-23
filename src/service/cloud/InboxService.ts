@@ -67,11 +67,10 @@ export class InboxService extends BaseContainerService {
         await this.validateAccessToThread(model.data.threadId, user);
         await this.validateAccessToStore(model.data.storeId, user);
         const groups = model.groups || [];
-        const groupManagers = model.groupManagers || [];
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(model.contextId, model.keys, model.keyId, model.users, model.managers);
-        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(model.contextId, [model.keyId], [], model.groupKeys || [], model.keyId, groups, groupManagers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(model.contextId, [model.keyId], [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
         try {
-            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
+            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.inboxNotificationService.sendInboxCreated(inbox, context.solution);
             return inbox;
         }
@@ -108,15 +107,14 @@ export class InboxService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             const groups = model.groups || [];
-            const groupManagers = model.groupManagers || [];
             const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
-            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups, groupManagers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
             if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null, {groups, groupManagers, groupKeys: newGroupKeys});
+                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null, {groups, groupKeys: newGroupKeys});
                 return {inbox, context, oldInbox};
             }
             catch (err) {

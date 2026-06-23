@@ -42,7 +42,7 @@ export class KvdbNotificationService {
     
     /** Kvdb users plus the expanded members of any granted groups (Phase 2 grantee notifications). */
     private async getKvdbMemberUserIds(kvdb: db.kvdb.Kvdb): Promise<types.cloud.UserId[]> {
-        const groupIds = [...(kvdb.groups || []), ...(kvdb.groupManagers || [])];
+        const groupIds = (kvdb.groups || []).map(g => g.groupId);
         const groupMembers = await this.repositoryFactory.createGroupRepository().getMembersOfGroups(groupIds);
         return Utils.unique([...kvdb.users, ...groupMembers]);
     }

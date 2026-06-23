@@ -30,7 +30,6 @@ export class KvdbConverter {
             data: kvdb.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (kvdb.keys.find(x => x.user === user)?.keys) || [],
             groups: kvdb.groups || [],
-            groupManagers: kvdb.groupManagers || [],
             groupKeys: kvdb.groupKeys || [],
             version: <types.kvdb.KvdbVersion>kvdb.history.length,
             type: kvdb.type,

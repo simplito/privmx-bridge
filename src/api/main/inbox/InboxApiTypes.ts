@@ -24,8 +24,7 @@ export interface Inbox {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.group.GroupId[];
-    groupManagers: types.group.GroupId[];
+    groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.inbox.InboxVersion;
     type?: types.inbox.InboxType;
@@ -47,8 +46,7 @@ export interface InboxCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -71,8 +69,7 @@ export interface InboxUpdateModel {
     version: types.inbox.InboxVersion;
     force: boolean;
     policy?: types.cloud.ContainerWithoutItemPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 

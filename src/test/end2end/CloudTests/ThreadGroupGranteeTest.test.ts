@@ -1,0 +1,207 @@
+/*!
+PrivMX Bridge.
+Copyright © 2024 Simplito sp. z o.o.
+
+This file is part of the PrivMX Platform (https://privmx.dev).
+This software is Licensed under the PrivMX Free License.
+
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
+import * as assert from "assert";
+import { testData } from "../../datasets/testData";
+import * as types from "../../../types";
+import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
+import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { Base64 } from "../../../utils/Base64";
+import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
+
+const groupIdentity = ECUtils.generateKeyPair();
+const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+
+// A second context user ("alice") created at runtime — she will get access to a thread ONLY through a group.
+const aliceIdentity = ECUtils.generateKeyPair();
+const aliceId = "alice" as types.cloud.UserId;
+const alicePubKey = aliceIdentity.pub58 as types.cloud.UserPubKey;
+const aliceWif = aliceIdentity.privWif as string;
+
+const groupKeyId = "group-key" as types.core.KeyId;
+const threadKeyId = "thread-key" as types.core.KeyId;
+const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
+
+function signAsJanek(payload: GroupSignaturePayload): types.core.EccSignature {
+    const keyPair = ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif);
+    if (!keyPair) {
+        throw new Error("Failed to load test private key");
+    }
+    return Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
+}
+
+export class ThreadGroupGranteeTests extends BaseTestSet {
+    
+    private groupId?: types.group.GroupId;
+    private threadId?: types.thread.ThreadId;
+    private aliceThreadApi?: ThreadApiClient;
+    
+    @Test()
+    async shouldGrantThreadAccessThroughGroupAndRevokeOnRemoval() {
+        await this.addAliceToContext();
+        await this.createGroupWithAlice();
+        await this.createThreadGrantingGroup();
+        await this.connectAsAlice();
+        await this.aliceCanGetThreadViaGroup();
+        await this.aliceCanListThreadViaGroup();
+        await this.removeAliceFromGroup();
+        await this.aliceCanNoLongerGetThread();
+        await this.aliceCanNoLongerListThread();
+    }
+    
+    @Test()
+    async shouldBlockGroupDeletionWhileGrantedToThread() {
+        await this.addAliceToContext();
+        await this.createGroupWithAlice();
+        await this.createThreadGrantingGroup();
+        const groupId = this.requireGroupId();
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupDelete({groupId}), "GROUP_IN_USE");
+    }
+    
+    private async addAliceToContext() {
+        this.helpers.authorizePlainApi();
+        const res = await this.plainApis.contextApi.addUserToContext({
+            contextId: testData.contextId,
+            userId: aliceId,
+            userPubKey: alicePubKey,
+            acl: "ALLOW ALL" as types.cloud.ContextAcl,
+        });
+        assert(res === "OK", "addUserToContext did not return OK");
+    }
+    
+    private async createGroupWithAlice() {
+        const users = [testData.userId, aliceId];
+        const managers = [testData.userId];
+        const signature = signAsJanek({
+            op: "create",
+            contextId: testData.contextId,
+            author: testData.userId,
+            authorPubKey: testData.userPubKey,
+            groupPubKey: groupPubKey,
+            keyId: groupKeyId,
+            prevSignature: null,
+            resultUsers: users,
+            resultManagers: managers,
+        });
+        const res = await this.apis.contextApi.groupCreate({
+            contextId: testData.contextId,
+            groupPubKey: groupPubKey,
+            users: users,
+            managers: managers,
+            data: "AAAA" as types.group.GroupData,
+            keyId: groupKeyId,
+            keys: [
+                {user: testData.userId, keyId: groupKeyId, data: "AAAA" as types.core.UserKeyData},
+                {user: aliceId, keyId: groupKeyId, data: "BBBB" as types.core.UserKeyData},
+            ],
+            signature: signature,
+        });
+        this.groupId = res.groupId;
+    }
+    
+    private async createThreadGrantingGroup() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: threadKeyId,
+            keys: [{user: testData.userId, keyId: threadKeyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+            groups: [{groupId: groupId, role: "user"}],
+            groupKeys: [{group: groupId, keyId: threadKeyId, data: "CCCC" as types.core.UserKeyData}],
+        });
+        this.threadId = res.threadId;
+    }
+    
+    private async connectAsAlice() {
+        const conn = await this.helpers.createNewConnection(aliceWif, testData.solutionId);
+        this.aliceThreadApi = new ThreadApiClient(conn);
+    }
+    
+    private async aliceCanGetThreadViaGroup() {
+        const threadId = this.requireThreadId();
+        const res = await this.requireAliceThreadApi().threadGet({threadId});
+        assert(res.thread.id === threadId, "alice should be able to get the thread via the group");
+        assert(res.thread.groups.some(g => g.groupId === this.requireGroupId()), "thread should list the granted group");
+    }
+    
+    private async aliceCanListThreadViaGroup() {
+        const threadId = this.requireThreadId();
+        const res = await this.requireAliceThreadApi().threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "MEMBER"});
+        assert(res.threads.some(t => t.id === threadId), "alice should see the thread in her MEMBER list via the group");
+    }
+    
+    private async removeAliceFromGroup() {
+        const groupId = this.requireGroupId();
+        const {group} = await this.apis.contextApi.groupGet({groupId});
+        const head = group.history[group.history.length - 1].signature;
+        const resultUsers = [testData.userId];
+        const resultManagers = [testData.userId];
+        const signature = signAsJanek({
+            op: "modifyMembers",
+            contextId: testData.contextId,
+            author: testData.userId,
+            authorPubKey: testData.userPubKey,
+            groupPubKey: groupPubKey,
+            keyId: rotatedGroupKeyId,
+            prevSignature: head,
+            resultUsers: resultUsers,
+            resultManagers: resultManagers,
+            delta: {usersAdded: [], usersRemoved: [aliceId], managersAdded: [], managersRemoved: []},
+        });
+        const res = await this.apis.contextApi.groupModifyMembers({
+            id: groupId,
+            usersToAddOrUpdate: [],
+            usersToRemove: [aliceId],
+            managersToAddOrUpdate: [],
+            managersToRemove: [],
+            keyId: rotatedGroupKeyId,
+            keys: [{user: testData.userId, keyId: rotatedGroupKeyId, data: "AAAA" as types.core.UserKeyData}],
+            signature: signature,
+            prevSignature: head,
+        });
+        assert(res === "OK", "groupModifyMembers did not return OK");
+    }
+    
+    private async aliceCanNoLongerGetThread() {
+        const threadId = this.requireThreadId();
+        await shouldThrowErrorWithCode2(() => this.requireAliceThreadApi().threadGet({threadId}), "ACCESS_DENIED");
+    }
+    
+    private async aliceCanNoLongerListThread() {
+        const threadId = this.requireThreadId();
+        const res = await this.requireAliceThreadApi().threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "MEMBER"});
+        assert(!res.threads.some(t => t.id === threadId), "alice should no longer see the thread after being removed from the group");
+    }
+    
+    private requireGroupId(): types.group.GroupId {
+        if (!this.groupId) {
+            throw new Error("groupId not initialized yet");
+        }
+        return this.groupId;
+    }
+    
+    private requireThreadId(): types.thread.ThreadId {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        return this.threadId;
+    }
+    
+    private requireAliceThreadApi(): ThreadApiClient {
+        if (!this.aliceThreadApi) {
+            throw new Error("alice connection not initialized yet");
+        }
+        return this.aliceThreadApi;
+    }
+}

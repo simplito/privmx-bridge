@@ -29,7 +29,6 @@ export class StreamConverter {
             data: stream.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (stream.keys.find(x => x.user === user)?.keys) || [],
             groups: stream.groups || [],
-            groupManagers: stream.groupManagers || [],
             groupKeys: stream.groupKeys || [],
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,

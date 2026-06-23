@@ -167,8 +167,7 @@ export namespace thread {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
         history: ThreadHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
@@ -182,8 +181,7 @@ export namespace thread {
         data: types.thread.ThreadData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -256,8 +254,7 @@ export namespace store {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
         history: StoreHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
@@ -271,8 +268,7 @@ export namespace store {
         data: types.store.StoreData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -331,8 +327,7 @@ export namespace inbox {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
         history: InboxHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
@@ -343,8 +338,7 @@ export namespace inbox {
         data: types.inbox.InboxData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -367,8 +361,7 @@ export namespace stream {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
         history: StreamRoomHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
@@ -381,8 +374,7 @@ export namespace stream {
         data: types.stream.StreamRoomData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -495,8 +487,7 @@ export namespace kvdb {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
         history: KvdbHistoryEntry[];
         entries: number;
@@ -509,8 +500,7 @@ export namespace kvdb {
         data: types.stream.StreamRoomData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        groups?: types.group.GroupId[];
-        groupManagers?: types.group.GroupId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }

@@ -29,7 +29,6 @@ export class InboxConverter {
             data: inbox.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (inbox.keys.find(x => x.user === user)?.keys) || [],
             groups: inbox.groups || [],
-            groupManagers: inbox.groupManagers || [],
             groupKeys: inbox.groupKeys || [],
             version: <types.inbox.InboxVersion>inbox.history.length,
             type: inbox.type,

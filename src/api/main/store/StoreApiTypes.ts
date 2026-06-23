@@ -21,8 +21,7 @@ export interface StoreCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -37,8 +36,7 @@ export interface StoreUpdateModel {
     version: types.store.StoreVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -89,8 +87,7 @@ export interface Store {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.group.GroupId[];
-    groupManagers: types.group.GroupId[];
+    groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.store.StoreVersion;
     lastFileDate: types.core.Timestamp;

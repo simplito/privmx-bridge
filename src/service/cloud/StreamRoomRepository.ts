@@ -76,7 +76,6 @@ export class StreamRoomRepository {
     
     async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -85,7 +84,6 @@ export class StreamRoomRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const streamRoom: db.stream.StreamRoom = {
             id: this.repository.generateId(),
@@ -101,7 +99,6 @@ export class StreamRoomRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
@@ -119,7 +116,6 @@ export class StreamRoomRepository {
     async updateStreamRoom(oldStreamRoom: db.stream.StreamRoom, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
         const groups = grantees?.groups || [];
-        const groupManagers = grantees?.groupManagers || [];
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -128,7 +124,6 @@ export class StreamRoomRepository {
             users: users,
             managers: managers,
             groups: groups,
-            groupManagers: groupManagers,
         };
         const updatedStreamRoom: db.stream.StreamRoom = {
             id: oldStreamRoom.id,
@@ -144,7 +139,6 @@ export class StreamRoomRepository {
             managers: entry.managers,
             keys: keys,
             groups: groups,
-            groupManagers: groupManagers,
             groupKeys: grantees?.groupKeys || [],
             history: [...oldStreamRoom.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldStreamRoom.allTimeUsers, entry.users, entry.managers),
@@ -164,7 +158,7 @@ export class StreamRoomRepository {
     
     /** True if any stream room still grants access to the given group (Phase 2 referential integrity). */
     async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
-        const found = await this.repository.query(q => q.or(q.includes("groups", groupId), q.includes("groupManagers", groupId))).limit(1).array();
+        const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
         return found.length > 0;
     }
     

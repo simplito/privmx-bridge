@@ -28,8 +28,7 @@ export interface StreamRoom {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.group.GroupId[];
-    groupManagers: types.group.GroupId[];
+    groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
@@ -47,8 +46,7 @@ export interface StreamRoomCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
@@ -67,8 +65,7 @@ export interface StreamRoomUpdateModel {
     version: types.stream.StreamRoomVersion;
     force: boolean;
     policy?: types.cloud.ContainerWithoutItemPolicy;
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: types.cloud.GroupGrant[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 

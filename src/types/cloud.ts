@@ -84,10 +84,18 @@ export interface GroupKeyEntrySet {
     data: types.core.UserKeyData;
 }
 
+/** Role a group grantee holds in a container. Role-tagged so it generalizes to RBAC (widen this union). */
+export type ContainerRole = "user"|"manager";
+
+/** A group granted access to a container, with the role it holds there. */
+export interface GroupGrant {
+    groupId: types.group.GroupId;
+    role: ContainerRole;
+}
+
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
 export interface ContainerGrantees {
-    groups?: types.group.GroupId[];
-    groupManagers?: types.group.GroupId[];
+    groups?: GroupGrant[];
     groupKeys?: GroupKeysEntry[];
 }
 

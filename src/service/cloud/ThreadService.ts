@@ -165,15 +165,15 @@ export class ThreadService extends BaseContainerService {
         return {thread, messages};
     }
     
-    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
+    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups, groupManagers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
-            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupManagers, groupKeys: newGroupKeys});
+            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.threadNotificationService.sendCreatedThread(thread, context.solution);
             return thread;
         }
@@ -185,7 +185,7 @@ export class ThreadService extends BaseContainerService {
         }
     }
     
-    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.group.GroupId[] = [], groupManagers: types.group.GroupId[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
+    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -204,12 +204,12 @@ export class ThreadService extends BaseContainerService {
             }
             const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, users, managers);
-            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, groups, groupManagers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupManagers, groupKeys: newGroupKeys});
+                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupKeys: newGroupKeys});
                 return {thread, context, oldThread};
             }
             catch (err) {
