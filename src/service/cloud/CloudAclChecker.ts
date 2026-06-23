@@ -88,9 +88,7 @@ export type AclFunctionNameX =
     | "stream/streamPublish"
     | "stream/streamUpdate"
     | "stream/streamUnpublish"
-    | "stream/streamSubscribe"
-    | "stream/streamUnsubscribe"
-    | "stream/streamModifySubscription"
+    | "stream/streamUpdateSubscriptions"
     | "stream/streamTrickle"
     | "stream/streamAcceptOffer"
     | "stream/streamSetNewOffer"
@@ -244,9 +242,7 @@ export class CloudAclChecker {
             "stream/streamPublish": ["streamRoomId"],
             "stream/streamUpdate": ["streamRoomId"],
             "stream/streamUnpublish": ["streamRoomId"],
-            "stream/streamSubscribe": ["streamRoomId"],
-            "stream/streamUnsubscribe": ["streamRoomId"],
-            "stream/streamModifySubscription": ["streamRoomId"],
+            "stream/streamUpdateSubscriptions": ["streamRoomId"],
             "stream/streamTrickle": ["streamRoomId"],
             "stream/streamAcceptOffer": ["streamRoomId"],
             "stream/streamSetNewOffer": ["streamRoomId"],

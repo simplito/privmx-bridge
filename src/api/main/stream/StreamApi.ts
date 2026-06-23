@@ -131,35 +131,13 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
-    async streamsSubscribeToRemote(model: streamApi.StreamsSubscribeModel): Promise<streamApi.StreamSubscribeResult> {
+    async streamsUpdateRemoteSubscriptions(model: streamApi.StreamUpdateRemoteSubscriptionsModel): Promise<streamApi.StreamSubscribeResult> {
         if (!this.websocket) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.subscribeToRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToAdd, this.websocket, wsId);
-        return res;
-    }
-    
-    @ApiMethod({})
-    async streamsModifyRemoteSubscriptions(model: streamApi.StreamModifySubscriptionModel): Promise<streamApi.StreamSubscribeResult> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.modifyRemoteSubscriptions(cloudUser, model.streamRoomId, model.subscriptionsToAdd, model.subscriptionsToRemove, this.websocket, wsId);
-        return res;
-    }
-    
-    @ApiMethod({})
-    async streamsUnsubscribeFromRemote(model: streamApi.StreamsUnsubscribeModel): Promise<streamApi.StreamSubscribeResult> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.unsubscribeFromRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToRemove, this.websocket, wsId);
+        const res = await this.streamService.updateRemoteSubscriptions(cloudUser, model.streamRoomId, model.subscriptionsToAdd, model.subscriptionsToRemove, this.websocket, wsId);
         return res;
     }
     

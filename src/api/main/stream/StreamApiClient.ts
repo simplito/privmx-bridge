@@ -83,16 +83,8 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.request("stream.streamRoomSendCustomEvent", model);
     }
     
-    streamsSubscribeToRemote(model: streamApi.StreamsSubscribeModel): Promise<streamApi.StreamSubscribeResult> {
-        return this.requestWS("stream.streamsSubscribeToRemote", model);
-    }
-    
-    streamsUnsubscribeFromRemote(model: streamApi.StreamsUnsubscribeModel): Promise<streamApi.StreamSubscribeResult> {
-        return this.requestWS("stream.streamsUnsubscribeFromRemote", model);
-    }
-    
-    streamsModifyRemoteSubscriptions(model: streamApi.StreamModifySubscriptionModel): Promise<streamApi.StreamSubscribeResult> {
-        return this.requestWS("stream.streamsModifyRemoteSubscriptions", model);
+    streamsUpdateRemoteSubscriptions(model: streamApi.StreamUpdateRemoteSubscriptionsModel): Promise<streamApi.StreamSubscribeResult> {
+        return this.requestWS("stream.streamsUpdateRemoteSubscriptions", model);
     }
     
     streamUnpublish(model: streamApi.StreamUnpublishModel): Promise<types.core.OK> {
