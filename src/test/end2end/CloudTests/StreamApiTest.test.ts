@@ -12,6 +12,7 @@ limitations under the License.
 import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
+import * as assert from "assert";
 
 export class StreamTests extends BaseTestSet {
     private streamRoomId?: types.stream.StreamRoomId;
@@ -44,6 +45,41 @@ export class StreamTests extends BaseTestSet {
         await this.tryStreamUnpublish();
         await this.tryStreamRoomJoin();
         await this.tryStreamRoomLeave();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async streamRoomTtlIsPersistedAndReturned() {
+        // A room created with a ttl reports it back on get; a room created without one defaults to 0.
+        const withTtl = await this.apis.streamApi.streamRoomCreate({
+            contextId: testData.contextId,
+            data: "AAAA",
+            resourceId: this.helpers.generateResourceId(),
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+            streamRoomTtl: 60000 as types.core.Timespan,
+        });
+        const withTtlRoom = await this.apis.streamApi.streamRoomGet({ id: withTtl.streamRoomId });
+        assert(withTtlRoom.streamRoom.streamRoomTtl === 60000, `expected streamRoomTtl 60000, got ${withTtlRoom.streamRoom.streamRoomTtl}`);
+        
+        const withoutTtl = await this.apis.streamApi.streamRoomCreate({
+            contextId: testData.contextId,
+            data: "AAAA",
+            resourceId: this.helpers.generateResourceId(),
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+        });
+        const withoutTtlRoom = await this.apis.streamApi.streamRoomGet({ id: withoutTtl.streamRoomId });
+        assert(withoutTtlRoom.streamRoom.streamRoomTtl === 0, `expected default streamRoomTtl 0, got ${withoutTtlRoom.streamRoom.streamRoomTtl}`);
     }
     
     @Test({

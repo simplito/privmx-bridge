@@ -74,7 +74,7 @@ export class StreamRoomRepository {
         return this.repository.matchX2({contextId: contextId, state: state}, listParams);
     }
     
-    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number) {
+    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number, streamRoomTtl: types.core.Timespan) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -102,6 +102,9 @@ export class StreamRoomRepository {
             janusRoomId: janusRoomId,
             state: "created",
         };
+        if (streamRoomTtl > 0) {
+            streamRoom.streamRoomTtl = streamRoomTtl;
+        }
         if (resourceId) {
             streamRoom.clientResourceId = resourceId;
         }
@@ -138,6 +141,9 @@ export class StreamRoomRepository {
             janusRoomId: oldStreamRoom.janusRoomId,
             state: oldStreamRoom.state,
         };
+        if (oldStreamRoom.streamRoomTtl) {
+            updatedStreamRoom.streamRoomTtl = oldStreamRoom.streamRoomTtl;
+        }
         if (resourceId && !oldStreamRoom.clientResourceId) {
             updatedStreamRoom.clientResourceId = resourceId;
         }

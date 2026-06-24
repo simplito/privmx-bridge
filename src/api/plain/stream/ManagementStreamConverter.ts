@@ -30,6 +30,7 @@ export class ManagementStreamConverter {
             version: <types.stream.StreamRoomVersion>x.history.length,
             publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
             state: x.state,
+            streamRoomTtl: x.streamRoomTtl ?? <types.core.Timespan>0,
         };
         return res;
     }

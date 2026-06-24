@@ -16,6 +16,8 @@ import { StreamRoomId } from "../../../types/stream";
 import { JanusRoomWatch } from "../../../service/cloud/JanusRoomsWatcher";
 import { StreamSubscription } from "../../../api/main/stream/StreamApiTypes";
 import { UserId } from "../../../types/cloud";
+import { Timespan, Timestamp } from "../../../types/core";
+import { DateUtils } from "../../../utils/DateUtils";
 
 export interface RoomLookup {
     streamRoomId: StreamRoomId;
@@ -31,6 +33,12 @@ interface RoomState {
     janusRoomId: number;
     publishers: Map<number, JanusRoomWatch>;
     subscribers: Map<UserId, StreamSubscription[]>;
+    ttl: Timespan;
+}
+
+interface PendingEmptyRoom {
+    host: string;
+   closeAt: Timestamp;
 }
 
 @IpcService
@@ -39,7 +47,7 @@ export class JanusRoomsWatcherCache {
     // Map keys are strictly primitive strings to survive IPC serialization
     private hostsMap: Map<string, Map<string, RoomState>> = new Map();
     private janusRoomIdToStreamRoomIdMap: Map<number, RoomLookup> = new Map();
-    private pendingEmptyRooms: Map<string, string> = new Map();
+    private pendingEmptyRooms: Map<string, PendingEmptyRoom> = new Map();
     
     constructor(
         private logger: Logger,
@@ -50,11 +58,15 @@ export class JanusRoomsWatcherCache {
     @ApiMethod({})
     async extractPendingEmptyRooms(params: { limit: number }): Promise<{ streamRoomId: StreamRoomId, host: string }[]> {
         const limit = params.limit;
+        const now = DateUtils.now();
         this.logger.debug({ limit, currentPendingSize: this.pendingEmptyRooms.size }, "[CACHE] extractPendingEmptyRooms invoked");
         
         const result: { streamRoomId: StreamRoomId, host: string }[] = [];
-        for (const [streamRoomIdStr, hostStr] of this.pendingEmptyRooms.entries()) {
-            result.push({ streamRoomId: streamRoomIdStr as StreamRoomId, host: hostStr });
+        for (const [streamRoomIdStr, pending] of this.pendingEmptyRooms.entries()) {
+            if (pending.closeAt > now) {
+                continue;
+            }
+            result.push({ streamRoomId: streamRoomIdStr as StreamRoomId, host: pending.host });
             this.pendingEmptyRooms.delete(streamRoomIdStr);
             this.logger.debug({ streamRoomIdStr }, "[CACHE] extractPendingEmptyRooms: Popped from queue");
             
@@ -110,6 +122,7 @@ export class JanusRoomsWatcherCache {
         const publisherId = Number(model.publisherId);
         
         const roomState = this.ensureRoomState(model.host, model.streamRoomId, janusRoomId);
+        roomState.ttl = model.ttl ?? DateUtils.ZERO_TIME;
         
         const wasEmpty = roomState.publishers.size === 0;
         roomState.publishers.set(publisherId, model);
@@ -149,9 +162,8 @@ export class JanusRoomsWatcherCache {
             }, "[CACHE] removePublisher: Deletion step completed");
             
             if (this.isRoomEmpty(roomState)) {
-                this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removePublisher: Room is now EMPTY (no publishers, no members). Queuing for close.");
-                this.pendingEmptyRooms.set(model.streamRoomId, model.host);
-                return true;
+                this.logger.debug({ streamRoomId: model.streamRoomId, ttl: roomState.ttl }, "[CACHE] removePublisher: Room is now EMPTY (no publishers, no members). Queuing for close.");
+                return this.queueEmptyRoom(model.host, model.streamRoomId, roomState.ttl);
             }
         }
         else {
@@ -193,11 +205,14 @@ export class JanusRoomsWatcherCache {
     }
     
     @ApiMethod({})
-    async addSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId }) {
+    async addSubscriber(model: { host: string, streamRoomId: StreamRoomId, userId: UserId, ttl?: Timespan }) {
         const roomState = this.ensureRoomState(model.host, model.streamRoomId);
+        roomState.ttl = model.ttl ?? DateUtils.ZERO_TIME;
         if (!roomState.subscribers.has(model.userId)) {
             roomState.subscribers.set(model.userId, []);
         }
+        // Joining cancels any pending close so a rejoin within the grace period keeps the room alive.
+        this.pendingEmptyRooms.delete(model.streamRoomId);
         this.logger.debug({ streamRoomId: model.streamRoomId, userId: model.userId }, "[CACHE] addSubscriber completed");
     }
     
@@ -212,9 +227,8 @@ export class JanusRoomsWatcherCache {
         
         // A leaving member can be the transition that empties the room (no publishers, no members).
         if (this.isRoomEmpty(roomState)) {
-            this.logger.debug({ streamRoomId: model.streamRoomId }, "[CACHE] removeSubscriber: Room is now EMPTY. Queuing for close.");
-            this.pendingEmptyRooms.set(model.streamRoomId, model.host);
-            return true;
+            this.logger.debug({ streamRoomId: model.streamRoomId, ttl: roomState.ttl }, "[CACHE] removeSubscriber: Room is now EMPTY. Queuing for close.");
+            return this.queueEmptyRoom(model.host, model.streamRoomId, roomState.ttl);
         }
         return false;
     }
@@ -249,6 +263,7 @@ export class JanusRoomsWatcherCache {
                 janusRoomId: janusRoomId ?? 0,
                 publishers: new Map<number, JanusRoomWatch>(),
                 subscribers: new Map<UserId, StreamSubscription[]>(),
+                ttl: DateUtils.ZERO_TIME,
             };
             hostRooms.set(streamRoomId, roomState);
         }
@@ -261,6 +276,12 @@ export class JanusRoomsWatcherCache {
     
     private isRoomEmpty(roomState: RoomState): boolean {
         return roomState.publishers.size === 0 && roomState.subscribers.size === 0;
+    }
+    
+    private queueEmptyRoom(host: string, streamRoomId: StreamRoomId, ttl: Timespan): boolean {
+        const grace = ttl > 0 ? ttl : DateUtils.ZERO_TIME;
+        this.pendingEmptyRooms.set(streamRoomId, { host, closeAt: DateUtils.nowAdd(grace) });
+        return grace === 0;
     }
     
     private subscriptionsEqual(a: StreamSubscription, b: StreamSubscription): boolean {
