@@ -24,16 +24,6 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import { Utils } from "../../utils/Utils";
-import { GroupMembershipSignature, GroupSignaturePayload } from "./GroupMembershipSignature";
-import { GroupEntrySignature } from "./GroupRepository";
-
-export interface GroupMembersModification {
-    usersToAddOrUpdate: types.cloud.UserId[];
-    usersToRemove: types.cloud.UserId[];
-    managersToAddOrUpdate: types.cloud.UserId[];
-    managersToRemove: types.cloud.UserId[];
-}
 
 export class GroupService extends BaseContainerService {
     
@@ -79,25 +69,16 @@ export class GroupService extends BaseContainerService {
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, signature: types.core.EccSignature) {
+        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        const sig = this.verifyAndBuildSignature(signature, {
-            op: "create",
-            contextId: contextId,
-            author: user.userId,
-            authorPubKey: user.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: keyId,
-            prevSignature: null,
-            resultUsers: users,
-            resultManagers: managers,
-        });
+        // Membership integrity (signature/chain) is committed inside the opaque `data` (endpoint DIO) and verified
+        // client-side; the bridge only stores it. See documents/plan/10-endpoint-security-model-and-alignment.md.
         try {
-            const group = await this.repositoryFactory.createGroupRepository().createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy, sig);
+            const group = await this.repositoryFactory.createGroupRepository().createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy);
             this.groupNotificationService.sendCreatedGroup(group, context.solution);
             return group;
         }
@@ -111,7 +92,7 @@ export class GroupService extends BaseContainerService {
     
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, signature: types.core.EccSignature, prevSignature: types.core.EccSignature) {
+        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -128,24 +109,13 @@ export class GroupService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
             }
-            this.checkChainLink(oldGroup, prevSignature);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldGroup.contextId, [...oldGroup.history.map(x => x.keyId), keyId], oldGroup.keys, keys, keyId, users, managers);
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
-            const sig = this.verifyAndBuildSignature(signature, {
-                op: "update",
-                contextId: oldGroup.contextId,
-                author: user.userId,
-                authorPubKey: user.userPubKey,
-                groupPubKey: groupPubKey,
-                keyId: keyId,
-                prevSignature: prevSignature,
-                resultUsers: users,
-                resultManagers: managers,
-            });
+            // Membership integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
-                const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId, sig);
+                const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId);
                 return {group, context, oldGroup};
             }
             catch (err) {
@@ -154,44 +124,6 @@ export class GroupService extends BaseContainerService {
                 }
                 throw err;
             }
-        });
-        const updatedUsers = rGroup.managers.concat(rGroup.users);
-        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedUsers.includes(u));
-        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
-        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify);
-        return rGroup;
-    }
-    
-    async modifyGroupMembers(cloudUser: CloudUser, id: types.group.GroupId, modification: GroupMembersModification,
-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], signature: types.core.EccSignature, prevSignature: types.core.EccSignature) {
-        const {group: rGroup, context: usedContext, oldGroup: old} = await this.repositoryFactory.withTransaction(async session => {
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await groupRepository.get(id);
-            if (!oldGroup) {
-                throw new AppException("GROUP_DOES_NOT_EXIST");
-            }
-            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
-            this.checkChainLink(oldGroup, prevSignature);
-            const delta = this.normalizeDelta(modification);
-            const users = Utils.unique(oldGroup.users.concat(delta.usersAdded).filter(u => !delta.usersRemoved.includes(u)));
-            const managers = Utils.unique(oldGroup.managers.concat(delta.managersAdded).filter(u => !delta.managersRemoved.includes(u)));
-            this.policy.makeUpdateContainerCheck(user, context, oldGroup, managers, undefined);
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldGroup.contextId, [...oldGroup.history.map(x => x.keyId), keyId], oldGroup.keys, keys, keyId, users, managers);
-            const sig = this.verifyAndBuildSignature(signature, {
-                op: "modifyMembers",
-                contextId: oldGroup.contextId,
-                author: user.userId,
-                authorPubKey: user.userPubKey,
-                groupPubKey: oldGroup.groupPubKey,
-                keyId: keyId,
-                prevSignature: prevSignature,
-                resultUsers: users,
-                resultManagers: managers,
-                delta: delta,
-            });
-            const group = await groupRepository.updateGroup(oldGroup, user.userId, oldGroup.groupPubKey, managers, users, oldGroup.data, keyId, newKeys, undefined, null, sig);
-            return {group, context, oldGroup};
         });
         const updatedUsers = rGroup.managers.concat(rGroup.users);
         const deletedUsers = old.managers.concat(old.users).filter(u => !updatedUsers.includes(u));
@@ -237,34 +169,6 @@ export class GroupService extends BaseContainerService {
         });
     }
     
-    private normalizeDelta(modification: GroupMembersModification): types.group.GroupMembersDelta {
-        return {
-            usersAdded: Utils.unique(modification.usersToAddOrUpdate),
-            usersRemoved: Utils.unique(modification.usersToRemove),
-            managersAdded: Utils.unique(modification.managersToAddOrUpdate),
-            managersRemoved: Utils.unique(modification.managersToRemove),
-        };
-    }
-    
-    private checkChainLink(oldGroup: db.group.Group, prevSignature: types.core.EccSignature) {
-        const head = oldGroup.history[oldGroup.history.length - 1];
-        if (!head || head.signature !== prevSignature) {
-            throw new AppException("GROUP_VERSION_MISMATCH", "prevSignature does not match the current head of the membership log");
-        }
-    }
-    
-    private verifyAndBuildSignature(signature: types.core.EccSignature, payload: GroupSignaturePayload): GroupEntrySignature {
-        if (!GroupMembershipSignature.verify(signature, payload)) {
-            throw new AppException("INVALID_SIGNATURE", "group membership signature verification failed");
-        }
-        return {
-            op: payload.op,
-            delta: payload.delta,
-            authorPubKey: payload.authorPubKey,
-            prevSignature: payload.prevSignature,
-            signature: signature,
-        };
-    }
 }
 
 class GroupPolicy extends BasePolicy<db.group.Group, never> {

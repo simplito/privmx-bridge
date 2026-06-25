@@ -13,21 +13,12 @@ import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { Base64 } from "../../../utils/Base64";
 
+// The bridge stores group data opaquely; signing/verification is the endpoint's job (committed inside `data`).
+// These tests exercise CRUD, listing, version-CAS and referential integrity only.
 const groupIdentity = ECUtils.generateKeyPair();
 const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
-
-/** Signs a group membership-log payload with janek's context private key (matches testData.userPubKey). */
-function signAsJanek(payload: GroupSignaturePayload): types.core.EccSignature {
-    const keyPair = ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif);
-    if (!keyPair) {
-        throw new Error("Failed to load test private key");
-    }
-    return Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
-}
 
 export class GroupApiTests extends BaseTestSet {
     
@@ -41,38 +32,10 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldRejectCreateWithInvalidSignature() {
-        // A well-formed signature (passes the eccSignature validator) but signed over a different member
-        // set, so the bridge's signature verification — not the input validator — rejects it.
-        const wrongSignature = signAsJanek({
-            op: "create",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: testData.keyId,
-            prevSignature: null,
-            resultUsers: ["someone-else" as types.cloud.UserId],
-            resultManagers: ["someone-else" as types.cloud.UserId],
-        });
-        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupCreate({
-            contextId: testData.contextId,
-            groupPubKey: groupPubKey,
-            users: [testData.userId],
-            managers: [testData.userId],
-            data: "AAAA" as types.group.GroupData,
-            keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
-            signature: wrongSignature,
-        }), "INVALID_SIGNATURE");
-    }
-    
-    @Test()
-    async shouldUpdateGroupAndEnforceSignatureChain() {
+    async shouldUpdateGroupAndEnforceVersion() {
         await this.createGroup();
-        const head = await this.getHeadSignature();
-        await this.updateGroup(head);
-        await this.tryUpdateWithWrongPrevSignatureAndFail();
+        await this.updateGroup();
+        await this.tryUpdateWithStaleVersionAndFail();
     }
     
     @Test()
@@ -95,17 +58,6 @@ export class GroupApiTests extends BaseTestSet {
     private async createGroup() {
         const users = [testData.userId];
         const managers = [testData.userId];
-        const signature = signAsJanek({
-            op: "create",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: testData.keyId,
-            prevSignature: null,
-            resultUsers: users,
-            resultManagers: managers,
-        });
         const res = await this.apis.contextApi.groupCreate({
             contextId: testData.contextId,
             groupPubKey: groupPubKey,
@@ -114,7 +66,6 @@ export class GroupApiTests extends BaseTestSet {
             data: "AAAA" as types.group.GroupData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
-            signature: signature,
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         this.groupId = res.groupId;
@@ -129,9 +80,7 @@ export class GroupApiTests extends BaseTestSet {
         assert(group.managers.length === 1 && group.managers[0] === testData.userId, "managers mismatch");
         assert(group.version === 1, `version should be 1, got ${group.version}`);
         assert(group.history.length === 1, "history should have a single genesis entry");
-        assert(group.history[0].op === "create", "genesis op should be create");
-        assert(group.history[0].prevSignature === null, "genesis prevSignature should be null");
-        assert(!!group.history[0].signature, "genesis entry should carry a signature");
+        assert(group.history[0].author === testData.userId, "genesis author mismatch");
     }
     
     private async listGroupsAndVerify() {
@@ -140,75 +89,37 @@ export class GroupApiTests extends BaseTestSet {
         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
     }
     
-    private async getHeadSignature(): Promise<types.core.EccSignature> {
+    private async updateGroup() {
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId});
-        return group.history[group.history.length - 1].signature;
-    }
-    
-    private async updateGroup(prevSignature: types.core.EccSignature) {
-        const groupId = this.requireGroupId();
-        const users = [testData.userId];
-        const managers = [testData.userId];
-        const signature = signAsJanek({
-            op: "update",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: testData.keyId,
-            prevSignature: prevSignature,
-            resultUsers: users,
-            resultManagers: managers,
-        });
         const res = await this.apis.contextApi.groupUpdate({
             id: groupId,
             groupPubKey: groupPubKey,
-            users: users,
-            managers: managers,
+            users: [testData.userId],
+            managers: [testData.userId],
             data: "AAAAB" as types.group.GroupData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
             version: 1 as types.group.GroupVersion,
             force: false,
-            signature: signature,
-            prevSignature: prevSignature,
         });
         assert(res === "OK", "groupUpdate did not return OK");
         const {group} = await this.apis.contextApi.groupGet({groupId});
         assert(group.version === 2, `version should be 2 after update, got ${group.version}`);
     }
     
-    private async tryUpdateWithWrongPrevSignatureAndFail() {
+    private async tryUpdateWithStaleVersionAndFail() {
         const groupId = this.requireGroupId();
-        // Well-formed signature (passes the eccSignature validator) that simply does not match the head,
-        // so the chain-link check — not the input validator — rejects it.
-        const wrongPrev = Base64.from(Buffer.alloc(65)) as types.core.EccSignature;
-        const users = [testData.userId];
-        const managers = [testData.userId];
-        const signature = signAsJanek({
-            op: "update",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: testData.keyId,
-            prevSignature: wrongPrev,
-            resultUsers: users,
-            resultManagers: managers,
-        });
+        // current version is now 2; submitting version 1 without force must be rejected (optimistic concurrency).
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdate({
             id: groupId,
             groupPubKey: groupPubKey,
-            users: users,
-            managers: managers,
+            users: [testData.userId],
+            managers: [testData.userId],
             data: "AAAAC" as types.group.GroupData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
-            version: 2 as types.group.GroupVersion,
+            version: 1 as types.group.GroupVersion,
             force: false,
-            signature: signature,
-            prevSignature: wrongPrev,
         }), "GROUP_VERSION_MISMATCH");
     }
     

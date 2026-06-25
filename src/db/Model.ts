@@ -222,18 +222,12 @@ export namespace group {
     
     export interface GroupHistoryEntry {
         keyId: types.core.KeyId;
-        data: types.group.GroupData;
+        data: types.group.GroupData;        // opaque; carries the endpoint's DIO (members + chain-link committed inside)
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         groupPubKey: types.cloud.GroupPubKey;
         created: types.core.Timestamp;
         author: types.cloud.UserId;
-        // signed membership log
-        op: types.group.GroupSignatureOp;
-        delta?: types.group.GroupMembersDelta;
-        authorPubKey: types.cloud.UserPubKey;
-        prevSignature: types.core.EccSignature|null;
-        signature: types.core.EccSignature;
     }
 }
 

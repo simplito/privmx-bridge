@@ -19,7 +19,6 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { ThreadRepository } from "../../../service/cloud/ThreadRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
 import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
@@ -33,7 +32,10 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { Base64 } from "../../../utils/Base64";
+
+// The bridge no longer signs or verifies group data: signing/verification is the endpoint's responsibility
+// (committed inside the opaque `data`). These tests exercise the bridge's storage, ACL, coverage, version-CAS
+// and referential-integrity logic only. See documents/plan/10-endpoint-security-model-and-alignment.md.
 
 const solutionId = "MySolutionId" as types.cloud.SolutionId;
 const contextId = "MyContextId" as types.context.ContextId;
@@ -43,18 +45,14 @@ const resourceId = "MyGroupResourceId" as types.core.ClientResourceId;
 const keyId = "SomeKeyId" as types.core.KeyId;
 const data = "SomeGroupData" as types.group.GroupData;
 const keys = [{} as types.cloud.KeyEntrySet];
-const headSignature = "HEAD_SIGNATURE" as types.core.EccSignature;
 
 const janekKeys = ECUtils.generateKeyPair();
 const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
+const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const janek = "janek" as types.cloud.UserId;
 const alice = "alice" as types.cloud.UserId;
 const janekCloudUser = new CloudUser(janekPub);
 const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
-
-function sign(payload: GroupSignaturePayload): types.core.EccSignature {
-    return Base64.from(ECUtils.signToCompactSignature(janekKeys.keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
-}
 
 const myContext: db.context.Context = {
     id: contextId,
@@ -79,7 +77,7 @@ const group: db.group.Group = {
     id: groupId,
     clientResourceId: resourceId,
     contextId: contextId,
-    groupPubKey: janekPub as unknown as types.cloud.GroupPubKey,
+    groupPubKey: groupPubKey,
     createDate: DateUtils.now(),
     creator: janek,
     lastModificationDate: DateUtils.now(),
@@ -95,13 +93,9 @@ const group: db.group.Group = {
         data: data,
         users: [janek, alice],
         managers: [janek],
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey,
+        groupPubKey: groupPubKey,
         created: DateUtils.now(),
         author: janek,
-        op: "create",
-        authorPubKey: janekPub,
-        prevSignature: null,
-        signature: headSignature,
     }],
     policy: {},
 };
@@ -168,42 +162,18 @@ function createGroupService(groupReferenced = false) {
     return {groupService, repositoryFactory, cloudKeyService, groupNotificationService, groupRepository, cloudAccessValidator};
 }
 
-it("Should create group with a valid signature", async () => {
+it("Should create group", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const signature = sign({
-        op: "create", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: null,
-        resultUsers: [janek, alice], resultManagers: [janek],
-    });
-    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, signature);
+    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, keys, {});
     expect(res).not.toBeNull();
     hasOneCall(groupRepository.createGroup);
     hasOneCall(groupNotificationService.sendCreatedGroup);
 });
 
-it("Should fail to create group with an invalid signature", async () => {
-    const {groupService, groupRepository} = createGroupService();
-    const badSignature = "AAAA" as types.core.EccSignature;
-    try {
-        await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, badSignature);
-    }
-    catch (e) {
-        expect(AppException.is(e, "INVALID_SIGNATURE")).toBe(true);
-        hasNoCalls(groupRepository.createGroup);
-        return;
-    }
-    expect(true).toBeFalsy();
-});
-
 it("Should fail to create group as an unknown user", async () => {
     const {groupService, groupRepository} = createGroupService();
-    const signature = sign({
-        op: "create", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: null,
-        resultUsers: [janek, alice], resultManagers: [janek],
-    });
     try {
-        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, signature);
+        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, keys, {});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -231,45 +201,17 @@ it("Should fail to get a not existing group", async () => {
     expect(true).toBeFalsy();
 });
 
-it("Should update group with valid version, prevSignature and signature", async () => {
+it("Should update group with a valid version", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const signature = sign({
-        op: "update", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
-        resultUsers: [janek, alice], resultManagers: [janek],
-    });
-    await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null, signature, headSignature);
+    await groupService.updateGroup(janekCloudUser, groupId, groupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null);
     hasOneCall(groupRepository.updateGroup);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
-});
-
-it("Should reject update when prevSignature does not match the head", async () => {
-    const {groupService, groupRepository} = createGroupService();
-    const signature = sign({
-        op: "update", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: "WRONG" as types.core.EccSignature,
-        resultUsers: [janek, alice], resultManagers: [janek],
-    });
-    try {
-        await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null, signature, "WRONG" as types.core.EccSignature);
-    }
-    catch (e) {
-        expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
-        hasNoCalls(groupRepository.updateGroup);
-        return;
-    }
-    expect(true).toBeFalsy();
 });
 
 it("Should reject update with a stale version and no force", async () => {
     const {groupService, groupRepository} = createGroupService();
-    const signature = sign({
-        op: "update", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
-        resultUsers: [janek, alice], resultManagers: [janek],
-    });
     try {
-        await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 99 as types.group.GroupVersion, false, undefined, null, signature, headSignature);
+        await groupService.updateGroup(janekCloudUser, groupId, groupPubKey, [janek, alice], [janek], data, keyId, keys, 99 as types.group.GroupVersion, false, undefined, null);
     }
     catch (e) {
         expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
@@ -277,21 +219,6 @@ it("Should reject update with a stale version and no force", async () => {
         return;
     }
     expect(true).toBeFalsy();
-});
-
-it("Should modify group members (remove a user) with a valid signature", async () => {
-    const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const signature = sign({
-        op: "modifyMembers", contextId, author: janek, authorPubKey: janekPub,
-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
-        resultUsers: [janek], resultManagers: [janek],
-        delta: {usersAdded: [], usersRemoved: [alice], managersAdded: [], managersRemoved: []},
-    });
-    await groupService.modifyGroupMembers(janekCloudUser, groupId, {
-        usersToAddOrUpdate: [], usersToRemove: [alice], managersToAddOrUpdate: [], managersToRemove: [],
-    }, keyId, keys, signature, headSignature);
-    hasOneCall(groupRepository.updateGroup);
-    hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
 
 it("Should delete group", async () => {

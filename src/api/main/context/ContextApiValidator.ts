@@ -51,7 +51,6 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerPolicy),
-            signature: this.tv.eccSignature,
         }));
         this.registerMethod("groupUpdate", this.builder.createObject({
             id: this.tv.groupId,
@@ -65,19 +64,6 @@ export class ContextApiValidator extends BaseValidator {
             version: this.builder.int,
             force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerPolicy),
-            signature: this.tv.eccSignature,
-            prevSignature: this.tv.eccSignature,
-        }));
-        this.registerMethod("groupModifyMembers", this.builder.createObject({
-            id: this.tv.groupId,
-            usersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            usersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            managersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            managersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
-            signature: this.tv.eccSignature,
-            prevSignature: this.tv.eccSignature,
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
             groupId: this.tv.groupId,

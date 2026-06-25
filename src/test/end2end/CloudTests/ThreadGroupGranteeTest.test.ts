@@ -13,9 +13,7 @@ import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { Base64 } from "../../../utils/Base64";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
 
 const groupIdentity = ECUtils.generateKeyPair();
@@ -30,14 +28,6 @@ const aliceWif = aliceIdentity.privWif as string;
 const groupKeyId = "group-key" as types.core.KeyId;
 const threadKeyId = "thread-key" as types.core.KeyId;
 const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
-
-function signAsJanek(payload: GroupSignaturePayload): types.core.EccSignature {
-    const keyPair = ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif);
-    if (!keyPair) {
-        throw new Error("Failed to load test private key");
-    }
-    return Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
-}
 
 export class ThreadGroupGranteeTests extends BaseTestSet {
     
@@ -81,17 +71,6 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     private async createGroupWithAlice() {
         const users = [testData.userId, aliceId];
         const managers = [testData.userId];
-        const signature = signAsJanek({
-            op: "create",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: groupKeyId,
-            prevSignature: null,
-            resultUsers: users,
-            resultManagers: managers,
-        });
         const res = await this.apis.contextApi.groupCreate({
             contextId: testData.contextId,
             groupPubKey: groupPubKey,
@@ -103,7 +82,6 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
                 {user: testData.userId, keyId: groupKeyId, data: "AAAA" as types.core.UserKeyData},
                 {user: aliceId, keyId: groupKeyId, data: "BBBB" as types.core.UserKeyData},
             ],
-            signature: signature,
         });
         this.groupId = res.groupId;
     }
@@ -142,35 +120,22 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     }
     
     private async removeAliceFromGroup() {
+        // Removal via full-replace groupUpdate; membership integrity is committed inside `data` by the endpoint,
+        // not verified by the bridge. modifyMembers (delta) is deferred — see documents/plan/08-future-plans.md.
         const groupId = this.requireGroupId();
         const {group} = await this.apis.contextApi.groupGet({groupId});
-        const head = group.history[group.history.length - 1].signature;
-        const resultUsers = [testData.userId];
-        const resultManagers = [testData.userId];
-        const signature = signAsJanek({
-            op: "modifyMembers",
-            contextId: testData.contextId,
-            author: testData.userId,
-            authorPubKey: testData.userPubKey,
-            groupPubKey: groupPubKey,
-            keyId: rotatedGroupKeyId,
-            prevSignature: head,
-            resultUsers: resultUsers,
-            resultManagers: resultManagers,
-            delta: {usersAdded: [], usersRemoved: [aliceId], managersAdded: [], managersRemoved: []},
-        });
-        const res = await this.apis.contextApi.groupModifyMembers({
+        const res = await this.apis.contextApi.groupUpdate({
             id: groupId,
-            usersToAddOrUpdate: [],
-            usersToRemove: [aliceId],
-            managersToAddOrUpdate: [],
-            managersToRemove: [],
+            groupPubKey: groupPubKey,
+            users: [testData.userId],
+            managers: [testData.userId],
+            data: "AAAA" as types.group.GroupData,
             keyId: rotatedGroupKeyId,
             keys: [{user: testData.userId, keyId: rotatedGroupKeyId, data: "AAAA" as types.core.UserKeyData}],
-            signature: signature,
-            prevSignature: head,
+            version: group.version,
+            force: false,
         });
-        assert(res === "OK", "groupModifyMembers did not return OK");
+        assert(res === "OK", "groupUpdate did not return OK");
     }
     
     private async aliceCanNoLongerGetThread() {

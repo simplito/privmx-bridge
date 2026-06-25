@@ -39,7 +39,7 @@ export class GroupConverter {
         return res;
     }
     
-    private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupSignedEntry {
+    private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupHistoryEntryInfo {
         return {
             keyId: entry.keyId,
             groupPubKey: entry.groupPubKey,
@@ -47,11 +47,6 @@ export class GroupConverter {
             managers: entry.managers,
             created: entry.created,
             author: entry.author,
-            authorPubKey: entry.authorPubKey,
-            op: entry.op,
-            delta: entry.delta,
-            prevSignature: entry.prevSignature,
-            signature: entry.signature,
         };
     }
 }

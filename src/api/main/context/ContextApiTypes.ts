@@ -116,7 +116,6 @@ export interface GroupCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
-    signature: types.core.EccSignature;
 }
 
 export interface GroupCreateResult {
@@ -135,20 +134,6 @@ export interface GroupUpdateModel {
     version: types.group.GroupVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
-    signature: types.core.EccSignature;
-    prevSignature: types.core.EccSignature;
-}
-
-export interface GroupModifyMembersModel {
-    id: types.group.GroupId;
-    usersToAddOrUpdate: types.cloud.UserId[];
-    usersToRemove: types.cloud.UserId[];
-    managersToAddOrUpdate: types.cloud.UserId[];
-    managersToRemove: types.cloud.UserId[];
-    keyId: types.core.KeyId;
-    keys: types.cloud.KeyEntrySet[];
-    signature: types.core.EccSignature;
-    prevSignature: types.core.EccSignature;
 }
 
 export interface GroupDeleteModel {
@@ -179,19 +164,15 @@ export interface GroupDataEntry {
     data: types.group.GroupData;
 }
 
-/** A signed, chained membership-log entry — the endpoint verifies the chain client-side. */
-export interface GroupSignedEntry {
+/** A group version record. The membership signature + chain link is committed inside the opaque `data`
+ *  (endpoint DIO) and verified client-side; the bridge stores it but does not interpret it. */
+export interface GroupHistoryEntryInfo {
     keyId: types.core.KeyId;
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     created: types.core.Timestamp;
     author: types.cloud.UserId;
-    authorPubKey: types.cloud.UserPubKey;
-    op: types.group.GroupSignatureOp;
-    delta?: types.group.GroupMembersDelta;
-    prevSignature: types.core.EccSignature|null;
-    signature: types.core.EccSignature;
 }
 
 export interface GroupInfo {
@@ -210,7 +191,7 @@ export interface GroupInfo {
     keys: types.core.KeyEntry[];
     version: types.group.GroupVersion;
     policy: types.cloud.ContainerPolicy;
-    history: GroupSignedEntry[];
+    history: GroupHistoryEntryInfo[];
 }
 
 export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupInfo>;
@@ -230,7 +211,6 @@ export interface IContextApi {
     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
     groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
     groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
-    groupModifyMembers(model: GroupModifyMembersModel): Promise<types.core.OK>;
     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
     groupList(model: GroupListModel): Promise<GroupListResult>;

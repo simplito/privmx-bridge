@@ -16,15 +16,6 @@ import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { AppException } from "../../api/AppException";
 
-/** Signed membership-log metadata attached to each new history entry. */
-export interface GroupEntrySignature {
-    op: types.group.GroupSignatureOp;
-    delta?: types.group.GroupMembersDelta;
-    authorPubKey: types.cloud.UserPubKey;
-    prevSignature: types.core.EccSignature|null;
-    signature: types.core.EccSignature;
-}
-
 export class GroupRepository {
     
     static readonly COLLECTION_NAME = "group";
@@ -99,7 +90,7 @@ export class GroupRepository {
     
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, sig: GroupEntrySignature) {
+        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
         const now = DateUtils.now();
         const entry: db.group.GroupHistoryEntry = {
             created: now,
@@ -109,11 +100,6 @@ export class GroupRepository {
             users: users,
             managers: managers,
             groupPubKey: groupPubKey,
-            op: sig.op,
-            delta: sig.delta,
-            authorPubKey: sig.authorPubKey,
-            prevSignature: sig.prevSignature,
-            signature: sig.signature,
         };
         const group: db.group.Group = {
             id: this.repository.generateId() as types.group.GroupId,
@@ -142,7 +128,7 @@ export class GroupRepository {
     
     async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, groupPubKey: types.cloud.GroupPubKey, managers: types.cloud.UserId[],
         users: types.cloud.UserId[], data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[],
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, sig: GroupEntrySignature) {
+        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.group.GroupHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -151,11 +137,6 @@ export class GroupRepository {
             users: users,
             managers: managers,
             groupPubKey: groupPubKey,
-            op: sig.op,
-            delta: sig.delta,
-            authorPubKey: sig.authorPubKey,
-            prevSignature: sig.prevSignature,
-            signature: sig.signature,
         };
         const updatedGroup: db.group.Group = {
             id: oldGroup.id,

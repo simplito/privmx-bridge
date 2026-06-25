@@ -16,10 +16,8 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
-import { Base64 } from "../../utils/Base64";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
-const signature = Base64.from(Buffer.alloc(65)) as types.core.EccSignature;
 const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "MyKeyId" as types.core.KeyId;
@@ -37,20 +35,12 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         data: "someData" as types.group.GroupData,
         keyId: keyId,
         keys: [],
-        signature: signature,
     };
 }
 
 it("ContextApiValidator.groupCreate valid", () => {
     const result = Utils.try(() => validator().validate("groupCreate", validGroupCreate()));
     expect(result.success).toBe(true);
-});
-
-it("ContextApiValidator.groupCreate rejects missing signature", () => {
-    const model = validGroupCreate();
-    delete (model as Partial<contextApi.GroupCreateModel>).signature;
-    const result = Utils.try(() => validator().validate("groupCreate", model));
-    expect(result.success).toBe(false);
 });
 
 it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
@@ -70,42 +60,9 @@ it("ContextApiValidator.groupUpdate valid", () => {
         keys: [],
         version: 1 as types.group.GroupVersion,
         force: false,
-        signature: signature,
-        prevSignature: signature,
     };
     const result = Utils.try(() => validator().validate("groupUpdate", model));
     expect(result.success).toBe(true);
-});
-
-it("ContextApiValidator.groupModifyMembers valid", () => {
-    const model: contextApi.GroupModifyMembersModel = {
-        id: groupId,
-        usersToAddOrUpdate: ["alice"] as types.cloud.UserId[],
-        usersToRemove: [] as types.cloud.UserId[],
-        managersToAddOrUpdate: [] as types.cloud.UserId[],
-        managersToRemove: [] as types.cloud.UserId[],
-        keyId: keyId,
-        keys: [],
-        signature: signature,
-        prevSignature: signature,
-    };
-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
-    expect(result.success).toBe(true);
-});
-
-it("ContextApiValidator.groupModifyMembers rejects missing prevSignature", () => {
-    const model = {
-        id: groupId,
-        usersToAddOrUpdate: [] as types.cloud.UserId[],
-        usersToRemove: [] as types.cloud.UserId[],
-        managersToAddOrUpdate: [] as types.cloud.UserId[],
-        managersToRemove: [] as types.cloud.UserId[],
-        keyId: keyId,
-        keys: [],
-        signature: signature,
-    };
-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
-    expect(result.success).toBe(false);
 });
 
 it("ContextApiValidator.groupGet valid", () => {

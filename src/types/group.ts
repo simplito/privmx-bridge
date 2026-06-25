@@ -9,21 +9,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import * as types from "./";
-
 export type GroupId = string&{__groupId: never};
 export type GroupData = unknown;
 export type GroupVersion = number&{__groupVersion: never};
 export type GroupType = string&{__groupType: never};
-
-export type GroupSignatureOp = "create"|"update"|"modifyMembers";
-
-export interface GroupMembersDelta {
-    usersAdded: types.cloud.UserId[];
-    usersRemoved: types.cloud.UserId[];
-    managersAdded: types.cloud.UserId[];
-    managersRemoved: types.cloud.UserId[];
-}
 
 export interface GroupDeleteStatus {
     id: GroupId;
