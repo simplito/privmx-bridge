@@ -43,6 +43,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupUpdate", model);
     }
     
+    groupGenerateNewKey(model: contextApi.GroupGenerateNewKeyModel): Promise<types.core.OK> {
+        return this.request("context.groupGenerateNewKey", model);
+    }
+    
     groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
         return this.request("context.groupDelete", model);
     }

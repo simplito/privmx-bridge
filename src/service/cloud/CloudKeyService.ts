@@ -108,6 +108,8 @@ export class CloudKeyService {
     /**
      * Verifies and builds the per-group key blobs of a container (the container key encrypted to each
      * group grantee's pubkey). Mirrors checkKeysAndClients but keyed by group instead of user.
+     * Also enforces per-epoch coverage (BR-5): the submitted groupEpoch for each grantee must match
+     * the group's current keyVersion, preventing re-key to a stale epoch.
      */
     async checkGroupKeysAndGrantees(
         contextId: types.context.ContextId,
@@ -123,7 +125,33 @@ export class CloudKeyService {
         await this.repositoryFactory.createGroupRepository().checkGroupsExistence(contextId, groupIds);
         const newGroupKeys = this.buildGroupKeys(availableKeyIds, oldGroupKeys, inserts);
         this.verifyThatOnlyGivenGroupsHaveAccess(newGroupKeys, keyId, groupIds);
+        if (groupIds.length > 0) {
+            await this.verifyGroupEpochCoverage(contextId, groupIds, inserts, keyId);
+        }
         return newGroupKeys;
+    }
+    
+    private async verifyGroupEpochCoverage(
+        contextId: types.context.ContextId,
+        groupIds: types.group.GroupId[],
+        inserts: types.cloud.GroupKeyEntrySet[],
+        keyId: types.core.KeyId,
+    ) {
+        const groupRepo = this.repositoryFactory.createGroupRepository();
+        const currentVersions = await groupRepo.getKeyVersions(contextId, groupIds);
+        for (const groupId of groupIds) {
+            const currentVersion = currentVersions.get(groupId) ?? 1;
+            const insert = inserts.find(i => i.group === groupId && i.keyId === keyId);
+            if (!insert) {
+                continue;
+            }
+            if (insert.groupEpoch === undefined) {
+                continue;
+            }
+            if (insert.groupEpoch !== currentVersion) {
+                throw new AppException("INVALID_PARAMS", `stale groupEpoch for group '${groupId}': got ${insert.groupEpoch}, current is ${currentVersion}`);
+            }
+        }
     }
     
     buildGroupKeys(availableKeyIds: types.core.KeyId[], oldGroupKeys: types.cloud.GroupKeysEntry[], inserts: types.cloud.GroupKeyEntrySet[]) {
@@ -135,6 +163,9 @@ export class CloudKeyService {
                 group: x.group,
                 keys: x.keys.slice(),
             };
+            if (x.groupEpoch !== undefined) {
+                res.groupEpoch = x.groupEpoch;
+            }
             return res;
         });
         for (const insert of inserts) {
@@ -145,6 +176,9 @@ export class CloudKeyService {
             if (!groupEntry) {
                 groupEntry = {group: insert.group, keys: []};
                 newGroupKeys.push(groupEntry);
+            }
+            if (insert.groupEpoch !== undefined) {
+                groupEntry.groupEpoch = insert.groupEpoch;
             }
             const keyEntry = groupEntry.keys.find(x => x.keyId === insert.keyId);
             if (!keyEntry) {

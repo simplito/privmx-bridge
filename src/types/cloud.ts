@@ -24,6 +24,11 @@ export type AclGroups =  Record<AclGroupName, AclFunctions>;
 export type AppPubKey = types.core.EccPubKey;
 export type UserPubKey = types.core.EccPubKey;
 export type GroupPubKey = types.core.EccPubKey;
+
+export interface GroupPubKeyAtEpoch {
+    keyVersion: number;
+    groupPubKey: GroupPubKey;
+}
 export type KnownKeyId = string&{__knownKeyId: never};
 export type KnownKeyStatus = "login"|"logout";
 export type ChannelSchemeOptions = Pick<ChannelScheme, "containerType"|"limitedBy"|"objectId">;
@@ -75,11 +80,13 @@ export interface KeyEntrySet {
 /** Container key blobs distributed to a group grantee (the container key encrypted to the group's pubkey). */
 export interface GroupKeysEntry {
     group: types.group.GroupId;
+    groupEpoch?: number;
     keys: types.core.KeyEntry[];
 }
 
 export interface GroupKeyEntrySet {
     group: types.group.GroupId;
+    groupEpoch?: number;
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
 }

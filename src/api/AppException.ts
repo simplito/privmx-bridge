@@ -131,6 +131,8 @@ export const API_ERROR_CODES = {
     "GROUP_DOES_NOT_EXIST"                  : {code: 0x6219, message: "Group does not exist"},
     "GROUP_IN_USE"                          : {code: 0x621A, message: "Group is still a member of a container"},
     "GROUP_VERSION_MISMATCH"                : {code: 0x621B, message: "Group version mismatch or broken signature chain"},
+    "ROTATED_ALREADY"                       : {code: 0x621C, message: "Group key was already rotated by a concurrent request"},
+    "GROUP_ROTATION_RATE_LIMIT"             : {code: 0x621D, message: "Group key rotation rate limit exceeded"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

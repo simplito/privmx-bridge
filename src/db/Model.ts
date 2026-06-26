@@ -218,6 +218,8 @@ export namespace group {
         keys: types.cloud.UserKeysEntry[];
         history: GroupHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
+        keyVersion?: number;
+        keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
     }
     
     export interface GroupHistoryEntry {
@@ -228,6 +230,7 @@ export namespace group {
         groupPubKey: types.cloud.GroupPubKey;
         created: types.core.Timestamp;
         author: types.cloud.UserId;
+        confirmationTag?: types.core.Base64;
     }
 }
 

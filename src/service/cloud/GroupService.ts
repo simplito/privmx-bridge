@@ -24,10 +24,14 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
+import { DateUtils } from "../../utils/DateUtils";
+import { Utils } from "../../utils/Utils";
+import type { GroupGenerateNewKeyModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 
 export class GroupService extends BaseContainerService {
     
     private policy: GroupPolicy;
+    private rotationRateLimiter = new RotationRateLimiter();
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -92,7 +96,7 @@ export class GroupService extends BaseContainerService {
     
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, expectedKeyVersion?: number) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -113,8 +117,51 @@ export class GroupService extends BaseContainerService {
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
+            const isRotation = this.isRemoval(oldGroup, users, managers) || (expectedKeyVersion !== undefined);
             // Membership integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
+                if (isRotation) {
+                    this.rotationRateLimiter.check(id, user.userId);
+                    const casExpected = expectedKeyVersion ?? groupRepository.getKeyVersion(oldGroup);
+                    const now = DateUtils.now();
+                    const entry: db.group.GroupHistoryEntry = {
+                        created: now,
+                        author: user.userId,
+                        keyId: keyId,
+                        data: data,
+                        users: users,
+                        managers: managers,
+                        groupPubKey: groupPubKey,
+                    };
+                    const epochGroup: db.group.Group = {
+                        ...oldGroup,
+                        groupPubKey: groupPubKey,
+                        lastModifier: user.userId,
+                        lastModificationDate: now,
+                        keyId: keyId,
+                        data: data,
+                        users: users,
+                        managers: managers,
+                        keys: newKeys,
+                        history: [...oldGroup.history, entry],
+                        allTimeUsers: Utils.uniqueFromArrays(oldGroup.allTimeUsers, users, managers),
+                        policy: policy === undefined ? oldGroup.policy : policy,
+                        keyVersion: casExpected + 1,
+                        keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: casExpected, groupPubKey: oldGroup.groupPubKey}],
+                    };
+                    if (resourceId && !oldGroup.clientResourceId) {
+                        epochGroup.clientResourceId = resourceId;
+                    }
+                    else if (oldGroup.clientResourceId) {
+                        epochGroup.clientResourceId = oldGroup.clientResourceId;
+                    }
+                    const result = await groupRepository.casRotate(oldGroup, casExpected, epochGroup);
+                    if (!result) {
+                        const winner = await groupRepository.get(id);
+                        throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
+                    }
+                    return {group: result, context, oldGroup};
+                }
                 const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId);
                 return {group, context, oldGroup};
             }
@@ -130,6 +177,56 @@ export class GroupService extends BaseContainerService {
         const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
         this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify);
         return rGroup;
+    }
+    
+    async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
+        const {group: rGroup, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+            const oldGroup = await groupRepository.get(model.id);
+            if (!oldGroup) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
+            this.rotationRateLimiter.check(model.id, user.userId);
+            const currentKeyVersion = groupRepository.getKeyVersion(oldGroup);
+            if (currentKeyVersion !== model.expectedKeyVersion) {
+                const winner = await groupRepository.get(model.id);
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
+            }
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(
+                oldGroup.contextId,
+                [...oldGroup.history.map(x => x.keyId), model.keyId],
+                oldGroup.keys,
+                model.keys,
+                model.keyId,
+                oldGroup.users,
+                oldGroup.managers,
+            );
+            const result = await groupRepository.generateNewGroupKey(oldGroup, user.userId, model.groupPubKey, model.data, model.keyId, newKeys, model.confirmationTag);
+            if (!result) {
+                const winner = await groupRepository.get(model.id);
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
+            }
+            return {group: result, context};
+        });
+        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, []);
+        return rGroup;
+    }
+    
+    private isRemoval(oldGroup: db.group.Group, newUsers: types.cloud.UserId[], newManagers: types.cloud.UserId[]): boolean {
+        const oldSet = new Set([...oldGroup.users, ...oldGroup.managers]);
+        return [...oldSet].some(u => !newUsers.includes(u) && !newManagers.includes(u));
+    }
+    
+    private buildRotatedAlreadyData(winner: db.group.Group, callerId: types.cloud.UserId): RotatedAlreadyData {
+        const callerEntry = winner.keys.find(k => k.user === callerId);
+        const winnerKeyEntry = callerEntry?.keys.find(k => k.keyId === winner.keyId);
+        return {
+            keyVersion: winner.keyVersion ?? 1,
+            groupPubKey: winner.groupPubKey,
+            winnerKeyEntry: winnerKeyEntry ?? {keyId: winner.keyId, data: "" as types.core.UserKeyData},
+        };
     }
     
     async deleteGroup(executor: Executor, id: types.group.GroupId) {
@@ -179,5 +276,24 @@ class GroupPolicy extends BasePolicy<db.group.Group, never> {
     
     protected extractPolicyFromContext(policy: types.context.ContextPolicy) {
         return policy?.group || {};
+    }
+}
+
+/** In-memory sliding-window rate limiter: max 10 rotations per (groupId, userId) per hour. */
+class RotationRateLimiter {
+    private static readonly MAX_ROTATIONS = 10;
+    private static readonly WINDOW_MS = 60 * 60 * 1000;
+    private readonly windows = new Map<string, number[]>();
+    
+    check(groupId: types.group.GroupId, userId: types.cloud.UserId): void {
+        const key = `${groupId}:${userId}`;
+        const now = Date.now();
+        const cutoff = now - RotationRateLimiter.WINDOW_MS;
+        const timestamps = (this.windows.get(key) ?? []).filter(t => t > cutoff);
+        if (timestamps.length >= RotationRateLimiter.MAX_ROTATIONS) {
+            throw new AppException("GROUP_ROTATION_RATE_LIMIT");
+        }
+        timestamps.push(now);
+        this.windows.set(key, timestamps);
     }
 }

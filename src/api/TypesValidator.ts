@@ -246,6 +246,7 @@ export class TypesValidator {
         });
         this.cloudGroupKeyEntrySet = this.builder.createObject({
             group: this.groupId,
+            groupEpoch: this.builder.optional(this.builder.int),
             keyId: this.keyId,
             data: this.userKeyData,
         });

@@ -30,6 +30,8 @@ export class GroupConverter {
             managers: group.managers,
             keys: (group.keys.find(x => x.user === user)?.keys) || [],
             version: group.history.length as types.group.GroupVersion,
+            keyVersion: group.keyVersion ?? 1,
+            keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: group.history.map(x => this.convertHistoryEntry(x)),
         };
@@ -40,7 +42,7 @@ export class GroupConverter {
     }
     
     private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupHistoryEntryInfo {
-        return {
+        const res: contextApi.GroupHistoryEntryInfo = {
             keyId: entry.keyId,
             groupPubKey: entry.groupPubKey,
             users: entry.users,
@@ -48,5 +50,9 @@ export class GroupConverter {
             created: entry.created,
             author: entry.author,
         };
+        if (entry.confirmationTag !== undefined) {
+            res.confirmationTag = entry.confirmationTag;
+        }
+        return res;
     }
 }

@@ -169,4 +169,74 @@ export class GroupRepository {
     async deleteGroup(id: types.group.GroupId) {
         return this.repository.delete(id);
     }
+    
+    getKeyVersion(group: db.group.Group): number {
+        return group.keyVersion ?? 1;
+    }
+    
+    async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
+        if (groupIds.length === 0) {
+            return new Map();
+        }
+        const groups = await this.repository.getMulti(groupIds);
+        const map = new Map<types.group.GroupId, number>();
+        for (const g of groups) {
+            if (g.contextId === contextId) {
+                map.set(g.id, this.getKeyVersion(g));
+            }
+        }
+        return map;
+    }
+    
+    /** Atomically replace the group document only if keyVersion matches (compare-and-swap).
+     *  Returns the updated group on success, null on CAS miss. */
+    async casRotate(oldGroup: db.group.Group, expectedKeyVersion: number, updatedGroup: db.group.Group): Promise<db.group.Group | null> {
+        const filter: Record<string, unknown> = {_id: oldGroup.id};
+        if (expectedKeyVersion === 1) {
+            filter.$or = [{keyVersion: 1}, {keyVersion: {$exists: false}}];
+        }
+        else {
+            filter.keyVersion = expectedKeyVersion;
+        }
+        const dbDoc: Record<string, unknown> = {};
+        for (const key of Object.keys(updatedGroup) as (keyof db.group.Group)[]) {
+            dbDoc[key === "id" ? "_id" : key] = updatedGroup[key];
+        }
+        delete dbDoc.id;
+        const result = await this.repository.collection.replaceOne(filter, dbDoc, this.repository.getOptions());
+        if (result.matchedCount === 0) {
+            return null;
+        }
+        return updatedGroup;
+    }
+    
+    async generateNewGroupKey(oldGroup: db.group.Group, modifier: types.cloud.UserId, newGroupPubKey: types.cloud.GroupPubKey,
+        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[],
+        confirmationTag?: types.core.Base64): Promise<db.group.Group | null> {
+        const now = DateUtils.now();
+        const entry: db.group.GroupHistoryEntry = {
+            created: now,
+            author: modifier,
+            keyId: keyId,
+            data: data,
+            users: oldGroup.users,
+            managers: oldGroup.managers,
+            groupPubKey: newGroupPubKey,
+            ...(confirmationTag ? {confirmationTag} : {}),
+        };
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const updatedGroup: db.group.Group = {
+            ...oldGroup,
+            groupPubKey: newGroupPubKey,
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: keyId,
+            data: data,
+            keys: keys,
+            history: [...oldGroup.history, entry],
+            keyVersion: expectedKeyVersion + 1,
+            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
+        };
+        return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);
+    }
 }

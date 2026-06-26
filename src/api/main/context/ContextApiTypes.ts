@@ -134,6 +134,23 @@ export interface GroupUpdateModel {
     version: types.group.GroupVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
+    expectedKeyVersion?: number;
+}
+
+export interface GroupGenerateNewKeyModel {
+    id: types.group.GroupId;
+    groupPubKey: types.cloud.GroupPubKey;
+    data: types.group.GroupData;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    expectedKeyVersion: number;
+    confirmationTag?: types.core.Base64;
+}
+
+export interface RotatedAlreadyData {
+    keyVersion: number;
+    groupPubKey: types.cloud.GroupPubKey;
+    winnerKeyEntry: types.core.KeyEntry;
 }
 
 export interface GroupDeleteModel {
@@ -173,6 +190,7 @@ export interface GroupHistoryEntryInfo {
     managers: types.cloud.UserId[];
     created: types.core.Timestamp;
     author: types.cloud.UserId;
+    confirmationTag?: types.core.Base64;
 }
 
 export interface GroupInfo {
@@ -190,6 +208,8 @@ export interface GroupInfo {
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
     version: types.group.GroupVersion;
+    keyVersion: number;
+    keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
 }
@@ -211,6 +231,7 @@ export interface IContextApi {
     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
     groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
     groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
+    groupGenerateNewKey(model: GroupGenerateNewKeyModel): Promise<types.core.OK>;
     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
     groupList(model: GroupListModel): Promise<GroupListResult>;
