@@ -131,6 +131,7 @@ export class ThreadRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            keeper: entry.author,
             data: entry.data,
             users: entry.users,
             managers: entry.managers,
@@ -152,7 +153,35 @@ export class ThreadRepository {
         await this.repository.update(updatedThread);
         return updatedThread;
     }
-    
+
+    async rotateKeys(oldThread: db.thread.Thread, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldThread.lastModifier
+        // at oldThread.lastModificationDate) remains verifiable by the endpoint.
+        const groups = grantees?.groups || oldThread.groups || [];
+        const entry: db.thread.ThreadHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldThread.keyId,
+            data: oldThread.data,
+            users: oldThread.users,
+            managers: oldThread.managers,
+            groups: groups,
+        };
+        const updatedThread: db.thread.Thread = {
+            ...oldThread,
+            keyId: newKeyId,
+            keeper: modifier,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
+            history: [...oldThread.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedThread);
+        return updatedThread;
+    }
+
     async deleteThread(id: types.thread.ThreadId) {
         return this.repository.delete(id);
     }

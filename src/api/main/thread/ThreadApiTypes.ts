@@ -40,6 +40,15 @@ export interface ThreadUpdateModel {
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
+export interface ThreadRotateKeysModel {
+    id: types.thread.ThreadId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.thread.ThreadVersion;
+    force: boolean;
+}
+
 export interface ThreadDeleteModel {
     threadId: types.thread.ThreadId;
 }
@@ -103,6 +112,7 @@ export interface ThreadInfo {
     lastModifier: types.cloud.UserId;
     data: ThreadDataEntry[];
     keyId: types.core.KeyId;
+    keeper?: types.cloud.UserId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];

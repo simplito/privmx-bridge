@@ -40,6 +40,15 @@ export interface StoreUpdateModel {
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
+export interface StoreRotateKeysModel {
+    id: types.store.StoreId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.store.StoreVersion;
+    force: boolean;
+}
+
 export interface StoreDeleteModel {
     storeId: types.store.StoreId;
 }

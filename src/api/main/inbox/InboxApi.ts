@@ -48,6 +48,14 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
     }
     
     @ApiMethod({})
+    async inboxRotateKeys(model: inboxApi.InboxRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const inbox = await this.inboxService.rotateInboxKeys(cloudUser, model);
+        this.requestLogger.setContextId(inbox.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
     async inboxDelete(model: inboxApi.InboxDeleteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const inbox = await this.inboxService.deleteInbox(cloudUser, model.inboxId);

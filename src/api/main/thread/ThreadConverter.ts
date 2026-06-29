@@ -26,6 +26,7 @@ export class ThreadConverter {
             users: thread.users,
             managers: thread.managers,
             keyId: thread.keyId,
+            keeper: thread.keeper,
             data: thread.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (thread.keys.find(x => x.user === user)?.keys) || [],
             groups: thread.groups || [],

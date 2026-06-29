@@ -162,6 +162,7 @@ export namespace thread {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        keeper?: types.cloud.UserId;
         data: types.thread.ThreadData;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];

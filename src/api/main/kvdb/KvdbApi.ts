@@ -48,6 +48,14 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     }
     
     @ApiMethod({})
+    async kvdbRotateKeys(model: kvdbApi.KvdbRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const kvdb = await this.kvdbService.rotateKvdbKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
+        this.requestLogger.setContextId(kvdb.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
     async kvdbDelete(model: kvdbApi.KvdbDeleteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const kvdb = await this.kvdbService.deleteKvdb(cloudUser, model.kvdbId);

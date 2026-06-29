@@ -96,7 +96,7 @@ export class GroupService extends BaseContainerService {
     
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, expectedKeyVersion?: number) {
+        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, expectedKeyVersion?: number, confirmationTag?: types.core.Base64) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -132,6 +132,7 @@ export class GroupService extends BaseContainerService {
                         users: users,
                         managers: managers,
                         groupPubKey: groupPubKey,
+                        ...(confirmationTag ? {confirmationTag} : {}),
                     };
                     const epochGroup: db.group.Group = {
                         ...oldGroup,
@@ -223,7 +224,7 @@ export class GroupService extends BaseContainerService {
         const callerEntry = winner.keys.find(k => k.user === callerId);
         const winnerKeyEntry = callerEntry?.keys.find(k => k.keyId === winner.keyId);
         return {
-            keyVersion: winner.keyVersion ?? 1,
+            keyVersion: winner.keyVersion ?? 0,
             groupPubKey: winner.groupPubKey,
             winnerKeyEntry: winnerKeyEntry ?? {keyId: winner.keyId, data: "" as types.core.UserKeyData},
         };

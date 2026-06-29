@@ -30,7 +30,7 @@ export class GroupConverter {
             managers: group.managers,
             keys: (group.keys.find(x => x.user === user)?.keys) || [],
             version: group.history.length as types.group.GroupVersion,
-            keyVersion: group.keyVersion ?? 1,
+            keyVersion: group.keyVersion ?? 0,
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: group.history.map(x => this.convertHistoryEntry(x)),

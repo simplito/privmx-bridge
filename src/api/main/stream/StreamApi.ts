@@ -51,7 +51,13 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
         this.requestLogger.setContextId(streamRoom.contextId);
         return "OK";
     }
-    
+    @ApiMethod({})
+    async streamRoomRotateKeys(model: streamApi.StreamRoomRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const streamRoom = await this.streamService.rotateStreamRoomKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
+        this.requestLogger.setContextId(streamRoom.contextId);
+        return "OK";
+    }
     @ApiMethod({})
     async streamRoomDelete(model: streamApi.StreamRoomDeleteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();

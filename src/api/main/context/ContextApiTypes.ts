@@ -135,6 +135,7 @@ export interface GroupUpdateModel {
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
     expectedKeyVersion?: number;
+    confirmationTag?: types.core.Base64;
 }
 
 export interface GroupGenerateNewKeyModel {

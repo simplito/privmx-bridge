@@ -46,6 +46,14 @@ export class StoreApiValidator extends BaseValidator {
             groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupGrant, 16384)),
             groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
         }));
+        this.registerMethod("storeRotateKeys", this.builder.createObject({
+            id: this.tv.storeId,
+            keyId: this.tv.keyId,
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
+            version: this.tv.intNonNegative,
+            force: this.builder.bool,
+        }));
         this.registerMethod("storeDelete", this.builder.createObject({
             storeId: this.tv.storeId,
         }));

@@ -47,7 +47,15 @@ export class ThreadApiValidator extends BaseValidator {
             groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupGrant, 16384)),
             groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
         }));
-        
+        this.registerMethod("threadRotateKeys", this.builder.createObject({
+            id: this.tv.threadId,
+            keyId: this.tv.keyId,
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
+            version: this.tv.intNonNegative,
+            force: this.builder.bool,
+        }));
+
         this.registerMethod("threadDelete", this.builder.createObject({
             threadId: this.tv.threadId,
         }));
