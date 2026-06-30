@@ -48,9 +48,9 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     }
     
     @ApiMethod({})
-    async threadRotateKey(model: threadApi.ThreadRotateKeyModel): Promise<types.core.OK> {
+    async threadRotateKeys(model: threadApi.ThreadRotateKeysModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.rotateThreadKey(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
+        const thread = await this.threadService.rotateThreadKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }

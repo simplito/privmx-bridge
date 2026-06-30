@@ -206,6 +206,32 @@ export class StreamService extends BaseContainerService {
         return rStreamRoom;
     }
     
+    async rotateStreamRoomKeys(cloudUser: CloudUser, id: types.stream.StreamRoomId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean) {
+        const {streamRoom: rStreamRoom, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const streamRoomRepository = this.repositoryFactory.createStreamRoomRepository(session);
+            const oldStreamRoom = await streamRoomRepository.get(id);
+            if (!oldStreamRoom) {
+                throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStreamRoom.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomRotateKeys", ["streamRoomId=" + id]);
+            if (!this.policy.canRotateContainerKeys(user, context, oldStreamRoom)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, oldStreamRoom.users, oldStreamRoom.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, (oldStreamRoom.groups || []).map(g => g.groupId));
+            const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, oldStreamRoom.managers, oldStreamRoom.users, oldStreamRoom.data, keyId, newKeys, undefined, null, {groups: oldStreamRoom.groups || [], groupKeys: newGroupKeys});
+            return {streamRoom, context};
+        });
+        this.streamNotificationService.sendStreamRoomUpdated(rStreamRoom, usedContext.solution, []);
+        return rStreamRoom;
+    }
+    
     async deleteStreamRoom(executor: Executor, id: types.stream.StreamRoomId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const streamRoomRepository = this.repositoryFactory.createStreamRoomRepository(session);

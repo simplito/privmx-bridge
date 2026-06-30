@@ -179,7 +179,7 @@ export class GroupRepository {
     }
     
     getKeyVersion(group: db.group.Group): number {
-        return group.keyVersion ?? 1;
+        return group.keyVersion ?? 0;
     }
     
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
@@ -200,8 +200,8 @@ export class GroupRepository {
      *  Returns the updated group on success, null on CAS miss. */
     async casRotate(oldGroup: db.group.Group, expectedKeyVersion: number, updatedGroup: db.group.Group): Promise<db.group.Group | null> {
         const filter: Record<string, unknown> = {_id: oldGroup.id};
-        if (expectedKeyVersion === 1) {
-            filter.$or = [{keyVersion: 1}, {keyVersion: {$exists: false}}];
+        if (expectedKeyVersion === 0) {
+            filter.$or = [{keyVersion: 0}, {keyVersion: {$exists: false}}];
         }
         else {
             filter.keyVersion = expectedKeyVersion;

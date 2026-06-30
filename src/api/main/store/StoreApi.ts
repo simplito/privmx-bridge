@@ -48,6 +48,14 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     }
     
     @ApiMethod({})
+    async storeRotateKeys(model: storeApi.StoreRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const store = await this.storeService.rotateStoreKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
+        this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
     async storeDelete(model: storeApi.StoreDeleteModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const store = await this.storeService.deleteStore(cloudUser, model.storeId);

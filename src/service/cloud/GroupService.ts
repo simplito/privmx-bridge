@@ -203,7 +203,7 @@ export class GroupService extends BaseContainerService {
         const callerEntry = winner.keys.find(k => k.user === callerId);
         const winnerKeyEntry = callerEntry?.keys.find(k => k.keyId === winner.keyId);
         return {
-            keyVersion: winner.keyVersion ?? 1,
+            keyVersion: winner.keyVersion ?? 0,
             groupPubKey: winner.groupPubKey,
             winnerKeyEntry: winnerKeyEntry ?? {keyId: winner.keyId, data: "" as types.core.UserKeyData},
         };

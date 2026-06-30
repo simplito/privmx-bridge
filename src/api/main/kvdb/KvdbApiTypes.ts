@@ -40,6 +40,15 @@ export interface KvdbUpdateModel {
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
+export interface KvdbRotateKeysModel {
+    id: types.kvdb.KvdbId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.kvdb.KvdbVersion;
+    force: boolean;
+}
+
 export interface KvdbDeleteModel {
     kvdbId: types.kvdb.KvdbId;
 }

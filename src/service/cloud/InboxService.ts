@@ -131,6 +131,33 @@ export class InboxService extends BaseContainerService {
         return rInbox;
     }
     
+    async rotateInboxKeys(cloudUser: CloudUser, model: inboxApi.InboxRotateKeysModel) {
+        const {inbox: rInbox, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const inboxRepository = this.repositoryFactory.createInboxRepository(session);
+            const oldInbox = await inboxRepository.get(model.id);
+            if (!oldInbox) {
+                throw new AppException("STORE_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxRotateKeys", ["inboxId=" + model.id]);
+            if (!this.policy.canRotateContainerKeys(user, context, oldInbox)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.inbox.InboxVersion>oldInbox.history.length;
+            if (currentVersion !== model.version && !model.force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);
+            const groups = (oldInbox.groups || []);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
+            const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, oldInbox.managers, oldInbox.users, oldInbox.data as types.inbox.InboxData, model.keyId, newKeys, undefined, null, {groups, groupKeys: newGroupKeys});
+            return {inbox, context};
+        });
+        this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution, []);
+        return rInbox;
+    }
+    
     async deleteInbox(executor: Executor, id: types.inbox.InboxId) {
         const {inbox: rInbox, userContext: usedContext} = await this.repositoryFactory.withTransaction(async session => {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);

@@ -50,7 +50,7 @@ export class GroupApiTests extends BaseTestSet {
             managers: [testData.userId],
             users: [testData.userId],
             groups: [{groupId: groupId, role: "user"}],
-            groupKeys: [{group: groupId, groupEpoch: 1, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            groupKeys: [{group: groupId, groupEpoch: 0, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
         });
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupDelete({groupId}), "GROUP_IN_USE");
     }

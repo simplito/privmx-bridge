@@ -73,6 +73,15 @@ export interface InboxUpdateModel {
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
+export interface InboxRotateKeysModel {
+    id: types.inbox.InboxId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.inbox.InboxVersion;
+    force: boolean;
+}
+
 export interface InboxDeleteModel {
     inboxId: types.inbox.InboxId;
 }

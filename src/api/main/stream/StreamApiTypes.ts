@@ -69,6 +69,15 @@ export interface StreamRoomUpdateModel {
     groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
+export interface StreamRoomRotateKeysModel {
+    id: types.stream.StreamRoomId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.stream.StreamRoomVersion;
+    force: boolean;
+}
+
 export interface StreamRoomDeleteModel {
     id: types.stream.StreamRoomId;
 }

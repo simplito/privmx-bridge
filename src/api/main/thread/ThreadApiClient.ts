@@ -23,8 +23,8 @@ export class ThreadApiClient extends BaseApiClient implements threadApi.IThreadA
         return this.request("thread.threadUpdate", model);
     }
     
-    threadRotateKey(model: threadApi.ThreadRotateKeyModel): Promise<types.core.OK> {
-        return this.request("thread.threadRotateKey", model);
+    threadRotateKeys(model: threadApi.ThreadRotateKeysModel): Promise<types.core.OK> {
+        return this.request("thread.threadRotateKeys", model);
     }
     
     threadDelete(model: threadApi.ThreadDeleteModel): Promise<types.core.OK> {

@@ -56,6 +56,10 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
         return this.isContainerPolicMet(user, context, container, p => p?.update);
     }
     
+    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, container: T) {
+        return this.isContainerPolicMet(user, context, container, p => p?.rotateKeys);
+    }
+    
     canUpdateContainerPolicy(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.updatePolicy);
     }

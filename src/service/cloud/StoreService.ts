@@ -115,6 +115,32 @@ export class StoreService extends BaseContainerService {
         return rStore;
     }
     
+    async rotateStoreKeys(cloudUser: CloudUser, id: types.store.StoreId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.store.StoreVersion, force: boolean) {
+        const {store: rStore, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const storeRepository = this.repositoryFactory.createStoreRepository(session);
+            const oldStore = await storeRepository.get(id);
+            if (!oldStore) {
+                throw new AppException("STORE_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStore.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "store/storeRotateKeys", ["storeId=" + id]);
+            if (!this.policy.canRotateContainerKeys(user, context, oldStore)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.store.StoreVersion>oldStore.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, oldStore.users, oldStore.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, (oldStore.groups || []).map(g => g.groupId));
+            const store = await storeRepository.updateStore(oldStore, user.userId, oldStore.managers, oldStore.users, oldStore.data, keyId, newKeys, undefined, null, {groups: oldStore.groups || [], groupKeys: newGroupKeys});
+            return {store, context};
+        });
+        this.storeNotificationService.sendStoreUpdated(rStore, usedContext.solution, []);
+        return rStore;
+    }
+    
     async deleteStore(executor: Executor, id: types.store.StoreId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const storeRepository = this.repositoryFactory.createStoreRepository(session);

@@ -126,6 +126,8 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     update?: PolicyEntry;
     /** Determines who can update a container */
     delete?: PolicyEntry;
+    /** Determines who can rotate container keys */
+    rotateKeys?: PolicyEntry;
     /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
     /** Determines whether the creator has to be added to the list of managers */

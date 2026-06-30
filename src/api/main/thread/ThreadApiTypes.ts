@@ -41,7 +41,7 @@ export interface ThreadUpdateModel {
 }
 
 /** Rotate the thread's content key only — no membership change (Phase 2 lazy re-key). */
-export interface ThreadRotateKeyModel {
+export interface ThreadRotateKeysModel {
     id: types.thread.ThreadId;
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
@@ -113,6 +113,7 @@ export interface ThreadInfo {
     lastModifier: types.cloud.UserId;
     data: ThreadDataEntry[];
     keyId: types.core.KeyId;
+    keeper?: types.cloud.UserId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
@@ -275,7 +276,7 @@ export interface ThreadSendCustomEventModel {
 export interface IThreadApi {
     threadCreate(model: ThreadCreateModel): Promise<ThreadCreateResult>;
     threadUpdate(model: ThreadUpdateModel): Promise<types.core.OK>;
-    threadRotateKey(model: ThreadRotateKeyModel): Promise<types.core.OK>;
+    threadRotateKeys(model: ThreadRotateKeysModel): Promise<types.core.OK>;
     threadDelete(model: ThreadDeleteModel): Promise<types.core.OK>;
     threadDeleteMany(model: ThreadDeleteManyModel): Promise<ThreadDeleteManyResult>
     threadGet(model: ThreadGetModel): Promise<ThreadGetResult>;

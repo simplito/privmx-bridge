@@ -141,6 +141,32 @@ export class KvdbService extends BaseContainerService {
         return rKvdb;
     }
     
+    async rotateKvdbKeys(cloudUser: CloudUser, id: types.kvdb.KvdbId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.kvdb.KvdbVersion, force: boolean) {
+        const {kvdb: rKvdb, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const kvdbRepository = this.repositoryFactory.createKvdbRepository(session);
+            const oldKvdb = await kvdbRepository.get(id);
+            if (!oldKvdb) {
+                throw new AppException("KVDB_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldKvdb.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbRotateKeys", ["kvdbId=" + id]);
+            if (!this.policy.canRotateContainerKeys(user, context, oldKvdb)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.kvdb.KvdbVersion>oldKvdb.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, oldKvdb.users, oldKvdb.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, (oldKvdb.groups || []).map(g => g.groupId));
+            const kvdb = await kvdbRepository.updateKvdb(oldKvdb, user.userId, oldKvdb.managers, oldKvdb.users, oldKvdb.data, keyId, newKeys, undefined, {groups: oldKvdb.groups || [], groupKeys: newGroupKeys});
+            return {kvdb, context};
+        });
+        this.kvdbNotificationService.sendKvdbUpdated(rKvdb, usedContext.solution, []);
+        return rKvdb;
+    }
+    
     async deleteKvdb(executor: Executor, id: types.kvdb.KvdbId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const kvdbRepository = this.repositoryFactory.createKvdbRepository(session);
