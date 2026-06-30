@@ -409,6 +409,7 @@ export class StoreService extends BaseContainerService {
         if (model.keyId !== store.keyId) {
             throw new AppException("INVALID_KEY");
         }
+        await this.checkGroupEpochs(store, this.policy.isForwardSecrecyEnforced(context, store));
         const requestRepository = this.repositoryFactory.createRequestRepository();
         const request = await requestRepository.getReadyForUser(cloudUser.pub, model.requestId);
         if (!request.files[model.fileIndex]) {
@@ -424,7 +425,7 @@ export class StoreService extends BaseContainerService {
         }
         const uploadedFile = request.files[model.fileIndex];
         const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
-        
+
         await this.storageService.getStorageService(uploadedFile.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedFile.id);
         if (uploadedThumb) {
             await this.storageService.getStorageService(uploadedThumb.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedThumb.id);
@@ -460,6 +461,7 @@ export class StoreService extends BaseContainerService {
         if (model.keyId !== store.keyId) {
             throw new AppException("INVALID_KEY");
         }
+        await this.checkGroupEpochs(store, this.policy.isForwardSecrecyEnforced(context, store));
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);
@@ -507,6 +509,7 @@ export class StoreService extends BaseContainerService {
             if (model.keyId !== store.keyId) {
                 throw new AppException("INVALID_KEY");
             }
+            await this.checkGroupEpochs(store, this.policy.isForwardSecrecyEnforced(context, store));
             if (!oldFile.supportsRandomWrite) {
                 throw new AppException("UNSUPPORTED_OPERATION", "Random write can be only executed on files supporting this operation");
             }
@@ -538,6 +541,7 @@ export class StoreService extends BaseContainerService {
         if (model.keyId !== store.keyId) {
             throw new AppException("INVALID_KEY");
         }
+        await this.checkGroupEpochs(store, this.policy.isForwardSecrecyEnforced(context, store));
         const currentVersion = ((oldFile.updates || []).length + 1) as types.store.StoreFileVersion;
         if (typeof(model.version) === "number" && currentVersion !== model.version && model.force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${model.version}, expected: ${currentVersion}`);

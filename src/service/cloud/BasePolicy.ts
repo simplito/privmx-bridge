@@ -123,7 +123,17 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
     ownerCanBeRemovedFromManagers(context: db.context.Context, container: T) {
         return this.getPolicyBooleanValue2x(context, container, p => p?.ownerCanBeRemovedFromManagers);
     }
-    
+
+    isForwardSecrecyEnforced(context: db.context.Context, container: T): boolean {
+        const value = this.policyService.getPolicy2x(
+            context,
+            container.policy || {},
+            p => this.extractPolicyFromContext(p),
+            p => p?.forwardSecrecy
+        );
+        return value === "yes";
+    }
+
     creatorIsNotManagerAndItIsForbidden(context: db.context.Context, creator: db.context.ContextUser, managers: types.cloud.UserId[]) {
         return !this.isOnManagersList(creator, managers) && this.creatorHasToBeManager(context);
     }

@@ -365,6 +365,7 @@ export class ThreadService extends BaseContainerService {
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
         }
+        await this.checkGroupEpochs(thread, this.policy.isForwardSecrecyEnforced(context, thread));
         try {
             const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
             await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);

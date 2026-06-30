@@ -266,6 +266,7 @@ export class KvdbService extends BaseContainerService {
         if (kvdb.keyId !== keyId) {
             throw new AppException("INVALID_KEY_ID");
         }
+        await this.checkGroupEpochs(kvdb, this.policy.isForwardSecrecyEnforced(context, kvdb));
         const item = await (async () => {
             const entryRepository = this.repositoryFactory.createKvdbEntryRepository();
             const entry = await entryRepository.get(kvdbId, kvdbEntryKey);
