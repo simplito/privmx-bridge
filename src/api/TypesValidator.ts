@@ -246,7 +246,7 @@ export class TypesValidator {
         });
         this.cloudGroupKeyEntrySet = this.builder.createObject({
             group: this.groupId,
-            groupEpoch: this.builder.optional(this.builder.int),
+            groupEpoch: this.builder.int,
             keyId: this.keyId,
             data: this.userKeyData,
         });
@@ -340,6 +340,7 @@ export class TypesValidator {
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
             canOverwriteContextPolicy: policyEntry,
+            forwardSecrecy: policyEntry,
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),

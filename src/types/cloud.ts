@@ -86,7 +86,7 @@ export interface GroupKeysEntry {
 
 export interface GroupKeyEntrySet {
     group: types.group.GroupId;
-    groupEpoch?: number;
+    groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion (Phase 2, BR-5)
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
 }
@@ -138,6 +138,10 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     canOverwriteContextPolicy?: PolicyBooleanEntry;
     /** Determines who can send custom notifications */
     sendCustomNotification?: PolicyEntry;
+    /** When "yes", the container opts into forward secrecy: clients lazily re-key it (rotateKey) after a
+     *  grantee group's epoch advances, so removed members can't read content written afterwards. Bridge stores
+     *  this advisory flag (best-effort — it does not force re-key); the endpoint acts on it. */
+    forwardSecrecy?: PolicyBooleanEntry;
 }
 
 export interface ContainerPolicy extends ContainerWithoutItemPolicy {

@@ -32,6 +32,7 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 
 // The bridge no longer signs or verifies group data: signing/verification is the endpoint's responsibility
 // (committed inside the opaque `data`). These tests exercise the bridge's storage, ACL, coverage, version-CAS
@@ -51,7 +52,10 @@ const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
 const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const janek = "janek" as types.cloud.UserId;
 const alice = "alice" as types.cloud.UserId;
+const aliceKeys = ECUtils.generateKeyPair();
+const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
 const janekCloudUser = new CloudUser(janekPub);
+const aliceCloudUser = new CloudUser(alicePub);
 const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
 
 const myContext: db.context.Context = {
@@ -71,6 +75,16 @@ const janekUser: db.context.ContextUser = {
     contextId: contextId,
     userId: janek,
     userPubKey: janekPub,
+    acl: "ALLOW ALL" as types.cloud.ContextAcl,
+};
+// alice is a context user with full ACL but only a group MEMBER (not a manager) — used to prove that
+// mutating operations (e.g. generateNewGroupKey) require the manager/policy gate, not just the ACL.
+const aliceUser: db.context.ContextUser = {
+    id: "yyy" as db.context.ContextUserId,
+    created: DateUtils.now(),
+    contextId: contextId,
+    userId: alice,
+    userPubKey: alicePub,
     acl: "ALLOW ALL" as types.cloud.ContextAcl,
 };
 const group: db.group.Group = {
@@ -112,7 +126,10 @@ function createGroupService(groupReferenced = false) {
     const cloudAccessValidator = createMock<CloudAccessValidator>({});
     const activeUsersMap = createMock<ActiveUsersMap>({});
     const host = "localhost" as types.core.Host;
-    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator);
+    const groupRotationRateLimiter = createMock<GroupRotationRateLimiter>({});
+    mock(groupRotationRateLimiter, "check", async () => ({allowed: true}));
+    mock(groupRotationRateLimiter, "record", async () => {});
+    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter);
     
     const containerRepo = {isGroupReferenced: async () => groupReferenced};
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
@@ -133,6 +150,10 @@ function createGroupService(groupReferenced = false) {
     mock(groupRepository, "updateGroup", async (...args: any[]) => ({...group, users: args[4], managers: args[3]}) as db.group.Group);
     mock(groupRepository, "deleteGroup", async () => {});
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
+    // Phase 2 (epochs/CAS): default mocks — success path.
+    mock(groupRepository, "getKeyVersion", ((g: db.group.Group) => g.keyVersion ?? 1) as never);
+    mock(groupRepository, "casRotate", (async (_old: db.group.Group, _expected: number, updated: db.group.Group) => updated) as never);
+    mock(groupRepository, "generateNewGroupKey", (async () => ({...group, keyVersion: 2}) as db.group.Group) as never);
     
     mock(contextUserRepository, "getUsers", async () => []);
     mock(activeUsersMap, "getUsersState", async () => []);
@@ -142,7 +163,8 @@ function createGroupService(groupReferenced = false) {
     mock(groupNotificationService, "sendDeletedGroup", () => {});
     
     mock(cloudAccessValidator, "getUserFromContext", async (cloudUser, ctx) => {
-        const user = cloudUser.pub === janekPub && ctx === contextId ? janekUser : null;
+        const usersByPub: Record<string, db.context.ContextUser> = {[janekPub]: janekUser, [alicePub]: aliceUser};
+        const user = ctx === contextId ? usersByPub[cloudUser.pub] ?? null : null;
         const context = ctx === contextId ? myContext : null;
         if (!user || !context) {
             throw new AppException("ACCESS_DENIED");
@@ -159,7 +181,7 @@ function createGroupService(groupReferenced = false) {
         return context;
     });
     
-    return {groupService, repositoryFactory, cloudKeyService, groupNotificationService, groupRepository, cloudAccessValidator};
+    return {groupService, repositoryFactory, cloudKeyService, groupNotificationService, groupRepository, cloudAccessValidator, groupRotationRateLimiter};
 }
 
 it("Should create group", async () => {
@@ -237,6 +259,117 @@ it("Should refuse to delete a group still referenced by a container", async () =
     catch (e) {
         expect(AppException.is(e, "GROUP_IN_USE")).toBe(true);
         hasNoCalls(groupRepository.deleteGroup);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+// ---------- Phase 2: rotation is decoupled from updateGroup ----------
+
+it("updateGroup changes membership WITHOUT rotating the key epoch (no casRotate)", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    // remove alice (fixture has [janek, alice]); same groupPubKey → pure membership change, never a rotation
+    await groupService.updateGroup(janekCloudUser, groupId, groupPubKey, [janek], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null);
+    hasOneCall(groupRepository.updateGroup);
+    hasNoCalls(groupRepository.casRotate);
+});
+
+it("updateGroup rejects an attempt to rotate the group key (must use generateNewGroupKey)", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    const rotatedPubKey = "DifferentGroupPubKey" as unknown as types.cloud.GroupPubKey;
+    try {
+        await groupService.updateGroup(janekCloudUser, groupId, rotatedPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null);
+    }
+    catch (e) {
+        expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
+        hasNoCalls(groupRepository.updateGroup);
+        hasNoCalls(groupRepository.casRotate);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("Should generate a new group key (rotation without membership change)", async () => {
+    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+    const res = await groupService.generateNewGroupKey(janekCloudUser, {
+        id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1,
+    });
+    expect(res.keyVersion).toBe(2);
+    hasOneCall(groupRepository.generateNewGroupKey);
+    hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("Should reject generateNewGroupKey with a stale expectedKeyVersion (ROTATED_ALREADY)", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {
+            id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 99,
+        });
+    }
+    catch (e) {
+        expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);
+        hasNoCalls(groupRepository.generateNewGroupKey);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("Should return ROTATED_ALREADY when the rotation CAS loses mid-write", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    mock(groupRepository, "generateNewGroupKey", (async () => null) as never); // CAS lost after the version check
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1});
+    }
+    catch (e) {
+        expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("Should reject a rotation when the (IPC) rate limiter denies it", async () => {
+    const {groupService, groupRotationRateLimiter} = createGroupService();
+    mock(groupRotationRateLimiter, "check", async () => ({allowed: false}));
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1});
+    }
+    catch (e) {
+        expect(AppException.is(e, "GROUP_ROTATION_RATE_LIMIT")).toBe(true);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("Should reject generateNewGroupKey from a non-manager (context ACL alone is insufficient)", async () => {
+    const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
+    // alice has ALLOW ALL context ACL and is a group member, but is NOT a group manager.
+    try {
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1});
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupRepository.generateNewGroupKey);
+        hasNoCalls(groupRotationRateLimiter.record); // budget not charged when the gate rejects
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("charges the rotation rate-limit budget only after a successful rotation", async () => {
+    const {groupService, groupRotationRateLimiter} = createGroupService();
+    await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1});
+    hasOneCall(groupRotationRateLimiter.record);
+});
+
+it("does NOT charge the rate-limit budget on a lost CAS race (ROTATED_ALREADY)", async () => {
+    const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
+    mock(groupRepository, "generateNewGroupKey", (async () => null) as never); // CAS lost mid-write
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, keys: [], expectedKeyVersion: 1});
+    }
+    catch (e) {
+        expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);
+        hasNoCalls(groupRotationRateLimiter.record);
         return;
     }
     expect(true).toBeFalsy();

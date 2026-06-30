@@ -1,0 +1,1287 @@
+diff --git a/src/api/main/context/ContextApi.ts b/src/api/main/context/ContextApi.ts
+index b62553d..ff59e9a 100644
+--- a/src/api/main/context/ContextApi.ts
++++ b/src/api/main/context/ContextApi.ts
+@@ -71,7 +71,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
+     @ApiMethod({})
+     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
+         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+-        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.signature);
++        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+         this.requestLogger.setContextId(group.contextId);
+         return {groupId: group.id};
+     }
+@@ -79,20 +79,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
+     @ApiMethod({})
+     async groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
+         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+-        const group = await this.groupService.updateGroup(cloudUser, model.id, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.signature, model.prevSignature);
+-        this.requestLogger.setContextId(group.contextId);
+-        return "OK";
+-    }
+-    
+-    @ApiMethod({})
+-    async groupModifyMembers(model: contextApi.GroupModifyMembersModel): Promise<types.core.OK> {
+-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+-        const group = await this.groupService.modifyGroupMembers(cloudUser, model.id, {
+-            usersToAddOrUpdate: model.usersToAddOrUpdate,
+-            usersToRemove: model.usersToRemove,
+-            managersToAddOrUpdate: model.managersToAddOrUpdate,
+-            managersToRemove: model.managersToRemove,
+-        }, model.keyId, model.keys, model.signature, model.prevSignature);
++        const group = await this.groupService.updateGroup(cloudUser, model.id, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
+         this.requestLogger.setContextId(group.contextId);
+         return "OK";
+     }
+diff --git a/src/api/main/context/ContextApiClient.ts b/src/api/main/context/ContextApiClient.ts
+index c234798..ad876db 100644
+--- a/src/api/main/context/ContextApiClient.ts
++++ b/src/api/main/context/ContextApiClient.ts
+@@ -43,10 +43,6 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
+         return this.request("context.groupUpdate", model);
+     }
+     
+-    groupModifyMembers(model: contextApi.GroupModifyMembersModel): Promise<types.core.OK> {
+-        return this.request("context.groupModifyMembers", model);
+-    }
+-    
+     groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
+         return this.request("context.groupDelete", model);
+     }
+diff --git a/src/api/main/context/ContextApiTypes.ts b/src/api/main/context/ContextApiTypes.ts
+index 433d371..818b5f0 100644
+--- a/src/api/main/context/ContextApiTypes.ts
++++ b/src/api/main/context/ContextApiTypes.ts
+@@ -116,7 +116,6 @@ export interface GroupCreateModel {
+     keyId: types.core.KeyId;
+     keys: types.cloud.KeyEntrySet[];
+     policy?: types.cloud.ContainerPolicy;
+-    signature: types.core.EccSignature;
+ }
+ 
+ export interface GroupCreateResult {
+@@ -135,20 +134,6 @@ export interface GroupUpdateModel {
+     version: types.group.GroupVersion;
+     force: boolean;
+     policy?: types.cloud.ContainerPolicy;
+-    signature: types.core.EccSignature;
+-    prevSignature: types.core.EccSignature;
+-}
+-
+-export interface GroupModifyMembersModel {
+-    id: types.group.GroupId;
+-    usersToAddOrUpdate: types.cloud.UserId[];
+-    usersToRemove: types.cloud.UserId[];
+-    managersToAddOrUpdate: types.cloud.UserId[];
+-    managersToRemove: types.cloud.UserId[];
+-    keyId: types.core.KeyId;
+-    keys: types.cloud.KeyEntrySet[];
+-    signature: types.core.EccSignature;
+-    prevSignature: types.core.EccSignature;
+ }
+ 
+ export interface GroupDeleteModel {
+@@ -179,19 +164,15 @@ export interface GroupDataEntry {
+     data: types.group.GroupData;
+ }
+ 
+-/** A signed, chained membership-log entry — the endpoint verifies the chain client-side. */
+-export interface GroupSignedEntry {
++/** A group version record. The membership signature + chain link is committed inside the opaque `data`
++ *  (endpoint DIO) and verified client-side; the bridge stores it but does not interpret it. */
++export interface GroupHistoryEntryInfo {
+     keyId: types.core.KeyId;
+     groupPubKey: types.cloud.GroupPubKey;
+     users: types.cloud.UserId[];
+     managers: types.cloud.UserId[];
+     created: types.core.Timestamp;
+     author: types.cloud.UserId;
+-    authorPubKey: types.cloud.UserPubKey;
+-    op: types.group.GroupSignatureOp;
+-    delta?: types.group.GroupMembersDelta;
+-    prevSignature: types.core.EccSignature|null;
+-    signature: types.core.EccSignature;
+ }
+ 
+ export interface GroupInfo {
+@@ -210,7 +191,7 @@ export interface GroupInfo {
+     keys: types.core.KeyEntry[];
+     version: types.group.GroupVersion;
+     policy: types.cloud.ContainerPolicy;
+-    history: GroupSignedEntry[];
++    history: GroupHistoryEntryInfo[];
+ }
+ 
+ export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupInfo>;
+@@ -230,7 +211,6 @@ export interface IContextApi {
+     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
+     groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
+     groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
+-    groupModifyMembers(model: GroupModifyMembersModel): Promise<types.core.OK>;
+     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
+     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
+     groupList(model: GroupListModel): Promise<GroupListResult>;
+diff --git a/src/api/main/context/ContextApiValidator.ts b/src/api/main/context/ContextApiValidator.ts
+index 615d31e..7dfd145 100644
+--- a/src/api/main/context/ContextApiValidator.ts
++++ b/src/api/main/context/ContextApiValidator.ts
+@@ -51,7 +51,6 @@ export class ContextApiValidator extends BaseValidator {
+             keyId: this.tv.keyId,
+             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+             policy: this.builder.optional(this.tv.containerPolicy),
+-            signature: this.tv.eccSignature,
+         }));
+         this.registerMethod("groupUpdate", this.builder.createObject({
+             id: this.tv.groupId,
+@@ -65,19 +64,6 @@ export class ContextApiValidator extends BaseValidator {
+             version: this.builder.int,
+             force: this.builder.bool,
+             policy: this.builder.optional(this.tv.containerPolicy),
+-            signature: this.tv.eccSignature,
+-            prevSignature: this.tv.eccSignature,
+-        }));
+-        this.registerMethod("groupModifyMembers", this.builder.createObject({
+-            id: this.tv.groupId,
+-            usersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            usersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            managersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            managersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            keyId: this.tv.keyId,
+-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+-            signature: this.tv.eccSignature,
+-            prevSignature: this.tv.eccSignature,
+         }));
+         this.registerMethod("groupDelete", this.builder.createObject({
+             groupId: this.tv.groupId,
+diff --git a/src/api/main/context/GroupConverter.ts b/src/api/main/context/GroupConverter.ts
+index fea816c..fe2e5af 100644
+--- a/src/api/main/context/GroupConverter.ts
++++ b/src/api/main/context/GroupConverter.ts
+@@ -39,7 +39,7 @@ export class GroupConverter {
+         return res;
+     }
+     
+-    private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupSignedEntry {
++    private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupHistoryEntryInfo {
+         return {
+             keyId: entry.keyId,
+             groupPubKey: entry.groupPubKey,
+@@ -47,11 +47,6 @@ export class GroupConverter {
+             managers: entry.managers,
+             created: entry.created,
+             author: entry.author,
+-            authorPubKey: entry.authorPubKey,
+-            op: entry.op,
+-            delta: entry.delta,
+-            prevSignature: entry.prevSignature,
+-            signature: entry.signature,
+         };
+     }
+ }
+diff --git a/src/db/Model.ts b/src/db/Model.ts
+index a780320..3929287 100644
+--- a/src/db/Model.ts
++++ b/src/db/Model.ts
+@@ -222,18 +222,12 @@ export namespace group {
+     
+     export interface GroupHistoryEntry {
+         keyId: types.core.KeyId;
+-        data: types.group.GroupData;
++        data: types.group.GroupData;        // opaque; carries the endpoint's DIO (members + chain-link committed inside)
+         users: types.cloud.UserId[];
+         managers: types.cloud.UserId[];
+         groupPubKey: types.cloud.GroupPubKey;
+         created: types.core.Timestamp;
+         author: types.cloud.UserId;
+-        // signed membership log
+-        op: types.group.GroupSignatureOp;
+-        delta?: types.group.GroupMembersDelta;
+-        authorPubKey: types.cloud.UserPubKey;
+-        prevSignature: types.core.EccSignature|null;
+-        signature: types.core.EccSignature;
+     }
+ }
+ 
+diff --git a/src/service/cloud/GroupMembershipSignature.ts b/src/service/cloud/GroupMembershipSignature.ts
+deleted file mode 100644
+index d497357..0000000
+--- a/src/service/cloud/GroupMembershipSignature.ts
++++ /dev/null
+@@ -1,129 +0,0 @@
+-/*!
+-PrivMX Bridge.
+-Copyright © 2024 Simplito sp. z o.o.
+-
+-This file is part of the PrivMX Platform (https://privmx.dev).
+-This software is Licensed under the PrivMX Free License.
+-
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-*/
+-
+-import * as types from "../../types";
+-import { Crypto } from "../../utils/crypto/Crypto";
+-import { ECUtils } from "../../utils/crypto/ECUtils";
+-
+-/**
+- * Canonical serialization + verification of the signed group membership log.
+- *
+- * The bridge is untrusted, so every membership-mutating group operation (create / update /
+- * modifyMembers) is signed by its author with their context private key. The bridge stores the
+- * signature in an append-only, chained history (each entry links to the previous via prevSignature)
+- * and serves the whole chain; the privmx-endpoint library replays and verifies it client-side.
+- *
+- * CONTRACT (must match byte-for-byte between privmx-bridge and privmx-endpoint):
+- *   message = sha256( canonical )                       // signed/verified value
+- *   canonical = concat of length-prefixed fields, in the FIXED order below.
+- *
+- * Field encoding:
+- *   - string field: uint32be(byteLength) || utf8Bytes
+- *   - list field:   uint32be(count) || (string field for each element, elements sorted ascending
+- *                   by their UTF-8 byte sequence so order on the wire is irrelevant to the signer)
+- *
+- * The group is anchored by its groupPubKey (the client-generated cryptographic identity, known at
+- * signing time) plus the prevSignature chain — NOT by the server-assigned groupId, which does not exist
+- * yet when the genesis (create) entry is signed.
+- *
+- * Field order:
+- *   0  DOMAIN            ("PMX_GROUP_SIG")
+- *   1  SIG_VERSION       (decimal string, currently "1")
+- *   2  op                ("create" | "update" | "modifyMembers")
+- *   3  contextId
+- *   4  author (userId)
+- *   5  authorPubKey
+- *   6  groupPubKey
+- *   7  keyId
+- *   8  prevSignature     ("" for the genesis/create entry)
+- *   9  resultUsers       (sorted list — the resulting full members set the bridge enforces)
+- *   10 resultManagers    (sorted list — the resulting full managers set the bridge enforces)
+- *   -- the following four are present ONLY when op === "modifyMembers" --
+- *   11 usersAdded        (sorted list)
+- *   12 usersRemoved      (sorted list)
+- *   13 managersAdded     (sorted list)
+- *   14 managersRemoved   (sorted list)
+- *
+- * The signature is the 65-byte compact ECDSA signature (recovery byte || r || s), Base64-encoded as
+- * types.core.EccSignature — identical to every other signature on the wire (see ECUtils).
+- */
+-
+-export const GROUP_SIG_DOMAIN = "PMX_GROUP_SIG";
+-export const GROUP_SIG_VERSION = 1;
+-
+-export interface GroupSignaturePayload {
+-    op: types.group.GroupSignatureOp;
+-    contextId: types.context.ContextId;
+-    author: types.cloud.UserId;
+-    authorPubKey: types.cloud.UserPubKey;
+-    groupPubKey: types.cloud.GroupPubKey;
+-    keyId: types.core.KeyId;
+-    prevSignature: types.core.EccSignature | null;
+-    /** The resulting full member set the bridge will enforce after this operation. */
+-    resultUsers: types.cloud.UserId[];
+-    resultManagers: types.cloud.UserId[];
+-    /** Present only for op === "modifyMembers". */
+-    delta?: types.group.GroupMembersDelta;
+-}
+-
+-export class GroupMembershipSignature {
+-    
+-    private static writeString(value: string): Buffer {
+-        const data = Buffer.from(value, "utf8");
+-        const len = Buffer.alloc(4);
+-        len.writeUInt32BE(data.length, 0);
+-        return Buffer.concat([len, data]);
+-    }
+-    
+-    private static writeList(values: string[]): Buffer {
+-        const sorted = [...values].sort();
+-        const count = Buffer.alloc(4);
+-        count.writeUInt32BE(sorted.length, 0);
+-        return Buffer.concat([count, ...sorted.map(v => GroupMembershipSignature.writeString(v))]);
+-    }
+-    
+-    /** Builds the byte-stable canonical buffer for the given payload. */
+-    static buildCanonical(payload: GroupSignaturePayload): Buffer {
+-        const parts: Buffer[] = [
+-            GroupMembershipSignature.writeString(GROUP_SIG_DOMAIN),
+-            GroupMembershipSignature.writeString(String(GROUP_SIG_VERSION)),
+-            GroupMembershipSignature.writeString(payload.op),
+-            GroupMembershipSignature.writeString(payload.contextId),
+-            GroupMembershipSignature.writeString(payload.author),
+-            GroupMembershipSignature.writeString(payload.authorPubKey),
+-            GroupMembershipSignature.writeString(payload.groupPubKey),
+-            GroupMembershipSignature.writeString(payload.keyId),
+-            GroupMembershipSignature.writeString(payload.prevSignature || ""),
+-            GroupMembershipSignature.writeList(payload.resultUsers),
+-            GroupMembershipSignature.writeList(payload.resultManagers),
+-        ];
+-        if (payload.op === "modifyMembers") {
+-            const delta = payload.delta || {usersAdded: [], usersRemoved: [], managersAdded: [], managersRemoved: []};
+-            parts.push(
+-                GroupMembershipSignature.writeList(delta.usersAdded),
+-                GroupMembershipSignature.writeList(delta.usersRemoved),
+-                GroupMembershipSignature.writeList(delta.managersAdded),
+-                GroupMembershipSignature.writeList(delta.managersRemoved),
+-            );
+-        }
+-        return Buffer.concat(parts);
+-    }
+-    
+-    /** The sha256 digest that is actually signed/verified. */
+-    static digest(payload: GroupSignaturePayload): Buffer {
+-        return Crypto.sha256(GroupMembershipSignature.buildCanonical(payload));
+-    }
+-    
+-    /** Verifies the author's signature over the canonical payload. */
+-    static verify(signature: types.core.EccSignature, payload: GroupSignaturePayload): boolean {
+-        return ECUtils.verifySignature2(payload.authorPubKey, signature, GroupMembershipSignature.digest(payload));
+-    }
+-}
+diff --git a/src/service/cloud/GroupRepository.ts b/src/service/cloud/GroupRepository.ts
+index 0244ff4..fa33faa 100644
+--- a/src/service/cloud/GroupRepository.ts
++++ b/src/service/cloud/GroupRepository.ts
+@@ -16,15 +16,6 @@ import { DateUtils } from "../../utils/DateUtils";
+ import { Utils } from "../../utils/Utils";
+ import { AppException } from "../../api/AppException";
+ 
+-/** Signed membership-log metadata attached to each new history entry. */
+-export interface GroupEntrySignature {
+-    op: types.group.GroupSignatureOp;
+-    delta?: types.group.GroupMembersDelta;
+-    authorPubKey: types.cloud.UserPubKey;
+-    prevSignature: types.core.EccSignature|null;
+-    signature: types.core.EccSignature;
+-}
+-
+ export class GroupRepository {
+     
+     static readonly COLLECTION_NAME = "group";
+@@ -99,7 +90,7 @@ export class GroupRepository {
+     
+     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
+         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, sig: GroupEntrySignature) {
++        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
+         const now = DateUtils.now();
+         const entry: db.group.GroupHistoryEntry = {
+             created: now,
+@@ -109,11 +100,6 @@ export class GroupRepository {
+             users: users,
+             managers: managers,
+             groupPubKey: groupPubKey,
+-            op: sig.op,
+-            delta: sig.delta,
+-            authorPubKey: sig.authorPubKey,
+-            prevSignature: sig.prevSignature,
+-            signature: sig.signature,
+         };
+         const group: db.group.Group = {
+             id: this.repository.generateId() as types.group.GroupId,
+@@ -142,7 +128,7 @@ export class GroupRepository {
+     
+     async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, groupPubKey: types.cloud.GroupPubKey, managers: types.cloud.UserId[],
+         users: types.cloud.UserId[], data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[],
+-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, sig: GroupEntrySignature) {
++        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+         const entry: db.group.GroupHistoryEntry = {
+             created: DateUtils.now(),
+             author: modifier,
+@@ -151,11 +137,6 @@ export class GroupRepository {
+             users: users,
+             managers: managers,
+             groupPubKey: groupPubKey,
+-            op: sig.op,
+-            delta: sig.delta,
+-            authorPubKey: sig.authorPubKey,
+-            prevSignature: sig.prevSignature,
+-            signature: sig.signature,
+         };
+         const updatedGroup: db.group.Group = {
+             id: oldGroup.id,
+diff --git a/src/service/cloud/GroupService.ts b/src/service/cloud/GroupService.ts
+index 3b00301..99ed49d 100644
+--- a/src/service/cloud/GroupService.ts
++++ b/src/service/cloud/GroupService.ts
+@@ -24,16 +24,6 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
+ import { DbDuplicateError } from "../../error/DbDuplicateError";
+ import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+ import { BaseContainerService } from "./BaseContainerService";
+-import { Utils } from "../../utils/Utils";
+-import { GroupMembershipSignature, GroupSignaturePayload } from "./GroupMembershipSignature";
+-import { GroupEntrySignature } from "./GroupRepository";
+-
+-export interface GroupMembersModification {
+-    usersToAddOrUpdate: types.cloud.UserId[];
+-    usersToRemove: types.cloud.UserId[];
+-    managersToAddOrUpdate: types.cloud.UserId[];
+-    managersToRemove: types.cloud.UserId[];
+-}
+ 
+ export class GroupService extends BaseContainerService {
+     
+@@ -79,25 +69,16 @@ export class GroupService extends BaseContainerService {
+     
+     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
+         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
+-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, signature: types.core.EccSignature) {
++        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+         this.policyService.validateContainerPolicyForContainer("policy", policy);
+         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
+         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
+         this.policy.makeCreateContainerCheck(user, context, managers, policy);
+         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+-        const sig = this.verifyAndBuildSignature(signature, {
+-            op: "create",
+-            contextId: contextId,
+-            author: user.userId,
+-            authorPubKey: user.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: keyId,
+-            prevSignature: null,
+-            resultUsers: users,
+-            resultManagers: managers,
+-        });
++        // Membership integrity (signature/chain) is committed inside the opaque `data` (endpoint DIO) and verified
++        // client-side; the bridge only stores it. See documents/plan/10-endpoint-security-model-and-alignment.md.
+         try {
+-            const group = await this.repositoryFactory.createGroupRepository().createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy, sig);
++            const group = await this.repositoryFactory.createGroupRepository().createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy);
+             this.groupNotificationService.sendCreatedGroup(group, context.solution);
+             return group;
+         }
+@@ -111,7 +92,7 @@ export class GroupService extends BaseContainerService {
+     
+     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
+         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
+-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, signature: types.core.EccSignature, prevSignature: types.core.EccSignature) {
++        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+         if (policy) {
+             this.policyService.validateContainerPolicyForContainer("policy", policy);
+         }
+@@ -128,24 +109,13 @@ export class GroupService extends BaseContainerService {
+             if (currentVersion !== version && !force) {
+                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
+             }
+-            this.checkChainLink(oldGroup, prevSignature);
+             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldGroup.contextId, [...oldGroup.history.map(x => x.keyId), keyId], oldGroup.keys, keys, keyId, users, managers);
+             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
+                 throw new AppException("RESOURCE_ID_MISSMATCH");
+             }
+-            const sig = this.verifyAndBuildSignature(signature, {
+-                op: "update",
+-                contextId: oldGroup.contextId,
+-                author: user.userId,
+-                authorPubKey: user.userPubKey,
+-                groupPubKey: groupPubKey,
+-                keyId: keyId,
+-                prevSignature: prevSignature,
+-                resultUsers: users,
+-                resultManagers: managers,
+-            });
++            // Membership integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
+             try {
+-                const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId, sig);
++                const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId);
+                 return {group, context, oldGroup};
+             }
+             catch (err) {
+@@ -162,44 +132,6 @@ export class GroupService extends BaseContainerService {
+         return rGroup;
+     }
+     
+-    async modifyGroupMembers(cloudUser: CloudUser, id: types.group.GroupId, modification: GroupMembersModification,
+-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], signature: types.core.EccSignature, prevSignature: types.core.EccSignature) {
+-        const {group: rGroup, context: usedContext, oldGroup: old} = await this.repositoryFactory.withTransaction(async session => {
+-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+-            const oldGroup = await groupRepository.get(id);
+-            if (!oldGroup) {
+-                throw new AppException("GROUP_DOES_NOT_EXIST");
+-            }
+-            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
+-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
+-            this.checkChainLink(oldGroup, prevSignature);
+-            const delta = this.normalizeDelta(modification);
+-            const users = Utils.unique(oldGroup.users.concat(delta.usersAdded).filter(u => !delta.usersRemoved.includes(u)));
+-            const managers = Utils.unique(oldGroup.managers.concat(delta.managersAdded).filter(u => !delta.managersRemoved.includes(u)));
+-            this.policy.makeUpdateContainerCheck(user, context, oldGroup, managers, undefined);
+-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldGroup.contextId, [...oldGroup.history.map(x => x.keyId), keyId], oldGroup.keys, keys, keyId, users, managers);
+-            const sig = this.verifyAndBuildSignature(signature, {
+-                op: "modifyMembers",
+-                contextId: oldGroup.contextId,
+-                author: user.userId,
+-                authorPubKey: user.userPubKey,
+-                groupPubKey: oldGroup.groupPubKey,
+-                keyId: keyId,
+-                prevSignature: prevSignature,
+-                resultUsers: users,
+-                resultManagers: managers,
+-                delta: delta,
+-            });
+-            const group = await groupRepository.updateGroup(oldGroup, user.userId, oldGroup.groupPubKey, managers, users, oldGroup.data, keyId, newKeys, undefined, null, sig);
+-            return {group, context, oldGroup};
+-        });
+-        const updatedUsers = rGroup.managers.concat(rGroup.users);
+-        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedUsers.includes(u));
+-        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
+-        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify);
+-        return rGroup;
+-    }
+-    
+     async deleteGroup(executor: Executor, id: types.group.GroupId) {
+         const result = await this.repositoryFactory.withTransaction(async session => {
+             const groupRepository = this.repositoryFactory.createGroupRepository(session);
+@@ -237,34 +169,6 @@ export class GroupService extends BaseContainerService {
+         });
+     }
+     
+-    private normalizeDelta(modification: GroupMembersModification): types.group.GroupMembersDelta {
+-        return {
+-            usersAdded: Utils.unique(modification.usersToAddOrUpdate),
+-            usersRemoved: Utils.unique(modification.usersToRemove),
+-            managersAdded: Utils.unique(modification.managersToAddOrUpdate),
+-            managersRemoved: Utils.unique(modification.managersToRemove),
+-        };
+-    }
+-    
+-    private checkChainLink(oldGroup: db.group.Group, prevSignature: types.core.EccSignature) {
+-        const head = oldGroup.history[oldGroup.history.length - 1];
+-        if (!head || head.signature !== prevSignature) {
+-            throw new AppException("GROUP_VERSION_MISMATCH", "prevSignature does not match the current head of the membership log");
+-        }
+-    }
+-    
+-    private verifyAndBuildSignature(signature: types.core.EccSignature, payload: GroupSignaturePayload): GroupEntrySignature {
+-        if (!GroupMembershipSignature.verify(signature, payload)) {
+-            throw new AppException("INVALID_SIGNATURE", "group membership signature verification failed");
+-        }
+-        return {
+-            op: payload.op,
+-            delta: payload.delta,
+-            authorPubKey: payload.authorPubKey,
+-            prevSignature: payload.prevSignature,
+-            signature: signature,
+-        };
+-    }
+ }
+ 
+ class GroupPolicy extends BasePolicy<db.group.Group, never> {
+diff --git a/src/test/end2end/CloudTests/MainGroupApiTest.test.ts b/src/test/end2end/CloudTests/MainGroupApiTest.test.ts
+index 3e16975..05e2136 100644
+--- a/src/test/end2end/CloudTests/MainGroupApiTest.test.ts
++++ b/src/test/end2end/CloudTests/MainGroupApiTest.test.ts
+@@ -13,22 +13,13 @@ import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
+ import * as assert from "assert";
+ import { testData } from "../../datasets/testData";
+ import * as types from "../../../types";
+-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
+ import { ECUtils } from "../../../utils/crypto/ECUtils";
+-import { Base64 } from "../../../utils/Base64";
+ 
++// The bridge stores group data opaquely; signing/verification is the endpoint's job (committed inside `data`).
++// These tests exercise CRUD, listing, version-CAS and referential integrity only.
+ const groupIdentity = ECUtils.generateKeyPair();
+ const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+ 
+-/** Signs a group membership-log payload with janek's context private key (matches testData.userPubKey). */
+-function signAsJanek(payload: GroupSignaturePayload): types.core.EccSignature {
+-    const keyPair = ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif);
+-    if (!keyPair) {
+-        throw new Error("Failed to load test private key");
+-    }
+-    return Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
+-}
+-
+ export class GroupApiTests extends BaseTestSet {
+     
+     private groupId?: types.group.GroupId;
+@@ -41,38 +32,10 @@ export class GroupApiTests extends BaseTestSet {
+     }
+     
+     @Test()
+-    async shouldRejectCreateWithInvalidSignature() {
+-        // A well-formed signature (passes the eccSignature validator) but signed over a different member
+-        // set, so the bridge's signature verification — not the input validator — rejects it.
+-        const wrongSignature = signAsJanek({
+-            op: "create",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: testData.keyId,
+-            prevSignature: null,
+-            resultUsers: ["someone-else" as types.cloud.UserId],
+-            resultManagers: ["someone-else" as types.cloud.UserId],
+-        });
+-        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupCreate({
+-            contextId: testData.contextId,
+-            groupPubKey: groupPubKey,
+-            users: [testData.userId],
+-            managers: [testData.userId],
+-            data: "AAAA" as types.group.GroupData,
+-            keyId: testData.keyId,
+-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+-            signature: wrongSignature,
+-        }), "INVALID_SIGNATURE");
+-    }
+-    
+-    @Test()
+-    async shouldUpdateGroupAndEnforceSignatureChain() {
++    async shouldUpdateGroupAndEnforceVersion() {
+         await this.createGroup();
+-        const head = await this.getHeadSignature();
+-        await this.updateGroup(head);
+-        await this.tryUpdateWithWrongPrevSignatureAndFail();
++        await this.updateGroup();
++        await this.tryUpdateWithStaleVersionAndFail();
+     }
+     
+     @Test()
+@@ -95,17 +58,6 @@ export class GroupApiTests extends BaseTestSet {
+     private async createGroup() {
+         const users = [testData.userId];
+         const managers = [testData.userId];
+-        const signature = signAsJanek({
+-            op: "create",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: testData.keyId,
+-            prevSignature: null,
+-            resultUsers: users,
+-            resultManagers: managers,
+-        });
+         const res = await this.apis.contextApi.groupCreate({
+             contextId: testData.contextId,
+             groupPubKey: groupPubKey,
+@@ -114,7 +66,6 @@ export class GroupApiTests extends BaseTestSet {
+             data: "AAAA" as types.group.GroupData,
+             keyId: testData.keyId,
+             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+-            signature: signature,
+         });
+         assert(!!res.groupId, "groupCreate did not return a groupId");
+         this.groupId = res.groupId;
+@@ -129,9 +80,7 @@ export class GroupApiTests extends BaseTestSet {
+         assert(group.managers.length === 1 && group.managers[0] === testData.userId, "managers mismatch");
+         assert(group.version === 1, `version should be 1, got ${group.version}`);
+         assert(group.history.length === 1, "history should have a single genesis entry");
+-        assert(group.history[0].op === "create", "genesis op should be create");
+-        assert(group.history[0].prevSignature === null, "genesis prevSignature should be null");
+-        assert(!!group.history[0].signature, "genesis entry should carry a signature");
++        assert(group.history[0].author === testData.userId, "genesis author mismatch");
+     }
+     
+     private async listGroupsAndVerify() {
+@@ -140,75 +89,37 @@ export class GroupApiTests extends BaseTestSet {
+         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
+     }
+     
+-    private async getHeadSignature(): Promise<types.core.EccSignature> {
+-        const groupId = this.requireGroupId();
+-        const {group} = await this.apis.contextApi.groupGet({groupId});
+-        return group.history[group.history.length - 1].signature;
+-    }
+-    
+-    private async updateGroup(prevSignature: types.core.EccSignature) {
++    private async updateGroup() {
+         const groupId = this.requireGroupId();
+-        const users = [testData.userId];
+-        const managers = [testData.userId];
+-        const signature = signAsJanek({
+-            op: "update",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: testData.keyId,
+-            prevSignature: prevSignature,
+-            resultUsers: users,
+-            resultManagers: managers,
+-        });
+         const res = await this.apis.contextApi.groupUpdate({
+             id: groupId,
+             groupPubKey: groupPubKey,
+-            users: users,
+-            managers: managers,
++            users: [testData.userId],
++            managers: [testData.userId],
+             data: "AAAAB" as types.group.GroupData,
+             keyId: testData.keyId,
+             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+             version: 1 as types.group.GroupVersion,
+             force: false,
+-            signature: signature,
+-            prevSignature: prevSignature,
+         });
+         assert(res === "OK", "groupUpdate did not return OK");
+         const {group} = await this.apis.contextApi.groupGet({groupId});
+         assert(group.version === 2, `version should be 2 after update, got ${group.version}`);
+     }
+     
+-    private async tryUpdateWithWrongPrevSignatureAndFail() {
++    private async tryUpdateWithStaleVersionAndFail() {
+         const groupId = this.requireGroupId();
+-        // Well-formed signature (passes the eccSignature validator) that simply does not match the head,
+-        // so the chain-link check — not the input validator — rejects it.
+-        const wrongPrev = Base64.from(Buffer.alloc(65)) as types.core.EccSignature;
+-        const users = [testData.userId];
+-        const managers = [testData.userId];
+-        const signature = signAsJanek({
+-            op: "update",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: testData.keyId,
+-            prevSignature: wrongPrev,
+-            resultUsers: users,
+-            resultManagers: managers,
+-        });
++        // current version is now 2; submitting version 1 without force must be rejected (optimistic concurrency).
+         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdate({
+             id: groupId,
+             groupPubKey: groupPubKey,
+-            users: users,
+-            managers: managers,
++            users: [testData.userId],
++            managers: [testData.userId],
+             data: "AAAAC" as types.group.GroupData,
+             keyId: testData.keyId,
+             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+-            version: 2 as types.group.GroupVersion,
++            version: 1 as types.group.GroupVersion,
+             force: false,
+-            signature: signature,
+-            prevSignature: wrongPrev,
+         }), "GROUP_VERSION_MISMATCH");
+     }
+     
+diff --git a/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts b/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
+index c580360..80ca03b 100644
+--- a/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
++++ b/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
+@@ -13,9 +13,7 @@ import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
+ import * as assert from "assert";
+ import { testData } from "../../datasets/testData";
+ import * as types from "../../../types";
+-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
+ import { ECUtils } from "../../../utils/crypto/ECUtils";
+-import { Base64 } from "../../../utils/Base64";
+ import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
+ 
+ const groupIdentity = ECUtils.generateKeyPair();
+@@ -31,14 +29,6 @@ const groupKeyId = "group-key" as types.core.KeyId;
+ const threadKeyId = "thread-key" as types.core.KeyId;
+ const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
+ 
+-function signAsJanek(payload: GroupSignaturePayload): types.core.EccSignature {
+-    const keyPair = ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif);
+-    if (!keyPair) {
+-        throw new Error("Failed to load test private key");
+-    }
+-    return Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
+-}
+-
+ export class ThreadGroupGranteeTests extends BaseTestSet {
+     
+     private groupId?: types.group.GroupId;
+@@ -81,17 +71,6 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
+     private async createGroupWithAlice() {
+         const users = [testData.userId, aliceId];
+         const managers = [testData.userId];
+-        const signature = signAsJanek({
+-            op: "create",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: groupKeyId,
+-            prevSignature: null,
+-            resultUsers: users,
+-            resultManagers: managers,
+-        });
+         const res = await this.apis.contextApi.groupCreate({
+             contextId: testData.contextId,
+             groupPubKey: groupPubKey,
+@@ -103,7 +82,6 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
+                 {user: testData.userId, keyId: groupKeyId, data: "AAAA" as types.core.UserKeyData},
+                 {user: aliceId, keyId: groupKeyId, data: "BBBB" as types.core.UserKeyData},
+             ],
+-            signature: signature,
+         });
+         this.groupId = res.groupId;
+     }
+@@ -142,35 +120,22 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
+     }
+     
+     private async removeAliceFromGroup() {
++        // Removal via full-replace groupUpdate; membership integrity is committed inside `data` by the endpoint,
++        // not verified by the bridge. modifyMembers (delta) is deferred — see documents/plan/08-future-plans.md.
+         const groupId = this.requireGroupId();
+         const {group} = await this.apis.contextApi.groupGet({groupId});
+-        const head = group.history[group.history.length - 1].signature;
+-        const resultUsers = [testData.userId];
+-        const resultManagers = [testData.userId];
+-        const signature = signAsJanek({
+-            op: "modifyMembers",
+-            contextId: testData.contextId,
+-            author: testData.userId,
+-            authorPubKey: testData.userPubKey,
+-            groupPubKey: groupPubKey,
+-            keyId: rotatedGroupKeyId,
+-            prevSignature: head,
+-            resultUsers: resultUsers,
+-            resultManagers: resultManagers,
+-            delta: {usersAdded: [], usersRemoved: [aliceId], managersAdded: [], managersRemoved: []},
+-        });
+-        const res = await this.apis.contextApi.groupModifyMembers({
++        const res = await this.apis.contextApi.groupUpdate({
+             id: groupId,
+-            usersToAddOrUpdate: [],
+-            usersToRemove: [aliceId],
+-            managersToAddOrUpdate: [],
+-            managersToRemove: [],
++            groupPubKey: groupPubKey,
++            users: [testData.userId],
++            managers: [testData.userId],
++            data: "AAAA" as types.group.GroupData,
+             keyId: rotatedGroupKeyId,
+             keys: [{user: testData.userId, keyId: rotatedGroupKeyId, data: "AAAA" as types.core.UserKeyData}],
+-            signature: signature,
+-            prevSignature: head,
++            version: group.version,
++            force: false,
+         });
+-        assert(res === "OK", "groupModifyMembers did not return OK");
++        assert(res === "OK", "groupUpdate did not return OK");
+     }
+     
+     private async aliceCanNoLongerGetThread() {
+diff --git a/src/test/service/cloud/GroupMembershipSignature.test.ts b/src/test/service/cloud/GroupMembershipSignature.test.ts
+deleted file mode 100644
+index 33dd1c7..0000000
+--- a/src/test/service/cloud/GroupMembershipSignature.test.ts
++++ /dev/null
+@@ -1,125 +0,0 @@
+-/*!
+-PrivMX Bridge.
+-Copyright © 2024 Simplito sp. z o.o.
+-
+-This file is part of the PrivMX Platform (https://privmx.dev).
+-This software is Licensed under the PrivMX Free License.
+-
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-*/
+-
+-import "q2-test";
+-import * as types from "../../../types";
+-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
+-import { ECUtils } from "../../../utils/crypto/ECUtils";
+-import { Base64 } from "../../../utils/Base64";
+-
+-const author = "janek" as types.cloud.UserId;
+-const contextId = "ctx-1" as types.context.ContextId;
+-const keyId = "key-1" as types.core.KeyId;
+-
+-function newSigner() {
+-    const {keyPair, pub58} = ECUtils.generateKeyPair();
+-    const sign = (payload: GroupSignaturePayload) =>
+-        Base64.from(ECUtils.signToCompactSignature(keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
+-    return {pub58, sign};
+-}
+-
+-function createPayload(pub58: types.core.EccPubKey, overrides: Partial<GroupSignaturePayload> = {}): GroupSignaturePayload {
+-    return {
+-        op: "create",
+-        contextId: contextId,
+-        author: author,
+-        authorPubKey: pub58 as types.cloud.UserPubKey,
+-        groupPubKey: pub58 as types.cloud.GroupPubKey,
+-        keyId: keyId,
+-        prevSignature: null,
+-        resultUsers: ["a", "b"] as types.cloud.UserId[],
+-        resultManagers: ["a"] as types.cloud.UserId[],
+-        ...overrides,
+-    };
+-}
+-
+-it("verifies a valid create signature", () => {
+-    const {pub58, sign} = newSigner();
+-    const payload = createPayload(pub58);
+-    const signature = sign(payload);
+-    expect(GroupMembershipSignature.verify(signature, payload)).toBe(true);
+-});
+-
+-it("verifies valid update and modifyMembers signatures", () => {
+-    const {pub58, sign} = newSigner();
+-    const prev = "AAAA" as types.core.EccSignature;
+-    const update = createPayload(pub58, {op: "update", prevSignature: prev});
+-    expect(GroupMembershipSignature.verify(sign(update), update)).toBe(true);
+-    
+-    const modify = createPayload(pub58, {
+-        op: "modifyMembers",
+-        prevSignature: prev,
+-        resultUsers: ["a", "b", "c"] as types.cloud.UserId[],
+-        delta: {
+-            usersAdded: ["c"] as types.cloud.UserId[],
+-            usersRemoved: [] as types.cloud.UserId[],
+-            managersAdded: [] as types.cloud.UserId[],
+-            managersRemoved: [] as types.cloud.UserId[],
+-        },
+-    });
+-    expect(GroupMembershipSignature.verify(sign(modify), modify)).toBe(true);
+-});
+-
+-it("rejects a signature from a different key", () => {
+-    const a = newSigner();
+-    const b = newSigner();
+-    const payload = createPayload(a.pub58);
+-    // signed by b but payload claims a as author key
+-    expect(GroupMembershipSignature.verify(b.sign(payload), payload)).toBe(false);
+-});
+-
+-it("rejects when the member set is tampered after signing", () => {
+-    const {pub58, sign} = newSigner();
+-    const payload = createPayload(pub58);
+-    const signature = sign(payload);
+-    const tampered = {...payload, resultUsers: ["a", "b", "evil"] as types.cloud.UserId[]};
+-    expect(GroupMembershipSignature.verify(signature, tampered)).toBe(false);
+-});
+-
+-it("rejects when prevSignature is tampered (chain binding)", () => {
+-    const {pub58, sign} = newSigner();
+-    const payload = createPayload(pub58, {op: "update", prevSignature: "GOOD" as types.core.EccSignature});
+-    const signature = sign(payload);
+-    const tampered = {...payload, prevSignature: "OTHER" as types.core.EccSignature};
+-    expect(GroupMembershipSignature.verify(signature, tampered)).toBe(false);
+-});
+-
+-it("is independent of member list ordering (canonical sorting)", () => {
+-    const {pub58} = newSigner();
+-    const p1 = createPayload(pub58, {resultUsers: ["a", "b", "c"] as types.cloud.UserId[]});
+-    const p2 = createPayload(pub58, {resultUsers: ["c", "a", "b"] as types.cloud.UserId[]});
+-    expect(GroupMembershipSignature.digest(p1).toString("hex")).toBe(GroupMembershipSignature.digest(p2).toString("hex"));
+-});
+-
+-it("binds the delta for modifyMembers (different delta -> different digest)", () => {
+-    const {pub58} = newSigner();
+-    const base = createPayload(pub58, {op: "modifyMembers", prevSignature: "P" as types.core.EccSignature});
+-    const d1 = {...base, delta: {usersAdded: ["c"] as types.cloud.UserId[], usersRemoved: [] as types.cloud.UserId[], managersAdded: [] as types.cloud.UserId[], managersRemoved: [] as types.cloud.UserId[]}};
+-    const d2 = {...base, delta: {usersAdded: [] as types.cloud.UserId[], usersRemoved: ["c"] as types.cloud.UserId[], managersAdded: [] as types.cloud.UserId[], managersRemoved: [] as types.cloud.UserId[]}};
+-    expect(GroupMembershipSignature.digest(d1).toString("hex")).not.toBe(GroupMembershipSignature.digest(d2).toString("hex"));
+-});
+-
+-it("binds the op (create vs update -> different digest)", () => {
+-    const {pub58} = newSigner();
+-    const create = createPayload(pub58, {op: "create"});
+-    const update = createPayload(pub58, {op: "update"});
+-    expect(GroupMembershipSignature.digest(create).toString("hex")).not.toBe(GroupMembershipSignature.digest(update).toString("hex"));
+-});
+-
+-it("binds contextId, groupPubKey and keyId", () => {
+-    const {pub58} = newSigner();
+-    const base = createPayload(pub58);
+-    const otherCtx = {...base, contextId: "ctx-2" as types.context.ContextId};
+-    const otherKey = {...base, keyId: "key-2" as types.core.KeyId};
+-    const baseDigest = GroupMembershipSignature.digest(base).toString("hex");
+-    expect(GroupMembershipSignature.digest(otherCtx).toString("hex")).not.toBe(baseDigest);
+-    expect(GroupMembershipSignature.digest(otherKey).toString("hex")).not.toBe(baseDigest);
+-});
+diff --git a/src/test/service/cloud/GroupService.test.ts b/src/test/service/cloud/GroupService.test.ts
+index 4967d52..b9f44d4 100644
+--- a/src/test/service/cloud/GroupService.test.ts
++++ b/src/test/service/cloud/GroupService.test.ts
+@@ -19,7 +19,6 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
+ import { GroupRepository } from "../../../service/cloud/GroupRepository";
+ import { ThreadRepository } from "../../../service/cloud/ThreadRepository";
+ import { GroupService } from "../../../service/cloud/GroupService";
+-import { GroupMembershipSignature, GroupSignaturePayload } from "../../../service/cloud/GroupMembershipSignature";
+ import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+ import * as types from "../../../types";
+ import * as db from "../../../db/Model";
+@@ -33,7 +32,10 @@ import { CloudUser } from "../../../CommonTypes";
+ import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
+ import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
+ import { ECUtils } from "../../../utils/crypto/ECUtils";
+-import { Base64 } from "../../../utils/Base64";
++
++// The bridge no longer signs or verifies group data: signing/verification is the endpoint's responsibility
++// (committed inside the opaque `data`). These tests exercise the bridge's storage, ACL, coverage, version-CAS
++// and referential-integrity logic only. See documents/plan/10-endpoint-security-model-and-alignment.md.
+ 
+ const solutionId = "MySolutionId" as types.cloud.SolutionId;
+ const contextId = "MyContextId" as types.context.ContextId;
+@@ -43,19 +45,15 @@ const resourceId = "MyGroupResourceId" as types.core.ClientResourceId;
+ const keyId = "SomeKeyId" as types.core.KeyId;
+ const data = "SomeGroupData" as types.group.GroupData;
+ const keys = [{} as types.cloud.KeyEntrySet];
+-const headSignature = "HEAD_SIGNATURE" as types.core.EccSignature;
+ 
+ const janekKeys = ECUtils.generateKeyPair();
+ const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
++const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
+ const janek = "janek" as types.cloud.UserId;
+ const alice = "alice" as types.cloud.UserId;
+ const janekCloudUser = new CloudUser(janekPub);
+ const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
+ 
+-function sign(payload: GroupSignaturePayload): types.core.EccSignature {
+-    return Base64.from(ECUtils.signToCompactSignature(janekKeys.keyPair, GroupMembershipSignature.digest(payload))) as types.core.EccSignature;
+-}
+-
+ const myContext: db.context.Context = {
+     id: contextId,
+     created: DateUtils.now(),
+@@ -79,7 +77,7 @@ const group: db.group.Group = {
+     id: groupId,
+     clientResourceId: resourceId,
+     contextId: contextId,
+-    groupPubKey: janekPub as unknown as types.cloud.GroupPubKey,
++    groupPubKey: groupPubKey,
+     createDate: DateUtils.now(),
+     creator: janek,
+     lastModificationDate: DateUtils.now(),
+@@ -95,13 +93,9 @@ const group: db.group.Group = {
+         data: data,
+         users: [janek, alice],
+         managers: [janek],
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey,
++        groupPubKey: groupPubKey,
+         created: DateUtils.now(),
+         author: janek,
+-        op: "create",
+-        authorPubKey: janekPub,
+-        prevSignature: null,
+-        signature: headSignature,
+     }],
+     policy: {},
+ };
+@@ -168,42 +162,18 @@ function createGroupService(groupReferenced = false) {
+     return {groupService, repositoryFactory, cloudKeyService, groupNotificationService, groupRepository, cloudAccessValidator};
+ }
+ 
+-it("Should create group with a valid signature", async () => {
++it("Should create group", async () => {
+     const {groupService, groupRepository, groupNotificationService} = createGroupService();
+-    const signature = sign({
+-        op: "create", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: null,
+-        resultUsers: [janek, alice], resultManagers: [janek],
+-    });
+-    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, signature);
++    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, keys, {});
+     expect(res).not.toBeNull();
+     hasOneCall(groupRepository.createGroup);
+     hasOneCall(groupNotificationService.sendCreatedGroup);
+ });
+ 
+-it("Should fail to create group with an invalid signature", async () => {
+-    const {groupService, groupRepository} = createGroupService();
+-    const badSignature = "AAAA" as types.core.EccSignature;
+-    try {
+-        await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, badSignature);
+-    }
+-    catch (e) {
+-        expect(AppException.is(e, "INVALID_SIGNATURE")).toBe(true);
+-        hasNoCalls(groupRepository.createGroup);
+-        return;
+-    }
+-    expect(true).toBeFalsy();
+-});
+-
+ it("Should fail to create group as an unknown user", async () => {
+     const {groupService, groupRepository} = createGroupService();
+-    const signature = sign({
+-        op: "create", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: null,
+-        resultUsers: [janek, alice], resultManagers: [janek],
+-    });
+     try {
+-        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, {}, signature);
++        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, keys, {});
+     }
+     catch (e) {
+         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+@@ -231,45 +201,17 @@ it("Should fail to get a not existing group", async () => {
+     expect(true).toBeFalsy();
+ });
+ 
+-it("Should update group with valid version, prevSignature and signature", async () => {
++it("Should update group with a valid version", async () => {
+     const {groupService, groupRepository, groupNotificationService} = createGroupService();
+-    const signature = sign({
+-        op: "update", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
+-        resultUsers: [janek, alice], resultManagers: [janek],
+-    });
+-    await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null, signature, headSignature);
++    await groupService.updateGroup(janekCloudUser, groupId, groupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null);
+     hasOneCall(groupRepository.updateGroup);
+     hasOneCall(groupNotificationService.sendUpdatedGroup);
+ });
+ 
+-it("Should reject update when prevSignature does not match the head", async () => {
+-    const {groupService, groupRepository} = createGroupService();
+-    const signature = sign({
+-        op: "update", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: "WRONG" as types.core.EccSignature,
+-        resultUsers: [janek, alice], resultManagers: [janek],
+-    });
+-    try {
+-        await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 1 as types.group.GroupVersion, false, undefined, null, signature, "WRONG" as types.core.EccSignature);
+-    }
+-    catch (e) {
+-        expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
+-        hasNoCalls(groupRepository.updateGroup);
+-        return;
+-    }
+-    expect(true).toBeFalsy();
+-});
+-
+ it("Should reject update with a stale version and no force", async () => {
+     const {groupService, groupRepository} = createGroupService();
+-    const signature = sign({
+-        op: "update", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
+-        resultUsers: [janek, alice], resultManagers: [janek],
+-    });
+     try {
+-        await groupService.updateGroup(janekCloudUser, groupId, janekPub as unknown as types.cloud.GroupPubKey, [janek, alice], [janek], data, keyId, keys, 99 as types.group.GroupVersion, false, undefined, null, signature, headSignature);
++        await groupService.updateGroup(janekCloudUser, groupId, groupPubKey, [janek, alice], [janek], data, keyId, keys, 99 as types.group.GroupVersion, false, undefined, null);
+     }
+     catch (e) {
+         expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
+@@ -279,21 +221,6 @@ it("Should reject update with a stale version and no force", async () => {
+     expect(true).toBeFalsy();
+ });
+ 
+-it("Should modify group members (remove a user) with a valid signature", async () => {
+-    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+-    const signature = sign({
+-        op: "modifyMembers", contextId, author: janek, authorPubKey: janekPub,
+-        groupPubKey: janekPub as unknown as types.cloud.GroupPubKey, keyId, prevSignature: headSignature,
+-        resultUsers: [janek], resultManagers: [janek],
+-        delta: {usersAdded: [], usersRemoved: [alice], managersAdded: [], managersRemoved: []},
+-    });
+-    await groupService.modifyGroupMembers(janekCloudUser, groupId, {
+-        usersToAddOrUpdate: [], usersToRemove: [alice], managersToAddOrUpdate: [], managersToRemove: [],
+-    }, keyId, keys, signature, headSignature);
+-    hasOneCall(groupRepository.updateGroup);
+-    hasOneCall(groupNotificationService.sendUpdatedGroup);
+-});
+-
+ it("Should delete group", async () => {
+     const {groupService, groupRepository, groupNotificationService} = createGroupService();
+     const res = await groupService.deleteGroup(janekCloudUser, groupId);
+diff --git a/src/test/validator/MainContextApiValidator.test.ts b/src/test/validator/MainContextApiValidator.test.ts
+index 3d74201..9eb4f5e 100644
+--- a/src/test/validator/MainContextApiValidator.test.ts
++++ b/src/test/validator/MainContextApiValidator.test.ts
+@@ -16,10 +16,8 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
+ import { TypesValidator } from "../../api/TypesValidator";
+ import { Utils } from "../../utils/Utils";
+ import { ECUtils } from "../../utils/crypto/ECUtils";
+-import { Base64 } from "../../utils/Base64";
+ 
+ const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+-const signature = Base64.from(Buffer.alloc(65)) as types.core.EccSignature;
+ const contextId = "MyContextId" as types.context.ContextId;
+ const groupId = "MyGroupId" as types.group.GroupId;
+ const keyId = "MyKeyId" as types.core.KeyId;
+@@ -37,7 +35,6 @@ function validGroupCreate(): contextApi.GroupCreateModel {
+         data: "someData" as types.group.GroupData,
+         keyId: keyId,
+         keys: [],
+-        signature: signature,
+     };
+ }
+ 
+@@ -46,13 +43,6 @@ it("ContextApiValidator.groupCreate valid", () => {
+     expect(result.success).toBe(true);
+ });
+ 
+-it("ContextApiValidator.groupCreate rejects missing signature", () => {
+-    const model = validGroupCreate();
+-    delete (model as Partial<contextApi.GroupCreateModel>).signature;
+-    const result = Utils.try(() => validator().validate("groupCreate", model));
+-    expect(result.success).toBe(false);
+-});
+-
+ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
+     const model = {...validGroupCreate(), groupPubKey: "not-a-valid-ecc-key!!!" as types.cloud.GroupPubKey};
+     const result = Utils.try(() => validator().validate("groupCreate", model));
+@@ -70,44 +60,11 @@ it("ContextApiValidator.groupUpdate valid", () => {
+         keys: [],
+         version: 1 as types.group.GroupVersion,
+         force: false,
+-        signature: signature,
+-        prevSignature: signature,
+     };
+     const result = Utils.try(() => validator().validate("groupUpdate", model));
+     expect(result.success).toBe(true);
+ });
+ 
+-it("ContextApiValidator.groupModifyMembers valid", () => {
+-    const model: contextApi.GroupModifyMembersModel = {
+-        id: groupId,
+-        usersToAddOrUpdate: ["alice"] as types.cloud.UserId[],
+-        usersToRemove: [] as types.cloud.UserId[],
+-        managersToAddOrUpdate: [] as types.cloud.UserId[],
+-        managersToRemove: [] as types.cloud.UserId[],
+-        keyId: keyId,
+-        keys: [],
+-        signature: signature,
+-        prevSignature: signature,
+-    };
+-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
+-    expect(result.success).toBe(true);
+-});
+-
+-it("ContextApiValidator.groupModifyMembers rejects missing prevSignature", () => {
+-    const model = {
+-        id: groupId,
+-        usersToAddOrUpdate: [] as types.cloud.UserId[],
+-        usersToRemove: [] as types.cloud.UserId[],
+-        managersToAddOrUpdate: [] as types.cloud.UserId[],
+-        managersToRemove: [] as types.cloud.UserId[],
+-        keyId: keyId,
+-        keys: [],
+-        signature: signature,
+-    };
+-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
+-    expect(result.success).toBe(false);
+-});
+-
+ it("ContextApiValidator.groupGet valid", () => {
+     const result = Utils.try(() => validator().validate("groupGet", {groupId: groupId}));
+     expect(result.success).toBe(true);
+diff --git a/src/types/group.ts b/src/types/group.ts
+index b38ef6b..b47ad80 100644
+--- a/src/types/group.ts
++++ b/src/types/group.ts
+@@ -9,22 +9,11 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+ 
+-import * as types from "./";
+-
+ export type GroupId = string&{__groupId: never};
+ export type GroupData = unknown;
+ export type GroupVersion = number&{__groupVersion: never};
+ export type GroupType = string&{__groupType: never};
+ 
+-export type GroupSignatureOp = "create"|"update"|"modifyMembers";
+-
+-export interface GroupMembersDelta {
+-    usersAdded: types.cloud.UserId[];
+-    usersRemoved: types.cloud.UserId[];
+-    managersAdded: types.cloud.UserId[];
+-    managersRemoved: types.cloud.UserId[];
+-}
+-
+ export interface GroupDeleteStatus {
+     id: GroupId;
+     status: "OK"|"GROUP_DOES_NOT_EXIST"|"ACCESS_DENIED"|"GROUP_IN_USE";

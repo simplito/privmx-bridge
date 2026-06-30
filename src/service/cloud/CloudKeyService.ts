@@ -143,10 +143,16 @@ export class CloudKeyService {
             const currentVersion = currentVersions.get(groupId) ?? 1;
             const insert = inserts.find(i => i.group === groupId && i.keyId === keyId);
             if (!insert) {
+                // No NEW key entry for this group at this keyId (the keyId is being reused, the group's existing
+                // entry stands). Only freshly-submitted entries are epoch-checked. A re-key (new keyId) that
+                // omits a grantee fails earlier in verifyThatOnlyGivenGroupsHaveAccess.
                 continue;
             }
             if (insert.groupEpoch === undefined) {
-                continue;
+                // Mandatory (Option A) — every new group key entry must declare the epoch it was wrapped to, so
+                // a grant/re-key can never silently target a stale epoch. The validator also enforces this; this
+                // is defense-in-depth for any non-validated caller.
+                throw new AppException("INVALID_PARAMS", `groupEpoch is required for group '${groupId}' key entry`);
             }
             if (insert.groupEpoch !== currentVersion) {
                 throw new AppException("INVALID_PARAMS", `stale groupEpoch for group '${groupId}': got ${insert.groupEpoch}, current is ${currentVersion}`);

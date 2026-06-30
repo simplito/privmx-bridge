@@ -1,0 +1,183 @@
+diff --git a/src/api/main/context/ContextApi.ts b/src/api/main/context/ContextApi.ts
+index b62553d..102feae 100644
+--- a/src/api/main/context/ContextApi.ts
++++ b/src/api/main/context/ContextApi.ts
+@@ -84,19 +84,6 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
+         return "OK";
+     }
+     
+-    @ApiMethod({})
+-    async groupModifyMembers(model: contextApi.GroupModifyMembersModel): Promise<types.core.OK> {
+-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+-        const group = await this.groupService.modifyGroupMembers(cloudUser, model.id, {
+-            usersToAddOrUpdate: model.usersToAddOrUpdate,
+-            usersToRemove: model.usersToRemove,
+-            managersToAddOrUpdate: model.managersToAddOrUpdate,
+-            managersToRemove: model.managersToRemove,
+-        }, model.keyId, model.keys, model.signature, model.prevSignature);
+-        this.requestLogger.setContextId(group.contextId);
+-        return "OK";
+-    }
+-    
+     @ApiMethod({})
+     async groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
+         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+diff --git a/src/api/main/context/ContextApiClient.ts b/src/api/main/context/ContextApiClient.ts
+index c234798..ad876db 100644
+--- a/src/api/main/context/ContextApiClient.ts
++++ b/src/api/main/context/ContextApiClient.ts
+@@ -43,10 +43,6 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
+         return this.request("context.groupUpdate", model);
+     }
+     
+-    groupModifyMembers(model: contextApi.GroupModifyMembersModel): Promise<types.core.OK> {
+-        return this.request("context.groupModifyMembers", model);
+-    }
+-    
+     groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
+         return this.request("context.groupDelete", model);
+     }
+diff --git a/src/api/main/context/ContextApiTypes.ts b/src/api/main/context/ContextApiTypes.ts
+index 433d371..f03aa76 100644
+--- a/src/api/main/context/ContextApiTypes.ts
++++ b/src/api/main/context/ContextApiTypes.ts
+@@ -139,18 +139,6 @@ export interface GroupUpdateModel {
+     prevSignature: types.core.EccSignature;
+ }
+ 
+-export interface GroupModifyMembersModel {
+-    id: types.group.GroupId;
+-    usersToAddOrUpdate: types.cloud.UserId[];
+-    usersToRemove: types.cloud.UserId[];
+-    managersToAddOrUpdate: types.cloud.UserId[];
+-    managersToRemove: types.cloud.UserId[];
+-    keyId: types.core.KeyId;
+-    keys: types.cloud.KeyEntrySet[];
+-    signature: types.core.EccSignature;
+-    prevSignature: types.core.EccSignature;
+-}
+-
+ export interface GroupDeleteModel {
+     groupId: types.group.GroupId;
+ }
+@@ -230,7 +218,6 @@ export interface IContextApi {
+     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
+     groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
+     groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
+-    groupModifyMembers(model: GroupModifyMembersModel): Promise<types.core.OK>;
+     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
+     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
+     groupList(model: GroupListModel): Promise<GroupListResult>;
+diff --git a/src/api/main/context/ContextApiValidator.ts b/src/api/main/context/ContextApiValidator.ts
+index 615d31e..57966a7 100644
+--- a/src/api/main/context/ContextApiValidator.ts
++++ b/src/api/main/context/ContextApiValidator.ts
+@@ -68,17 +68,6 @@ export class ContextApiValidator extends BaseValidator {
+             signature: this.tv.eccSignature,
+             prevSignature: this.tv.eccSignature,
+         }));
+-        this.registerMethod("groupModifyMembers", this.builder.createObject({
+-            id: this.tv.groupId,
+-            usersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            usersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            managersToAddOrUpdate: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            managersToRemove: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+-            keyId: this.tv.keyId,
+-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+-            signature: this.tv.eccSignature,
+-            prevSignature: this.tv.eccSignature,
+-        }));
+         this.registerMethod("groupDelete", this.builder.createObject({
+             groupId: this.tv.groupId,
+         }));
+diff --git a/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts b/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
+index c580360..b0b3067 100644
+--- a/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
++++ b/src/test/end2end/CloudTests/ThreadGroupGranteeTest.test.ts
+@@ -142,13 +142,14 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
+     }
+     
+     private async removeAliceFromGroup() {
++        // modifyMembers is deferred (see documents/plan/08-future-plans.md); removal is done via full-replace groupUpdate.
+         const groupId = this.requireGroupId();
+         const {group} = await this.apis.contextApi.groupGet({groupId});
+         const head = group.history[group.history.length - 1].signature;
+         const resultUsers = [testData.userId];
+         const resultManagers = [testData.userId];
+         const signature = signAsJanek({
+-            op: "modifyMembers",
++            op: "update",
+             contextId: testData.contextId,
+             author: testData.userId,
+             authorPubKey: testData.userPubKey,
+@@ -157,20 +158,21 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
+             prevSignature: head,
+             resultUsers: resultUsers,
+             resultManagers: resultManagers,
+-            delta: {usersAdded: [], usersRemoved: [aliceId], managersAdded: [], managersRemoved: []},
+         });
+-        const res = await this.apis.contextApi.groupModifyMembers({
++        const res = await this.apis.contextApi.groupUpdate({
+             id: groupId,
+-            usersToAddOrUpdate: [],
+-            usersToRemove: [aliceId],
+-            managersToAddOrUpdate: [],
+-            managersToRemove: [],
++            groupPubKey: groupPubKey,
++            users: resultUsers,
++            managers: resultManagers,
++            data: "AAAA" as types.group.GroupData,
+             keyId: rotatedGroupKeyId,
+             keys: [{user: testData.userId, keyId: rotatedGroupKeyId, data: "AAAA" as types.core.UserKeyData}],
++            version: group.version,
++            force: false,
+             signature: signature,
+             prevSignature: head,
+         });
+-        assert(res === "OK", "groupModifyMembers did not return OK");
++        assert(res === "OK", "groupUpdate did not return OK");
+     }
+     
+     private async aliceCanNoLongerGetThread() {
+diff --git a/src/test/validator/MainContextApiValidator.test.ts b/src/test/validator/MainContextApiValidator.test.ts
+index 3d74201..18a3028 100644
+--- a/src/test/validator/MainContextApiValidator.test.ts
++++ b/src/test/validator/MainContextApiValidator.test.ts
+@@ -77,37 +77,6 @@ it("ContextApiValidator.groupUpdate valid", () => {
+     expect(result.success).toBe(true);
+ });
+ 
+-it("ContextApiValidator.groupModifyMembers valid", () => {
+-    const model: contextApi.GroupModifyMembersModel = {
+-        id: groupId,
+-        usersToAddOrUpdate: ["alice"] as types.cloud.UserId[],
+-        usersToRemove: [] as types.cloud.UserId[],
+-        managersToAddOrUpdate: [] as types.cloud.UserId[],
+-        managersToRemove: [] as types.cloud.UserId[],
+-        keyId: keyId,
+-        keys: [],
+-        signature: signature,
+-        prevSignature: signature,
+-    };
+-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
+-    expect(result.success).toBe(true);
+-});
+-
+-it("ContextApiValidator.groupModifyMembers rejects missing prevSignature", () => {
+-    const model = {
+-        id: groupId,
+-        usersToAddOrUpdate: [] as types.cloud.UserId[],
+-        usersToRemove: [] as types.cloud.UserId[],
+-        managersToAddOrUpdate: [] as types.cloud.UserId[],
+-        managersToRemove: [] as types.cloud.UserId[],
+-        keyId: keyId,
+-        keys: [],
+-        signature: signature,
+-    };
+-    const result = Utils.try(() => validator().validate("groupModifyMembers", model));
+-    expect(result.success).toBe(false);
+-});
+-
+ it("ContextApiValidator.groupGet valid", () => {
+     const result = Utils.try(() => validator().validate("groupGet", {groupId: groupId}));
+     expect(result.success).toBe(true);

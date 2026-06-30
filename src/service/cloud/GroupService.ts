@@ -24,14 +24,12 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import { DateUtils } from "../../utils/DateUtils";
-import { Utils } from "../../utils/Utils";
 import type { GroupGenerateNewKeyModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 
 export class GroupService extends BaseContainerService {
     
     private policy: GroupPolicy;
-    private rotationRateLimiter = new RotationRateLimiter();
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -42,6 +40,7 @@ export class GroupService extends BaseContainerService {
         private cloudAclChecker: CloudAclChecker,
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
+        private groupRotationRateLimiter: GroupRotationRateLimiter,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -96,7 +95,7 @@ export class GroupService extends BaseContainerService {
     
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, expectedKeyVersion?: number) {
+        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -109,6 +108,12 @@ export class GroupService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
             this.policy.makeUpdateContainerCheck(user, context, oldGroup, managers, policy);
+            // updateGroup changes membership/metadata only — it must NOT rotate the group identity key (epoch).
+            // Key rotation is a separate, narrowly-scoped operation: context.groupGenerateNewKey (which cannot
+            // add/remove members). This keeps the two capabilities cleanly separable.
+            if (groupPubKey !== oldGroup.groupPubKey) {
+                throw new AppException("INVALID_PARAMS", "groupUpdate cannot rotate the group key; use generateNewGroupKey");
+            }
             const currentVersion = oldGroup.history.length as types.group.GroupVersion;
             if (currentVersion !== version && !force) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
@@ -117,51 +122,8 @@ export class GroupService extends BaseContainerService {
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
-            const isRotation = this.isRemoval(oldGroup, users, managers) || (expectedKeyVersion !== undefined);
             // Membership integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
-                if (isRotation) {
-                    this.rotationRateLimiter.check(id, user.userId);
-                    const casExpected = expectedKeyVersion ?? groupRepository.getKeyVersion(oldGroup);
-                    const now = DateUtils.now();
-                    const entry: db.group.GroupHistoryEntry = {
-                        created: now,
-                        author: user.userId,
-                        keyId: keyId,
-                        data: data,
-                        users: users,
-                        managers: managers,
-                        groupPubKey: groupPubKey,
-                    };
-                    const epochGroup: db.group.Group = {
-                        ...oldGroup,
-                        groupPubKey: groupPubKey,
-                        lastModifier: user.userId,
-                        lastModificationDate: now,
-                        keyId: keyId,
-                        data: data,
-                        users: users,
-                        managers: managers,
-                        keys: newKeys,
-                        history: [...oldGroup.history, entry],
-                        allTimeUsers: Utils.uniqueFromArrays(oldGroup.allTimeUsers, users, managers),
-                        policy: policy === undefined ? oldGroup.policy : policy,
-                        keyVersion: casExpected + 1,
-                        keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: casExpected, groupPubKey: oldGroup.groupPubKey}],
-                    };
-                    if (resourceId && !oldGroup.clientResourceId) {
-                        epochGroup.clientResourceId = resourceId;
-                    }
-                    else if (oldGroup.clientResourceId) {
-                        epochGroup.clientResourceId = oldGroup.clientResourceId;
-                    }
-                    const result = await groupRepository.casRotate(oldGroup, casExpected, epochGroup);
-                    if (!result) {
-                        const winner = await groupRepository.get(id);
-                        throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
-                    }
-                    return {group: result, context, oldGroup};
-                }
                 const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId);
                 return {group, context, oldGroup};
             }
@@ -188,7 +150,10 @@ export class GroupService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
-            this.rotationRateLimiter.check(model.id, user.userId);
+            // Rotation is a container mutation, so it must pass the same manager/policy gate as updateGroup.
+            // Rotation changes neither membership nor policy → reuse the existing managers and pass no policy.
+            this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, undefined);
+            await this.checkRotationRateLimit(model.id);
             const currentKeyVersion = groupRepository.getKeyVersion(oldGroup);
             if (currentKeyVersion !== model.expectedKeyVersion) {
                 const winner = await groupRepository.get(model.id);
@@ -210,13 +175,28 @@ export class GroupService extends BaseContainerService {
             }
             return {group: result, context};
         });
+        // Charge the rotation rate-limit budget only on a committed rotation, so lost CAS races / version
+        // mismatches (ROTATED_ALREADY) don't consume the group's quota.
+        await this.groupRotationRateLimiter.record({key: this.rotationRateLimitKey(model.id)});
         this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, []);
         return rGroup;
     }
     
-    private isRemoval(oldGroup: db.group.Group, newUsers: types.cloud.UserId[], newManagers: types.cloud.UserId[]): boolean {
-        const oldSet = new Set([...oldGroup.users, ...oldGroup.managers]);
-        return [...oldSet].some(u => !newUsers.includes(u) && !newManagers.includes(u));
+    // The rotation rate limit is keyed per GROUP (not per caller): BR-4 protects grantee containers from
+    // epoch churn, which is a per-group cost regardless of which manager triggers it.
+    private rotationRateLimitKey(groupId: types.group.GroupId): string {
+        return groupId;
+    }
+    
+    /**
+     * Cross-worker rotation rate limit (BR-4) via the master-held IPC service. Peek only — the quota is
+     * consumed by `record` after the rotation actually commits (see generateNewGroupKey).
+     */
+    private async checkRotationRateLimit(groupId: types.group.GroupId): Promise<void> {
+        const {allowed} = await this.groupRotationRateLimiter.check({key: this.rotationRateLimitKey(groupId)});
+        if (!allowed) {
+            throw new AppException("GROUP_ROTATION_RATE_LIMIT");
+        }
     }
     
     private buildRotatedAlreadyData(winner: db.group.Group, callerId: types.cloud.UserId): RotatedAlreadyData {
@@ -276,24 +256,5 @@ class GroupPolicy extends BasePolicy<db.group.Group, never> {
     
     protected extractPolicyFromContext(policy: types.context.ContextPolicy) {
         return policy?.group || {};
-    }
-}
-
-/** In-memory sliding-window rate limiter: max 10 rotations per (groupId, userId) per hour. */
-class RotationRateLimiter {
-    private static readonly MAX_ROTATIONS = 10;
-    private static readonly WINDOW_MS = 60 * 60 * 1000;
-    private readonly windows = new Map<string, number[]>();
-    
-    check(groupId: types.group.GroupId, userId: types.cloud.UserId): void {
-        const key = `${groupId}:${userId}`;
-        const now = Date.now();
-        const cutoff = now - RotationRateLimiter.WINDOW_MS;
-        const timestamps = (this.windows.get(key) ?? []).filter(t => t > cutoff);
-        if (timestamps.length >= RotationRateLimiter.MAX_ROTATIONS) {
-            throw new AppException("GROUP_ROTATION_RATE_LIMIT");
-        }
-        timestamps.push(now);
-        this.windows.set(key, timestamps);
     }
 }

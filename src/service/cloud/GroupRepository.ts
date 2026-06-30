@@ -156,6 +156,14 @@ export class GroupRepository {
             allTimeUsers: Utils.uniqueFromArrays(oldGroup.allTimeUsers, entry.users, entry.managers),
             policy: policy === undefined ? oldGroup.policy : policy,
         };
+        // A membership/metadata update does NOT rotate the key epoch — carry it forward unchanged.
+        // (Rotation is done by generateNewGroupKey, which bumps keyVersion via casRotate.)
+        if (oldGroup.keyVersion !== undefined) {
+            updatedGroup.keyVersion = oldGroup.keyVersion;
+        }
+        if (oldGroup.keyHistory !== undefined) {
+            updatedGroup.keyHistory = oldGroup.keyHistory;
+        }
         if (resourceId && !oldGroup.clientResourceId) {
             updatedGroup.clientResourceId = resourceId;
         }

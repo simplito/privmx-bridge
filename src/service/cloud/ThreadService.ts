@@ -226,6 +226,36 @@ export class ThreadService extends BaseContainerService {
         return rThread;
     }
     
+    /**
+     * Rotate the thread's content key ONLY — no membership change (Phase 2 lazy re-key). The members/managers/
+     * grantee groups, `data` and policy are kept as-is; only a new `keyId` (re-wrapped to the current users and
+     * grantee groups) is installed. Per-epoch coverage (BR-5) is enforced via checkGroupKeysAndGrantees.
+     * This is the narrow counterpart of threadUpdate — it cannot add/remove users or groups.
+     */
+    async rotateThreadKey(cloudUser: CloudUser, id: types.thread.ThreadId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.thread.ThreadVersion, force: boolean) {
+        const {thread: rThread, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const threadRepository = this.repositoryFactory.createThreadRepository(session);
+            const oldThread = await threadRepository.get(id);
+            if (!oldThread) {
+                throw new AppException("THREAD_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldThread.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "thread/threadUpdate", ["threadId=" + id]);
+            const currentVersion = <types.thread.ThreadVersion>oldThread.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const currentGroups = oldThread.groups || [];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, oldThread.users, oldThread.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, currentGroups.map(g => g.groupId));
+            const thread = await threadRepository.updateThread(oldThread, user.userId, oldThread.managers, oldThread.users, oldThread.data, keyId, newKeys, undefined, null, {groups: currentGroups, groupKeys: newGroupKeys});
+            return {thread, context};
+        });
+        this.threadNotificationService.sendUpdatedThread(rThread, usedContext.solution, []);
+        return rThread;
+    }
+    
     async deleteThread(executor: Executor, id: types.thread.ThreadId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const threadRepository = this.repositoryFactory.createThreadRepository(session);

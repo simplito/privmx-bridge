@@ -202,6 +202,9 @@ export class PolicyService {
         if (policy.ownerCanBeRemovedFromManagers !== undefined) {
             this.validatePolicyEntry(path + ".ownerCanBeRemovedFromManagers", policy.ownerCanBeRemovedFromManagers, ["default", "yes", "no"], []);
         }
+        if (policy.forwardSecrecy !== undefined) {
+            this.validatePolicyEntry(path + ".forwardSecrecy", policy.forwardSecrecy, ["default", "yes", "no"], []);
+        }
         if (policy.item !== undefined) {
             this.validateItemPolicy(path + ".item", policy.item, false);
         }
@@ -240,6 +243,9 @@ export class PolicyService {
         }
         if (policy.ownerCanBeRemovedFromManagers !== undefined) {
             this.validatePolicyEntry(path + ".ownerCanBeRemovedFromManagers", policy.ownerCanBeRemovedFromManagers, ["inherit", "default", "yes", "no"], []);
+        }
+        if (policy.forwardSecrecy !== undefined) {
+            this.validatePolicyEntry(path + ".forwardSecrecy", policy.forwardSecrecy, ["inherit", "default", "yes", "no"], []);
         }
         if (policy.item !== undefined) {
             this.validateItemPolicy(path + ".item", policy.item, true);

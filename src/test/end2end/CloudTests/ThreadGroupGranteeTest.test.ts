@@ -96,7 +96,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             managers: [testData.userId],
             users: [testData.userId],
             groups: [{groupId: groupId, role: "user"}],
-            groupKeys: [{group: groupId, keyId: threadKeyId, data: "CCCC" as types.core.UserKeyData}],
+            groupKeys: [{group: groupId, groupEpoch: 1, keyId: threadKeyId, data: "CCCC" as types.core.UserKeyData}],
         });
         this.threadId = res.threadId;
     }

@@ -134,7 +134,6 @@ export interface GroupUpdateModel {
     version: types.group.GroupVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
-    expectedKeyVersion?: number;
 }
 
 export interface GroupGenerateNewKeyModel {

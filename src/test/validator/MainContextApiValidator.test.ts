@@ -93,3 +93,30 @@ it("ContextApiValidator.groupList rejects invalid sortBy", () => {
     const result = Utils.try(() => validator().validate("groupList", model));
     expect(result.success).toBe(false);
 });
+
+// ---------- Phase 2: generateNewGroupKey + groupUpdate epoch CAS ----------
+
+it("ContextApiValidator.groupGenerateNewKey valid", () => {
+    const model: contextApi.GroupGenerateNewKeyModel = {
+        id: groupId,
+        groupPubKey: groupPubKey,
+        data: "someData" as types.group.GroupData,
+        keyId: keyId,
+        keys: [],
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupGenerateNewKey rejects missing expectedKeyVersion", () => {
+    const model = {
+        id: groupId,
+        groupPubKey: groupPubKey,
+        data: "someData" as types.group.GroupData,
+        keyId: keyId,
+        keys: [],
+    };
+    const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
+    expect(result.success).toBe(false);
+});
