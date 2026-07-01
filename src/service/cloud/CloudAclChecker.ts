@@ -75,7 +75,6 @@ export type AclFunctionNameX =
     | "stream/streamRoomListAll"
     | "stream/streamList"
     | "stream/streamRoomListParticipants"
-    | "stream/streamRoomEnableRecording"
     | "stream/READ"
     | "stream/streamRoomCreate"
     | "stream/streamRoomUpdate"
@@ -235,7 +234,6 @@ export class CloudAclChecker {
             "stream/streamRoomDelete": ["streamRoomId"],
             "stream/streamRoomDeleteMany": [],
             "stream/streamRoomClose": ["streamRoomId"],
-            "stream/streamRoomEnableRecording": ["streamRoomId"],
             "stream/streamSendCustomNotification": ["streamRoomId"],
             "stream/streamRoomJoin": ["streamRoomId"],
             "stream/streamRoomLeave": ["streamRoomId"],

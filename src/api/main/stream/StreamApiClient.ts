@@ -99,7 +99,4 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.requestWS("stream.streamRoomLeave", model);
     }
     
-    streamRoomEnableRecording(model: streamApi.StreamRoomRecordingModel): Promise<types.core.OK> {
-        return this.requestWS("stream.streamRoomEnableRecording", model);
-    }
 }

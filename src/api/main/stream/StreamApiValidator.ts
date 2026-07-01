@@ -97,9 +97,6 @@ export class StreamApiValidator extends BaseValidator {
         this.registerMethod("streamRoomJoin", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
-        this.registerMethod("streamRoomEnableRecording", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-        }));
         this.registerMethod("streamRoomLeave", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
