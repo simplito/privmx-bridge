@@ -79,7 +79,6 @@ export interface Config {
             port: number;
             secret: string;
             allowSelfSignedCerts: boolean;
-            recordingsPath: string;
             videoRoom: {
                 maxBitrate: number;
                 maxPublishers: number;
@@ -188,7 +187,6 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
                 port: parseInt(process.env.PMX_STREAMS_MEDIA_SERVER_PORT || "", 10) || 8989,
                 secret: process.env.PMX_STREAMS_MEDIA_SERVER_SECRET || "<janus_secret>",
                 allowSelfSignedCerts: process.env.PMX_MEDIA_SERVER_ALLOW_SELF_SIGNED_CERTS === "true" || false,
-                recordingsPath: process.env.PMX_STREAMS_RECORDINGS_PATH || "recordings",
                 videoRoom: {
                     maxBitrate: parseInt(process.env.PMX_STREAMS_MAX_BITRATE || "", 10) || 512000,
                     maxPublishers: parseInt(process.env.PMX_STREAMS_MAX_PUBLISHERS || "", 10) || 50,

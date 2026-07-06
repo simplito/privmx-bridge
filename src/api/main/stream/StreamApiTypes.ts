@@ -314,10 +314,6 @@ export interface StreamRoomLeaveModel {
     streamRoomId: types.stream.StreamRoomId;
 }
 
-export interface StreamRoomRecordingModel {
-    streamRoomId: types.stream.StreamRoomId;
-}
-
 export interface StreamRoomCloseModel {
     streamRoomId: types.stream.StreamRoomId;
 }

@@ -138,15 +138,6 @@ export type ListParticipantsResponse = SyncJanusResponse<{
     participants: WebRtcTypes.VideoRoomParticipant[];
 }>;
 
-export type EnableRecordingRequest = JanusRequest<{
-    request: "enable_recording";
-}&WebRtcTypes.EnableRecordingOptions>;
-
-export type EnableRecordingResponse = SyncJanusResponse<{
-    videoroom: "success";
-    room: WebRtcTypes.VideoRoomId; // <unique numeric ID>
-}>;
-
 export type JoinAsPublisherRequest = JanusRequest<{
     request: "join";
     ptype: "publisher";
@@ -243,8 +234,6 @@ export type PublishRequest = JanusRequest<{
     // audiocodec?: string; // "<audio codec to prefer among the negotiated ones; optional>",
     // videocodec?: string; // "<video codec to prefer among the negotiated ones; optional>",
     bitrate?: number; // <bitrate cap to return via REMB; optional, overrides the global room value if present>,
-    record?: boolean; // <true|false, whether this publisher should be recorded or not; optional>,
-    // filename?: string; // "<if recording, the base path/file to use for the recording files; optional>",
     display?: string; // "<display name to use in the room; optional>",
     // audio_level_average?: number; // "<if provided, overrides the room audio_level_average for this user; optional>",
     // audio_active_packets?: any; // "<if provided, overrides the room audio_active_packets for this user; optional>",

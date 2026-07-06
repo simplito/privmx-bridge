@@ -222,17 +222,6 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
-    async streamRoomEnableRecording(model: streamApi.StreamRoomRecordingModel): Promise<types.core.OK> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        await this.streamService.enableStreamRoomRecording(cloudUser, model.streamRoomId, this.websocket, wsId);
-        return "OK";
-    }
-    
-    @ApiMethod({})
     async streamRoomClose(model: streamApi.StreamRoomCloseModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const streamRoom = await this.streamService.closeStreamRoom(cloudUser, model.streamRoomId);

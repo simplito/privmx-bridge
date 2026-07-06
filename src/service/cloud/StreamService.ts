@@ -58,7 +58,6 @@ const JanusConstants = {
         UNPUBLISH: "unpublish",
         CONFIGURE: "configure",
         EDIT: "edit",
-        ENABLE_RECORDING: "enable_recording",
         DESTROY: "destroy",
     },
 } as const;
@@ -112,7 +111,6 @@ export class StreamService extends BaseContainerService {
                         body: {
                             request: JanusConstants.REQUEST.CREATE,
                             permanent: false,
-                            rec_dir: this.config.streams.mediaServer.recordingsPath,
                             publishers: this.config.streams.mediaServer.videoRoom.maxPublishers,
                             bitrate: this.config.streams.mediaServer.videoRoom.maxBitrate,
                             bitrate_cap: this.config.streams.mediaServer.videoRoom.bitrateCap,
@@ -895,43 +893,6 @@ export class StreamService extends BaseContainerService {
         
         this.streamNotificationService.sendStreamCustomEvent(streamRoom, keyId, data, { id: user.userId, pub: user.userPubKey }, customChannelName, users);
         return streamRoom;
-    }
-    
-    async enableStreamRoomRecording(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
-        const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamRoomEnableRecording");
-        
-        if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
-            throw new AppException("ACCESS_DENIED");
-        }
-        
-        const existingSignalingSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.MAIN, streamRoom.janusRoomId);
-        if (!existingSignalingSession) {
-            throw new AppException("MAIN_MEDIA_SESSION_FOR_USER_MISSING");
-        }
-        
-        const janusSession = existingSignalingSession.session;
-        await ctx.ws.janusVideoRoomPluginApi.edit({
-            janus: "message",
-            session_id: janusSession.id,
-            plugin: JanusConstants.PLUGIN,
-            handle_id: janusSession.handle,
-            body: {
-                request: JanusConstants.REQUEST.EDIT,
-                room: streamRoom.janusRoomId as WebRtcTypes.VideoRoomId,
-                new_rec_dir: `${this.config.streams.mediaServer.recordingsPath}/${streamRoomId}`,
-            },
-        });
-        await ctx.ws.janusVideoRoomPluginApi.enableRcording({
-            janus: "message",
-            session_id: janusSession.id,
-            plugin: JanusConstants.PLUGIN,
-            handle_id: janusSession.handle,
-            body: {
-                request: JanusConstants.REQUEST.ENABLE_RECORDING,
-                room: streamRoom.janusRoomId as WebRtcTypes.VideoRoomId,
-                record: true,
-            },
-        });
     }
     
     async closeStreamRoom(cloudUser: CloudUser, id: types.stream.StreamRoomId) {

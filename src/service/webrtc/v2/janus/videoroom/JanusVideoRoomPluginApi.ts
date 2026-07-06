@@ -51,9 +51,6 @@ export class JanusVideoRoomPluginApi {
         return this.sync<videoroom.ListParticipantsResponse>(model);
     }
     
-    async enableRcording(model: videoroom.EnableRecordingRequest) {
-        return this.async<videoroom.EnableRecordingResponse>(model);
-    }
     async joinAsPublisher(model: videoroom.JoinAsPublisherRequest) {
         return this.async<videoroom.JoinAsPublisherResponse>(model);
     }
