@@ -11,6 +11,7 @@ limitations under the License.
 
 import { BaseValidator } from "../../BaseValidator";
 import { TypesValidator } from "../../TypesValidator";
+import { DateUtils } from "../../../utils/DateUtils";
 
 export class StreamApiValidator extends BaseValidator {
     
@@ -29,6 +30,7 @@ export class StreamApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerWithoutItemPolicy),
+            emptyRoomTtl: this.builder.optional(this.builder.range(this.builder.int, 0, DateUtils.DAY)),
         }));
         
         this.registerMethod("streamRoomUpdate", this.builder.createObject({

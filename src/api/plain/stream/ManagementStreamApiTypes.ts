@@ -120,6 +120,8 @@ export interface StreamRoom {
     publicMeta: unknown;
     /** Stream room state: "created" (no one joined yet), "open" (active participants) or "closed" */
     state: types.stream.StreamRoomState;
+    /** Grace period (ms) the room stays open after the last participant leaves, before being closed. 0 closes it immediately. */
+    emptyRoomTtl: types.core.Timespan;
 }
 
 export interface StreamRoomDeletedData {

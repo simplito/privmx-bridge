@@ -21,6 +21,7 @@ import { RequestLogger } from "../../../service/log/RequestLogger";
 import { WebSocketExtendedWithJanus } from "../../../CommonTypes";
 import { AppException } from "../../AppException";
 import { TurnCredentialsService } from "../../../service/webrtc/v2/TurnCredentialsService";
+import { DateUtils } from "../../../utils/DateUtils";
 
 export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     
@@ -39,7 +40,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomCreate(model: streamApi.StreamRoomCreateModel): Promise<streamApi.StreamRoomCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.emptyRoomTtl ?? DateUtils.ZERO_TIME);
         this.requestLogger.setContextId(streamRoom.contextId);
         return {streamRoomId: streamRoom.id};
     }

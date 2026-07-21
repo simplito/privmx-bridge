@@ -16,6 +16,7 @@ import { AppException } from "../../api/AppException";
 import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
 import { UserId } from "../../types/cloud";
+import { Timespan } from "../../types/core";
 import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
@@ -28,6 +29,7 @@ export interface JanusRoomWatch {
     streamRoomId: StreamRoomId;
     janusRoomId: number;
     publisherId: number;
+    ttl?: Timespan;
 }
 interface VideoPluginEvent {
     janus: "event";
@@ -91,11 +93,14 @@ export class JanusRoomsWatcher {
         }
         
         const watcherModel = roomPublishers[publisherId];
-        const isRoomEmpty = await this.cache.removePublisher(watcherModel);
+        // The cache returns true only when the room is empty AND has no grace period (ttl <= 0).
+        // Rooms with a ttl stay queued in the cache and are closed later by the empty-rooms job,
+        // unless someone rejoins in the meantime.
+        const shouldCloseNow = await this.cache.removePublisher(watcherModel);
         
-        this.logger.debug({ publisherId, isRoomEmpty }, "Publisher removed via Watcher");
+        this.logger.debug({ publisherId, shouldCloseNow }, "Publisher removed via Watcher");
         
-        if (isRoomEmpty) {
+        if (shouldCloseNow) {
             this.logger.debug({ host, streamRoomId }, "LAST PUBLISHER LEFT. SETTING ROOM TO CLOSED");
             await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
         }
@@ -167,8 +172,8 @@ export class JanusRoomsWatcher {
     }
     
     async removeSessionFromWatch(model: JanusRoomWatch) {
-        const isRoomEmpty = await this.cache.removePublisher(model);
-        if (isRoomEmpty) {
+        const shouldCloseNow = await this.cache.removePublisher(model);
+        if (shouldCloseNow) {
             await this.closeDbRoomAndTriggerAutoDestroy(model.host, model.streamRoomId);
         }
     }
@@ -185,13 +190,13 @@ export class JanusRoomsWatcher {
         await this.cache.removeSubscriptions({host, streamRoomId, userId, subscriptions});
     }
     
-    async addSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
-        await this.cache.addSubscriber({host, streamRoomId, userId});
+    async addSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId, ttl?: Timespan) {
+        await this.cache.addSubscriber({host, streamRoomId, userId, ttl});
     }
     
     async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
-        const isRoomEmpty = await this.cache.removeSubscriber({host, streamRoomId, userId});
-        if (isRoomEmpty) {
+        const shouldCloseNow = await this.cache.removeSubscriber({host, streamRoomId, userId});
+        if (shouldCloseNow) {
             await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
         }
     }

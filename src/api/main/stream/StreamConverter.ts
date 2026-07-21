@@ -32,6 +32,7 @@ export class StreamConverter {
             type: stream.type,
             policy: stream.policy || {},
             state: stream.state,
+            emptyRoomTtl: stream.emptyRoomTtl ?? <types.core.Timespan>0,
         };
         if (stream.clientResourceId) {
             res.resourceId = stream.clientResourceId;
