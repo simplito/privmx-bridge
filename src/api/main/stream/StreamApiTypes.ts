@@ -32,7 +32,7 @@ export interface StreamRoom {
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;
     state: types.stream.StreamRoomState;
-    streamRoomTtl: types.core.Timespan;
+    emptyRoomTtl: types.core.Timespan;
 }
 
 export interface StreamRoomCreateModel {
@@ -45,7 +45,7 @@ export interface StreamRoomCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
-    streamRoomTtl?: types.core.Timespan;
+    emptyRoomTtl?: types.core.Timespan;
 }
 
 export interface StreamRoomCreateResult {

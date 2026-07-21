@@ -40,7 +40,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomCreate(model: streamApi.StreamRoomCreateModel): Promise<streamApi.StreamRoomCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.streamRoomTtl ?? DateUtils.ZERO_TIME);
+        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.emptyRoomTtl ?? DateUtils.ZERO_TIME);
         this.requestLogger.setContextId(streamRoom.contextId);
         return {streamRoomId: streamRoom.id};
     }

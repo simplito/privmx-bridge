@@ -89,7 +89,7 @@ export class StreamService extends BaseContainerService {
         this.policy = new StreamRoomPolicy(this.policyService);
     }
     
-    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, resourceId: types.core.ClientResourceId | null, type: types.stream.StreamRoomType | undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy, streamRoomTtl: types.core.Timespan) {
+    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, resourceId: types.core.ClientResourceId | null, type: types.stream.StreamRoomType | undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy, emptyRoomTtl: types.core.Timespan) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         
@@ -127,7 +127,7 @@ export class StreamService extends BaseContainerService {
         })();
         
         try {
-            const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, janusRoomId, streamRoomTtl);
+            const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, janusRoomId, emptyRoomTtl);
             this.streamNotificationService.sendStreamRoomCreated(streamRoom, context.solution);
             return streamRoom;
         }
@@ -538,7 +538,7 @@ export class StreamService extends BaseContainerService {
                 streamRoomId: streamRoom.id,
                 janusRoomId: streamRoom.janusRoomId as number,
                 publisherId: Number(janusSessionX.janusPublisherId),
-                ttl: streamRoom.streamRoomTtl,
+                ttl: streamRoom.emptyRoomTtl,
             });
         }
         
@@ -729,9 +729,9 @@ export class StreamService extends BaseContainerService {
                     streamRoomId: streamRoom.id,
                     janusRoomId: streamRoom.janusRoomId as number,
                     publisherId: Number(newSession.janusPublisherId),
-                    ttl: streamRoom.streamRoomTtl,
+                    ttl: streamRoom.emptyRoomTtl,
                 });
-                await this.janusRoomsWatcher.addSubscriber(this.host, streamRoom.id, user.userId, streamRoom.streamRoomTtl);
+                await this.janusRoomsWatcher.addSubscriber(this.host, streamRoom.id, user.userId, streamRoom.emptyRoomTtl);
             }
             catch {
                 throw new AppException("MEDIA_SERVER_ERROR", "Failed to join room");

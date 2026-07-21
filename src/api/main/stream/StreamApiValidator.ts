@@ -30,7 +30,7 @@ export class StreamApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerWithoutItemPolicy),
-            streamRoomTtl: this.builder.optional(this.builder.range(this.builder.int, 0, DateUtils.DAY)),
+            emptyRoomTtl: this.builder.optional(this.builder.range(this.builder.int, 0, DateUtils.DAY)),
         }));
         
         this.registerMethod("streamRoomUpdate", this.builder.createObject({

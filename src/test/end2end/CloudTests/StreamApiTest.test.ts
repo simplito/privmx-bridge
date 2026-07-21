@@ -54,7 +54,7 @@ export class StreamTests extends BaseTestSet {
             },
         },
     })
-    async streamRoomTtlIsPersistedAndReturned() {
+    async emptyRoomTtlIsPersistedAndReturned() {
         // A room created with a ttl reports it back on get; a room created without one defaults to 0.
         const withTtl = await this.apis.streamApi.streamRoomCreate({
             contextId: testData.contextId,
@@ -64,10 +64,10 @@ export class StreamTests extends BaseTestSet {
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
             managers: [testData.userId],
             users: [testData.userId],
-            streamRoomTtl: 60000 as types.core.Timespan,
+            emptyRoomTtl: 60000 as types.core.Timespan,
         });
         const withTtlRoom = await this.apis.streamApi.streamRoomGet({ id: withTtl.streamRoomId });
-        assert(withTtlRoom.streamRoom.streamRoomTtl === 60000, `expected streamRoomTtl 60000, got ${withTtlRoom.streamRoom.streamRoomTtl}`);
+        assert(withTtlRoom.streamRoom.emptyRoomTtl === 60000, `expected emptyRoomTtl 60000, got ${withTtlRoom.streamRoom.emptyRoomTtl}`);
         
         const withoutTtl = await this.apis.streamApi.streamRoomCreate({
             contextId: testData.contextId,
@@ -79,7 +79,7 @@ export class StreamTests extends BaseTestSet {
             users: [testData.userId],
         });
         const withoutTtlRoom = await this.apis.streamApi.streamRoomGet({ id: withoutTtl.streamRoomId });
-        assert(withoutTtlRoom.streamRoom.streamRoomTtl === 0, `expected default streamRoomTtl 0, got ${withoutTtlRoom.streamRoom.streamRoomTtl}`);
+        assert(withoutTtlRoom.streamRoom.emptyRoomTtl === 0, `expected default emptyRoomTtl 0, got ${withoutTtlRoom.streamRoom.emptyRoomTtl}`);
     }
     
     @Test({
