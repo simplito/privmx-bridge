@@ -600,7 +600,7 @@ export class IOC {
             if (!!this.workerRegistry.getConfig().streams.enabled) {
                 this.mainApiRsolver.registerApiWithPrefix("stream.", StreamApi, ({ioc: e, sessionService: s}) => new StreamApi(e.ioc.getStreamApiValidator(), s, e.ioc.getStreamService(), e.ioc.getStreamConverter(), e.getRequestLogger(), e.webSocket, e.ioc.getTurnCredentialsService()));
             }
-            this.mainApiRsolver.registerApiWithPrefix("lock.", LockApi, ({ioc: e, sessionService: s}) => new LockApi(e.ioc.getLockApiValidator(), e.ioc.getCloudLockService(), s));
+            this.mainApiRsolver.registerApiWithPrefix("lock.", LockApi, ({ioc: e, sessionService: s}) => new LockApi(e.ioc.getLockApiValidator(), e.ioc.getCloudLockService(), s, e.ioc.getStoreService()));
             
             this.getPluginsManager().registerEndpoint(this.mainApiRsolver);
         }
@@ -1105,16 +1105,14 @@ export class IOC {
     
     getLockApiValidator() {
         if (this.lockApiValidator == null) {
-            this.lockApiValidator = new LockApiValidator(
-                this.getTypesValidator(),
-            );
+            this.lockApiValidator = new LockApiValidator();
         }
         return this.lockApiValidator;
     }
     
     getCloudLockService() {
         if (this.cloudLockService == null) {
-            this.cloudLockService = new LockService(this.workerRegistry.getCloudLockService());
+            this.cloudLockService = new LockService(this.workerRegistry.getCloudLockService(), this.getInstanceHost());
         }
         return this.cloudLockService;
     }
