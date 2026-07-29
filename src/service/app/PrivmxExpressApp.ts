@@ -11,7 +11,7 @@ limitations under the License.
 
 import * as express from "express";
 import { EngineResponse } from "../../api/server/Engine";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import * as http from "http";
 import * as https from "https";
 import * as WebSocket from "ws";

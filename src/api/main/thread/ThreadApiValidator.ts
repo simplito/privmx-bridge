@@ -20,23 +20,25 @@ export class ThreadApiValidator extends BaseValidator {
         super();
         
         this.registerMethod("threadCreate", this.builder.createObject({
+            resourceId: this.builder.optional(this.tv.uuidv4),
             contextId: this.tv.cloudContextId,
             type: this.tv.optResourceType,
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
             data: this.tv.threadData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 128),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerPolicy),
         }));
         
         this.registerMethod("threadUpdate", this.builder.createObject({
             id: this.tv.threadId,
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 128),
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
             data: this.tv.threadData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 128),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             version: this.tv.intNonNegative,
             force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerPolicy),
@@ -57,6 +59,7 @@ export class ThreadApiValidator extends BaseValidator {
         
         this.registerMethod("threadList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
+            scope: this.tv.optionalContainerAccessScope,
             type: this.tv.optResourceType,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate", "lastMsgDate"])),
         }));
@@ -69,12 +72,14 @@ export class ThreadApiValidator extends BaseValidator {
         
         this.registerMethod("threadMessageSend", this.builder.createObject({
             threadId: this.tv.threadId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             data: this.tv.threadMessageData,
             keyId: this.tv.keyId,
         }));
         
         this.registerMethod("threadMessageUpdate", this.builder.createObject({
             messageId: this.tv.threadMessageId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
             data: this.tv.threadMessageData,
             keyId: this.tv.keyId,
             version: this.builder.optional(this.tv.intNonNegative),
@@ -100,10 +105,12 @@ export class ThreadApiValidator extends BaseValidator {
         
         this.registerMethod("threadMessagesGet", this.builder.addFields(this.tv.listModel, {
             threadId: this.tv.threadId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "updates"])),
         }));
         
         this.registerMethod("threadMessagesGetMy", this.builder.addFields(this.tv.listModel, {
             threadId: this.tv.threadId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "updates"])),
         }));
         
         this.registerMethod("threadSendCustomEvent", this.builder.createObject({
@@ -111,7 +118,7 @@ export class ThreadApiValidator extends BaseValidator {
             channel: this.tv.wsChannelName,
             keyId: this.tv.keyId,
             data: this.tv.unknown16Kb,
-            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 128)),
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384)),
         }));
     }
 }

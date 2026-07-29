@@ -30,6 +30,10 @@ export class ApiKeyRepository {
         return this.repository.get(id);
     }
     
+    async getApiKeyCount() {
+        return this.repository.col().countDocuments();
+    }
+    
     async getMasterKey() {
         return this.repository.find(q => q.eq("masterKey", true));
     }

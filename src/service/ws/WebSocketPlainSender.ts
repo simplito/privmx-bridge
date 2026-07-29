@@ -10,21 +10,21 @@ limitations under the License.
 */
 
 import * as types from "../../types";
-import { IWorker2Service } from "../../cluster/common/Worker2Service";
+import { NotificationBrokerInterface } from "../../cluster/common/Worker2Service";
 import { JobService } from "../job/JobService";
 import { PlainApiEvent } from "../../api/plain/Types";
 
 export class WebSocketPlainSender {
     
     constructor(
-        private workerService: IWorker2Service,
+        private workerService: NotificationBrokerInterface,
         private jobService: JobService,
     ) {
     }
     
     sendToPlainUsers(solution: types.cloud.SolutionId, event: PlainApiEvent) {
         this.jobService.addJob(async () => {
-            await this.workerService.sendWebsocketNotificationToPlainUsers({solution, event});
+            this.workerService.sendWebsocketNotificationToPlainUsers({solution, event});
         }, "Error during sending websocket notification to plain users");
     }
 }

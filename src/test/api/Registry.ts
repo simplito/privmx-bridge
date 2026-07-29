@@ -16,3 +16,4 @@ export { test as ThreadApi } from "../../api/plain/thread/ManagementThreadApiVal
 export { test as StoreApi } from "../../api/plain/store/ManagementStoreApiValidatorTest";
 export { test as StreamApi } from "../../api/plain/stream/ManagementStreamApiValidatorTest";
 export { test as InboxApi } from "../../api/plain/inbox/ManagementInboxApiValidatorTest";
+export { test as KvdbApi } from "../../api/plain/kvdb/ManagementKvdbApiValidatorTest";

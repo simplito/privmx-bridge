@@ -13,6 +13,7 @@ import * as types from "../../../types";
 
 export interface Inbox {
     id: types.inbox.InboxId;
+    resourceId?: types.core.ClientResourceId;
     contextId: types.context.ContextId;
     createDate: types.core.Timestamp;
     creator: types.cloud.UserId;
@@ -35,6 +36,7 @@ export interface InboxDataEntry {
 
 export interface InboxCreateModel {
     contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
     type?: types.inbox.InboxType;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
@@ -54,6 +56,7 @@ export interface InboxDeleteManyResult {
 
 export interface InboxUpdateModel {
     id: types.inbox.InboxId;
+    resourceId?: types.core.ClientResourceId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     data: types.inbox.InboxData;
@@ -83,6 +86,7 @@ export interface InboxGetResult {
 
 export interface InboxListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
+    scope?: types.core.ContainerAccessScope;
     type?: types.inbox.InboxType;
     sortBy?: "createDate"|"lastModificationDate";
 }
@@ -102,18 +106,21 @@ export type InboxListAllResult = InboxListResult;
 
 export interface InboxSendModel {
     inboxId: types.inbox.InboxId;
+    resourceId?: types.core.ClientResourceId;
     message: types.thread.ThreadMessageData;
     requestId?: types.request.RequestId;
     files: {
         fileIndex: number;
         thumbIndex?: number;
         meta: types.store.StoreFileMeta;
+        resourceId?: types.core.ClientResourceId;
     }[];
     version: types.inbox.InboxVersion;
 }
 
 export interface InboxGetPublicViewResult {
     inboxId: types.inbox.InboxId;
+    contextId: types.context.ContextId;
     version: types.inbox.InboxVersion;
     publicData: types.inbox.InboxPublicData;
 }

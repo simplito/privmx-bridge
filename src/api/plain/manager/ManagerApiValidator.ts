@@ -41,6 +41,12 @@ export class ManagerApiValidator extends BaseValidator {
             }),
         ], "type"));
         
+        this.registerMethod("createFirstApiKey", this.builder.createObject({
+            initializationToken: this.builder.rangeLength(this.builder.string, 1, 1024),
+            name: this.tv.apiKeyName,
+            publicKey: this.builder.optional(this.tv.ed25519PemPublicKey),
+        }));
+        
         this.registerMethod("createApiKey", this.builder.createObject({
             name: this.tv.apiKeyName,
             scope: this.tv.apiScope,

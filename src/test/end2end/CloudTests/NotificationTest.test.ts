@@ -14,55 +14,268 @@ import * as types from "../../../types";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
 import { testData } from "../../datasets/testData";
 import { BaseTestSet, Test } from "../BaseTestSet";
+import { ECUtils } from "../../../utils/crypto/ECUtils";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 
 export class NotificationTest extends BaseTestSet {
     
     private customNotificationDataQueue: {eventData: unknown}[] = [];
     private message: string = "";
     private contextUsers?: types.cloud.UserIdentity[];
+    private channelSubscriptions: types.core.SubscriptionId[] = [];
+    private newNoTypeThreadId?: types.thread.ThreadId;
+    private newInboxTypeThreadId?: types.thread.ThreadId;
+    private newThreadTypeThreadId?: types.thread.ThreadId;
+    private secondaryConnections: PrivmxRpc.AuthorizedConnection[] = [];
     
     @Test()
     async shouldDeliverCustomThreadNotification() {
-        await this.subscribeToCustomThreadNotificationChannel();
-        await this.sendNewCustomThreadNotification();
-        await this.checkIfSingleNotificationWasDelivered();
+        await this.subscribeToCustomMyChannelThreadNotificationChannel();
+        await this.sendNewCustomMyChannelThreadNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
     @Test()
     async shouldDeliverCustomStoreNotification() {
-        await this.subscribeToCustomStoreNotificationChannel();
-        await this.sendNewCustomStoreNotification();
-        await this.checkIfSingleNotificationWasDelivered();
+        await this.subscribeToCustomMyChannelStoreNotificationChannel();
+        await this.sendNewCustomMyChannelStoreNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
     @Test()
     async shouldDeliverCustomInboxNotification() {
         await this.subscribeToCustomInboxNotificationChannel();
-        await this.sendNewCustomInboxNotification();
-        await this.checkIfSingleNotificationWasDelivered();
+        await this.sendNewCustomMyChannelInboxNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async shouldDeliverCustomStreamNotification() {
-        await this.subscribeToCustomStreamNotificationChannel();
-        await this.sendNewCustomStreamNotification();
-        await this.checkIfSingleNotificationWasDelivered();
+        await this.subscribeToCustomMyChannelStreamNotificationChannel();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
     }
     
     @Test()
     async shouldDeliverCustomContextNotification() {
-        await this.subscribeToCustomContextNotificationChannel();
+        await this.subscribeToCustomMyChannelContextNotificationChannel();
         await this.fetchContextUsers();
-        await this.sendNewCustomContextNotification();
+        await this.sendNewCustomMyChannelContextNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldNotDeliverInternalStreamNotification() {
+        await this.subscribeToCustomMyChannelStreamNotificationChannel();
+        await this.sendNewInternalStreamNotification();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldNotDeliverInternalStreamNotificationWithNewChannels() {
+        await this.subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels();
+        await this.sendNewInternalStreamNotification();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldDeliverCustomStreamNotificationWithNewChannels() {
+        await this.subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldDeliverCustomStreamNotificationWithNewChannelsAndSubPath() {
+        await this.subscribeToAllCustomStreamNotificationChannelWithNewChannels();
+        await this.sendNewCustomStreamNotificationWithSubPathAbc();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldDeliverCustomStreamNotificationWithNewChannelsAndSubPathDefOnly() {
+        await this.subscribeToCustomStreamNotificationChannelWithNewChannelsWithChannelCustomDef();
+        await this.sendNewCustomStreamNotificationWithSubPathAbc();
+        await this.sendNewCustomStreamNotificationWithSubPathDef();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test()
+    async shouldDeliverCustomContextNotificationWithNewChannels() {
+        await this.subscribeToAllCustomContextNotificationChannelWithNewChannels();
+        await this.fetchContextUsers();
+        await this.sendNewCustomMyChannelContextNotification();
+        await this.checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldSubcribeToAllStreamNotificationsAndReceiveAllNotifications() {
+        await this.subscribeToAllCustomStreamNotifications();
+        await this.sendNewCustomStreamNotificationWithSubPathAbc();
+        await this.sendNewCustomStreamNotificationWithSubPathDef();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfThreeNotificationWereDelivered();
+    }
+    
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
+    async shouldSubcribeToStreamChannelsAndThenUnsubscribe() {
+        await this.subscribeToAllCustomStreamNotifications();
+        await this.unsubscribeFromAllCustomStreamNotifications();
+        await this.sendNewCustomStreamNotificationWithSubPathAbc();
+        await this.sendNewCustomStreamNotificationWithSubPathDef();
+        await this.sendNewCustomMyChannelStreamNotification();
+        await this.checkIfNoNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubcribeThreadChannelsAndThenBulkUnsubscribe() {
+        await this.startListeningOnEvents();
+        await this.subscribeToThreadMessagesChannelWithoutListening();
+        await this.subscribeToThreadMessagesChannelWithoutListening();
+        await this.subscribeToThreadMessagesChannelWithoutListening();
+        await this.sendMessageOnSubscribedThread();
+        await this.checkIfSingleNotificationWasDelivered();
+        await this.emptyNotificationQueue();
+        await this.unsubscribeFromMessagesChannelThreadNotificationChannel();
+        await this.sendMessageOnSubscribedThread();
+        await this.checkIfNoNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubcribeThreadMessagesDeleteChannelAndReceiveOnlyMessageDeleteNotifications() {
+        await this.startListeningOnEvents();
+        await this.subscribeToThreadMessagesDeleteChannelWithNewChannelsWithoutListening();
+        await this.sendMessageOnSubscribedThread();
+        await this.checkIfNoNotificationWasDelivered();
+        await this.deleteMessageOnSubscribedThread();
         await this.checkIfSingleNotificationWasDelivered();
     }
     
     @Test()
-    async shouldNotDeliverInternalStreamNotification() {
-        await this.subscribeToCustomStreamNotificationChannel();
-        await this.sendNewInternalStreamNotification();
-        await this.sendNewCustomStreamNotification();
+    async shouldSubcribeThreadMessagesDeleteChannelAndThreadCollectionChanged() {
+        await this.startListeningOnEvents();
+        await this.subscribeToThreadMessagesDeleteAndThreadCollectionChangedChannelsWithoutListening();
+        await this.sendManyMessagesOnSubscribedThread();
         await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeThreadMessagesAndReceiveEventAsManager() {
+        await this.startListeningOnEvents();
+        await this.createNewThreadWithManagerOnly();
+        await this.subscribeToThreadMessagesChannel();
+        await this.sendMessageOnNewThread();
+        await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeThreadMessagesOnDifferentTypesOfThread() {
+        await this.startListeningOnEvents();
+        await this.createNewThreadWithTypeThread();
+        await this.createNewThreadWithTypeInbox();
+        await this.subscribeToThreadMessagesChannelOnContainerTypeThreadOnly();
+        await this.sendMessageOnThreadTypeNadInboxTypeThreads();
+        await this.checkIfSingleNotificationWasDelivered();
+    }
+    
+    @Test()
+    async shouldSubscribeOncontextUserStatusChanged() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        await this.checkIfNotificationNumberMatchUserIdentitiesNumber();
+    }
+    
+    @Test()
+    async shouldReceiveContextUserStatusChangeOnLogin() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        
+        const { userId } = await this.createAndLoginNewUser();
+        
+        await this.checkIfUserStatusNotificationReceived("login", 1, userId);
+        await this.cleanupSecondaryConnections();
+    }
+    
+    @Test()
+    async shouldReceiveContextUserStatusChangeOnLogout() {
+        const { connection, userId } = await this.createAndLoginNewUser();
+        
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        
+        await PromiseUtils.wait(1500);
+        await this.emptyNotificationQueue();
+        connection.destroy();
+        this.secondaryConnections = this.secondaryConnections.filter(c => c !== connection);
+        
+        await this.checkIfUserStatusNotificationReceived("logout", 1, userId);
+    }
+    
+    @Test()
+    async shouldReceiveAggregatedContextUserStatusChange() {
+        await this.startListeningOnEvents();
+        await this.subscribeToAllContextEvents();
+        const users = await Promise.all([
+            this.createAndLoginNewUser(),
+            this.createAndLoginNewUser(),
+        ]);
+        await this.checkIfAggregatedUserStatusNotificationReceived("login", users.map(u => u.userId));
+        await this.cleanupSecondaryConnections();
+    }
+    
+    async unsubscribeFromAllCustomStreamNotifications() {
+        await this.helpers.unsubscribeFromChannels(this.channelSubscriptions);
     }
     
     async sendNewInternalStreamNotification() {
@@ -75,11 +288,11 @@ export class NotificationTest extends BaseTestSet {
         assert(res === "OK", "Unexpected return value from: streamRoomSendCustomEvent(");
     }
     
-    async subscribeToCustomContextNotificationChannel() {
+    async subscribeToCustomMyChannelContextNotificationChannel() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
         });
-        await this.helpers.subscribeToChannel(`context/${testData.contextId}/custom`);
+        await this.helpers.subscribeToChannel(`context/${testData.contextId}/MyChannel`);
     }
     
     async fetchContextUsers() {
@@ -88,14 +301,14 @@ export class NotificationTest extends BaseTestSet {
         this.contextUsers = res.users;
     }
     
-    async sendNewCustomContextNotification() {
+    async sendNewCustomMyChannelContextNotification() {
         if (!this.contextUsers) {
             throw new Error("Context users not fetched yet");
         }
         this.message = "Context-Custom-9999";
         const res = await this.apis.contextApi.contextSendCustomEvent({
             contextId: testData.contextId,
-            channel: "custom" as types.core.WsChannelName,
+            channel: "MyChannel" as types.core.WsChannelName,
             data: this.message,
             users: this.contextUsers.map(user => ({
                 id: user.id,
@@ -105,18 +318,18 @@ export class NotificationTest extends BaseTestSet {
         assert(res === "OK", "Unexpected return value from: streamRoomSendCustomEvent(");
     }
     
-    async subscribeToCustomStreamNotificationChannel() {
+    async subscribeToCustomMyChannelStreamNotificationChannel() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
         });
-        await this.helpers.subscribeToChannel(`stream/${testData.streamRoomId}/custom`);
+        await this.helpers.subscribeToChannel(`stream/${testData.streamRoomId}/MyChannel`);
     }
     
-    async sendNewCustomStreamNotification() {
+    async sendNewCustomMyChannelStreamNotification() {
         this.message = "Stream-Custom-9999";
         const res = await this.apis.streamApi.streamRoomSendCustomEvent({
             streamRoomId: testData.streamRoomId,
-            channel: "custom" as types.core.WsChannelName,
+            channel: "MyChannel" as types.core.WsChannelName,
             keyId: testData.keyId,
             data: this.message,
         });
@@ -127,61 +340,348 @@ export class NotificationTest extends BaseTestSet {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
         });
-        await this.helpers.subscribeToChannel(`inbox/${testData.inboxId}/custom`);
+        await this.helpers.subscribeToChannel(`inbox/${testData.inboxId}/MyChannel`);
     }
     
-    async sendNewCustomInboxNotification() {
+    async sendNewCustomMyChannelInboxNotification() {
         this.message = "Inbox-Custom-9999";
         const res = await this.apis.inboxApi.inboxSendCustomEvent({
             inboxId: testData.inboxId,
-            channel: "custom" as types.core.WsChannelName,
+            channel: "MyChannel" as types.core.WsChannelName,
             keyId: testData.keyId,
             data: this.message,
         });
         assert(res === "OK", "Unexpected return value from: inboxSendCustomEvent(");
     }
     
-    async subscribeToCustomStoreNotificationChannel() {
+    async subscribeToCustomMyChannelStoreNotificationChannel() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
         });
-        await this.helpers.subscribeToChannel(`store/${testData.storeId}/custom`);
+        await this.helpers.subscribeToChannel(`store/${testData.storeId}/MyChannel`);
     }
     
-    async sendNewCustomStoreNotification() {
+    async sendNewCustomMyChannelStoreNotification() {
         this.message = "Store-Custom-9999";
         const res = await this.apis.storeApi.storeSendCustomEvent({
             storeId: testData.storeId,
-            channel: "custom" as types.core.WsChannelName,
+            channel: "MyChannel" as types.core.WsChannelName,
             keyId: testData.keyId,
             data: this.message,
         });
         assert(res === "OK", "Unexpected return value from: storeSendCustomEvent(");
     }
     
-    async subscribeToCustomThreadNotificationChannel() {
+    async subscribeToCustomMyChannelThreadNotificationChannel() {
         this.helpers.addEventListenerForNotification(evt => {
             this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
         });
-        await this.helpers.subscribeToChannel(`thread/${testData.threadId}/custom`);
+        await this.helpers.subscribeToChannel(`thread/${testData.threadId}/MyChannel`);
     }
     
-    async sendNewCustomThreadNotification() {
+    async sendNewCustomMyChannelThreadNotification() {
         this.message = "Thread-Custom-9999";
         const res = await this.apis.threadApi.threadSendCustomEvent({
             threadId: testData.threadId,
-            channel: "custom" as types.core.WsChannelName,
+            channel: "MyChannel" as types.core.WsChannelName,
             keyId: testData.keyId,
             data: this.message,
         });
         assert(res === "OK", "Unexpected return value from: threadSendCustomEvent(");
     }
     
-    async checkIfSingleNotificationWasDelivered() {
+    async checkIfSingleCustomNotificationWithSpecifiedMessageWasDelivered() {
         await PromiseUtils.wait(1000);
         if (this.customNotificationDataQueue.length !== 1) {
             throw new Error(`Custom notification count expected: 1, got: ${this.customNotificationDataQueue.length}`);
         }
         assert((this.customNotificationDataQueue[0].eventData as unknown as string) === this.message, `NOTIFICATION MISSMATCH: got: ${this.customNotificationDataQueue[0].eventData as unknown as string} expected: ${this.message}`);
     }
+    
+    async checkIfSingleNotificationWasDelivered() {
+        await PromiseUtils.wait(2000);
+        if (this.customNotificationDataQueue.length !== 1) {
+            throw new Error(`Custom notification count expected: 1, got: ${this.customNotificationDataQueue.length}`);
+        }
+    }
+    
+    async checkIfNotificationNumberMatchUserIdentitiesNumber() {
+        await PromiseUtils.wait(1000);
+        if (this.customNotificationDataQueue.length !== 4) { // 4 because user belongs to 4 contexts in default dataset
+            throw new Error(`Custom notification count expected: 4, got: ${this.customNotificationDataQueue.length}`);
+        }
+    }
+    
+    async createAndLoginNewUser() {
+        const keys = ECUtils.generateKeyPair();
+        const pubKey = ECUtils.publicToBase58DER(keys.keyPair);
+        const userId = `NewUser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` as types.cloud.UserId;
+        const privKey = keys.privWif;
+        
+        this.helpers.authorizePlainApi();
+        await this.plainApis.contextApi.addUserToContext({
+            contextId: testData.contextId,
+            userId: userId,
+            userPubKey: pubKey,
+        });
+        
+        const connection = await this.helpers.createNewConnection(privKey, testData.solutionId);
+        this.secondaryConnections.push(connection);
+        return { connection, userId };
+    }
+    
+    async checkIfUserStatusNotificationReceived(action: "login"|"logout", expectedCount: number, targetUserId: types.cloud.UserId) {
+        await PromiseUtils.wait(1500);
+        let count = 0;
+        for (const evt of this.customNotificationDataQueue) {
+            const typedEvt = evt as unknown as { users?: { userId: string, action: string }[] };
+            if (typedEvt && Array.isArray(typedEvt.users)) {
+                count += typedEvt.users.filter(u => u.action === action && u.userId === targetUserId).length;
+            }
+        }
+        assert(count === expectedCount, `Expected ${expectedCount} users with action '${action}' for user ${targetUserId}, found ${count}`);
+    }
+    
+    async checkIfAggregatedUserStatusNotificationReceived(action: "login"|"logout", targetUserIds: types.cloud.UserId[]) {
+        await PromiseUtils.wait(1500);
+        const foundUsers = new Set<string>();
+        
+        for (const evt of this.customNotificationDataQueue) {
+            const typedEvt = evt as unknown as { users?: { userId: types.cloud.UserId, action: string }[] };
+            if (typedEvt && Array.isArray(typedEvt.users)) {
+                for (const u of typedEvt.users) {
+                    if (u.action === action && targetUserIds.includes(u.userId)) {
+                        foundUsers.add(u.userId);
+                    }
+                }
+            }
+        }
+        assert(foundUsers.size === targetUserIds.length, `Expected events for ${targetUserIds.length} users, found ${foundUsers.size}`);
+    }
+    
+    async cleanupSecondaryConnections() {
+        for (const c of this.secondaryConnections) {
+            c.destroy();
+        }
+        this.secondaryConnections = [];
+    }
+    
+    async subscribeToCustomMyChannelStreamNotificationChannelWithNewChannels() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+        await this.helpers.subscribeToChannels([`stream/custom/MyChannel|containerId=${testData.streamRoomId}`]);
+    }
+    
+    async subscribeToAllCustomStreamNotificationChannelWithNewChannels() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+        await this.helpers.subscribeToChannels([`stream/custom|containerId=${testData.streamRoomId}`]);
+    }
+    
+    async subscribeToAllCustomContextNotificationChannelWithNewChannels() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+        await this.helpers.subscribeToChannels([`context/custom|contextId=${testData.contextId}`]);
+    }
+    
+    async subscribeToCustomStreamNotificationChannelWithNewChannelsWithChannelCustomDef() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+        await this.helpers.subscribeToChannels([`stream/custom/def|containerId=${testData.streamRoomId}`]);
+    }
+    
+    async sendNewCustomStreamNotificationWithSubPathAbc() {
+        this.message = "Stream-Custom-9999";
+        const res = await this.apis.streamApi.streamRoomSendCustomEvent({
+            streamRoomId: testData.streamRoomId,
+            channel: "abc" as types.core.WsChannelName,
+            keyId: testData.keyId,
+            data: this.message,
+        });
+        assert(res === "OK", "Unexpected return value from: streamRoomSendCustomEvent(");
+    }
+    
+    async sendNewCustomStreamNotificationWithSubPathDef() {
+        this.message = "Stream-Custom-9999";
+        const res = await this.apis.streamApi.streamRoomSendCustomEvent({
+            streamRoomId: testData.streamRoomId,
+            channel: "def" as types.core.WsChannelName,
+            keyId: testData.keyId,
+            data: this.message,
+        });
+        assert(res === "OK", "Unexpected return value from: streamRoomSendCustomEvent(");
+    }
+    
+    async subscribeToAllCustomStreamNotifications() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+        const subscriptions = await this.helpers.subscribeToChannels(["stream/custom"]);
+        this.channelSubscriptions = this.channelSubscriptions.concat(subscriptions.subscriptions.map(sub => sub.subscriptionId) as types.core.SubscriptionId[]);
+    }
+    
+    async checkIfThreeNotificationWereDelivered() {
+        await PromiseUtils.wait(1000);
+        assert(this.customNotificationDataQueue.length === 3, `Custom notification count expected: 3, got: ${this.customNotificationDataQueue.length}`);
+        assert(this.customNotificationDataQueue.every(event => event.eventData as unknown as string === this.message), "NOTIFICATION MISSMATCH");
+    }
+    
+    async checkIfNoNotificationWasDelivered() {
+        await PromiseUtils.wait(1000);
+        assert(this.customNotificationDataQueue.length === 0, `Custom notification count expected: 0, got: ${this.customNotificationDataQueue.length}`);
+    }
+    
+    async subscribeToThreadMessagesChannelWithoutListening() {
+        const res = await this.helpers.subscribeToChannel(`thread/${testData.threadId}/messages`);
+        this.channelSubscriptions.push(res.subscriptionId as types.core.SubscriptionId);
+    }
+    
+    async subscribeToThreadMessagesDeleteChannelWithNewChannelsWithoutListening() {
+        const res = await this.helpers.subscribeToChannels([`thread/messages/delete|containerId=${testData.threadId}`]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    async subscribeToThreadMessagesDeleteAndThreadCollectionChangedChannelsWithoutListening() {
+        const res = await this.helpers.subscribeToChannels([`thread/messages/delete|containerId=${testData.threadId}`, "thread/collectionChanged"]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    async startListeningOnEvents() {
+        this.helpers.addEventListenerForNotification(evt => {
+            this.customNotificationDataQueue.push(evt.data as {eventData: unknown});
+        });
+    }
+    
+    async unsubscribeFromMessagesChannelThreadNotificationChannel() {
+        await this.helpers.unsubscribeFromChannel(`thread/${testData.threadId}/messages`);
+    }
+    
+    async sendMessageOnSubscribedThread() {
+        const res = await this.apis.threadApi.threadMessageSend({
+            threadId: testData.threadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res.messageId, "Unexpected return value from threadMessageSend(");
+    }
+    
+    async sendManyMessagesOnSubscribedThread() {
+        for (let i = 0; i < 10; i++) {
+            void this.apis.threadApi.threadMessageSend({
+                threadId: testData.threadId,
+                resourceId: this.helpers.generateResourceId(),
+                data: "AAAA" as types.thread.ThreadMessageData,
+                keyId: testData.keyId,
+            });
+        }
+    }
+    
+    async emptyNotificationQueue() {
+        this.customNotificationDataQueue = [];
+    }
+    
+    async deleteMessageOnSubscribedThread() {
+        const res = await this.apis.threadApi.threadMessageDelete({
+            messageId: testData.threadMessageId,
+        });
+        assert(res === "OK", "Unexpected return value from threadMessageDelete(");
+    }
+    
+    async subscribeToThreadMessagesChannel() {
+        const res = await this.helpers.subscribeToChannels(["thread/messages/create"]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    async subscribeToThreadMessagesChannelOnContainerTypeThreadOnly() {
+        const res = await this.helpers.subscribeToChannels([`thread/messages/create|contextId=${testData.contextId},containerType=thread`]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    async subscribeToAllContextEvents() {
+        const res = await this.helpers.subscribeToChannels(["context"]);
+        this.channelSubscriptions.push(res.subscriptions[0].subscriptionId);
+    }
+    
+    private async createNewThreadWithManagerOnly() {
+        const newThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+        });
+        this.newNoTypeThreadId = newThread.threadId;
+    }
+    
+    private async createNewThreadWithTypeThread() {
+        const newThreadTypeThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+            type: "thread" as types.thread.ThreadType,
+        });
+        this.newThreadTypeThreadId = newThreadTypeThread.threadId;
+    }
+    
+    private async createNewThreadWithTypeInbox() {
+        const newInboxTypeThread = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [],
+            type: "inbox" as types.thread.ThreadType,
+        });
+        this.newInboxTypeThreadId = newInboxTypeThread.threadId;
+    }
+    
+    async sendMessageOnNewThread() {
+        if (!this.newNoTypeThreadId) {
+            throw new Error("newThreadId not initialized yet");
+        }
+        const res = await this.apis.threadApi.threadMessageSend({
+            threadId: this.newNoTypeThreadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res.messageId, "Unexpected return value from threadMessageSend(");
+    }
+    
+    async sendMessageOnThreadTypeNadInboxTypeThreads() {
+        if (!this.newInboxTypeThreadId) {
+            throw new Error("newThreadId not initialized yet");
+        }
+        if (!this.newThreadTypeThreadId) {
+            throw new Error("newThreadId not initialized yet");
+        }
+        const res1 = await this.apis.threadApi.threadMessageSend({
+            threadId: this.newInboxTypeThreadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res1.messageId, "Unexpected return value from threadMessageSend(");
+        const res2 = await this.apis.threadApi.threadMessageSend({
+            threadId: this.newThreadTypeThreadId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "AAAA" as types.thread.ThreadMessageData,
+            keyId: testData.keyId,
+        });
+        assert(!!res2.messageId, "Unexpected return value from threadMessageSend(");
+    }
+    
 }

@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
-import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class StoreRepository {
     
@@ -48,46 +47,12 @@ export class StoreRepository {
         }
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.store.StoreType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.store.StoreType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
-        const match: Record<string, unknown> = {
-            $and: [
-                {
-                    contextId: contextId,
-                },
-                {
-                    $or: [
-                        {users: userId},
-                        {managers: userId},
-                    ],
-                },
-                {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            ],
-        };
-        if (type) {
-            match.type = type;
-        }
         return this.repository.getMatchingPage([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: match,
-            },
-            ...mongoQueries,
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
         ], listParams, sortBy);
     }
     
@@ -105,7 +70,7 @@ export class StoreRepository {
         return await this.repository.getMatchingPage<db.store.Store>([{$match: match}], listParams, sortBy);
     }
     
-    async createStore(contextId: types.context.ContextId, type: types.store.StoreType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+    async createStore(resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
@@ -134,12 +99,15 @@ export class StoreRepository {
             files: 0,
             policy: policy,
         };
+        if (resourceId) {
+            store.clientResourceId = resourceId;
+        }
         await this.repository.insert(store);
         return store;
     }
     
     async updateStore(oldStore: db.store.Store, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined) {
+        data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -167,6 +135,12 @@ export class StoreRepository {
             files: oldStore.files,
             policy: policy === undefined ? oldStore.policy : policy,
         };
+        if (resourceId && !oldStore.clientResourceId) {
+            updatedStore.clientResourceId = resourceId;
+        }
+        else if (oldStore.clientResourceId) {
+            updatedStore.clientResourceId = oldStore.clientResourceId;
+        }
         await this.repository.update(updatedStore);
         return updatedStore;
     }
@@ -184,14 +158,14 @@ export class StoreRepository {
     }
     
     async increaseFilesCounterBy(id: types.store.StoreId, lastFileDate: types.core.Timestamp, count: number) {
-        await this.repository.collection.updateOne({_id: id}, {$inc: {files: count}, $max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$inc: {files: count}, $max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
     
     async decreaseFilesCounter(id: types.store.StoreId, lastFileDate: types.core.Timestamp, decrease?: number) {
-        await this.repository.collection.updateOne({_id: id}, {$inc: {files: (decrease) ? -decrease : -1}, $max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$inc: {files: (decrease) ? -decrease : -1}, $max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
     
     async updateLastFileDate(id: types.store.StoreId, lastFileDate: types.core.Timestamp) {
-        await this.repository.collection.updateOne({_id: id}, {$max: {lastFileDate: lastFileDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: id}, {$max: {lastFileDate: lastFileDate}}, {session: this.repository.getSession()});
     }
 }

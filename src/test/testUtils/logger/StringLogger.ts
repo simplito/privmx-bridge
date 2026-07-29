@@ -9,14 +9,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../../../service/log/LoggerFactory";
-
+import { Logger } from "../../../service/log/Logger";
+import { pino } from "pino";
 export class StringLogger extends Logger {
     
     logs: {level: string, text: string, data?: any, data2?: any}[] = [];
     
     constructor() {
-        super("test", "fake", Logger.DEBUG, {log: () => {/* Do nothing */}}, true);
+        super("test", "fake", pino());
     }
     
     log(level: string, text: string, data?: any, data2?: any): void {

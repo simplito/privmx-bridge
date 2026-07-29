@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { RWState } from "./RWState";
 import { ContentType } from "./ContentType";
 import { Crypto } from "../../utils/crypto/Crypto";
@@ -20,6 +20,7 @@ import * as types from "../../types";
 import { StreamInterface } from "../../CommonTypes";
 import { AlertError } from "./AlertError";
 import { RpcError } from "./RpcError";
+import { EncoderHelper, EncoderType } from "../../utils/Encoder";
 
 export abstract class PrivmxConnectionBase {
     
@@ -28,8 +29,7 @@ export abstract class PrivmxConnectionBase {
         "ticket_response", "ecdhe", "ecdh", "key", "count", "client_random",
     ];
     
-    protected version: number;
-    
+    // protected version: number;
     protected masterSecret: Buffer;
     protected clientRandom: Buffer;
     protected serverRandom: Buffer;
@@ -39,15 +39,18 @@ export abstract class PrivmxConnectionBase {
     protected nextReadState: RWState;
     protected nextWriteState: RWState;
     
+    protected supportedVersions: number[] = [1, 2];
+    public version?: number;
+    public encoder?: EncoderType;
+    
     protected appFrameHandler?: (connection: this, data: Buffer) => Promise<void>|void;
     public output?: StreamInterface;
-    public readonly psonHelper: PsonHelperEx;
+    public readonly encoderHelper: EncoderHelper;
     
     constructor(
         protected requiredHelloPacket: boolean,
         protected logger: Logger,
     ) {
-        this.version = 1;
         this.writeState = new RWState();
         this.readState  = new RWState();
         this.nextReadState  = new RWState();
@@ -55,7 +58,8 @@ export abstract class PrivmxConnectionBase {
         this.clientRandom = Buffer.alloc(0);
         this.serverRandom = Buffer.alloc(0);
         this.masterSecret = Buffer.alloc(0);
-        this.psonHelper = new PsonHelperEx(PrivmxConnectionBase.dict);
+        const psonHelper = new PsonHelperEx(PrivmxConnectionBase.dict);
+        this.encoderHelper = new EncoderHelper(psonHelper);
     }
     
     setAppFrameHandler(appFrameHandler: (connection: this, data: Buffer) => Promise<void>|void) {
@@ -66,6 +70,9 @@ export abstract class PrivmxConnectionBase {
      * Sends a single binary data packet of specified content type.
      */
     send(packet: Buffer, contentType: number = ContentType.APPLICATION_DATA, forcePlaintext: boolean = false) {
+        if (!this.version) {
+            throw new Error("Cannot send response before packet");
+        }
         let frameHeader: Buffer;
         let frameData: Buffer;
         let frameMac: Buffer;
@@ -88,7 +95,7 @@ export abstract class PrivmxConnectionBase {
             const frameHeaderTag  = Crypto.hmacSha256(this.writeState.macKey, frameSeed).slice(0, 8);
             
             frameHeader = Buffer.concat([frameHeaderBody, frameHeaderTag]);
-            if (this.logger.isHandling(Logger.DEBUG)) {
+            if (this.logger.isLoggingOnThisLevel(Logger.DEBUG)) {
                 this.logger.debug("raw frame header\n" + Utils.hexDump(frameHeader, true));
                 this.logger.debug("raw frame data\n" +
                     (packet.length > 1024 ? Utils.hexDump(packet.slice(0, 1024)) + "..." : Utils.hexDump(packet, true)),
@@ -125,7 +132,7 @@ export abstract class PrivmxConnectionBase {
         this.output.write(frameHeader);
         this.output.write(frameData);
         this.output.write(frameMac);
-        if (this.logger.isHandling(Logger.DEBUG)) {
+        if (this.logger.isLoggingOnThisLevel(Logger.DEBUG)) {
             this.logger.debug("send frame header\n" + Utils.hexDump(frameHeader, true));
             this.logger.debug("send frame data\n" +
                 (frameData.length > 1024 ? Utils.hexDump(frameData.slice(0, 1024)) + "..." : Utils.hexDump(frameData, true)),
@@ -135,7 +142,7 @@ export abstract class PrivmxConnectionBase {
     }
     
     async process(input: StreamInterface) {
-        if (this.logger.isHandling(Logger.DEBUG)) {
+        if (this.logger.isLoggingOnThisLevel(Logger.DEBUG)) {
             const content = input.getBuffer();
             this.logger.debug("received\n" +
                 (content.length > 1024 ? Utils.hexDump(content.slice(0, 1024)) + "..." : Utils.hexDump(content)),
@@ -185,10 +192,11 @@ export abstract class PrivmxConnectionBase {
             }
             
             const frameVersion = frameHeader.readUInt8(0);
-            if (frameVersion != this.version) {
-                throw new RpcError("Unsupported version " + frameVersion + " " + this.version);
+            if (!this.supportedVersions.includes(frameVersion)) {
+                throw new RpcError("Unsupported version " + frameVersion + " " + this.supportedVersions);
             }
-            
+            this.version = frameVersion;
+            this.encoder = frameVersion === 1 ? EncoderType.PSON : EncoderType.MSGPACK;
             const frameContentType = frameHeader.readUInt8(1);
             const frameLength = frameHeader.readUInt32BE(2);
             
@@ -221,14 +229,16 @@ export abstract class PrivmxConnectionBase {
             
             switch (frameContentType) {
                 case ContentType.APPLICATION_DATA: {
-                    this.logger.debug("application", {data: frameData});
+                    if (this.logger.isLoggingOnThisLevel(Logger.DEBUG)) {
+                        this.logger.debug({data: (frameData.length > 1024 ? Utils.hexDump(frameData.subarray(0, 1024)) + "..." : Utils.hexDump(frameData))}, "application");
+                    };
                     if (this.appFrameHandler) {
                         await this.appFrameHandler(this, frameData);
                     }
                     break;
                 }
                 case ContentType.HANDSHAKE: {
-                    const packetResult = Utils.try(() => this.psonHelper.pson_decode<types.packet.BasePacket>(frameData));
+                    const packetResult = Utils.try(() => this.getEncoder().decode<types.packet.BasePacket>(frameData));
                     if (packetResult.success === false) {
                         throw new RpcError("Invalid handshake data. Cannot decode given PSON");
                     }
@@ -250,7 +260,7 @@ export abstract class PrivmxConnectionBase {
                     throw new AlertError(alertMessage);
                 }
                 case ContentType.HELLO: {
-                    const packetResult = Utils.try(() => this.psonHelper.pson_decode<string>(frameData));
+                    const packetResult = Utils.try(() => this.getEncoder().decode<types.packet.BasePacket>(frameData));
                     if (packetResult.success === false) {
                         throw new RpcError("Invalid hello data. Cannot decode given PSON");
                     }
@@ -306,7 +316,7 @@ export abstract class PrivmxConnectionBase {
     getFreshRWStates(masterSecret: Buffer, clientRandom: Buffer, serverRandom: Buffer) {
         const keyBlock = Crypto.prf_tls12(masterSecret, Buffer.concat([Buffer.from("key expansion", "utf8"), serverRandom, clientRandom]), 4 * 32);
         
-        this.logger.debug("new key material", {key_block: Hex.from(keyBlock.slice(0, 16)) + "..."});
+        this.logger.debug({key_block: Hex.from(keyBlock.slice(0, 16)) + "..."}, "new key material");
         
         const clientMacKey = keyBlock.slice(0, 32);
         const serverMacKey = keyBlock.slice(32, 64);
@@ -325,10 +335,24 @@ export abstract class PrivmxConnectionBase {
         const masterSecret = Crypto.prf_tls12(preMasterSecret, Buffer.concat([Buffer.from("master secret"), clientRandom, serverRandom]), 48);
         this.masterSecret = masterSecret;
         
-        this.logger.debug("new master secret", {masterSecret: Hex.from(masterSecret.slice(0, 16)) + "..."});
+        this.logger.debug({masterSecret: Hex.from(masterSecret.slice(0, 16)) + "..."}, "new master secret");
         
         const rwStates = this.getFreshRWStates(masterSecret, clientRandom, serverRandom);
         this.nextReadState  = rwStates.readState;
         this.nextWriteState = rwStates.writeState;
+    }
+    
+    getEncoder() {
+        if (!this.encoder) {
+            throw new RpcError("Encoder not set");
+        }
+        return this.encoderHelper.getEncoder(this.encoder);
+    }
+    
+    getEncoderType() {
+        if (!this.encoder) {
+            throw new RpcError("Encoder not set");
+        }
+        return this.encoder;
     }
 }

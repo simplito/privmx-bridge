@@ -26,6 +26,7 @@ import { RequestRepository } from "../../../service/request/RequestRepository";
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { StringLogger } from "../../testUtils/logger/StringLogger";
 import * as mongodb from "mongodb";
+import { StorageServiceProvider } from "../../../service/cloud/StorageServiceProvider";
 
 const requestId = <types.request.RequestId>"req-1";
 const notExistentRequestId = <types.request.RequestId>"req-2";
@@ -360,11 +361,15 @@ function createRequestService() {
         tmpDir: "/tmp",
         filesDir: "/storage",
     }})});
+    const storageServiceProvider = createMock<StorageServiceProvider>({});
     const fileSystemService = createMock<IStorageService>({});
+    mock(storageServiceProvider, "getStorageService", () => {
+        return fileSystemService;
+    });
     mock(fileSystemService, "create");
     mock(fileSystemService, "append");
     mock(fileSystemService, "setChecksumAndClose");
-    const requestService = new RequestService(configService, fileSystemService, repositoryFactory, new StringLogger());
+    const requestService = new RequestService(configService, storageServiceProvider, repositoryFactory, new StringLogger());
     return {
         repository,
         repositoryFactory,

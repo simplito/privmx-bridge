@@ -18,6 +18,7 @@ import { ECUtils } from "../../utils/crypto/ECUtils";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { AppException } from "../../api/AppException";
 import { RpcError } from "../../api/tls/RpcError";
+import { EncoderType } from "../../utils/Encoder";
 
 export class EcdheLoginService {
     
@@ -29,19 +30,19 @@ export class EcdheLoginService {
     ) {
     }
     
-    async onLogin(key: types.core.EccPubKey, solutionId?: types.cloud.SolutionId) {
+    async onLogin(key: types.core.EccPubKey, encoderType: EncoderType, solutionId?: types.cloud.SolutionId, plain?: boolean) {
         if (solutionId) {
             const solution = await this.repositoryFactory.createSolutionRepository().get(solutionId);
             if (!solution) {
                 throw new RpcError("Solution does not exist");
             }
         }
-        const session = await this.startEcdheSession(key, solutionId);
+        const session = await this.startEcdheSession(key, encoderType, solutionId, plain);
         await this.callbacks.trigger("ecdheLogin", [key, this, this.sessionHolder]);
         return session.id;
     }
     
-    private async startEcdheSession(key: types.core.EccPubKey, solution?: types.cloud.SolutionId) {
+    private async startEcdheSession(key: types.core.EccPubKey, encoderType: EncoderType, solution?: types.cloud.SolutionId, plain?: boolean) {
         const session = await this.sessionHolder.closeCurrentSessionAndCreateNewOne(undefined);
         session.set("username", <types.core.Username><unknown>key);
         session.set("state", "ecdhePre");
@@ -56,8 +57,12 @@ export class EcdheLoginService {
             regular_sections_manager: false,
             all_users_lookup: false,
         });
+        session.set("encoder", encoderType);
         if (solution) {
             session.set("solution", solution);
+        }
+        if (plain) {
+            session.set("plainCommunication", true);
         }
         return session;
     }
@@ -73,7 +78,7 @@ export class EcdheLoginService {
         }
     }
     
-    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solutionId: types.cloud.SolutionId|undefined) {
+    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean) {
         if (solutionId) {
             const solution = await this.repositoryFactory.createSolutionRepository().get(solutionId);
             if (!solution) {
@@ -85,7 +90,10 @@ export class EcdheLoginService {
             throw new AppException("INVALID_SIGNATURE");
         }
         await this.nonceService.nonceCheck2P(Buffer.from("ecdhexlogin", "utf8"), pub, nonce, timestamp, signature);
-        
+        return this.loginUsingKey(key, solutionId, encoderType, plain);
+    }
+    
+    async loginUsingKey(key: types.core.EccPubKey, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean) {
         const keyExists = await this.repositoryFactory.createContextUserRepository().userPubKeyExists(key);
         if (!keyExists) {
             throw new AppException("USER_DOESNT_EXIST");
@@ -105,8 +113,12 @@ export class EcdheLoginService {
             regular_sections_manager: false,
             all_users_lookup: false,
         });
+        session.set("encoder", encoderType);
         if (solutionId) {
             session.set("solution", solutionId);
+        }
+        if (plain) {
+            session.set("plainCommunication", true);
         }
         return session.id;
     }

@@ -69,6 +69,8 @@ export interface Inbox {
     managers: types.cloud.UserId[];
     /** Version */
     version: types.inbox.InboxVersion;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown;
 }
 
 export interface InboxDeletedData {
@@ -80,18 +82,21 @@ export interface InboxCreatedEvent {
     channel: "inbox";
     type: "inboxCreated";
     data: Inbox;
+    timestamp: types.core.Timestamp;
 }
 
 export interface InboxUpdatedEvent {
     channel: "inbox";
     type: "inboxUpdated";
     data: Inbox;
+    timestamp: types.core.Timestamp;
 }
 
 export interface InboxDeletedEvent {
     channel: "inbox";
     type: "inboxDeleted";
     data: InboxDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type InboxEvent = InboxCreatedEvent|InboxUpdatedEvent|InboxDeletedEvent;

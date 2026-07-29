@@ -21,6 +21,7 @@
         "strictFunctionTypes": true,
         "strictNullChecks": true,
         "strictPropertyInitialization": true,
+        "allowSyntheticDefaultImports": true,
         
         "noFallthroughCasesInSwitch": true,
         "noImplicitReturns": true,

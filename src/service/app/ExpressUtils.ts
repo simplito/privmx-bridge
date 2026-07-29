@@ -11,7 +11,7 @@ limitations under the License.
 
 import * as express from "express";
 import { EngineResponse } from "../../api/server/Engine";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import * as fs from "fs";
 import { FsPromise } from "../../utils/FsPromise";
 import { Utils } from "../../utils/Utils";
@@ -31,7 +31,7 @@ export class ExpressUtils {
                     body: "404 Not found",
                 };
             }
-            logger.error("Error during download " + errorMessage, stats.error);
+            logger.error(stats.error, "Error during download " + errorMessage);
             return {
                 code: 500,
                 body: "500 Internal server error",
@@ -62,7 +62,7 @@ export class ExpressUtils {
         response.set("Last-Modified", lastModified);
         fs.createReadStream(filePath)
             .on("error", err => {
-                logger.error("Error during download " + errorMessage, err);
+                logger.error(err, "Error during download " + errorMessage);
                 if (err && (err as any).code === "ENOENT") {
                     response.status(404);
                     response.send("404 Not found");

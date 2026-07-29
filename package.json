@@ -1,6 +1,6 @@
 {
   "name": "privmx-bridge",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "Zero-knowledge server for secure storage and transfer of E2E encrypted data.",
   "scripts": {
     "types-gen": "rm -rf out && tsc --emitDeclarationOnly --declaration && touch out/index.d.ts && ~/scripts/types.sh",
@@ -16,7 +16,8 @@
     "e2e-tests": "node ./out/test/end2end/runMulti.js",
     "gen-json-docs": "node ./out/docs/scripts/gen_json_docs.js",
     "gen-slate-from-json": "node ./out/docs/scripts/gen_slate_from_json.js",
-    "create-api-key": "node ./out/init/scripts/createApiKey.js"
+    "create-api-key": "node ./out/init/scripts/createApiKey.js",
+    "get-public-key": "node ./out/init/scripts/getPublicKey.js"
   },
   "jest": {
     "roots": [
@@ -52,6 +53,7 @@
   ],
   "dependencies": {
     "@godaddy/terminus": "^4.4.1",
+    "@msgpack/msgpack": "^3.1.2",
     "adv-promise": "^1.0.1",
     "adv-validator": "^1.0.3",
     "bn.js": "^4.12.0",
@@ -68,21 +70,29 @@
     "mkdirp": "^1.0.4",
     "moment-timezone": "^0.5.45",
     "mongodb": "^6.7.0",
-    "nodemailer": "^6.9.14",
+    "msgpackr": "^1.11.5",
+    "nodemailer": "^8.0.5",
     "notp": "^2.0.3",
+    "pino": "^10.0.0",
+    "pino-pretty": "^13.1.2",
     "privmx-pki2": "^1.2.3",
+    "prom-client": "^15.1.3",
     "pson": "^2.0.1",
     "real-client-ip": "^1.0.0",
+    "redis": "^5.9.0",
     "svg-captcha": "^1.4.0",
     "thirty-two": "^1.0.2",
     "uniqid": "^5.2.0",
-    "uuid": "^8.3.2",
-    "ws": "^7.5.10"
+    "uuid": "^14.0.0",
+    "ws": "^8.18.3",
+    "zeromq": "^6.5.0"
   },
   "optionalDependencies": {
+    "bufferutil": "^4.0.9",
     "privmx-native": "^2.0.0"
   },
   "devDependencies": {
+    "@simplito/privmx-minimal-js": "^3.0.0",
     "@stylistic/eslint-plugin": "^2.9.0",
     "@stylistic/eslint-plugin-js": "^2.9.0",
     "@types/authenticator": "^1.1.0",
@@ -110,13 +120,13 @@
     "@types/thirty-two": "^1.0.2",
     "@types/uniqid": "^5.2.0",
     "@types/uuid": "^8.3.3",
-    "@types/ws": "^7.2.9",
+    "@types/ws": "^8.18.1",
+    "@types/zeromq": "^5.2.5",
     "@typescript-eslint/eslint-plugin": "^8.10.0",
     "@typescript-eslint/parser": "^8.10.0",
     "eslint": "^9.12.0",
     "eslint-plugin-indent-empty-lines": "^1.0.2",
     "nodemon": "^3.1.7",
-    "privmx-rpc": "^2.4.7",
     "q2-test": "^1.1.2",
     "terser": "^5.31.1",
     "typescript": "^5.6.3"
@@ -152,7 +162,7 @@
       "plugins",
       "docker"
     ],
-    "version": "1.0.0-20250109155539884"
+    "version": "2.30.1-20250526141558510"
   },
   "typingsVersion": "1.0.202501091706"
 }

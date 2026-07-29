@@ -12,7 +12,7 @@ limitations under the License.
 import * as assert from "assert";
 import * as types from "../../../types";
 import { testData } from "../../datasets/testData";
-import { BaseTestSet, executeWithTimeout, Test } from "../BaseTestSet";
+import { BaseTestSet, executeWithTimeout, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import { DateUtils } from "../../../utils/DateUtils";
 import { expect } from "../AssertUtils";
 
@@ -28,6 +28,7 @@ interface DataObject {
 export class DbQueryTest extends BaseTestSet {
     
     private threadId?: types.thread.ThreadId;
+    private storeId?: types.store.StoreId;
     
     @Test()
     async searchThreadsForExactMatchTest() {
@@ -47,7 +48,13 @@ export class DbQueryTest extends BaseTestSet {
         await this.searchInboxesForExactMatch();
     }
     
-    @Test()
+    @Test({
+        config: {
+            streams: {
+                enabled: "true",
+            },
+        },
+    })
     async searchStreamRoomsForExactMatchTest() {
         await this.createStreamRooms();
         await this.searchStreamRoomsForExactMatch();
@@ -127,9 +134,48 @@ export class DbQueryTest extends BaseTestSet {
         await this.searchByNotExistingField();
     }
     
+    @Test()
+    async searchStoreFilesForExactMatch() {
+        await this.createNewStoreAndPopulateData();
+        await this.searchStoreFilesWithBooleanMatch();
+    }
+    
+    @Test()
+    async searchThreadsForExactMatchInRootLevelTest() {
+        await this.createThreads();
+        await this.searchThreadsForExactMatchInRootLevel();
+    }
+    
+    @Test()
+    async getThreadUsingQuery() {
+        await this.createThread();
+        await this.fetchThreadUsingQuery();
+    }
+    
+    @Test()
+    async tryQueryUsingRestrictedFields() {
+        await this.createThread();
+        await this.tryListThreadUsingRestrictedFieldsInQuery();
+    }
+    
+    @Test()
+    async getThreadWithExepctions() {
+        await this.createThread();
+        await this.createThreads();
+        await this.fetchThreadWithExpectionUsingNotIn();
+    }
+    
+    @Test()
+    async getThreadWithExepctionsByUsingNotLogicalOperator() {
+        await this.createThread();
+        await this.createThreads();
+        await this.fetchThreadWithExpectionUsingNotLogicalOperator();
+    }
+    
     private async createThreadAndPopulateDataWithMaliciousInput() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -140,6 +186,7 @@ export class DbQueryTest extends BaseTestSet {
         this.threadId = newThread.threadId;
         await this.apis.threadApi.threadMessageSend({
             threadId: this.threadId,
+            resourceId: this.helpers.generateResourceId(),
             data: {
                 publicMetaObject: {
                     field1: "a".repeat(10000) + "!",
@@ -174,6 +221,7 @@ export class DbQueryTest extends BaseTestSet {
     private async createThreadAndPopulateData() {
         const newThread = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA" as types.thread.ThreadData,
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -186,6 +234,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -199,6 +248,7 @@ export class DbQueryTest extends BaseTestSet {
             });
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `BBBB${i % 2}`,
@@ -211,6 +261,7 @@ export class DbQueryTest extends BaseTestSet {
             });
             await this.apis.threadApi.threadMessageSend({
                 threadId: this.threadId,
+                resourceId: this.helpers.generateResourceId(),
                 data: "CCCC" as types.thread.ThreadMessageData,
                 keyId: testData.keyId,
             });
@@ -427,6 +478,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.threadApi.threadCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -442,6 +494,20 @@ export class DbQueryTest extends BaseTestSet {
                 users: [testData.userId],
             });
         }
+    }
+    
+    private async createThread() {
+        const res = await this.apis.threadApi.threadCreate({
+            contextId: testData.contextId2,
+            resourceId: this.helpers.generateResourceId(),
+            data: {},
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+        });
+        assert(!!res && !!res.threadId, "Invalid return value");
+        this.threadId = res.threadId;
     }
     
     private async searchThreadsForExactMatch() {
@@ -462,6 +528,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.storeApi.storeCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -497,6 +564,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.streamApi.streamRoomCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     publicMetaObject: {
                         field1: `AAAA${i % 2}`,
@@ -531,6 +599,7 @@ export class DbQueryTest extends BaseTestSet {
     private async createInboxes() {
         const threadRes = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId2,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA",
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -539,6 +608,7 @@ export class DbQueryTest extends BaseTestSet {
         });
         const storeRes = await this.apis.storeApi.storeCreate({
             contextId: testData.contextId2,
+            resourceId: this.helpers.generateResourceId(),
             data: "AAAA",
             keyId: testData.keyId,
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
@@ -548,6 +618,7 @@ export class DbQueryTest extends BaseTestSet {
         for (let i = 0; i < 10; i++ ) {
             await this.apis.inboxApi.inboxCreate({
                 contextId: testData.contextId2,
+                resourceId: this.helpers.generateResourceId(),
                 data: {
                     threadId: threadRes.threadId,
                     storeId: storeRes.storeId,
@@ -588,5 +659,165 @@ export class DbQueryTest extends BaseTestSet {
         });
         expect(res.count).toBe(5);
         res.inboxes.forEach((v, i) => expect((v.data[v.data.length - 1].data.meta as DataObject).publicMetaObject.field1).withContext(`for index ${i}`).toBe("AAAA0"));
+    }
+    
+    private async createNewStoreAndPopulateData() {
+        const newStore = await this.apis.storeApi.storeCreate({
+            contextId: testData.contextId,
+            resourceId: this.helpers.generateResourceId(),
+            data: "",
+            keyId: testData.keyId,
+            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            managers: [testData.userId],
+            users: [testData.userId],
+        });
+        
+        this.storeId = newStore.storeId;
+        
+        for (let i = 0; i < 10; i++) {
+            const request = await this.apis.requestApi.createRequest({files: [{size: 512, checksumSize: 64}]});
+            await this.apis.requestApi.sendChunk({requestId: request.id, fileIndex: 0, seq: 0, data: Buffer.alloc(512, "A")});
+            await this.apis.requestApi.commitFile({requestId: request.id, fileIndex: 0, seq: 1, checksum: Buffer.alloc(64)});
+            
+            await this.apis.storeApi.storeFileCreate({
+                storeId: this.storeId,
+                requestId: request.id,
+                fileIndex: 0,
+                meta: {
+                    publicMetaObject: {
+                        field1: `AAAA${i % 2}`,
+                        field2: `AAAA${i % 3}`,
+                        field3: i * 2,
+                        field4: false,
+                    },
+                } as types.store.StoreFileMeta,
+                keyId: testData.keyId,
+            });
+        }
+        
+        for (let i = 0; i < 10; i++) {
+            const request = await this.apis.requestApi.createRequest({files: [{size: 512, checksumSize: 64}]});
+            await this.apis.requestApi.sendChunk({requestId: request.id, fileIndex: 0, seq: 0, data: Buffer.alloc(512, "A")});
+            await this.apis.requestApi.commitFile({requestId: request.id, fileIndex: 0, seq: 1, checksum: Buffer.alloc(64)});
+            
+            await this.apis.storeApi.storeFileCreate({
+                storeId: this.storeId,
+                requestId: request.id,
+                fileIndex: 0,
+                meta: {
+                    publicMetaObject: {
+                        field1: `AAAA${i % 2}`,
+                        field2: `AAAA${i % 3}`,
+                        field3: i * 2,
+                        field4: true,
+                    },
+                } as types.store.StoreFileMeta,
+                keyId: testData.keyId,
+            });
+        }
+    }
+    
+    private async searchStoreFilesWithBooleanMatch() {
+        if (!this.storeId) {
+            throw new Error("storeId not initialized yet");
+        }
+        const res = await this.apis.storeApi.storeFileList({
+            storeId: this.storeId,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                field4: false,
+            },
+        });
+        assert(res.count === 10 && res.files.every(v => (v.meta as DataObject).publicMetaObject.field4 === false));
+    }
+    
+    private async searchThreadsForExactMatchInRootLevel() {
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#creator": testData.userId,
+            },
+        });
+        expect(res.count).toBe(10);
+    }
+    
+    private async fetchThreadUsingQuery() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#id": this.threadId,
+            },
+        });
+        
+        assert(res.count === 1, "invalid count");
+        assert(res.threads[0].id === this.threadId, "invalid thread");
+    }
+    
+    private async fetchThreadWithExpectionUsingNotIn() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#id": {
+                    $nin: [this.threadId],
+                },
+            },
+        });
+        
+        assert(res.count === 10, "invalid count");
+        assert(res.threads.length === 10, "invalid number of threads");
+    }
+    
+    private async fetchThreadWithExpectionUsingNotLogicalOperator() {
+        if (!this.threadId) {
+            throw new Error("threadId not initialized yet");
+        }
+        
+        const res = await this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                $nor: [{
+                    "#id": {
+                        $in: [this.threadId],
+                    },
+                }],
+            },
+        });
+        
+        assert(res.count === 10, "invalid count");
+        assert(res.threads.length === 10, "invalid number of threads");
+    }
+    
+    private async tryListThreadUsingRestrictedFieldsInQuery() {
+        await shouldThrowErrorWithCode2(async () => this.apis.threadApi.threadList({
+            contextId: testData.contextId2,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#keyId": testData.keyId,
+            },
+        }), "INVALID_PARAMS");
     }
 }

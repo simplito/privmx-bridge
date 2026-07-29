@@ -56,9 +56,13 @@ export type EncryptionKey = Hex&{__encryptionKey: never};
 export type WsConnectionId = string&{__wsConnectionId: never};
 export type Quantity = number&{__quantity: never};
 export type WsChannelName = string&{__customChannelName: never};
-export type Query = {$and: Query[]} | {$or: Query[]} | PropertiesQuery;
-
+export type Query = {$and: Query[]} | {$or: Query[]} | {$nor: Query[]} | PropertiesQuery;
+export type SubscriptionId = string&{__subscriptionId: never};
+export type ClientResourceId = string&{__clientResourceId: never};
+export type CRUDAction = "create"|"update"|"delete";
+export type ContainerWithItems = "thread"|"store"|"kvdb";
 export type PropertiesQuery = Record<string, PropertyQuery>;
+export type ContainerAccessScope = "ALL"|"MANAGER"|"USER"|"MEMBER"|"OWNER";
 
 export type PropertyQuery = Value | {
     $gt?: number;
@@ -69,6 +73,7 @@ export type PropertyQuery = Value | {
     $eq?: Value;
     $ne?: Value;
     $in?: Value[];
+    $nin?: Value[];
     $startsWith?: string;
     $endsWith?: string;
     $contains?: string;
@@ -103,8 +108,13 @@ export interface ListModel2<T> {
     limit: number;
     sortOrder: SortOrder;
 }
-
+export interface Subscription {
+    subscriptionId: SubscriptionId;
+    channel: WsChannelName;
+}
 export interface Event<T extends string, D> {
     type: T;
     data: D;
+    subscriptions?: SubscriptionId[];
+    version?: number;
 }

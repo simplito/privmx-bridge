@@ -10,6 +10,7 @@ limitations under the License.
 */
 
 import * as crypto from "crypto";
+import * as elliptic from "elliptic";
 
 export interface KdfParams {
     label?: string;
@@ -35,6 +36,13 @@ export class Crypto {
     
     static hmac(algorithm: string, key: Buffer, data: Buffer): Buffer {
         return crypto.createHmac(algorithm, key).update(data).digest();
+    }
+    
+    /**
+     * HMAC-SHA-1
+     */
+    static hmacSha1(key: Buffer, data: Buffer): Buffer {
+        return Crypto.hmac("sha1", key, data);
     }
     
     /**
@@ -299,5 +307,14 @@ export class Crypto {
     
     static uuidv4() {
         return crypto.randomUUID();
+    }
+    
+    static compressPublicKey(uncompressedKey: Uint8Array) {
+        if (uncompressedKey.length !== 65 || uncompressedKey[0] !== 0x04) {
+            throw new Error("Invalid uncompressed key format");
+        }
+        const ed25519 = new elliptic.ec("ed25519");
+        const pub = ed25519.keyFromPublic(Buffer.from(uncompressedKey)).getPublic();
+        return pub.encodeCompressed();
     }
 }

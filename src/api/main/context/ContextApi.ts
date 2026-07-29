@@ -37,7 +37,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async contextList(model: contextApi.ContextListModel): Promise<contextApi.ContextListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const entries = await this.contextService.getAllForUser(cloudUser, model);
+        const entries = await this.contextService.getContextsOfUser(cloudUser, model);
         return {contexts: entries.list.map(x => this.convertContextUser(x)), count: entries.count};
     }
     
@@ -46,6 +46,13 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const users = await this.contextService.getAllContextUsers(cloudUser, model.contextId);
         return {users: users.map(user => this.convertUser(user))};
+    }
+    
+    @ApiMethod({})
+    async contextListUsers(model: contextApi.ContextListUsersModel): Promise<contextApi.ContextListUsersResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const usersList = await this.contextService.getPageOfContextUsersWithStatus(cloudUser, model.contextId, model);
+        return {count: usersList.count, users: usersList.users.map(user => this.convertUserWithStatusChange(user))};
     }
     
     @ApiMethod({})
@@ -61,17 +68,27 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             userId: x.userId,
             acl: x.acl,
             policy: context.policy || {},
+            created: context.created,
+            modified: context.modified,
+            name: context.name,
+            description: context.description,
+            scope: context.scope,
         };
         return res;
     }
     
-    private convertContextUser(context: db.context.Context&{users: db.context.ContextUser[]}) {
-        const x = context.users[0];
+    private convertContextUser(contextUser: db.context.ContextUser&{contextObj: db.context.Context}) {
+        const x = contextUser.contextObj;
         const res: contextApi.ContextInfo = {
-            contextId: x.contextId,
-            userId: x.userId,
-            acl: x.acl,
-            policy: context.policy || {},
+            contextId: contextUser.contextId,
+            userId: contextUser.userId,
+            acl: contextUser.acl,
+            policy: x.policy || {},
+            created: x.created,
+            modified: x.modified,
+            name: x.name,
+            description: x.description,
+            scope: x.scope,
         };
         return res;
     }
@@ -81,6 +98,16 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             id: x.userId,
             pub: x.userPubKey,
             status: x.status,
+        };
+        return res;
+    }
+    
+    private convertUserWithStatusChange(x: db.context.ContextUserWithStatus): types.cloud.UserIdentityWithStatusAndAction {
+        const res: types.cloud.UserIdentityWithStatusAndAction = {
+            id: x.userId,
+            pub: x.userPubKey,
+            status: x.status,
+            lastStatusChange: x.lastStatusChange ? x.lastStatusChange : null,
         };
         return res;
     }

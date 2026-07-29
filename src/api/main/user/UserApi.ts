@@ -67,22 +67,42 @@ export class UserApi extends BaseApi implements userApi.IUserApi {
     }
     
     @ApiMethod({})
-    async subscribeToChannel(model: {channel: string}): Promise<types.core.OK> {
+    async subscribeToChannel(model: {channel: types.core.WsChannelName}): Promise<userApi.SubscribeToChannelResult> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
-        await this.webSocketConnectionManager.subscribeToChannel(this.getSession(), this.webSocket as WebSocketEx, model.channel);
+        const subscriptionId = await this.webSocketConnectionManager.subscribeToChannelOld(this.getSession(), this.webSocket as WebSocketEx, model.channel);
+        return {subscriptionId};
+    }
+    
+    @ApiMethod({})
+    async unsubscribeFromChannel(model: {channel: types.core.WsChannelName}): Promise<types.core.OK> {
+        this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
+        if (!this.webSocket) {
+            throw new AppException("WEBSOCKET_REQUIRED");
+        }
+        await this.webSocketConnectionManager.unsubscribeFromChannelOld(this.getSession(), this.webSocket as WebSocketEx, model.channel);
         return "OK";
     }
     
     @ApiMethod({})
-    async unsubscribeFromChannel(model: {channel: string}): Promise<types.core.OK> {
+    async subscribeToChannels(model: userApi.SubscribeToChannelsModel): Promise<userApi.SubscribeToChannelsResult> {
         this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
         if (!this.webSocket) {
             throw new AppException("WEBSOCKET_REQUIRED");
         }
-        await this.webSocketConnectionManager.unsubscribeFromChannel(this.getSession(), this.webSocket as WebSocketEx, model.channel);
+        const subscriptionsIds = await this.webSocketConnectionManager.subscribeToChannels(this.getSession(), this.webSocket as WebSocketEx, model.channels);
+        return {subscriptions: subscriptionsIds};
+    }
+    
+    @ApiMethod({})
+    async unsubscribeFromChannels(model: userApi.UnsubscribeFromChannelsModel): Promise<types.core.OK> {
+        this.sessionService.assertMethod(Permission.HAS_ANY_SESSION);
+        if (!this.webSocket) {
+            throw new AppException("WEBSOCKET_REQUIRED");
+        }
+        await this.webSocketConnectionManager.unsubscribeFromChannels(this.getSession(), this.webSocket as WebSocketEx, model.subscriptionsIds);
         return "OK";
     }
     

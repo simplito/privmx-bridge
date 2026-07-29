@@ -27,4 +27,6 @@ export interface ContextPolicy {
     inbox?: types.cloud.ContainerWithoutItemPolicy;
     /** Policy for streams in this context */
     stream?: types.cloud.ContainerWithoutItemPolicy;
+    /** Policy for KVDBs in this context */
+    kvdb?: types.cloud.ContainerPolicy;
 }

@@ -51,7 +51,7 @@ export class PluginsLoader {
     }
     
     static loadForWorker(workerRegistry: WorkerRegistry) {
-        const logger = workerRegistry.getLoggerFactory().get(PluginsLoader);
+        const logger = workerRegistry.getLoggerFactory().createLogger(PluginsLoader);
         const pluginsManager = workerRegistry.getWorkerPluginsManager();
         const addPlugin = (pluginCreator: PluginCreator) => {
             const plugin = pluginCreator(workerRegistry);

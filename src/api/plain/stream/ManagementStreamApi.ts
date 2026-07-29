@@ -41,7 +41,7 @@ export class ManagementStreamApi extends ManagementBaseApi implements management
     @ApiMethod({errorCodes: ["CONTEXT_DOES_NOT_EXIST"] })
     async listStreamRooms(model: managementStreamApi.ListStreamRoomsModel): Promise<managementStreamApi.ListStreamRoomsResult> {
         this.validateScope("stream");
-        const {streamRooms} = await this.streamService.getStreamRoomsByContext(this.getPlainUser(), model.contextId, model);
+        const {streamRooms} = await this.streamService.getStreamRoomsByContext(this.getPlainUser(), model.contextId, model, model.state || "all");
         return {count: streamRooms.count, list: streamRooms.list.map(x => this.managementStreamConverter.convertStreamRoom(x))};
     }
     

@@ -14,6 +14,9 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { AppException } from "../../api/AppException";
+import { KnownPublicKeyRepository } from "./KnownPublicKeyRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
+import { ContextRepository } from "./ContextRepository";
 
 export class ContextUserRepository {
     
@@ -33,7 +36,7 @@ export class ContextUserRepository {
         return this.repository.exists(this.getUserId(contextId, userId));
     }
     
-    async insertOrUpdate(contextId: types.context.ContextId, userId: types.cloud.UserId, userPubKey: types.cloud.UserPubKey, acl:  types.cloud.ContextAcl) {
+    async insertOrUpdate(contextId: types.context.ContextId, userId: types.cloud.UserId, userPubKey: types.cloud.UserPubKey, acl: types.cloud.ContextAcl) {
         const oldUser = await this.getUserFromContext(userPubKey, contextId);
         if (oldUser) {
             if (oldUser.userId === userId) {
@@ -96,6 +99,104 @@ export class ContextUserRepository {
     
     async getUsersPageFromContext(contextId: types.context.ContextId, model: types.core.ListModel) {
         return this.repository.matchX({contextId: contextId}, model, "created");
+    }
+    
+    async getUserContexts(userPubKey: types.cloud.UserPubKey, listParams: types.core.ListModel, solutionId?: types.cloud.SolutionId) {
+        const sortBy = "contextObj.created" as keyof db.context.ContextUser;
+        const stages: any[] = [
+            {
+                $match: {
+                    userPubKey: userPubKey,
+                },
+            },
+            {
+                $lookup: {
+                    from: ContextRepository.COLLECTION_NAME,
+                    localField: "contextId",
+                    foreignField: "_id",
+                    as: "contextObj",
+                },
+            },
+            {
+                $unwind: "$contextObj",
+            },
+        ];
+        if (solutionId) {
+            stages.push({
+                $match: {
+                    $or: [
+                        {"contextObj.solution": solutionId},
+                        {"contextObj.shares": solutionId},
+                    ],
+                },
+            });
+        }
+        if (listParams.lastId) {
+            const temporaryListProperties = {
+                limit: listParams.limit,
+                skip: 0,
+                sortOrder: listParams.sortOrder,
+            };
+            const additionalCriteria = {
+                $match: {
+                    "contextId": { [(listParams.sortOrder === "asc") ? "$lt" : "$gt"]: listParams.lastId},
+                },
+            };
+            stages.push(additionalCriteria);
+            return await this.repository.aggregationX<db.context.ContextUser&{contextObj: db.context.Context}>(stages, temporaryListProperties, sortBy);
+        }
+        return this.repository.aggregationX<db.context.ContextUser&{contextObj: db.context.Context}>(stages, listParams, sortBy);
+    }
+    
+    async getUsersPageWithActivityFromContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId, model: types.core.ListModel) {
+        const mongoQueries = model.query ? [MongoQueryConverter.convertQuery(model.query)] : [];
+        return this.repository.getMatchingPage<db.context.ContextUserWithStatus>([
+            {
+                $match: {
+                    contextId: contextId,
+                },
+            },
+            {
+                $lookup: {
+                    from: KnownPublicKeyRepository.COLLECTION_NAME,
+                    localField: "userPubKey",
+                    foreignField: "publicKey",
+                    as: "matchedDocs",
+                },
+            },
+            {
+                $addFields: {
+                    matchedDocs: {
+                        $filter: {
+                            input: "$matchedDocs",
+                            as: "doc",
+                            cond: { $eq: ["$$doc.solutionId", solutionId] },
+                        },
+                    },
+                },
+            },
+            {
+                $unwind: {
+                    path: "$matchedDocs",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+            {
+                $addFields: {
+                    lastStatusChange: "$matchedDocs.lastStatusChange",
+                },
+            },
+            {
+                $project: {
+                    matchedDocs: 0,
+                },
+            },
+            ...mongoQueries,
+        ], model, "created");
+    }
+    
+    async getCountOfExistingUsersFromList(userId: types.cloud.UserId[], contextId: types.context.ContextId) {
+        return this.repository.count(q => q.in("id", userId.map(uId => this.getUserId(contextId, uId))));
     }
     
     private getUserId(contextId: types.context.ContextId, userId: types.cloud.UserId) {

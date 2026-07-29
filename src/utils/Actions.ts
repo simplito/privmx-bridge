@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../service/log/LoggerFactory";
+import { Logger } from "../service/log/Logger";
 
 export type Action = () => Promise<void>|void;
 
@@ -38,7 +38,7 @@ export class Actions {
                 await action();
             }
             catch (e) {
-                this.logger.error("Error during executing post action in section multi operators executor", e);
+                this.logger.error(e, "Error during executing post action in section multi operators executor");
             }
         }
     }

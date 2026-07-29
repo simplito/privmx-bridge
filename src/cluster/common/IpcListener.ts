@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { IpcResponse } from "../common/Ipc";
 import { DeferredMap } from "./DeferredMap";
 

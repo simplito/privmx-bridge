@@ -9,7 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import * as PrivmxRpc from "privmx-rpc";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 
 export class BaseApiClient {
     
@@ -20,6 +20,12 @@ export class BaseApiClient {
     
     protected async request<T>(method: string, params: unknown) {
         const result = await this.conn.call(method, params, {sendAlone: true});
+        const decoded = this.decode(result) as T;
+        return decoded;
+    }
+    
+    protected async requestWS<T>(method: string, params: unknown) {
+        const result = await this.conn.call(method, params, {sendAlone: true, channelType: "websocket"});
         const decoded = this.decode(result) as T;
         return decoded;
     }

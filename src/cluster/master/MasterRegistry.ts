@@ -17,7 +17,6 @@ import { IpcRequester } from "../common/IpcRequester";
 import { IpcExecutor } from "../common/IpcExecutor";
 import { DeferredMap } from "../common/DeferredMap";
 import { IpcListener } from "../common/IpcListener";
-import { Worker2Service } from "./Worker2Service";
 import { IpcMessageProcessor } from "../common/IpcMessageProcessor";
 import { LoggerFactory } from "../../service/log/LoggerFactory";
 import { IpRateLimiterImpl } from "./IpRateLimiterImpl";
@@ -29,12 +28,18 @@ import { MasterPlugin } from "../../service/plugin/Plugin";
 import { Callbacks } from "../../service/event/Callbacks";
 import { MetricsContainer } from "./ipcServices/MetricsContainer";
 import { ActiveUsersMap } from "./ipcServices/ActiveUsers";
+import { LockService } from "./ipcServices/LockService";
+import { WebsocketCommunicationManger } from "./ipcServices/WebsocketCommunicationManager";
+import { IBrokerClient } from "../common/BrokerClient";
+import { MetricsCollector } from "../../service/misc/MetricsCollector";
+import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
+import { ZeroMQBroker } from "./ZeroMQBroker";
+import { JanusRoomsWatcherCache } from "./ipcServices/JanusRoomsWatcherCache";
 
 export class MasterRegistry {
     
     private config?: Config;
     private methodExecutor?: MethodExecutor;
-    private worker2Service?: Worker2Service;
     private mongoClient?: mongodb.MongoClient;
     private workersHolder?: WorkersHolder;
     private ipcRequestMap?: DeferredMap;
@@ -50,6 +55,12 @@ export class MasterRegistry {
     private ipcRegistryService?: IpcRegistryService;
     private callbacks?: Callbacks;
     private plugins: MasterPlugin[] = [];
+    private lockService?: LockService;
+    private websocketCommunicationManager?: WebsocketCommunicationManger;
+    private aggregatedNotificationsService?: AggregatedNotificationsService;
+    private metricsCollector?: MetricsCollector;
+    private zeroMQBroker?: ZeroMQBroker;
+    private janusRoomsWatcherCache?: JanusRoomsWatcherCache;
     
     constructor(
         private loggerFactory: LoggerFactory,
@@ -85,6 +96,26 @@ export class MasterRegistry {
         return this.config;
     }
     
+    getBroker() {
+        const config = this.getConfig();
+        if (config.server.broker.mode === "internal") {
+            return this.getZeroMQBroker();
+        }
+        else {
+            return null;
+        }
+    }
+    
+    getZeroMQBroker() {
+        if (!this.zeroMQBroker) {
+            this.zeroMQBroker = new ZeroMQBroker(
+                this.getLoggerFactory().createLogger(ZeroMQBroker),
+                this.getConfig(),
+            );
+        }
+        return this.zeroMQBroker;
+    }
+    
     getMongoClient() {
         if (!this.mongoClient) {
             throw new Error("MongoClient not registered yet");
@@ -108,12 +139,15 @@ export class MasterRegistry {
     
     registerIpcServices() {
         const methodExecutor = this.getMethodExecutor();
-        methodExecutor.register(this.getWorker2Service());
         methodExecutor.register(this.getIpRateLimiter());
         methodExecutor.register(this.getNonceMap());
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
         methodExecutor.register(this.getActiveUsersMap());
+        methodExecutor.register(this.getJanusRoomsWatcherCache());
+        methodExecutor.register(this.getLockService());
+        methodExecutor.register(this.getWebsocketCommunicationManager());
+        methodExecutor.register(this.getAggregatedNotificationsService());
         this.getCallbacks().triggerSync("registerIpcServices", []);
     }
     
@@ -121,26 +155,16 @@ export class MasterRegistry {
         if (!this.ipcExecutor) {
             this.ipcExecutor = new IpcExecutor(
                 this.getMethodExecutor(),
-                this.getLoggerFactory().get(IpcExecutor),
+                this.getLoggerFactory().createLogger(IpcExecutor),
             );
         }
         return this.ipcExecutor;
     }
     
-    getWorker2Service() {
-        if (!this.worker2Service) {
-            this.worker2Service = new Worker2Service(
-                this.getIpcRequester(),
-                this.getWorkersHolder(),
-            );
-        }
-        return this.worker2Service;
-    }
-    
     getWorkersHolder() {
         if (!this.workersHolder) {
             this.workersHolder = new WorkersHolder(
-                this.getLoggerFactory().get(WorkersHolder),
+                this.getLoggerFactory().createLogger(WorkersHolder),
             );
         }
         return this.workersHolder;
@@ -157,7 +181,7 @@ export class MasterRegistry {
         if (!this.ipcListener) {
             this.ipcListener = new IpcListener(
                 this.getIpcRequestMap(),
-                this.getLoggerFactory().get(IpcListener),
+                this.getLoggerFactory().createLogger(IpcListener),
             );
         }
         return this.ipcListener;
@@ -177,15 +201,20 @@ export class MasterRegistry {
             this.ipcMessageProcessor = new IpcMessageProcessor(
                 this.getIpcExecutor(),
                 this.getIpcListener(),
-                this.getLoggerFactory().get(IpcMessageProcessor),
+                this.getLoggerFactory().createLogger(IpcMessageProcessor),
             );
         }
         return this.ipcMessageProcessor;
     }
     
+    getSubscriberMock() {
+        const subMock = {};
+        return subMock as IBrokerClient;
+    }
+    
     getJobService() {
         if (!this.jobService) {
-            this.jobService = new JobService(this.getLoggerFactory().get(JobService));
+            this.jobService = new JobService(this.getLoggerFactory().createLogger(JobService));
         }
         return this.jobService;
     }
@@ -208,6 +237,13 @@ export class MasterRegistry {
         return this.nonceMap;
     }
     
+    getLockService() {
+        if (this.lockService == null) {
+            this.lockService = new LockService();
+        }
+        return this.lockService;
+    }
+    
     getActiveUsersMap() {
         if (this.activeUsersMap == null) {
             this.activeUsersMap = new ActiveUsersMap();
@@ -215,9 +251,30 @@ export class MasterRegistry {
         return this.activeUsersMap;
     }
     
+    getWebsocketCommunicationManager() {
+        if (this.websocketCommunicationManager == null) {
+            this.websocketCommunicationManager = new WebsocketCommunicationManger(
+                this.getIpcRequester(),
+                this.getWorkersHolder(),
+            );
+        }
+        return this.websocketCommunicationManager;
+    }
+    
+    getAggregatedNotificationsService() {
+        if (!this.aggregatedNotificationsService) {
+            this.aggregatedNotificationsService = new AggregatedNotificationsService(
+                this.getActiveUsersMap(),
+            );
+        }
+        return this.aggregatedNotificationsService;
+    }
+    
     getMetricContainer() {
         if (this.metricsContainer == null) {
-            this.metricsContainer = new MetricsContainer();
+            this.metricsContainer = new MetricsContainer(
+                this.getMetricsCollector(),
+            );
         }
         return this.metricsContainer;
     }
@@ -228,4 +285,21 @@ export class MasterRegistry {
         }
         return this.ipcRegistryService;
     }
+    
+    getMetricsCollector() {
+        if (this.metricsCollector == null) {
+            this.metricsCollector = new MetricsCollector();
+        }
+        return this.metricsCollector;
+    }
+    
+    getJanusRoomsWatcherCache() {
+        if (!this.janusRoomsWatcherCache) {
+            this.janusRoomsWatcherCache = new JanusRoomsWatcherCache(
+                this.getLoggerFactory().createLogger(JanusRoomsWatcherCache),
+            );
+        }
+        return this.janusRoomsWatcherCache;
+    }
+    
 }

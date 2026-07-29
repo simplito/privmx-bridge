@@ -12,10 +12,20 @@ limitations under the License.
 import * as NodePath from "path";
 import * as types from "../types";
 import { Uint64BE } from "int64-buffer";
-import { Deferred, Immutable, ParsedHashmail, Result, SettleResult, StreamInterface } from "../CommonTypes";
+import { Deferred, Dictionary, Immutable, ParsedHashmail, Result, SettleResult, StreamInterface } from "../CommonTypes";
 import { Base64 } from "./Base64";
+import { Crypto } from "./crypto/Crypto";
+import type * as Cluster from "cluster";
+import type * as WebSocket from "ws";
+
+/* eslint-disable-next-line */
+const cluster = require("cluster") as Cluster.Cluster;
 
 export class Utils {
+    
+    static findFieldInUnknownObject(obj: unknown, fieldName: string): unknown {
+        return (obj as any)[fieldName] || null;
+    }
     
     static sleep(milliseconds: number) {
         return new Promise((resolve) => {
@@ -489,5 +499,56 @@ export class Utils {
             .replace(/[\u0300-\u036f]/g, "")
             .replace(/ł/g, "l")
             .replace(/[\W_]+/g, "");
+    }
+    
+    static hashObject(params: unknown) {
+        if (!this.isDictionary(params)) {
+            throw new Error("Not a object!");
+        }
+        const serializedParams = this.getRequestParamsRecursively(params);
+        const hash = Crypto.md5(Buffer.from(JSON.stringify(serializedParams))).toString("hex");
+        return hash;
+    }
+    
+    private static getRequestParamsRecursively(params: unknown) {
+        if (!this.isDictionary(params)) {
+            return params;
+        }
+        const paramsKeys = Object.keys(params);
+        paramsKeys.sort();
+        const serializedParams =  paramsKeys.reduce((accumulator: {[key: string]: unknown}, currentKey) => {
+            accumulator[currentKey] = this.getRequestParamsRecursively(params[currentKey]);
+            return accumulator;
+        }, {});
+        return serializedParams;
+    }
+    
+    static isDictionary(params: unknown): params is Dictionary {
+        return (typeof params === "object" && params !== null);
+    }
+    
+    static getThisWorkerId() {
+        const mainId = cluster.isPrimary ? "MS" : `WORKER${(cluster.worker?.id.toString().padStart(2, "0") || "-1")}`;
+        return `${mainId}`;
+    }
+    
+    static getFirstWorkerId() {
+        return "WORKER01";
+    }
+    
+    static convertWebSocketDataToString(data: WebSocket.Data) {
+        if (typeof(data) === "string") {
+            return data;
+        }
+        if (data instanceof ArrayBuffer) {
+            return Buffer.from(data).toString("utf8");
+        }
+        if (Buffer.isBuffer(data)) {
+            return data.toString("utf8");
+        }
+        if (Array.isArray(data)) {
+            return Buffer.concat(data).toString("utf8");
+        }
+        throw new Error("Cannot convert WebSocketData to string");
     }
 }

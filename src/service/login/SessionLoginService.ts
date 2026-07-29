@@ -13,7 +13,7 @@ import * as types from "../../types";
 import * as elliptic from "elliptic";
 import { Session } from "../../api/session/Session";
 import { SessionHolder } from "../../api/session/SessionHolder";
-import { Logger } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { NonceService } from "../misc/NonceService";

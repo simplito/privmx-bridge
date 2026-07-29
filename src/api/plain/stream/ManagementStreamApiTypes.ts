@@ -24,6 +24,7 @@ export interface GetStreamRoomResult {
 export interface ListStreamRoomsModel extends types.core.ListModel2<types.stream.StreamRoomId> {
     /** Context's ID */
     contextId: types.context.ContextId;
+    state?: "all"|"closed"|"active";
 }
 
 export interface ListStreamRoomsResult {
@@ -69,6 +70,10 @@ export interface StreamRoom {
     managers: types.cloud.UserId[];
     /** Version */
     version: types.stream.StreamRoomVersion;
+    /** Public meta data set by user, equal to null if does not exist */
+    publicMeta: unknown;
+    /** If stream room is closed */
+    closed: boolean;
 }
 
 export interface StreamRoomDeletedData {
@@ -80,18 +85,21 @@ export interface StreamRoomCreatedEvent {
     channel: "stream";
     type: "streamRoomCreated";
     data: StreamRoom;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StreamRoomUpdatedEvent {
     channel: "stream";
     type: "streamRoomUpdated";
     data: StreamRoom;
+    timestamp: types.core.Timestamp;
 }
 
 export interface StreamRoomDeletedEvent {
     channel: "stream";
     type: "streamRoomDeleted";
     data: StreamRoomDeletedData;
+    timestamp: types.core.Timestamp;
 }
 
 export type StreamNotifyEvent = StreamRoomCreatedEvent|StreamRoomUpdatedEvent|StreamRoomDeletedEvent;

@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as managementInboxApi from "./ManagementInboxApiTypes";
 import * as db from "../../../db/Model";
+import { Utils } from "../../../utils/Utils";
 
 export class ManagementInboxConverter {
     
@@ -27,6 +28,7 @@ export class ManagementInboxConverter {
             managers: inbox.managers,
             keyId: inbox.keyId,
             version: <types.inbox.InboxVersion>inbox.history.length,
+            publicMeta: Utils.findFieldInUnknownObject(inbox.data, "publicMetaObject"),
         };
         return res;
     }

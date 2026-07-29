@@ -24,6 +24,11 @@ export interface ContextInfo {
     contextId: types.context.ContextId;
     acl: types.cloud.ContextAcl;
     policy: types.context.ContextPolicy;
+    created: types.core.Timestamp;
+    modified: types.core.Timestamp;
+    name: types.context.ContextName;
+    description: types.context.ContextDescription;
+    scope: types.context.ContextScope;
 }
 
 export type ContextListModel = types.core.ListModel;
@@ -33,12 +38,21 @@ export interface ContextListResult {
     count: number;
 }
 
-export interface ContextGetUsersModel {
+export interface ContextGetUsersModel{
     contextId: types.context.ContextId;
 }
 
 export interface ContextGetUserResult {
     users: types.cloud.UserIdentityWithStatus[];
+}
+
+export interface ContextListUsersModel extends types.core.ListModel{
+    contextId: types.context.ContextId;
+}
+
+export interface ContextListUsersResult {
+    users: types.cloud.UserIdentityWithStatusAndAction[];
+    count: number;
 }
 
 export interface ContextSendCustomEventModel {
@@ -60,9 +74,37 @@ export interface ContextCustomEventData {
     author: types.cloud.UserIdentity;
 };
 
+export type ContextUserAddedEvent = types.cloud.Event<"contextUserAdded", "context", ContextUserAddedEventData>;
+
+export interface ContextUserAddedEventData {
+    contextId: types.context.ContextId;
+    userId: types.cloud.UserId;
+    pubKey: types.core.EccPubKey;
+}
+
+export type ContextUserRemovedEvent = types.cloud.Event<"contextUserRemoved", "context", ContextUserRemovedEventData>;
+
+export interface ContextUserRemovedEventData {
+    contextId: types.context.ContextId;
+    userId: types.cloud.UserId;
+    pubKey: types.core.EccPubKey;
+}
+
+export type ContextUsersStatusChange = types.cloud.Event<"contextUserStatusChanged", "context", ContextUsersStatusChangeData>;
+
+export interface ContextUsersStatusChangeData {
+    contextId: types.context.ContextId;
+    users: {
+        userId: types.cloud.UserId,
+        pubKey: types.core.EccPubKey,
+        action: "login"|"logout",
+    }[],
+}
+
 export interface IContextApi {
     contextGet(model: ContextGetModel): Promise<ContextGetResult>;
     contextList(model: ContextListModel): Promise<ContextListResult>;
     contextGetUsers(model: ContextGetUsersModel): Promise<ContextGetUserResult>;
+    contextListUsers(model: ContextListUsersModel): Promise<ContextListUsersResult>
     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
 }

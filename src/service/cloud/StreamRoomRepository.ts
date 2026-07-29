@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
-import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class StreamRoomRepository {
     
@@ -58,46 +57,12 @@ export class StreamRoomRepository {
         return await this.repository.getMatchingPage<db.stream.StreamRoom>([{$match: match}], listParams, sortBy);
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
-        const match: Record<string, unknown> = {
-            $and: [
-                {
-                    contextId: contextId,
-                },
-                {
-                    $or: [
-                        {users: userId},
-                        {managers: userId},
-                    ],
-                },
-                {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            ],
-        };
-        if (type) {
-            match.type = type;
-        }
         return this.repository.getMatchingPage([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: match,
-            },
-            ...mongoQueries,
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
         ], listParams, sortBy);
     }
     
@@ -105,7 +70,15 @@ export class StreamRoomRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async createStreamRoom(contextId: types.context.ContextId, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async getPageOfClosedStreamsByContext(contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>) {
+        return this.repository.matchX2({contextId: contextId, closed: true}, listParams);
+    }
+    
+    async getPageOfActiveStreamsByContext(contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>) {
+        return this.repository.matchX2({contextId: contextId, closed: false}, listParams);
+    }
+    
+    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -130,13 +103,18 @@ export class StreamRoomRepository {
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
+            janusRoomId: janusRoomId,
+            closed: false,
         };
+        if (resourceId) {
+            streamRoom.clientResourceId = resourceId;
+        }
         await this.repository.insert(streamRoom);
         return streamRoom;
     }
     
-    async updateStreamRoom(oldStore: db.stream.StreamRoom, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined) {
+    async updateStreamRoom(oldStreamRoom: db.stream.StreamRoom, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+        data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -146,11 +124,11 @@ export class StreamRoomRepository {
             managers: managers,
         };
         const updatedStreamRoom: db.stream.StreamRoom = {
-            id: oldStore.id,
-            contextId: oldStore.contextId,
-            type: oldStore.type,
-            creator: oldStore.creator,
-            createDate: oldStore.createDate,
+            id: oldStreamRoom.id,
+            contextId: oldStreamRoom.contextId,
+            type: oldStreamRoom.type,
+            creator: oldStreamRoom.creator,
+            createDate: oldStreamRoom.createDate,
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
@@ -158,10 +136,18 @@ export class StreamRoomRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
-            history: [...oldStore.history, entry],
-            allTimeUsers: Utils.uniqueFromArrays(oldStore.allTimeUsers, entry.users, entry.managers),
-            policy: policy === undefined ? oldStore.policy : policy,
+            history: [...oldStreamRoom.history, entry],
+            allTimeUsers: Utils.uniqueFromArrays(oldStreamRoom.allTimeUsers, entry.users, entry.managers),
+            policy: policy === undefined ? oldStreamRoom.policy : policy,
+            janusRoomId: oldStreamRoom.janusRoomId,
+            closed: oldStreamRoom.closed,
         };
+        if (resourceId && !oldStreamRoom.clientResourceId) {
+            updatedStreamRoom.clientResourceId = resourceId;
+        }
+        else if (oldStreamRoom.clientResourceId) {
+            updatedStreamRoom.clientResourceId = oldStreamRoom.clientResourceId;
+        }
         await this.repository.update(updatedStreamRoom);
         return updatedStreamRoom;
     }
@@ -172,5 +158,16 @@ export class StreamRoomRepository {
     
     async deleteManyStreamRooms(ids: types.stream.StreamRoomId[]) {
         await this.repository.deleteMany(q => q.in("id", ids));
+    }
+    
+    async closeStreamRoom(id: types.stream.StreamRoomId) {
+        await this.repository.col().updateOne({
+            _id: id,
+        },
+        {
+            $set: {
+                closed: true,
+            },
+        });
     }
 }

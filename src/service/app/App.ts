@@ -10,7 +10,8 @@ limitations under the License.
 */
 
 import { IOC } from "../ioc/IOC";
-import { LoggerFactory, Logger, ConsoleAppender } from "../log/LoggerFactory";
+import { LoggerFactory } from "../log/LoggerFactory";
+import { Logger } from "../log/Logger";
 import { MongoBinaryRepositoryFactory } from "../../db/mongo/MongoBinaryRepositoryFactory";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import * as pki from "privmx-pki2";
@@ -24,6 +25,7 @@ import { Hex } from "../../utils/Hex";
 import { WorkerRegistry } from "../../cluster/worker/WorkerRegistry";
 import { PluginsLoader } from "../plugin/PluginsLoader";
 import { loadConfigFromFile } from "../../cluster/common/ConfigUtils";
+import { Utils } from "../../utils/Utils";
 
 export class App {
     
@@ -34,7 +36,6 @@ export class App {
         public ioc: IOC,
         private logger: Logger,
     ) {
-        this.ioc.getLoggerFactory().setLevel("ConfigLoader", Logger.DEBUG);
         this.ioc.registerApp(this);
     }
     
@@ -97,23 +98,23 @@ export class App {
     // Runners
     
     static initWithConfigFile(filePath: string, ioc?: IOC) {
-        const loggerFactory = new LoggerFactory("<main>", new ConsoleAppender());
+        const loggerFactory = new LoggerFactory(`<main>/${Utils.getThisWorkerId()}"`);
         const workerRegistry = new WorkerRegistry(loggerFactory);
         PluginsLoader.loadForWorker(workerRegistry);
         workerRegistry.registerConfig(loadConfigFromFile(filePath, false, workerRegistry.getWorkerCallbacks()));
-        const app = new App(ioc || new IOC("<main>" as types.core.Host, workerRegistry, loggerFactory), loggerFactory.get(App));
+        const app = new App(ioc || new IOC("<main>" as types.core.Host, workerRegistry), loggerFactory.createLogger(App));
         app.setConfigLoadingByFile(filePath);
         return App.prepare(app);
     }
     
     static initWithConfigChanger(ioc: IOC, configChanger: ConfigChanger, finisher: ConfigChanger) {
-        const app = new App(ioc, ioc.getLoggerFactory().get(App));
+        const app = new App(ioc, ioc.getLoggerFactory().createLogger(App));
         app.setConfigLoadingByChanger(configChanger, finisher);
         return App.prepare(app);
     }
     
     static initWithIocAndConfigFile(ioc: IOC, filePath: string) {
-        const app = new App(ioc, ioc.getLoggerFactory().get(App));
+        const app = new App(ioc, ioc.getLoggerFactory().createLogger(App));
         app.setConfigLoadingByFile(filePath);
         return App.prepare(app);
     }
@@ -152,8 +153,7 @@ export class App {
                 }
                 if (newState.dbVersion !== MigrationManager.getDbVersion()) {
                     this.logger.out("[CheckState] Need to make migration");
-                    const logger = this.ioc.getLoggerFactory().get("MigrationManager");
-                    logger.setLevel(Logger.DEBUG);
+                    const logger = this.ioc.getLoggerFactory().createLogger("MigrationManager");
                     const migrationManager = new MigrationManager(this.ioc.getDbManager(), this.ioc, logger);
                     await migrationManager.go();
                     newState = {...newState, dbVersion: MigrationManager.getDbVersion()};
@@ -219,7 +219,7 @@ export class App {
             void jobManager.run({name: "clearOldStats", func: () => this.ioc.getServerStatsService().clearOld()});
         }
         catch (e) {
-            this.logger.error("Error during runnning jobs", e);
+            this.logger.error(e, "Error during runnning jobs");
         }
     }
     

@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
-import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class ThreadRepository {
     
@@ -48,46 +47,12 @@ export class ThreadRepository {
         }
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
-        const match: Record<string, unknown> = {
-            $and: [
-                {
-                    contextId: contextId,
-                },
-                {
-                    $or: [
-                        {users: userId},
-                        {managers: userId},
-                    ],
-                },
-                {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            ],
-        };
-        if (type) {
-            match.type = type;
-        }
         return this.repository.getMatchingPage([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: match,
-            },
-            ...mongoQueries,
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
         ], listParams, sortBy);
     }
     
@@ -105,7 +70,7 @@ export class ThreadRepository {
         return await this.repository.getMatchingPage<db.thread.Thread>([{$match: match}], listParams, sortBy);
     }
     
-    async createThread(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
+    async createThread(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
@@ -134,12 +99,15 @@ export class ThreadRepository {
             messages: 0,
             policy: policy,
         };
+        if (resourceId) {
+            thread.clientResourceId = resourceId;
+        }
         await this.repository.insert(thread);
         return thread;
     }
     
     async updateThread(oldThread: db.thread.Thread, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined) {
+        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -167,6 +135,12 @@ export class ThreadRepository {
             messages: oldThread.messages,
             policy: policy === undefined ? oldThread.policy : policy,
         };
+        if (resourceId && !oldThread.clientResourceId) {
+            updatedThread.clientResourceId = resourceId;
+        }
+        else if (oldThread.clientResourceId) {
+            updatedThread.clientResourceId = oldThread.clientResourceId;
+        }
         await this.repository.update(updatedThread);
         return updatedThread;
     }
@@ -180,11 +154,11 @@ export class ThreadRepository {
     }
     
     async increaseMessageCounter(threadId: types.thread.ThreadId, lastMsgDate: types.core.Timestamp) {
-        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: 1}, $max: {lastMsgDate: lastMsgDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: 1}, $max: {lastMsgDate: lastMsgDate}}, {session: this.repository.getSession()});
     }
     
     async decreaseMessageCounter(threadId: types.thread.ThreadId, lastMsgDate: types.core.Timestamp, decrease?: number) {
-        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: (decrease) ? -decrease : -1}, $set: {lastMsgDate: lastMsgDate}}, {upsert: true, session: this.repository.getSession()});
+        await this.repository.collection.updateOne({_id: threadId}, {$inc: {messages: (decrease) ? -decrease : -1}, $set: {lastMsgDate: lastMsgDate}}, {session: this.repository.getSession()});
     }
     
     async getThreadStats(threadId: types.thread.ThreadId) {

@@ -69,6 +69,7 @@ export class TicketsDb {
             agent: ticketData.agent,
             masterSecret: Base64.from(ticketData.masterSecret),
         };
+        
         await this.repositoryFactory.createTicketDataRepository(session).insert(dbTicketData);
         return {
             ids: ticketsIds,

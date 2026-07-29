@@ -9,7 +9,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { Logger } from "../service/log/LoggerFactory";
 import { EngineResponse, Engine } from "./server/Engine";
 import * as express from "express";
 import { ServerEndpoint } from "./ServerEndpoint";
@@ -17,6 +16,7 @@ import { RequestInfoHolder } from "./session/RequestInfoHolder";
 import * as types from "../types";
 import { ClientIpService } from "../service/misc/ClientIpService";
 import { IpRateLimiterClient } from "../cluster/worker/IpRateLimiterClient";
+import { Logger } from "../service/log/Logger";
 
 export class ApiEndpoint {
     
@@ -54,7 +54,7 @@ export class ApiEndpoint {
         try {
             this.requestInfoHolder.setData(
                 this.clientIpService.getClientIp(this.request),
-                <types.core.ServerSessionId> this.request.header("Privmx-Auth"));
+                this.request.header("Privmx-Auth") as types.core.ServerSessionId);
         }
         catch (e) {
             if (e && (e as {message: string}).message == "INVALID_PROXY_SESSION") {
@@ -64,7 +64,7 @@ export class ApiEndpoint {
         }
         const response: EngineResponse = {};
         this.engine.setHeaders(response, "application/octet-stream");
-        response.body = await this.serverEndpoint.execute(<Buffer> this.request.body);
+        response.body = await this.serverEndpoint.execute(this.request.body as Buffer);
         return response;
     }
 }

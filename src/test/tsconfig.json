@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // "typeRoots": ["./types", "./node_modules/@types"],
+    "lib": ["es2021", "dom"],
+    "target": "es2021",
+    "module": "commonjs",
+    "types": ["node"]
+  },
+  "include": ["."]
+}

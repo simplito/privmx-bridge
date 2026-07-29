@@ -13,7 +13,7 @@ import { BaseTestSet, Test } from "../BaseTestSet";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import * as PrivmxRpc from "privmx-rpc";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 import * as assert from "assert";
 import { expect } from "../AssertUtils";
 
@@ -35,6 +35,23 @@ export class MainContextApiTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldFetchPageOfContextUsersWithStatus() {
+        await this.createNewUser();
+        await this.fetchPageOfUsersAndCheckIfNewUserIsInactive();
+        await this.loginAsNewUser();
+        await this.fetchPageOfUsersAndCheckIfNewUserIsActive();
+        await this.closeNewUserConnection();
+        await this.fetchPageOfUsersAndCheckIfNewUserIsInactive();
+    }
+    
+    @Test()
+    async shouldFetchUserUsingMongoQuery() {
+        await this.createNewUser();
+        await this.fetchUserUsingMongoQueryWithUserId();
+        await this.fetchUserUsingMongoQueryWithUserPubKey();
+    }
+    
+    @Test()
     async shouldListContext() {
         const res = await this.apis.contextApi.contextList({
             limit: 2,
@@ -42,10 +59,62 @@ export class MainContextApiTests extends BaseTestSet {
             sortOrder: "desc",
             lastId: "662115304034ea5684acac8b" as types.context.ContextId,
         });
-        expect(res.count).toBe(4);
+        expect(res.count).toBe(3);
         expect(res.contexts.length).toBe(2);
         expect(res.contexts[0].contextId).toBe("662115304034ea5684acac8c" as types.context.ContextId);
         expect(res.contexts[1].contextId).toBe("662115304034ea5684acac8e" as types.context.ContextId);
+    }
+    
+    @Test()
+    async shouldFetchContext() {
+        await this.fetchContext();
+    }
+    
+    private async fetchUserUsingMongoQueryWithUserId() {
+        if (!this.newUserId) {
+            throw new Error("newUserId not initialized yet");
+        }
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#userId": {
+                    $in: [this.newUserId],
+                },
+            },
+        });
+        assert(!!res.users && res.users.length === 1, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user, "Invalid user fetched");
+    }
+    
+    private async fetchUserUsingMongoQueryWithUserPubKey() {
+        if (!this.newUserPubkey) {
+            throw new Error("newUserPubKey not initialized yet");
+        }
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
+            query: {
+                "#userPubKey": {
+                    $in: [this.newUserPubkey],
+                },
+            },
+        });
+        assert(!!res.users && res.users.length === 1, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user, "Invalid user fetched");
+    }
+    
+    private async fetchContext() {
+        const res = await this.apis.contextApi.contextGet({
+            id: testData.contextId,
+        });
+        assert(!!res && "context" in res, "Unexpected response from contextGet(");
     }
     
     private async createNewUser() {
@@ -67,9 +136,33 @@ export class MainContextApiTests extends BaseTestSet {
         assert(!!user && user.status === "active", "Invalid new user status");
     }
     
+    private async fetchPageOfUsersAndCheckIfNewUserIsActive() {
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
+        });
+        assert(!!res.users && res.users.length === 2, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user && user.status === "active", "Invalid new user status");
+    }
+    
     private async fetchUsersAndCheckIfNewUserIsInactive() {
         const res = await this.apis.contextApi.contextGetUsers({
             contextId: testData.contextId,
+        });
+        assert(!!res.users && res.users.length === 2, "contextGetUsers invalid response");
+        const user = res.users.find(u => u.id === "NewUser");
+        assert(!!user && user.status === "inactive", "Invalid new user status");
+    }
+    
+    private async fetchPageOfUsersAndCheckIfNewUserIsInactive() {
+        const res = await this.apis.contextApi.contextListUsers({
+            contextId: testData.contextId,
+            limit: 100,
+            skip: 0,
+            sortOrder: "asc",
         });
         assert(!!res.users && res.users.length === 2, "contextGetUsers invalid response");
         const user = res.users.find(u => u.id === "NewUser");

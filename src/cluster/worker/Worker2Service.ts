@@ -14,22 +14,30 @@ import { IWorker2Service } from "../common/Worker2Service";
 import { ApiMethod } from "../../api/Decorators";
 import { WebSocketInnerManager } from "../../service/ws/WebSocketInnerManager";
 import { PlainApiEvent } from "../../api/plain/Types";
+import { TargetChannel } from "../../service/ws/WebSocketConnectionManager";
+import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
 
 export class Worker2Service implements IWorker2Service {
     
     constructor(
         private webSocketInnerManager: WebSocketInnerManager,
+        private aggregatedNotificationService: AggregatedNotificationsService,
     ) {
     }
-    
     @ApiMethod({})
-    async sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: string, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): Promise<void> {
-        return this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
+    sendWebsocketNotificationAndAggregateData<T extends types.core.Event<any, any>>(model: { channel: TargetChannel; host: types.core.Host; clients: types.core.Client[] | null; event: T; }): void {
+        void this.aggregatedNotificationService.aggregateDataForCollectionChangedNotification(model.channel, model.clients, model.host);
+        this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
     }
     
     @ApiMethod({})
-    async sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId, event: PlainApiEvent}): Promise<void> {
-        return this.webSocketInnerManager.sendToPlainUsers(model.solution, model.event);
+    sendWebsocketNotification<T extends types.core.Event<any, any>>(model: { channel: TargetChannel, host: types.core.Host; clients: types.core.Client[]|null; event: T; }): void {
+        this.webSocketInnerManager.send(model.host, model.channel, model.clients, model.event);
+    }
+    
+    @ApiMethod({})
+    sendWebsocketNotificationToPlainUsers(model: {solution: types.cloud.SolutionId, event: PlainApiEvent}): void {
+        this.webSocketInnerManager.sendToPlainUsers(model.solution, model.event);
     }
     
     @ApiMethod({})
@@ -62,3 +70,4 @@ export class Worker2Service implements IWorker2Service {
         return this.webSocketInnerManager.disconnectWebSocketsBySubidentityGroup(model.host, model.groupId);
     }
 }
+

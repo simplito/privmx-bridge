@@ -41,6 +41,9 @@ export class CloudKeyService {
             throw new AppException("INVALID_PARAMS", "managers not unique");
         }
         const allUsers = Utils.unique(users.concat(managers));
+        if (allUsers.length === 0) {
+            throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
+        }
         const allClients = [...allUsers];
         await this.checkUsersExistance(contextId, allUsers);
         const newKeys = this.buildKeys(availableKeyIds, oldKeys, inserts);
@@ -68,8 +71,12 @@ export class CloudKeyService {
                 userEntry = {user: insert.user, keys: []};
                 newKeys.push(userEntry);
             }
-            if (!userEntry.keys.some(x => x.keyId === insert.keyId)) {
+            const keyEntry = userEntry.keys.find(x => x.keyId === insert.keyId);
+            if (!keyEntry) {
                 userEntry.keys.push({keyId: insert.keyId, data: insert.data});
+            }
+            else {
+                keyEntry.data = insert.data;
             }
         }
         return newKeys;
@@ -99,11 +106,9 @@ export class CloudKeyService {
     }
     
     async checkUsersExistance(contextId: types.context.ContextId, users: types.cloud.UserId[]) {
-        const userRepository = this.repositoryFactory.createContextUserRepository();
-        for (const user of users) {
-            if (!await userRepository.exists(contextId, user)) {
-                throw new AppException("USER_DOESNT_EXIST", user);
-            }
+        const existingUsersCount = await this.repositoryFactory.createContextUserRepository().getCountOfExistingUsersFromList(users, contextId);
+        if (existingUsersCount !== users.length) {
+            throw new AppException("USER_DOESNT_EXIST", "at least one of users does not exist");
         }
     }
 }

@@ -10,7 +10,8 @@ limitations under the License.
 */
 
 import * as types from "../../types";
-import { IWorker2Service } from "../../cluster/common/Worker2Service";
+import * as db from "../../db/Model";
+import { IWorker2Service, NotificationBrokerInterface } from "../../cluster/common/Worker2Service";
 import { ConfigService } from "../config/ConfigService";
 import { JobService } from "../job/JobService";
 import { WebSocketEx, WebSocketSession } from "../../CommonTypes";
@@ -18,30 +19,51 @@ import { WebSocketInnerManager } from "./WebSocketInnerManager";
 import { AppException } from "../../api/AppException";
 import { Base64 } from "../../utils/Base64";
 import { Session } from "../../api/session/Session";
-import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
+import { Crypto } from "../../utils/crypto/Crypto";
+import { Hex } from "../../utils/Hex";
+import { ChannelScheme, ChannelSchemeOptions } from "../../types/cloud";
+import { RepositoryFactory } from "../../db/RepositoryFactory";
+import { UserStatusManager } from "../cloud/UserStatusManager";
+
+export interface TargetChannel {
+    contextId: types.context.ContextId;
+    containerId?: string;
+    itemId?: string;
+    containerType?: string;
+    channel: types.core.WsChannelName
+}
 
 export interface WebSocketConnectionManager {
     authorizeWebSocket(session: Session, wsEx: WebSocketEx, addWsChannelId: boolean, key: types.core.Base64): Promise<types.core.WsChannelId>;
     unauthorizeWebSocket(session: Session, wsEx: WebSocketEx): Promise<void>;
-    subscribeToChannel(session: Session, wsEx: WebSocketEx, channel: string): Promise<void>;
-    unsubscribeFromChannel(session: Session, wsEx: WebSocketEx, channel: string): Promise<void>;
+    subscribeToChannels(session: Session, wsEx: WebSocketEx, channels: string[]): Promise<types.core.Subscription[]>;
+    unsubscribeFromChannels(session: Session, wsEx: WebSocketEx, channels: string[]): Promise<void>;
+    subscribeToChannelOld(session: Session, wsEx: WebSocketEx, channel: types.core.WsChannelName): Promise<types.core.SubscriptionId>;
+    unsubscribeFromChannelOld(session: Session, wsEx: WebSocketEx, channel: types.core.WsChannelName): Promise<void>;
     hasOpenConnectionWithUsername(username: types.core.Username): Promise<boolean>;
     disconnectWebSocketsBySession(sessionId: types.core.SessionId): void;
     disconnectWebSocketsByUsername(username: types.core.Username): void;
     disconnectWebSocketsBySubidentity(pub: types.core.EccPubKey): void;
     disconnectWebSocketsByDeviceId(deviceId: types.core.DeviceId): void;
     disconnectWebSocketsBySubidentityGroup(groupId: types.user.UsersGroupId): void;
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T): void;
+    sendAtChannel<T extends types.core.Event<any, any>>(channel: TargetChannel, clients: types.core.Client[]|null, event: T): void;
 }
+
+// const ["containerType", "limitedBy", "objectId"]
 
 export class SimpleWebSocketConnectionManager implements WebSocketConnectionManager {
     
+    private readonly SELECTOR_SUBSCRIBTION_OPTIONS = new Set<types.cloud.ChannelSchemeSelectors>(["itemId", "containerId", "contextId"]);
+    private readonly SUBSCRIBTION_OPTIONS = new Set<keyof types.cloud.ChannelSchemeOptions>(["containerType", "limitedBy", "objectId"]);
+    
     constructor(
         private jobService: JobService,
-        private workerService: IWorker2Service,
+        private workerService: IWorker2Service&NotificationBrokerInterface,
         private configService: ConfigService,
         private webSocketInnerManager: WebSocketInnerManager,
-        private activeUsersMap: ActiveUsersMap,
+        private userStatusManager: UserStatusManager,
+        private host: types.core.Host,
+        private repositoryFactory: RepositoryFactory,
     ) {
     }
     
@@ -61,36 +83,117 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
             throw new AppException("CANNOT_ADD_CHANNEL_TO_SINGLE_CHANNEL_WEBSOCKET");
         }
         const wsChannelId = this.generateWsChannelId(wsEx.ex.sessions);
+        const username = session.get("username");
+        const solution = session.get("solution");
         this.webSocketInnerManager.addSession(wsEx, {
             id: session.id,
             host: this.configService.values.domain as types.core.Host,
             wsId: wsId,
             wsChannelId: wsChannelId,
             addWsChannelId: addWsChannelId,
-            username: session.get("username"),
+            username: username,
             subidentity: session.get("subidentity"),
-            solution: session.get("solution"),
+            solution: solution,
             proxy: session.get("proxy"),
             rights: session.get("rights"),
             type: session.get("type"),
             deviceId: properties ? properties.deviceId : null,
             encryptionKey: Base64.toBuf(key),
             channels: [],
+            instanceHost: this.host,
+            encoder: session.get("encoder"),
+            plainCommunication: session.get("plainCommunication", false),
+            eventBucket: [],
         });
-        await this.activeUsersMap.setUserAsActive({userPubkey: session.get("username") as unknown as types.core.EccPubKey, solutionId: session.get("solution")});
+        void this.userStatusManager.incrementUserActiveSessions(this.host, username as unknown as types.core.EccPubKey, solution);
         return wsChannelId;
     }
     
     async unauthorizeWebSocket(session: Session, wsEx: WebSocketEx) {
-        this.webSocketInnerManager.removeSessionByWsId(wsEx, session.getWsId());
+        await this.webSocketInnerManager.removeSessionByWsId(wsEx, session.getWsId());
     }
     
-    async subscribeToChannel(session: Session, wsEx: WebSocketEx, channel: string) {
+    async subscribeToChannels(session: Session, wsEx: WebSocketEx, channels: types.core.WsChannelName[]): Promise<types.core.Subscription[]> {
+        const subscriptionsIds: types.core.Subscription[] = [];
+        for (const channel of channels) {
+            const subscriptionId = await this.subscribeToChannel(session, wsEx, channel, {version: 2});
+            subscriptionsIds.push({subscriptionId: subscriptionId, channel});
+        }
+        return subscriptionsIds;
+    }
+    
+    async subscribeToChannelOld(session: Session, wsEx: WebSocketEx, oldChannel: types.core.WsChannelName): Promise<types.core.SubscriptionId> {
+        const channel = this.parseOldChannel(oldChannel);
+        if (!channel) {
+            throw new AppException("INVALID_PARAMS", "invalid channel construction");
+        }
+        return await this.subscribeToChannel(session, wsEx,  channel, {version: 1});
+    }
+    
+    async unsubscribeFromChannelOld(session: Session, wsEx: WebSocketEx, oldChannel: types.core.WsChannelName): Promise<void> {
+        const channel = this.parseOldChannel(oldChannel);
+        if (!channel) {
+            throw new AppException("INVALID_PARAMS", "invalid channel construction");
+        }
+        this.webSocketInnerManager.unsubscribeFromChannelsByOrgChannel(wsEx, session.getWsId(), channel);
+    }
+    
+    private convertChannelToObject(channel: types.core.WsChannelName, version: number): types.cloud.ChannelScheme {
+        const [path, scope] = channel.split("|");
+        const options: ChannelSchemeOptions = scope ? this.parseScopeOptions(scope) : {
+            limitedBy: "none",
+            objectId: "<none>",
+        };
+        const channelScheme: types.cloud.ChannelScheme = {
+            subscriptionId: this.generateSubscriptionId(),
+            orgChannel: channel,
+            path: path,
+            version,
+            ...options,
+        };
+        return channelScheme;
+    }
+    
+    private parseScopeOptions(scope: string) {
+        const scopeOptions = scope.split(",");
+        const limitedBy: ChannelSchemeOptions = {
+            limitedBy: "none",
+            objectId: "<none>",
+        };
+        for (const option of scopeOptions) {
+            const optionParts = option.split("=");
+            if (optionParts.length !== 2) {
+                throw new AppException("INVALID_PARAMS", "Invalid subscribtion options");
+            }
+            const [optionKey, optionValue] = optionParts;
+            if (this.SELECTOR_SUBSCRIBTION_OPTIONS.has(optionKey as types.cloud.ChannelSchemeSelectors)) {
+                if (limitedBy.limitedBy === "none") {
+                    limitedBy.limitedBy = optionKey as types.cloud.ChannelSchemeSelectors;
+                    limitedBy.objectId = optionValue;
+                }
+                else {
+                    throw new AppException("INVALID_PARAMS", "Invalid subscribtion options, there can be only one object selector");
+                }
+            }
+            else if (this.isSubscriptionOption(optionKey)) {
+                limitedBy[optionKey] = optionValue;
+            }
+            else {
+                throw new AppException("INVALID_PARAMS", `invalid: ${scope}`);
+            }
+        }
+        return limitedBy;
+    }
+    
+    async subscribeToChannel(session: Session, wsEx: WebSocketEx, channelModel: types.core.WsChannelName, options: {version: number}) {
+        const channel = this.convertChannelToObject(channelModel, options.version);
         this.webSocketInnerManager.subscribeToChannel(wsEx, session.getWsId(), channel);
+        await this.sendAwaitingUserNotifications(channel, session.get("username") as unknown as types.core.EccPubKey);
+        return channel.subscriptionId;
     }
     
-    async unsubscribeFromChannel(session: Session, wsEx: WebSocketEx, channel: string) {
-        this.webSocketInnerManager.unsubscribeFromChannel(wsEx, session.getWsId(), channel);
+    async unsubscribeFromChannels(session: Session, wsEx: WebSocketEx, subscriptionIds: types.core.SubscriptionId[]) {
+        this.webSocketInnerManager.unsubscribeFromChannels(wsEx, session.getWsId(), subscriptionIds);
     }
     
     hasOpenConnectionWithUsername(username: types.core.Username) {
@@ -127,9 +230,9 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
         }, "disconnectWebSocketsBySubidentityGroup");
     }
     
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T) {
+    sendAtChannel<T extends types.core.Event<any, any>>(channel: TargetChannel, clients: types.core.Client[]|null, event: T) {
         this.jobService.addJob(async () => {
-            await this.workerService.sendWebsocketNotification({channel: channel, host: this.getHost(), clients, event});
+            this.workerService.sendWebsocketNotificationAndAggregateData({channel: channel, host: this.getHost(), clients, event});
         }, "Error during sending websocket notification");
     }
     
@@ -144,5 +247,42 @@ export class SimpleWebSocketConnectionManager implements WebSocketConnectionMana
                 return wsChannelId;
             }
         }
+    }
+    
+    private parseOldChannel(channel: types.core.WsChannelName): types.core.WsChannelName|null {
+        const parts = channel.split("/");
+        if (parts.length === 2) {
+            return null;
+        }
+        if (parts.length === 1) {
+            return parts[0] as types.core.WsChannelName;
+        }
+        
+        const tool = parts[0];
+        const id = parts[1];
+        const channelName = parts.slice(2).join("/");
+        return `${tool}/${channelName !== "messages" && channelName !== "files" && channelName !== "entries" ? "custom/" : ""}${channelName}|${tool === "context" ? "contextId" : "containerId"}=${id}` as types.core.WsChannelName;
+    }
+    
+    private generateSubscriptionId() {
+        return Hex.from(Crypto.randomBytes(12)) as unknown as types.core.SubscriptionId;
+    }
+    
+    private async sendAwaitingUserNotifications(channel: ChannelScheme, userPubKey: types.core.EccPubKey) {
+        const notifications = await this.popRemainingUserNotifiactions(channel, userPubKey);
+        for (const notifiaction of notifications) {
+            this.sendAtChannel(notifiaction.channel, [notifiaction.userPubKey], notifiaction.event);
+        }
+    }
+    
+    private async popRemainingUserNotifiactions(channel: ChannelScheme, userPubKey: types.core.EccPubKey) {
+        return await this.repositoryFactory.withTransaction(async session => {
+            const notifications = await this.repositoryFactory.createNotificationRepository(session).getAwaitingUserNotifications(channel, userPubKey);
+            await this.repositoryFactory.createNotificationRepository().deleteMany(notifications.map(notification => notification._id as unknown as db.notification.NotificationId));
+            return notifications;
+        });
+    }
+    private isSubscriptionOption(key: string): key is keyof types.cloud.ChannelSchemeOptions {
+        return this.SUBSCRIBTION_OPTIONS.has(key as "containerType" | "limitedBy" | "objectId");
     }
 }

@@ -15,7 +15,6 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
-import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 
 export class InboxRepository {
     
@@ -58,46 +57,12 @@ export class InboxRepository {
         return await this.repository.getMatchingPage<db.inbox.Inbox>([{$match: match}], listParams, sortBy);
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
-        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
-        const match: Record<string, unknown> = {
-            $and: [
-                {
-                    contextId: contextId,
-                },
-                {
-                    $or: [
-                        {users: userId},
-                        {managers: userId},
-                    ],
-                },
-                {
-                    $or: [
-                        {"contextObj.solution": solutionId},
-                        {"contextObj.shares": solutionId},
-                    ],
-                },
-            ],
-        };
-        if (type) {
-            match.type = type;
-        }
         return this.repository.getMatchingPage([
-            {
-                $lookup: {
-                    from: ContextRepository.COLLECTION_NAME,
-                    localField: "contextId",
-                    foreignField: "_id",
-                    as: "contextObj",
-                },
-            },
-            {
-                $match: match,
-            },
-            ...mongoQueries,
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
         ], listParams, sortBy);
     }
     
@@ -105,7 +70,7 @@ export class InboxRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async createInbox(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async createInbox(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -131,11 +96,14 @@ export class InboxRepository {
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
         };
+        if (resourceId) {
+            inbox.clientResourceId = resourceId;
+        }
         await this.repository.insert(inbox);
         return inbox;
     }
     
-    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined) {
+    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -161,6 +129,12 @@ export class InboxRepository {
             allTimeUsers: Utils.uniqueFromArrays(oldInbox.allTimeUsers, entry.users, entry.managers),
             policy: policy === undefined ? oldInbox.policy : policy,
         };
+        if (resourceId && !oldInbox.clientResourceId) {
+            updatedInbox.clientResourceId = resourceId;
+        }
+        else if (oldInbox.clientResourceId) {
+            updatedInbox.clientResourceId = oldInbox.clientResourceId;
+        }
         await this.repository.update(updatedInbox);
         return updatedInbox;
     }

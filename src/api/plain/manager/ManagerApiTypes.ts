@@ -63,6 +63,17 @@ export interface AuthResult {
     scope: types.auth.Scope[];
 }
 
+export interface CreateFirstApiKeyModel {
+    /** Initialization token */
+    initializationToken: types.auth.InitializationToken;
+    /** New api key name */
+    name: types.auth.ApiKeyName;
+    /** ED25519 PEM encoded public key */
+    publicKey?: types.core.EccPubKeyPEM;
+}
+
+export type CreateFirstApiKeyResult = CreateApiKeyResult;
+
 export interface CreateApiKeyModel {
     /** New api key name */
     name: types.auth.ApiKeyName;
@@ -154,6 +165,12 @@ export interface IManagerApi {
     * @returns accessToken, refreshToken, expiryTime and scope
     */
     auth(model: AuthModel): Promise<AuthResult>;
+    /**
+    * Adds new ApiKey (up to limit of 10). If you pass a public key you cannot use generated api key secret to authorize
+    * @param model api key name, scope and optional public key
+    * @returns api key id and secret
+    */
+    createFirstApiKey(model: CreateFirstApiKeyModel): Promise<CreateFirstApiKeyResult>;
     /**
     * Adds new ApiKey (up to limit of 10). If you pass a public key you cannot use generated api key secret to authorize
     * @param model api key name, scope and optional public key

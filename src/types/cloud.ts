@@ -23,16 +23,41 @@ export type AclGroupName = string&{__aclGroupName: never};
 export type AclGroups =  Record<AclGroupName, AclFunctions>;
 export type AppPubKey = types.core.EccPubKey;
 export type UserPubKey = types.core.EccPubKey;
+export type KnownKeyId = string&{__knownKeyId: never};
+export type KnownKeyStatus = "login"|"logout";
+export type ChannelSchemeOptions = Pick<ChannelScheme, "containerType"|"limitedBy"|"objectId">;
+export type ChannelSchemeSelectors = "containerId"|"itemId"|"contextId"|"none";
 
 export interface UserIdentity {
     id: UserId;
     pub: UserPubKey;
+}
+export interface ChannelScheme {
+    subscriptionId: types.core.SubscriptionId;
+    orgChannel: string;
+    path: string;
+    limitedBy: string;
+    objectId: string;
+    version: number;
+    containerType?: string;
+}
+
+export interface KnownKeyStatusChange {
+    action: KnownKeyStatus;
+    timestamp: types.core.Timestamp;
 }
 
 export interface UserIdentityWithStatus {
     id: UserId;
     pub: UserPubKey;
     status: "active"|"inactive";
+}
+
+export interface UserIdentityWithStatusAndAction {
+    id: UserId;
+    pub: UserPubKey;
+    status: "active"|"inactive";
+    lastStatusChange: null|KnownKeyStatusChange;
 }
 
 export interface UserKeysEntry {
@@ -50,6 +75,7 @@ export interface Event<T extends string, C extends string, D> {
     type: T;
     channel: C;
     data: D;
+    timestamp: types.core.Timestamp;
 }
 
 export interface ContainerWithoutItemPolicy extends ItemPolicy {

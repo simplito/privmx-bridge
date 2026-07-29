@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as mongodb from "mongodb";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { MongoBinaryDb } from "./MongoBinaryDb";
 import { MongoObjectRepository } from "./MongoObjectRepository";
 import { Utils } from "../../utils/Utils";
@@ -43,6 +43,7 @@ export class MongoDbManager {
         private client: mongodb.MongoClient|null,
         public readonly logger: Logger,
         public readonly metricService: MetricService,
+        private dbCache: Map<string, unknown>,
     ) {
         // this.logger.level = Logger.DEBUG;
         this.mongo = null;
@@ -160,9 +161,9 @@ export class MongoDbManager {
         return await func(new MongoBinaryDb(await this.getCollection(collectionName, ""), undefined, this.logger));
     }
     
-    async withMongo<T>(collectionType: string, collectionName: string, func: (col: mongodb.Collection) => Promise<T>): Promise<T> {
+    async withMongo<T>(collectionType: string, collectionName: string, func: (col: mongodb.Collection, collectionName: string, dbCache: Map<string, unknown>) => Promise<T>): Promise<T> {
         this.checkInitialization(this.mongo);
-        return await func(await this.getCollection(collectionType, collectionName));
+        return await func(await this.getCollection(collectionType, collectionName), this.getCollectionName(collectionType, collectionName), this.dbCache);
     }
     
     async getStorageSize() {
@@ -229,7 +230,7 @@ export class MongoDbManager {
     
     getRepository<K extends string|number, V extends mongodb.Document>(collectionName: string, idProp: keyof V, session?: mongodb.ClientSession): MongoObjectRepository<K, V> {
         this.checkInitialization(this.mongo);
-        return new MongoObjectRepository(this.mongo.db.collection<V>(collectionName), idProp, session, this.logger, this.metricService);
+        return new MongoObjectRepository(this.mongo.db.collection<V>(collectionName), idProp, session, this.logger, this.metricService, collectionName, this.dbCache);
     }
     
     getCollectionByName<T extends mongodb.Document = mongodb.Document>(colName: string) {

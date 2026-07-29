@@ -37,7 +37,7 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
     
     async validateAccess(method: string) {
         await this.authorizationDetector.authorize();
-        if (method !== "auth" && method !== "bindAccessToken" && !this.authorizationHolder.isAuthorized()) {
+        if (method !== "auth" && method !== "bindAccessToken" && method !== "createFirstApiKey" && !this.authorizationHolder.isAuthorized()) {
             throw new AppException("UNAUTHORIZED");
         }
     }
@@ -54,6 +54,12 @@ export class ManagerApi extends BaseApi implements managerApi.IManagerApi {
             return this.authService.authByApiKeySignature(model.apiKeyId, model.scope, model.timestamp, model.nonce, model.signature, model.data || "");
         }
         throw new AppException("INVALID_PARAMS", "grantType");
+    }
+    
+    @ApiMethod({errorCodes: ["FIRST_API_KEY_ALREADY_EXISTS",  "INITIALIZATION_TOKEN_MISSMATCH"]})
+    async createFirstApiKey(model: managerApi.CreateFirstApiKeyModel): Promise<managerApi.CreateFirstApiKeyResult> {
+        const apiKey = await this.apiKeyService.createFirstApiKey(model.initializationToken, model.name, model.publicKey);
+        return {id: apiKey.id, secret: apiKey.secret};
     }
     
     @ApiMethod({errorCodes: ["API_KEYS_LIMIT_EXCEEDED"]})

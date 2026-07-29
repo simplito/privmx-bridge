@@ -32,6 +32,7 @@ export const test = testApi("client", "store/", ManagementStoreApi, new Manageme
             version: 1 as types.store.StoreVersion,
             lastFileDate: 1709648110994 as types.core.Timestamp,
             files: 1,
+            publicMeta: null,
         },
     });
     call("listStores", api => api.listStores({
@@ -55,6 +56,7 @@ export const test = testApi("client", "store/", ManagementStoreApi, new Manageme
                 version: 1 as types.store.StoreVersion,
                 lastFileDate: 1709648110994 as types.core.Timestamp,
                 files: 1,
+                publicMeta: null,
             },
         ],
     });
@@ -75,6 +77,7 @@ export const test = testApi("client", "store/", ManagementStoreApi, new Manageme
             lastModificationDate: 1709648110994 as types.core.Timestamp,
             size: 64 as types.core.SizeInBytes,
             keyId: "f03c6e25c54bac1b7e22e5508d38b9d5" as types.core.KeyId,
+            publicMeta: null,
         },
     });
     call("listStoreFiles", api => api.listStoreFiles({
@@ -96,6 +99,7 @@ export const test = testApi("client", "store/", ManagementStoreApi, new Manageme
                 lastModificationDate: 1709648110994 as types.core.Timestamp,
                 size: 64 as types.core.SizeInBytes,
                 keyId: "f03c6e25c54bac1b7e22e5508d38b9d5" as types.core.KeyId,
+                publicMeta: null,
             },
         ],
     });

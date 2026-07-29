@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as types from "../../types";
-import { WebSocketConnectionManager } from "./WebSocketConnectionManager";
+import { TargetChannel, WebSocketConnectionManager } from "./WebSocketConnectionManager";
 
 export class WebSocketSender {
     
@@ -19,23 +19,15 @@ export class WebSocketSender {
     ) {
     }
     
-    sendToAll<T extends types.core.Event<any, any>>(event: T) {
-        return this.sendToAllAtChannel("", event);
+    sendToAllAtChannel<T extends types.core.Event<any, any>>(channel: TargetChannel, event: T) {
+        return this.sendAtChannel(null, channel, event);
     }
     
-    sendToAllAtChannel<T extends types.core.Event<any, any>>(channel: string, event: T) {
-        return this.sendAtChannel(channel, null, event);
+    sendCloudEventAtChannel<T extends types.cloud.Event<string, string, any>>(clients: types.core.Client[], channel: TargetChannel, event: T) {
+        return this.sendAtChannel(clients, channel, event);
     }
     
-    send<T extends types.core.Event<any, any>>(clients: types.core.Client[], event: T) {
-        return this.sendAtChannel("", clients, event);
-    }
-    
-    sendCloudEventAtChannel<T extends types.cloud.Event<string, string, any>>(clients: types.core.Client[], event: T) {
-        return this.sendAtChannel(event.channel, clients, event);
-    }
-    
-    sendAtChannel<T extends types.core.Event<any, any>>(channel: string, clients: types.core.Client[]|null, event: T) {
-        return this.webSocketConnectionManager.sendAtChannel(channel, clients, event);
+    sendAtChannel<T extends types.core.Event<any, any>>(clients: types.core.Client[]|null, targetChannel: TargetChannel, event: T) {
+        return this.webSocketConnectionManager.sendAtChannel(targetChannel, clients, event);
     }
 }

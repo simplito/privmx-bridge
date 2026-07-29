@@ -15,7 +15,7 @@ import * as bs58check from "bs58check";
 import * as elliptic from "elliptic";
 import * as BN from "bn.js";
 import { ECIES } from "./ECIES";
-import { Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { ECUtils } from "./ECUtils";
 
 export function init(logger: Logger) {
@@ -190,6 +190,6 @@ export function init(logger: Logger) {
         };
     }
     catch (e) {
-        logger.error("ERROR loading privmx-native", e);
+        logger.error(e, "ERROR loading privmx-native");
     }
 }

@@ -10,10 +10,11 @@ limitations under the License.
 */
 
 import * as types from "../../types";
+import type * as mongodb from "mongodb";
 
 export type FileId = types.request.FileId;
 export type TmpFileId = types.request.FileId;
-
+export type RandomWriteStorageContext = Record<string, unknown>;
 /**
     File has two states. When file is uploaded, firstly you create temporary file, append data to it, set checksum and
     in the end you commit that file or reject it. When it is committed you can read/copy/delete it. Copy operation
@@ -74,4 +75,14 @@ export interface IStorageService {
         Switch to fresh storage if needed (if clearStorage is not definetely and if after it storage is not fully cleared)
     */
     switchToFreshStorage(): Promise<void>;
+    
+    /**
+        Prepares file to random write. Writes at specified position of file or checksum. At -1 writes at the end of the file. If the provider does not support random write throw an exception.
+    */
+    randomWritePrepare(id: FileId, operations: types.store.StoreFileRandomWriteOperation[]): Promise<RandomWriteStorageContext>
+    
+    /**
+        Commits writes to file. If the provider does not support random write throw an exception.
+    */
+    randomWriteCommit(commitContext: RandomWriteStorageContext, session?: mongodb.ClientSession): Promise<{newFileSize: number, newChecksumSize: number}>
 }

@@ -12,7 +12,6 @@ limitations under the License.
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
-import * as mongodb from "mongodb";
 
 export class NonceRepository {
     
@@ -42,7 +41,7 @@ export class NonceRepository {
             return true;
         }
         catch (e) {
-            if (e instanceof mongodb.MongoError && e.code === 11000) { // E11000 duplicate key error
+            if (this.repository.isMongoDuplicateError(e)) {
                 return false;
             }
             throw e;

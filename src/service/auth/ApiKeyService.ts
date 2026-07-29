@@ -14,12 +14,32 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { AppException } from "../../api/AppException";
 import * as managerApi from "../../api/plain/manager/ManagerApiTypes";
 import { AuthoriationUtils } from "../../utils/AuthorizationUtils";
+import { LockHelper } from "../misc/LockHelper";
+import { Config } from "../../cluster/common/ConfigUtils";
 
 export class ApiKeyService {
     
     constructor(
         private repositoryFactory: RepositoryFactory,
+        private lockHelper: LockHelper,
+        private config: Config,
     ) {
+    }
+    
+    async createFirstApiKey(initializationToken: types.auth.InitializationToken, name: types.auth.ApiKeyName, publicKey: types.core.EccPubKeyPEM|undefined) {
+        return this.lockHelper.withLock("first-api-key-creation", async () => {
+            const apiKeyCount = await this.repositoryFactory.createApiKeyRepository().getApiKeyCount();
+            if (apiKeyCount !== 0) {
+                throw new AppException("FIRST_API_KEY_ALREADY_EXISTS");
+            }
+            if (!this.config.server.initializationToken || initializationToken !== this.config.server.initializationToken) {
+                throw new AppException("INITIALIZATION_TOKEN_MISSMATCH");
+            }
+            const user = await this.repositoryFactory.createApiUserRepository().create();
+            return await this.repositoryFactory.createApiKeyRepository().create(user.id, name as types.auth.ApiKeyName, [
+                "context", "apiKey", "solution", "solution:*", "inbox", "store", "thread", "stream", "kvdb",
+            ] as types.auth.Scope[], true, publicKey);
+        });
     }
     
     async createApiKey(userId: types.auth.ApiUserId, name: types.auth.ApiKeyName, scope: types.auth.Scope[], publicKey: types.core.EccPubKeyPEM|undefined) {

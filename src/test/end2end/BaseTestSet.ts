@@ -22,7 +22,7 @@ import { PromiseUtils } from "../../utils/PromiseUtils";
 import { Deferred } from "../../CommonTypes";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
 import { MetricService } from "../../service/misc/MetricService";
-import { ConsoleAppender, Logger } from "../../service/log/LoggerFactory";
+import { Logger } from "../../service/log/Logger";
 import { HttpClient2 } from "../../utils/HttpClient2";
 import { ConfigLoader } from "../../service/config/ConfigLoader";
 import { ContextApiClient } from "../../api/main/context/ContextApiClient";
@@ -32,8 +32,7 @@ import { InboxApiClient } from "../../api/main/inbox/InboxApiClient";
 import { RequestApiClient } from "../../api/main/request/RequestApiClient";
 import { UserApiClient } from "../../api/main/user/UserApiClient";
 import { StreamApiClient } from "../../api/main/stream/StreamApiClient";
-import * as PrivmxCrypto from "privmx-crypto";
-import * as PrivmxRpc from "privmx-rpc";
+import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 import { ErrorCode, ERROR_CODES } from "../../api/AppException";
 import * as assert from "assert";
 import { ManagementContextApiClient } from "../../api/plain/context/ManagementContextApiClient";
@@ -46,6 +45,10 @@ import { JsonRpcClient, JsonRpcException } from "../../utils/JsonRpcClient";
 import { ManagementStreamApiClient } from "../../api/plain/stream/ManagementStreamApiClient";
 import { testData } from "../datasets/testData";
 import * as types from "../../types";
+import { KvdbApiClient } from "../../api/main/kvdb/KvdbApiClient";
+import { ManagementKvdbApiClient } from "../../api/plain/kvdb/ManagementKvdbApiClient";
+import { Crypto } from "../../utils/crypto/Crypto";
+import { pino } from "pino";
 
 interface Collection {
     name: string;
@@ -161,6 +164,10 @@ export class BaseTestSet {
             "port": 3001,
             "hostname": "0.0.0.0",
             "workers": 1,
+            "broker": {
+                "mode": "internal",
+                "brokerUri": "/tmp/pmx_event",
+            },
         },
         "db": {
             "mongo": {
@@ -173,6 +180,11 @@ export class BaseTestSet {
             "tmpDir": "/tmp/privmx-bridge-e2e-tests/tmp",
         },
         "dbMigrationId": "Migration048FixAclCache",
+        "streams": {
+            "mediaServer": {
+                "fake": true,
+            },
+        },
     };
     
     protected apis!: {
@@ -184,6 +196,7 @@ export class BaseTestSet {
         requestApi: RequestApiClient;
         userApi: UserApiClient;
         streamApi: StreamApiClient;
+        kvdbApi: KvdbApiClient;
     };
     
     protected plainApis!: {
@@ -195,6 +208,7 @@ export class BaseTestSet {
         storeApi: ManagementStoreApiClient;
         inboxApi: ManagementInboxApiClient;
         streamApi: ManagementStreamApiClient;
+        kvdbApi: ManagementKvdbApiClient;
     };
     
     protected helpers = {
@@ -205,12 +219,22 @@ export class BaseTestSet {
         
         /** Subscribes to channel on main api */
         subscribeToChannel: async (channel: string) => {
-            await this.apis.connection.call("subscribeToChannel", {channel}, {channelType: "websocket"});
+            return await this.apis.connection.call("subscribeToChannel", {channel}, {channelType: "websocket"});
         },
         
         /** Unsubscribes from channel on main api */
-        unsubscribeToChannel: async (channel: string) => {
+        unsubscribeFromChannel: async (channel: string) => {
             await this.apis.connection.call("unsubscribeFromChannel", {channel}, {channelType: "websocket"});
+        },
+        
+        /** Subscribes to channel on main api */
+        subscribeToChannels: async (channels: string[]): Promise<{subscriptions: types.core.Subscription[]}> => {
+            return await this.apis.connection.call("subscribeToChannels", {channels: channels}, {channelType: "websocket"});
+        },
+        
+        /** Unsubscribes from channel on main api */
+        unsubscribeFromChannels: async (subscriptionsIds: types.core.SubscriptionId[]) => {
+            await this.apis.connection.call("unsubscribeFromChannels", {subscriptionsIds}, {channelType: "websocket"});
         },
         
         /** Adds event listener on main api */
@@ -225,9 +249,14 @@ export class BaseTestSet {
                 url: serverUrl + "/api/v2.0",
                 host: "localhost",
             };
-            const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(privKeyWif);
-            const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: solutionId}, connectionOptions);
+            const priv = PrivmxRpc.crypto.ecc.PrivateKey.fromWIF(privKeyWif);
+            const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: await priv, solution: solutionId}, connectionOptions);
             return conn;
+        },
+        
+        /** Generates and returns UUID for resourceId */
+        generateResourceId: () => {
+            return Crypto.uuidv4() as types.core.ClientResourceId;
         },
     };
     
@@ -237,6 +266,7 @@ export class BaseTestSet {
             if (workerId) {
                 this.defaultConfig.server.port += workerId;
                 this.defaultConfig.db.mongo.dbName += "-" + workerId;
+                this.defaultConfig.server.broker.brokerUri += "=" + workerId;
                 this.configPath = "/tmp/config" + workerId + ".json";
             }
             await this.connectToMongo();
@@ -327,8 +357,8 @@ export class BaseTestSet {
             url: serverUrl + "/api/v2.0",
             host: "localhost",
         };
-        const priv = PrivmxCrypto.ecc.PrivateKey.fromWIF(testData.userPrivKey);
-        const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: priv, solution: testData.solutionId}, connectionOptions);
+        const priv = PrivmxRpc.crypto.ecc.PrivateKey.fromWIF(testData.userPrivKey);
+        const conn = await PrivmxRpc.rpc.createEcdhexConnection({key: await priv, solution: testData.solutionId}, connectionOptions);
         this.apis = {
             connection: conn,
             contextApi: new ContextApiClient(conn),
@@ -338,6 +368,7 @@ export class BaseTestSet {
             requestApi: new RequestApiClient(conn),
             userApi: new UserApiClient(conn),
             streamApi: new StreamApiClient(conn),
+            kvdbApi: new KvdbApiClient(conn),
         };
         const jsonRpcClient = new JsonRpcClient(serverUrl + "/api", {
             "Content-type": "application/json",
@@ -351,6 +382,7 @@ export class BaseTestSet {
             storeApi: new ManagementStoreApiClient(jsonRpcClient),
             streamApi: new ManagementStreamApiClient(jsonRpcClient),
             threadApi: new ManagementThreadApiClient(jsonRpcClient),
+            kvdbApi: new ManagementKvdbApiClient(jsonRpcClient),
         };
     }
     
@@ -416,8 +448,9 @@ export class BaseTestSet {
     private async connectToMongo() {
         this.dbManager = new MongoDbManager(
             new MongoClient(this.defaultConfig.db.mongo.url),
-            new Logger("Tests", "TestLogger", 0, new ConsoleAppender(), true),
+            new Logger("Tests", "TestLogger", pino()),
             new MetricService(),
+            new Map<string, unknown>(),
         );
         this.dbManager.init(this.defaultConfig.db.mongo.dbName);
     }

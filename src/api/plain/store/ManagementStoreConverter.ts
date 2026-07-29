@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as managementStoreApi from "./ManagementStoreApiTypes";
 import * as db from "../../../db/Model";
+import { Utils } from "../../../utils/Utils";
 
 export class ManagementStoreConverter {
     
@@ -29,6 +30,7 @@ export class ManagementStoreConverter {
             version: x.history.length as types.store.StoreVersion,
             lastFileDate: x.lastFileDate,
             files: x.files,
+            publicMeta: Utils.findFieldInUnknownObject(x.data, "publicMetaObject"),
         };
         return res;
     }
@@ -49,6 +51,7 @@ export class ManagementStoreConverter {
             thumb: file.thumb ? {
                 size: file.thumb.size,
             } : undefined,
+            publicMeta: Utils.findFieldInUnknownObject(file.meta, "publicMetaObject"),
         };
         return res;
     }

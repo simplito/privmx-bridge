@@ -14,7 +14,7 @@ import * as path from "path";
 import * as fs from "fs";
 import * as types from "./docsGeneratorTypes";
 import { Validator } from "adv-validator/out/Types";
-import { ApiVersion } from "../api/Version";
+import { VersionDetector } from "../service/config/VersionDetector";
 
 export class SlateDocsGenerator {
     
@@ -67,16 +67,23 @@ export class SlateDocsGenerator {
     }
     
     async generateAclGroupsSection(aclGroups: types.AclGroups, files: string[]) {
+        const hiddenAclPrefixes = ["stream"];
         const header = `
 Function | parameters
 -------- | -------`;
         
         const markdownAclGroups: string[] = ["# ACL Groups and functions"];
         for (const groupName in aclGroups.groups) {
+            if (hiddenAclPrefixes.some(prefix => groupName.startsWith(prefix))) {
+                continue;
+            }
             const groupFunctions = aclGroups.groups[groupName];
             markdownAclGroups.push(`\n### ${groupName}`);
             markdownAclGroups.push(header);
             for (const functionName in groupFunctions) {
+                if (hiddenAclPrefixes.some(prefix => functionName.startsWith(prefix))) {
+                    continue;
+                }
                 markdownAclGroups.push(`${functionName} | ${groupFunctions[functionName].join("</br>")}`);
             }
         }
@@ -400,7 +407,7 @@ ${this.createArrayFromMap(jsonRpcErrorCodes).filter(x => (!commonErorrs.some(e =
     async setApiVersion() {
         const layoutPath = path.resolve(__dirname, "../../slatedocs/layouts/layout.erb");
         const layotuContent = await fs.promises.readFile(layoutPath, "utf8");
-        const newLayotuContent = layotuContent.replace(/(<span id="api-version">)(.+?)(<\/span>)/gi, `$1 ${ApiVersion} $3`);
+        const newLayotuContent = layotuContent.replace(/(<span id="api-version">)(.+?)(<\/span>)/gi, `$1 ${VersionDetector.detectServerVersion()} $3`);
         await fs.promises.writeFile(layoutPath, newLayotuContent, "utf8");
     }
 }

@@ -11,7 +11,12 @@ limitations under the License.
 
 import * as types from "../../types";
 import { FileSystemService } from "../request/FileSystemService";
-import { FileId, IStorageService, TmpFileId } from "./StorageService";
+import { FileId, IStorageService, RandomWriteStorageContext, TmpFileId } from "./StorageService";
+
+export interface FsRandomWriteStorageContext extends RandomWriteStorageContext{
+    id: FileId;
+    operations: types.store.StoreFileRandomWriteOperation[];
+}
 
 export class FileSystemStorageService implements IStorageService {
     
@@ -63,5 +68,17 @@ export class FileSystemStorageService implements IStorageService {
     
     async switchToFreshStorage(): Promise<void> {
         /* Do nothing */
+    }
+    
+    async randomWritePrepare(id: FileId, operations: types.store.StoreFileRandomWriteOperation[]): Promise<FsRandomWriteStorageContext> {
+        const res: FsRandomWriteStorageContext = {
+            id,
+            operations,
+        };
+        return res;
+    }
+    
+    async randomWriteCommit(randomWriteContext: FsRandomWriteStorageContext): Promise<{newFileSize: number, newChecksumSize: number}> {
+        return await this.fileSystemService.randomWrite(randomWriteContext.id, randomWriteContext.operations);
     }
 }

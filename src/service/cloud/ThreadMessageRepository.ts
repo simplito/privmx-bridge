@@ -39,8 +39,7 @@ export class ThreadMessageRepository {
         ));
     }
     
-    async getPageByThreadAndUser(userId: types.cloud.UserId, threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
+    async getPageByThreadAndUser(userId: types.cloud.UserId, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy: keyof db.thread.ThreadMessage) {
         const match: Record<string, unknown> = {
             $and: [
                 {
@@ -51,12 +50,11 @@ export class ThreadMessageRepository {
                 },
             ],
         };
-        return this.repository.matchX(match, listParams, sortBy);
+        return this.repository.matchWithUpdates(match, listParams, sortBy);
     }
     
-    async getPageByThread(threadId: types.thread.ThreadId, listParams: types.core.ListModel) {
-        const sortBy = "createDate";
-        return this.repository.matchX({threadId: threadId}, listParams, sortBy);
+    async getPageByThread(threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy: keyof db.thread.ThreadMessage) {
+        return this.repository.matchWithUpdates({threadId: threadId}, listParams, sortBy);
     }
     
     async getPageByThreadMatch2(threadId: types.thread.ThreadId, listParams: types.core.ListModel2<types.thread.ThreadMessageId>) {
@@ -67,20 +65,23 @@ export class ThreadMessageRepository {
         return this.repository.generateId();
     }
     
-    async createMessage(msgId: types.thread.ThreadMessageId|null, author: types.cloud.UserId, threadId: types.thread.ThreadId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId) {
+    async tryCreateMessage(msgId: types.thread.ThreadMessageId|null, author: types.cloud.UserId, threadId: types.thread.ThreadId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null) {
         const message: db.thread.ThreadMessage = {
-            id: msgId || this.repository.generateId(),
+            id: msgId ? msgId : this.repository.generateId(),
             threadId: threadId,
             createDate: DateUtils.now(),
             author: author,
             data: data,
             keyId: keyId,
         };
+        if (resourceId) {
+            message.clientResourceId = resourceId;
+        }
         await this.repository.insert(message);
         return message;
     }
     
-    async updateMessage(oldMessage: db.thread.ThreadMessage, author: types.cloud.UserId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId) {
+    async updateMessage(oldMessage: db.thread.ThreadMessage, author: types.cloud.UserId, data: types.thread.ThreadMessageData, keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null) {
         const updates = oldMessage.updates || [];
         updates.push({
             createDate: DateUtils.now(),
@@ -95,6 +96,12 @@ export class ThreadMessageRepository {
             keyId: keyId,
             updates: updates,
         };
+        if (resourceId && !oldMessage.clientResourceId) {
+            message.clientResourceId = resourceId;
+        }
+        else if (oldMessage.clientResourceId) {
+            message.clientResourceId = oldMessage.clientResourceId;
+        }
         await this.repository.update(message);
         return message;
     }

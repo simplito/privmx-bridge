@@ -32,6 +32,9 @@ export class InboxConverter {
             type: inbox.type,
             policy: inbox.policy || {},
         };
+        if (inbox.clientResourceId) {
+            res.resourceId = inbox.clientResourceId;
+        }
         return res;
     }
     
@@ -39,6 +42,7 @@ export class InboxConverter {
         const last = inbox.history[inbox.history.length - 1];
         const res: inboxApi.InboxGetPublicViewResult = {
             inboxId: inbox.id,
+            contextId: inbox.contextId,
             publicData: last.data.publicData,
             version: <types.inbox.InboxVersion>inbox.history.length,
         };
