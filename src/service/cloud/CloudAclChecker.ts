@@ -108,6 +108,7 @@ export type AclFunctionNameX =
     | "kvdb/kvdbSendCustomNotification"
     | "kvdb/kvdbEntrySet"
     | "kvdb/kvdbEntryGet"
+    | "kvdb/kvdbEntryFind"
     | "kvdb/kvdbEntryDelete"
     | "kvdb/kvdbEntryDeleteMany"
     | "kvdb/WRITE"
@@ -263,6 +264,7 @@ export class CloudAclChecker {
             "kvdb/kvdbList": [],
             "kvdb/kvdbListAll": [],
             "kvdb/kvdbEntryGet": ["kvdbId", "entryKey"],
+            "kvdb/kvdbEntryFind": ["kvdbId", "entryKey"],
             "kvdb/kvdbListKeys": ["kvdbId"],
             "kvdb/getKvdbEntries": ["kvdbId"],
         } as types.cloud.AclFunctions;
