@@ -120,3 +120,150 @@ it("ContextApiValidator.groupGenerateNewKey rejects missing expectedKeyVersion",
     const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
     expect(result.success).toBe(false);
 });
+
+// ---------- Hidden key tree + Epoch Ladder ----------
+
+const nodePubKey = ECUtils.generateKeyPair().pub58 as unknown as types.core.EccPubKey;
+
+/** Two members, one internal node, one grant edge — the smallest tree the wire format accepts. */
+function validTree(): types.cloud.GroupTreeState {
+    return {
+        numLeaves: 2,
+        leafAssignment: ["janek", "ola"] as types.cloud.UserId[],
+        nodes: [{nodeIndex: 1, generation: 0, publicKey: nodePubKey}],
+        edges: [
+            {parentIndex: 1, parentGeneration: 0, childKind: "user", childUserId: "janek" as types.cloud.UserId, data: "w1" as types.core.UserKeyData},
+            {parentIndex: 1, parentGeneration: 0, childKind: "user", childUserId: "ola" as types.cloud.UserId, data: "w2" as types.core.UserKeyData},
+            {isGrantEdge: true, parentGeneration: 1, childKind: "node", childIndex: 1, childGeneration: 0, data: "w3" as types.core.UserKeyData},
+        ],
+    };
+}
+
+it("ContextApiValidator.groupCreate accepts a tree", () => {
+    const model: contextApi.GroupCreateModel = {...validGroupCreate(), tree: validTree()};
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCreate accepts a blank leaf in leafAssignment", () => {
+    const tree = validTree();
+    tree.leafAssignment = ["janek", ""] as types.cloud.UserId[];
+    const result = Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), tree}));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCreate rejects a tree with numLeaves below one", () => {
+    const tree = {...validTree(), numLeaves: 0};
+    const result = Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), tree}));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupCreate rejects an unknown child kind", () => {
+    const tree = validTree();
+    (tree.edges[0] as {childKind: string}).childKind = "epoch";
+    const result = Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), tree}));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupAddMember valid", () => {
+    const model: contextApi.GroupAddMemberModel = {
+        id: groupId,
+        userId: "nowy" as types.cloud.UserId,
+        role: "user",
+        position: 2,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        tree: validTree(),
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupAddMember", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupAddMember rejects an unknown role", () => {
+    const model = {
+        id: groupId,
+        userId: "nowy" as types.cloud.UserId,
+        role: "owner",
+        position: 2,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        tree: validTree(),
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupAddMember", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupRemoveMember valid", () => {
+    const model: contextApi.GroupRemoveMemberModel = {
+        id: groupId,
+        userId: "ola" as types.cloud.UserId,
+        groupPubKey: groupPubKey,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        tree: validTree(),
+        rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupRemoveMember rejects a rung with epoch zero", () => {
+    const model = {
+        id: groupId,
+        userId: "ola" as types.cloud.UserId,
+        groupPubKey: groupPubKey,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        tree: validTree(),
+        rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupRemoveMember rejects a missing rung list", () => {
+    // The rungs are not optional: a new epoch without them orphans the group's own history.
+    const model = {
+        id: groupId,
+        userId: "ola" as types.cloud.UserId,
+        groupPubKey: groupPubKey,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        tree: validTree(),
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupCutEra valid", () => {
+    const model: contextApi.GroupCutEraModel = {id: groupId, newFloor: 5, expectedKeyVersion: 9};
+    const result = Utils.try(() => validator().validate("groupCutEra", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCutEra rejects a floor below one", () => {
+    const result = Utils.try(() => validator().validate("groupCutEra", {id: groupId, newFloor: 0, expectedKeyVersion: 9}));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupPruneArchive valid", () => {
+    const model: contextApi.GroupPruneArchiveModel = {id: groupId, belowEpoch: 4, expectedKeyVersion: 9};
+    const result = Utils.try(() => validator().validate("groupPruneArchive", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupGetKeyArchive valid without a window", () => {
+    const result = Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId}));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupGetKeyArchive valid with a window", () => {
+    const model: contextApi.GroupGetKeyArchiveModel = {id: groupId, fromKeyVersion: 2, toKeyVersion: 8};
+    const result = Utils.try(() => validator().validate("groupGetKeyArchive", model));
+    expect(result.success).toBe(true);
+});

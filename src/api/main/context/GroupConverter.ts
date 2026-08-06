@@ -38,6 +38,44 @@ export class GroupConverter {
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
         }
+        this.addTreeState(res, group, user);
+        return res;
+    }
+    
+    /**
+     * Serves the tree state, flattened, plus the caller's own leaf.
+     *
+     * The archive is deliberately *not* included: it grows with the group's entire history, while a client needs
+     * it only when reaching for an older epoch. `groupGetKeyArchive` serves it on demand instead.
+     */
+    private addTreeState(res: contextApi.GroupInfo, group: db.group.Group, user: types.cloud.UserId) {
+        if (!group.tree) {
+            return;
+        }
+        res.numLeaves = group.tree.numLeaves;
+        res.leafAssignment = group.tree.leafAssignment;
+        res.treeNodes = group.tree.nodes;
+        res.treeEdges = group.tree.edges;
+        res.eraFloor = group.eraFloor ?? 1;
+        if (group.archivePrunedBelow !== undefined) {
+            res.archivePrunedBelow = group.archivePrunedBelow;
+        }
+        const position = group.tree.leafAssignment.indexOf(user);
+        if (position >= 0) {
+            res.ownLeafPosition = position;
+        }
+    }
+    
+    convertKeyArchive(group: db.group.Group, rungs: types.cloud.GroupArchiveRung[]): contextApi.GroupGetKeyArchiveResult {
+        const res: contextApi.GroupGetKeyArchiveResult = {
+            keyVersion: group.keyVersion ?? 0,
+            eraFloor: group.eraFloor ?? 1,
+            keyHistory: group.keyHistory ?? [],
+            rungs: rungs,
+        };
+        if (group.archivePrunedBelow !== undefined) {
+            res.archivePrunedBelow = group.archivePrunedBelow;
+        }
         return res;
     }
     
