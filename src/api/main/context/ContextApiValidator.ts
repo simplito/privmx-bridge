@@ -107,6 +107,8 @@ export class ContextApiValidator extends BaseValidator {
             // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384)),
+            // At most one: the group is a grantee of itself, and it has exactly one grant key per epoch.
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 4)),
             expectedKeyVersion: this.builder.int,
             confirmationTag: this.builder.optional(this.tv.base64),
         }));

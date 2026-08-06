@@ -34,6 +34,7 @@ export class GroupConverter {
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: group.history.map(x => this.convertHistoryEntry(x)),
+            groupKeys: group.groupKeys ?? [],
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;

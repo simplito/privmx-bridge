@@ -13,6 +13,7 @@ limitations under the License.
 /* eslint-disable @typescript-eslint/no-empty-function */
 
 import "q2-test";
+import * as assert from "assert";
 import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { CloudKeyService } from "../../../service/cloud/CloudKeyService";
 import { GroupNotificationService } from "../../../service/cloud/GroupNotificationService";
@@ -568,6 +569,83 @@ it("SECURITY: removeMember refuses a key entry addressed to the member being rem
         keys: [{user: bob, keyId: newKeyId, data: "blob" as types.core.UserKeyData}],
     }));
     hasNoCalls(groupRepository.removeMemberWithTree);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the metadata key: one wrap, not one per member
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The self-addressed metadata key a removal submits: one ciphertext, opened by climbing to the grant key. */
+function selfKey(epoch: number, keyId_: types.core.KeyId = newKeyId): types.cloud.GroupKeyEntrySet {
+    return {group: groupId, groupEpoch: epoch, keyId: keyId_, data: "metadata-key" as types.core.UserKeyData};
+}
+
+it("removeMember stores the metadata key wrapped once to the group itself", async () => {
+    // The whole point: rotating the metadata key on a removal costs one wrap, not one per remaining member.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await groupService.removeMember(janekCloudUser, {...removalModel(group, 2), keys: [], groupKeys: [selfKey(EPOCH + 1)]});
+    hasOneCall(groupRepository.removeMemberWithTree);
+});
+
+it("removeMember keeps earlier epochs' metadata keys alongside the new one", async () => {
+    // An older `data` entry stays readable to whoever can descend the ladder to the epoch it was written at, so
+    // the entries accumulate rather than replace each other.
+    const existing: types.cloud.GroupKeysEntry[] = [
+        {group: groupId, groupEpoch: EPOCH, keys: [{keyId: keyId, data: "old" as types.core.UserKeyData}]},
+    ];
+    const group = treeBackedGroup({groupKeys: existing});
+    const {groupService, groupRepository} = createGroupService(group);
+    let stored: types.cloud.GroupKeysEntry[]|undefined;
+    mock(groupRepository, "removeMemberWithTree", (async (params: {groupKeys?: types.cloud.GroupKeysEntry[]}) => {
+        stored = params.groupKeys;
+        return group;
+    }) as never);
+    await groupService.removeMember(janekCloudUser, {...removalModel(group, 2), keys: [], groupKeys: [selfKey(EPOCH + 1)]});
+    assert.strictEqual(stored?.length, 2);
+    assert.strictEqual(stored?.[0].groupEpoch, EPOCH);
+    assert.strictEqual(stored?.[1].groupEpoch, EPOCH + 1);
+});
+
+it("SECURITY: removeMember refuses a metadata key addressed to a different group", async () => {
+    // Wrapping this group's metadata key to another group would hand it to that group's members, who are not
+    // members here.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("INVALID_PARAMS", () => groupService.removeMember(janekCloudUser, {
+        ...removalModel(group, 2),
+        keys: [],
+        groupKeys: [{...selfKey(EPOCH + 1), group: "other-group" as types.group.GroupId}],
+    }));
+    hasNoCalls(groupRepository.removeMemberWithTree);
+});
+
+it("SECURITY: removeMember refuses a metadata key wrapped to an earlier epoch", async () => {
+    // An entry wrapped to the *old* grant key would still open for the member being removed — that is the key
+    // they hold. This is the check that keeps the O(1) path as strong as the O(n) one it replaces.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("INVALID_PARAMS", () => groupService.removeMember(janekCloudUser, {
+        ...removalModel(group, 2), keys: [], groupKeys: [selfKey(EPOCH)],
+    }));
+    hasNoCalls(groupRepository.removeMemberWithTree);
+});
+
+it("removeMember refuses a metadata key naming a keyId other than the one being introduced", async () => {
+    const group = treeBackedGroup();
+    const {groupService} = createGroupService(group);
+    await expectFailure("INVALID_PARAMS", () => groupService.removeMember(janekCloudUser, {
+        ...removalModel(group, 2), keys: [], groupKeys: [selfKey(EPOCH + 1, keyId)],
+    }));
+});
+
+it("removeMember still accepts a removal with no metadata rotation at all", async () => {
+    // Rotating the metadata key is the caller's choice; the grant key rotates either way, so the removal is
+    // effective for content regardless.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await groupService.removeMember(janekCloudUser, removalModel(group, 2));
+    hasOneCall(groupRepository.removeMemberWithTree);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -156,6 +156,8 @@ export class GroupRepository {
         rungs: types.cloud.GroupArchiveRung[],
         /** Metadata-key entries for the members who stay; the departing member's are dropped regardless. */
         keys?: types.cloud.UserKeysEntry[],
+        /** The metadata key wrapped once to the group's own grant key — the O(1) replacement for the above. */
+        groupKeys?: types.cloud.GroupKeysEntry[],
         confirmationTag?: types.core.Base64,
     }): Promise<db.group.Group|null> {
         const {oldGroup, modifier, removedUser} = params;
@@ -189,6 +191,7 @@ export class GroupRepository {
             keyVersion: expectedKeyVersion + 1,
             keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
             tree: params.tree,
+            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
             archiveRungs: [...(oldGroup.archiveRungs ?? []), ...params.rungs],
         };
         return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);

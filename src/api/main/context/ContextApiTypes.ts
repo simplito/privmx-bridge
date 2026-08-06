@@ -162,13 +162,18 @@ export interface GroupRemoveMemberModel {
     tree: types.cloud.GroupTreeState;
     rungs: types.cloud.GroupArchiveRung[];
     /**
-     * Fresh key entries for the remaining members at `keyId`.
-     *
-     * The tree takes care of the grant key, but the group's own metadata is encrypted under an ordinary
-     * container key. A caller that wants the departing member locked out of *metadata* too must supply a new
-     * `keyId` with entries for everyone who stays; omitting them leaves the metadata key as it was.
+     * Per-member entries for the new `keyId`. Normally **empty** for a tree-backed group: `groupKeys` below
+     * carries the same key in a single ciphertext, which is the whole point.
      */
     keys?: types.cloud.KeyEntrySet[];
+    /**
+     * The new metadata key wrapped once to the group's own grant public key at the epoch being created.
+     *
+     * Without this, locking a departing member out of the group's *metadata* costs one wrap per remaining
+     * member — the O(n) the tree exists to remove. With it, a removal is one wrap regardless of group size, and
+     * every remaining member opens it by climbing to the grant key they can already reach.
+     */
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
     expectedKeyVersion: number;
     confirmationTag?: types.core.Base64;
 }
@@ -309,6 +314,8 @@ export interface GroupInfo {
     ownLeafPosition?: number;
     treeNodes?: types.cloud.GroupTreeNode[];
     treeEdges?: types.cloud.GroupTreeEdge[];
+    /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
+    groupKeys: types.cloud.GroupKeysEntry[];
     eraFloor?: number;
     archivePrunedBelow?: number;
 }

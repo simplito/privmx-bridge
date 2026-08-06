@@ -286,8 +286,10 @@ export class GroupService extends BaseContainerService {
                 oldGroup.keys.filter(k => k.user !== model.userId),
                 model.keys ?? [], model.keyId, [...users, ...managers],
             );
+            const newGroupKeys = this.buildSelfAddressedKeys(oldGroup, model.groupKeys ?? [], model.keyId, newKeyVersion);
             const result = await groupRepository.removeMemberWithTree({
                 keys: newKeys,
+                groupKeys: newGroupKeys,
                 oldGroup,
                 modifier: user.userId,
                 removedUser: model.userId,
@@ -468,6 +470,58 @@ export class GroupService extends BaseContainerService {
             }
         }
         return newKeys;
+    }
+    
+    /**
+     * Merges the metadata key the group wrapped **to itself**.
+     *
+     * A tree-backed group does not need one metadata-key ciphertext per member: it can wrap the key once to its
+     * own grant public key, exactly as a thread or store does when granting access to a group, and every member
+     * opens it by climbing to a key they can already reach. That single entry is what keeps a removal from
+     * costing O(n) wraps.
+     *
+     * The bridge checks only what it can: that the entry names *this* group, the epoch being created, and the
+     * keyId being introduced. It cannot check what is inside — and does not need to, since a member who cannot
+     * open it simply cannot read the metadata.
+     */
+    private buildSelfAddressedKeys(
+        group: db.group.Group,
+        inserts: types.cloud.GroupKeyEntrySet[],
+        keyId: types.core.KeyId,
+        newKeyVersion: number,
+    ): types.cloud.GroupKeysEntry[] {
+        const existing = group.groupKeys ?? [];
+        if (inserts.length === 0) {
+            return existing;
+        }
+        for (const insert of inserts) {
+            if (insert.group !== group.id) {
+                // Wrapping the group's metadata key to a *different* group would hand it to that group's
+                // members, who are not members here.
+                throw new AppException("INVALID_PARAMS", `groupKeys entry must be addressed to group '${group.id}'`);
+            }
+            if (insert.keyId !== keyId) {
+                throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
+            }
+            if (insert.groupEpoch !== newKeyVersion) {
+                // An entry wrapped to an earlier epoch's grant key would still open for the member being
+                // removed, since that is the key they hold.
+                throw new AppException("INVALID_PARAMS", `groupKeys entry must name epoch ${newKeyVersion}`);
+            }
+            if (!insert.data) {
+                throw new AppException("INVALID_PARAMS", "groupKeys entry carries no data");
+            }
+        }
+        // Kept per epoch rather than replaced: an older `data` entry stays readable to whoever can descend the
+        // ladder to the epoch it was written at.
+        return [
+            ...existing,
+            ...inserts.map(insert => ({
+                group: insert.group,
+                groupEpoch: insert.groupEpoch,
+                keys: [{keyId: insert.keyId, data: insert.data}],
+            })),
+        ];
     }
     
     private assertTreeIsValid(tree: types.cloud.GroupTreeState, roster: {users: types.cloud.UserId[], managers: types.cloud.UserId[]}, keyVersion: number) {
