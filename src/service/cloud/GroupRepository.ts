@@ -90,7 +90,8 @@ export class GroupRepository {
     
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
+        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy,
+        tree?: types.cloud.GroupTreeState) {
         const now = DateUtils.now();
         const entry: db.group.GroupHistoryEntry = {
             created: now,
@@ -122,8 +123,158 @@ export class GroupRepository {
         if (resourceId) {
             group.clientResourceId = resourceId;
         }
+        if (tree) {
+            // A tree-backed group starts at epoch 1 with an era floor of 1: there is no earlier epoch to
+            // descend to, and the floor is what every later rung is measured against.
+            group.tree = tree;
+            group.keyVersion = 1;
+            group.eraFloor = 1;
+            group.archiveRungs = [];
+        }
         await this.repository.insert(group);
         return group;
+    }
+    
+    /**
+     * Removes a member from a tree-backed group: the tree state is replaced, the epoch advances, and the
+     * submitted rungs are appended so the new epoch can still reach the old ones.
+     *
+     * All of it under one compare-and-swap on `keyVersion`, so two managers removing two members concurrently
+     * cannot interleave into a state where one refresh overwrites the other's — the loser is told to retry
+     * against the winner's tree.
+     *
+     * @returns the updated group, or `null` on a lost CAS race
+     */
+    async removeMemberWithTree(params: {
+        oldGroup: db.group.Group,
+        modifier: types.cloud.UserId,
+        removedUser: types.cloud.UserId,
+        newGroupPubKey: types.cloud.GroupPubKey,
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        tree: types.cloud.GroupTreeState,
+        rungs: types.cloud.GroupArchiveRung[],
+        /** Metadata-key entries for the members who stay; the departing member's are dropped regardless. */
+        keys?: types.cloud.UserKeysEntry[],
+        /** The metadata key wrapped once to the group's own grant key — the O(1) replacement for the above. */
+        groupKeys?: types.cloud.GroupKeysEntry[],
+        confirmationTag?: types.core.Base64,
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier, removedUser} = params;
+        const now = DateUtils.now();
+        const users = oldGroup.users.filter(u => u !== removedUser);
+        const managers = oldGroup.managers.filter(u => u !== removedUser);
+        const entry: db.group.GroupHistoryEntry = {
+            created: now,
+            author: modifier,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            groupPubKey: params.newGroupPubKey,
+            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
+        };
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const updatedGroup: db.group.Group = {
+            ...oldGroup,
+            groupPubKey: params.newGroupPubKey,
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            // Per-member key entries for the removed user go with them. A tree-backed group holds none, but a
+            // group that still carries some from before the tree must not keep the departed member's.
+            keys: (params.keys ?? oldGroup.keys).filter(k => k.user !== removedUser),
+            history: [...oldGroup.history, entry],
+            keyVersion: expectedKeyVersion + 1,
+            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
+            tree: params.tree,
+            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
+            archiveRungs: [...(oldGroup.archiveRungs ?? []), ...params.rungs],
+        };
+        return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);
+    }
+    
+    /**
+     * Adds a member to a tree-backed group without advancing the epoch.
+     *
+     * The epoch staying put is the whole economy of the design: no container the group can read goes stale, so
+     * an addition costs the wraps on one path and nothing else.
+     */
+    async addMemberWithTree(params: {
+        oldGroup: db.group.Group,
+        modifier: types.cloud.UserId,
+        addedUser: types.cloud.UserId,
+        role: types.cloud.ContainerRole,
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        tree: types.cloud.GroupTreeState,
+        /** The newcomer's entry for the group's existing metadata key. */
+        keys?: types.cloud.UserKeysEntry[],
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier, addedUser} = params;
+        const now = DateUtils.now();
+        const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
+        const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
+        const entry: db.group.GroupHistoryEntry = {
+            created: now,
+            author: modifier,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            groupPubKey: oldGroup.groupPubKey,
+        };
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const updatedGroup: db.group.Group = {
+            ...oldGroup,
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            keys: params.keys ?? oldGroup.keys,
+            history: [...oldGroup.history, entry],
+            allTimeUsers: Utils.uniqueFromArrays(oldGroup.allTimeUsers, [addedUser]),
+            tree: params.tree,
+        };
+        // Still a CAS on the unchanged epoch: an addition racing a removal must lose, because it was computed
+        // against a tree the removal has already replaced.
+        return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);
+    }
+    
+    /**
+     * Closes the current era at `newFloor`: nothing below it may be reached by descending any more, and the
+     * rungs that pointed there are dropped because policy has just made them useless.
+     */
+    async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const updatedGroup: db.group.Group = {
+            ...oldGroup,
+            eraFloor: newFloor,
+            archiveRungs: (oldGroup.archiveRungs ?? []).filter(r => r.targetKeyVersion >= newFloor),
+            lastModificationDate: DateUtils.now(),
+        };
+        return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);
+    }
+    
+    /**
+     * Deletes rungs targeting below `belowEpoch` and records the watermark, so a client that fails to descend
+     * is told the archive was pruned rather than left to suspect tampering.
+     */
+    async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const watermark = Math.max(oldGroup.archivePrunedBelow ?? 0, belowEpoch);
+        const updatedGroup: db.group.Group = {
+            ...oldGroup,
+            archivePrunedBelow: watermark,
+            archiveRungs: (oldGroup.archiveRungs ?? []).filter(r => r.targetKeyVersion >= belowEpoch),
+            lastModificationDate: DateUtils.now(),
+        };
+        return this.casRotate(oldGroup, expectedKeyVersion, updatedGroup);
     }
     
     async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, groupPubKey: types.cloud.GroupPubKey, managers: types.cloud.UserId[],

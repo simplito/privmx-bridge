@@ -58,4 +58,24 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
         return this.request("context.groupList", model);
     }
+    
+    groupAddMember(model: contextApi.GroupAddMemberModel): Promise<types.core.OK> {
+        return this.request("context.groupAddMember", model);
+    }
+    
+    groupRemoveMember(model: contextApi.GroupRemoveMemberModel): Promise<types.core.OK> {
+        return this.request("context.groupRemoveMember", model);
+    }
+    
+    groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
+        return this.request("context.groupCutEra", model);
+    }
+    
+    groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
+        return this.request("context.groupPruneArchive", model);
+    }
+    
+    groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
+        return this.request("context.groupGetKeyArchive", model);
+    }
 }

@@ -134,6 +134,9 @@ export const API_ERROR_CODES = {
     "GROUP_VERSION_MISMATCH"                : {code: 0x621B, message: "Group version mismatch or broken signature chain"},
     "ROTATED_ALREADY"                       : {code: 0x621C, message: "Group key was already rotated by a concurrent request"},
     "GROUP_ROTATION_RATE_LIMIT"             : {code: 0x621D, message: "Group key rotation rate limit exceeded"},
+    "GROUP_TREE_INVALID"                    : {code: 0x621E, message: "Submitted group key tree is malformed or incomplete"},
+    "GROUP_ARCHIVE_INVALID"                 : {code: 0x621F, message: "Submitted group key archive rungs are invalid"},
+    "GROUP_HAS_NO_TREE"                     : {code: 0x6220, message: "Group is not backed by a key tree"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

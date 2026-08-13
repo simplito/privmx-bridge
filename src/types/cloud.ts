@@ -77,11 +77,17 @@ export interface KeyEntrySet {
     data: types.core.UserKeyData;
 }
 
+/** One container-key blob wrapped to a group's pubkey, tagged with the epoch it was wrapped at. */
+export interface GroupKeyEntry {
+    keyId: types.core.KeyId;
+    data: types.core.UserKeyData;
+    groupEpoch?: number;
+}
+
 /** Container key blobs distributed to a group grantee (the container key encrypted to the group's pubkey). */
 export interface GroupKeysEntry {
     group: types.group.GroupId;
-    groupEpoch?: number;
-    keys: types.core.KeyEntry[];
+    keys: GroupKeyEntry[];
 }
 
 export interface GroupKeyEntrySet {
@@ -89,6 +95,65 @@ export interface GroupKeyEntrySet {
     groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion (Phase 2, BR-5)
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
+}
+
+// ── Hidden key tree (documents/nested_groups/09-hidden-key-tree.md) ─────────────────────────────────────────
+// The bridge stores and serves this state but cannot read a single key in it: every `data` below is a
+// ciphertext addressed to a key only clients hold. What the bridge *can* do — and must — is check the shape,
+// which is pure integer arithmetic over node indices (see keytree/TreeMath.ts).
+
+/** Public half of one tree node. Nodes are never deleted, only refreshed into a higher generation. */
+export interface GroupTreeNode {
+    nodeIndex: number;
+    generation: number;
+    publicKey: types.core.EccPubKey;
+}
+
+export type GroupTreeChildKind = "user"|"node";
+
+/**
+ * One edge: `wrap(sk_parent -> pk_child)`, letting a client that reached the child reach the parent.
+ *
+ * `isGrantEdge` marks the single edge joining the grant keypair to the tree root. That indirection is what
+ * keeps tree growth from advancing the epoch, and so from staling every container the group can read.
+ */
+export interface GroupTreeEdge {
+    isGrantEdge?: boolean;
+    /** Absent on the grant edge, whose "parent" is the grant keypair rather than a node. */
+    parentIndex?: number;
+    /** Node generation for an ordinary edge; the epoch (keyVersion) for the grant edge. */
+    parentGeneration: number;
+    childKind: GroupTreeChildKind;
+    childIndex?: number;
+    childGeneration?: number;
+    childUserId?: UserId;
+    data: types.core.UserKeyData;
+}
+
+/** Complete public tree state of a group. `leafAssignment` uses "" for a blank left by a removal. */
+export interface GroupTreeState {
+    numLeaves: number;
+    leafAssignment: UserId[];
+    nodes: GroupTreeNode[];
+    edges: GroupTreeEdge[];
+}
+
+// ── Epoch Ladder (documents/epoch_key_archive/) ─────────────────────────────────────────────────────────────
+
+/**
+ * One rung: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
+ *
+ * `targetKeyVersion < atKeyVersion` always. That single comparison is the whole security guarantee of this
+ * layer — an upward rung would hand a removed member a key from after their removal — and the bridge is the
+ * only party positioned to enforce it globally, which is why it does so on every write.
+ */
+export interface GroupArchiveRung {
+    atKeyVersion: number;
+    targetKeyVersion: number;
+    recipientKind?: "epoch"|"user"|"group";
+    recipient?: string;
+    data: types.core.UserKeyData;
+    author?: UserId;
 }
 
 /** Role a group grantee holds in a container. Role-tagged so it generalizes to RBAC (widen this union). */

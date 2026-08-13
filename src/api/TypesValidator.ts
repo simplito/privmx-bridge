@@ -63,6 +63,10 @@ export class TypesValidator {
     groupId: Validator;
     groupData: Validator;
     groupPubKey: Validator;
+    groupTreeNode: Validator;
+    groupTreeEdge: Validator;
+    groupTreeState: Validator;
+    groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
     storeId: Validator;
@@ -240,6 +244,38 @@ export class TypesValidator {
         this.groupId = id;
         this.groupData = this.unknown16Kb;
         this.groupPubKey = this.eccPub;
+        this.groupTreeNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        this.groupTreeEdge = this.builder.createObject({
+            isGrantEdge: this.builder.optional(this.builder.bool),
+            // Absent on the grant edge, whose parent is the grant keypair rather than a node.
+            parentIndex: this.builder.optional(this.intNonNegative),
+            parentGeneration: this.intNonNegative,
+            childKind: this.builder.createEnum(["user", "node"]),
+            childIndex: this.builder.optional(this.intNonNegative),
+            childGeneration: this.builder.optional(this.intNonNegative),
+            childUserId: this.builder.optional(this.cloudUserId),
+            data: this.userKeyData,
+        });
+        this.groupTreeState = this.builder.createObject({
+            numLeaves: this.builder.min(this.builder.int, 1),
+            // An empty string marks a blank left by a removal, so this is not cloudUserId (which requires a
+            // non-empty id). The structural validator checks the entries against the roster.
+            leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), 16384),
+            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, 32768),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 65536),
+        });
+        this.groupArchiveRung = this.builder.createObject({
+            atKeyVersion: this.builder.min(this.builder.int, 1),
+            targetKeyVersion: this.builder.min(this.builder.int, 1),
+            recipientKind: this.builder.optional(this.builder.createEnum(["epoch", "user", "group"])),
+            recipient: this.builder.optional(this.builder.maxLength(this.builder.string, 128)),
+            data: this.userKeyData,
+            author: this.builder.optional(this.cloudUserId),
+        });
         this.groupGrant = this.builder.createObject({
             groupId: this.groupId,
             role: this.builder.createEnum(["user", "manager"]),

@@ -221,6 +221,21 @@ export namespace group {
         policy?: types.cloud.ContainerPolicy;
         keyVersion?: number;
         keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
+        /** Hidden key tree. Absent on a flat group, which keeps behaving exactly as it did before. */
+        tree?: types.cloud.GroupTreeState;
+        /**
+         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch, instead of
+         * once per member. The group is a grantee of itself, using the same mechanism a thread or store uses to
+         * grant access to a group. This is what keeps a removal off the O(n) path — see
+         * documents/nested_groups/09-hidden-key-tree.md §9.1.
+         */
+        groupKeys?: types.cloud.GroupKeysEntry[];
+        /** Epoch Ladder rungs, append-only apart from pruning. */
+        archiveRungs?: types.cloud.GroupArchiveRung[];
+        /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
+        eraFloor?: number;
+        /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
+        archivePrunedBelow?: number;
     }
     
     export interface GroupHistoryEntry {

@@ -34,6 +34,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     private groupId?: types.group.GroupId;
     private threadId?: types.thread.ThreadId;
     private aliceThreadApi?: ThreadApiClient;
+    private aliceMessageId?: types.thread.ThreadMessageId;
     
     @Test()
     async shouldGrantThreadAccessThroughGroupAndRevokeOnRemoval() {
@@ -43,9 +44,12 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
         await this.connectAsAlice();
         await this.aliceCanGetThreadViaGroup();
         await this.aliceCanListThreadViaGroup();
+        await this.aliceCanSendMessageViaGroup();
+        await this.aliceCanGetMessagesViaGroup();
         await this.removeAliceFromGroup();
         await this.aliceCanNoLongerGetThread();
         await this.aliceCanNoLongerListThread();
+        await this.aliceCanNoLongerSendMessage();
     }
     
     @Test()
@@ -119,6 +123,22 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
         assert(res.threads.some(t => t.id === threadId), "alice should see the thread in her MEMBER list via the group");
     }
     
+    private async aliceCanSendMessageViaGroup() {
+        const threadId = this.requireThreadId();
+        const res = await this.requireAliceThreadApi().threadMessageSend({
+            threadId,
+            data: "hello-from-alice" as types.thread.ThreadMessageData,
+            keyId: threadKeyId,
+        });
+        this.aliceMessageId = res.messageId;
+    }
+    
+    private async aliceCanGetMessagesViaGroup() {
+        const threadId = this.requireThreadId();
+        const res = await this.requireAliceThreadApi().threadMessagesGet({threadId, limit: 10, skip: 0, sortOrder: "asc"});
+        assert(res.messages.some(m => m.id === this.requireAliceMessageId()), "alice should see the message she sent via the group-granted thread");
+    }
+    
     private async removeAliceFromGroup() {
         // Removal via full-replace groupUpdate; membership integrity is committed inside `data` by the endpoint,
         // not verified by the bridge. modifyMembers (delta) is deferred — see documents/plan/08-future-plans.md.
@@ -147,6 +167,22 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
         const threadId = this.requireThreadId();
         const res = await this.requireAliceThreadApi().threadList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc", scope: "MEMBER"});
         assert(!res.threads.some(t => t.id === threadId), "alice should no longer see the thread after being removed from the group");
+    }
+    
+    private async aliceCanNoLongerSendMessage() {
+        const threadId = this.requireThreadId();
+        await shouldThrowErrorWithCode2(() => this.requireAliceThreadApi().threadMessageSend({
+            threadId,
+            data: "should-fail" as types.thread.ThreadMessageData,
+            keyId: threadKeyId,
+        }), "ACCESS_DENIED");
+    }
+    
+    private requireAliceMessageId(): types.thread.ThreadMessageId {
+        if (!this.aliceMessageId) {
+            throw new Error("aliceMessageId not initialized yet");
+        }
+        return this.aliceMessageId;
     }
     
     private requireGroupId(): types.group.GroupId {

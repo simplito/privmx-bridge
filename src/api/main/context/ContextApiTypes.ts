@@ -116,6 +116,99 @@ export interface GroupCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
+    /**
+     * Hidden key tree for the group. Passing it makes the group tree-backed: members reach the grant key by
+     * climbing, so `keys` need not carry an entry per member. Omitting it creates a flat group, unchanged.
+     */
+    tree?: types.cloud.GroupTreeState;
+}
+
+/**
+ * Adds one member to a tree-backed group. Deliberately *not* an update to `users`: the point of the tree is
+ * that a member can be added without advancing the epoch, and that is only checkable against a named seat.
+ */
+export interface GroupAddMemberModel {
+    id: types.group.GroupId;
+    userId: types.cloud.UserId;
+    role: types.cloud.ContainerRole;
+    /** Leaf position the newcomer takes — a blank left by a removal, or the next free position. */
+    position: number;
+    keyId: types.core.KeyId;
+    data: types.group.GroupData;
+    tree: types.cloud.GroupTreeState;
+    /**
+     * Key entries for the newcomer at the group's current `keyId`.
+     *
+     * The tree distributes the *grant* key; the group's own metadata is encrypted under an ordinary container
+     * key, and the newcomer needs one entry for it. That is a single wrap and no rotation, so it does not make
+     * the addition expensive.
+     */
+    keys?: types.cloud.KeyEntrySet[];
+    /** Guards against computing the tree against a state a concurrent removal has already replaced. */
+    expectedKeyVersion: number;
+}
+
+/**
+ * Removes one member from a tree-backed group, in a single operation that must do all of it at once: blank the
+ * leaf, refresh the leaf's direct path, rotate the grant keypair (advancing the epoch), and supply the rungs
+ * that keep the older epochs reachable from the new one.
+ */
+export interface GroupRemoveMemberModel {
+    id: types.group.GroupId;
+    userId: types.cloud.UserId;
+    groupPubKey: types.cloud.GroupPubKey;
+    keyId: types.core.KeyId;
+    data: types.group.GroupData;
+    tree: types.cloud.GroupTreeState;
+    rungs: types.cloud.GroupArchiveRung[];
+    /**
+     * Per-member entries for the new `keyId`. Normally **empty** for a tree-backed group: `groupKeys` below
+     * carries the same key in a single ciphertext, which is the whole point.
+     */
+    keys?: types.cloud.KeyEntrySet[];
+    /**
+     * The new metadata key wrapped once to the group's own grant public key at the epoch being created.
+     *
+     * Without this, locking a departing member out of the group's *metadata* costs one wrap per remaining
+     * member — the O(n) the tree exists to remove. With it, a removal is one wrap regardless of group size, and
+     * every remaining member opens it by climbing to the grant key they can already reach.
+     */
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    expectedKeyVersion: number;
+    confirmationTag?: types.core.Base64;
+}
+
+/** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
+export interface GroupCutEraModel {
+    id: types.group.GroupId;
+    newFloor: number;
+    expectedKeyVersion: number;
+}
+
+/** Deletes rungs below `belowEpoch`, recording a watermark so clients can tell pruning from tampering. */
+export interface GroupPruneArchiveModel {
+    id: types.group.GroupId;
+    belowEpoch: number;
+    expectedKeyVersion: number;
+}
+
+/**
+ * Fetches the Epoch Ladder. Kept out of `groupGet` because the archive grows with the group's whole history,
+ * while a client needs it only when it is actually reaching for an older epoch.
+ */
+export interface GroupGetKeyArchiveModel {
+    id: types.group.GroupId;
+    /** Optional window; omitted bounds mean "everything reachable". */
+    fromKeyVersion?: number;
+    toKeyVersion?: number;
+}
+
+export interface GroupGetKeyArchiveResult {
+    keyVersion: number;
+    eraFloor: number;
+    archivePrunedBelow?: number;
+    keyHistory: types.cloud.GroupPubKeyAtEpoch[];
+    rungs: types.cloud.GroupArchiveRung[];
 }
 
 export interface GroupCreateResult {
@@ -211,6 +304,20 @@ export interface GroupInfo {
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
+    // ── Tree state, present only on a tree-backed group. Flat groups serve none of it and behave as before. ──
+    numLeaves?: number;
+    leafAssignment?: types.cloud.UserId[];
+    /**
+     * The caller's own leaf. The bridge fills this in because it knows who is asking — the same reason it
+     * already filters `keys` — which saves the client from having to know its own user id to find its seat.
+     */
+    ownLeafPosition?: number;
+    treeNodes?: types.cloud.GroupTreeNode[];
+    treeEdges?: types.cloud.GroupTreeEdge[];
+    /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
+    groupKeys: types.cloud.GroupKeysEntry[];
+    eraFloor?: number;
+    archivePrunedBelow?: number;
 }
 
 export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupInfo>;
@@ -234,4 +341,9 @@ export interface IContextApi {
     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
     groupList(model: GroupListModel): Promise<GroupListResult>;
+    groupAddMember(model: GroupAddMemberModel): Promise<types.core.OK>;
+    groupRemoveMember(model: GroupRemoveMemberModel): Promise<types.core.OK>;
+    groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
+    groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
+    groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
 }
