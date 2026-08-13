@@ -164,16 +164,10 @@ export class CloudKeyService {
         if (!Utils.isUnique(inserts.map(x => x.group + "/" + x.keyId))) {
             throw new AppException("INVALID_PARAMS", "Some group key entries are duplicated");
         }
-        const newGroupKeys = oldGroupKeys.map(x => {
-            const res: types.cloud.GroupKeysEntry = {
-                group: x.group,
-                keys: x.keys.slice(),
-            };
-            if (x.groupEpoch !== undefined) {
-                res.groupEpoch = x.groupEpoch;
-            }
-            return res;
-        });
+        const newGroupKeys = oldGroupKeys.map(x => ({
+            group: x.group,
+            keys: x.keys.slice(),
+        }));
         for (const insert of inserts) {
             if (!availableKeyIds.includes(insert.keyId)) {
                 throw new AppException("INVALID_KEY_ID");
@@ -183,15 +177,13 @@ export class CloudKeyService {
                 groupEntry = {group: insert.group, keys: []};
                 newGroupKeys.push(groupEntry);
             }
-            if (insert.groupEpoch !== undefined) {
-                groupEntry.groupEpoch = insert.groupEpoch;
-            }
             const keyEntry = groupEntry.keys.find(x => x.keyId === insert.keyId);
             if (!keyEntry) {
-                groupEntry.keys.push({keyId: insert.keyId, data: insert.data});
+                groupEntry.keys.push({keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch});
             }
             else {
                 keyEntry.data = insert.data;
+                keyEntry.groupEpoch = insert.groupEpoch;
             }
         }
         return newGroupKeys;

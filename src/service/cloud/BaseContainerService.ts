@@ -71,7 +71,7 @@ export class BaseContainerService {
             .getKeyVersions(container.contextId, groupIds);
         const isStale = (container.groupKeys || []).some(entry => {
             const current = currentVersions.get(entry.group) ?? 1;
-            return (entry.groupEpoch ?? 0) < current;
+            return entry.keys.some(k => (k.groupEpoch ?? 0) < current);
         });
         if (isStale) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");
