@@ -592,7 +592,7 @@ it("removeMember keeps earlier epochs' metadata keys alongside the new one", asy
     // An older `data` entry stays readable to whoever can descend the ladder to the epoch it was written at, so
     // the entries accumulate rather than replace each other.
     const existing: types.cloud.GroupKeysEntry[] = [
-        {group: groupId, groupEpoch: EPOCH, keys: [{keyId: keyId, data: "old" as types.core.UserKeyData}]},
+        {group: groupId, keys: [{keyId: keyId, data: "old" as types.core.UserKeyData, groupEpoch: EPOCH}]},
     ];
     const group = treeBackedGroup({groupKeys: existing});
     const {groupService, groupRepository} = createGroupService(group);
@@ -603,8 +603,8 @@ it("removeMember keeps earlier epochs' metadata keys alongside the new one", asy
     }) as never);
     await groupService.removeMember(janekCloudUser, {...removalModel(group, 2), keys: [], groupKeys: [selfKey(EPOCH + 1)]});
     assert.strictEqual(stored?.length, 2);
-    assert.strictEqual(stored?.[0].groupEpoch, EPOCH);
-    assert.strictEqual(stored?.[1].groupEpoch, EPOCH + 1);
+    assert.strictEqual(stored?.[0].keys[0].groupEpoch, EPOCH);
+    assert.strictEqual(stored?.[1].keys[0].groupEpoch, EPOCH + 1);
 });
 
 it("SECURITY: removeMember refuses a metadata key addressed to a different group", async () => {

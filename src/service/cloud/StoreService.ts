@@ -86,7 +86,8 @@ export class StoreService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStore.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeUpdate", ["storeId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldStore, managers, policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStore, user.userId, userGroupIds), managers, policy);
             const currentVersion = <types.store.StoreVersion>oldStore.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
@@ -124,7 +125,8 @@ export class StoreService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStore.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeRotateKeys", ["storeId=" + id]);
-            if (!this.policy.canRotateContainerKeys(user, context, oldStore)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldStore, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             const currentVersion = <types.store.StoreVersion>oldStore.history.length;
@@ -149,9 +151,10 @@ export class StoreService extends BaseContainerService {
             if (!store) {
                 throw new AppException("STORE_DOES_NOT_EXIST");
             }
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "store/storeDelete", ["storeId=" + id]);
-                if (!this.policy.canDeleteContainer(user, context, store)) {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED", "policy is not met");
                 }
             });
@@ -183,9 +186,10 @@ export class StoreService extends BaseContainerService {
             }
             const contextId = stores[0].contextId;
             let additionalAccessCheck: ((store: db.store.Store) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "store/storeDeleteMany", []);
-                additionalAccessCheck = store => this.policy.canDeleteContainer(user, context, store);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = store => this.policy.canDeleteContainer(user, context, this.withGroupMembership(store, user.userId, userGroupIds));
             });
             const toDelete: types.store.StoreId[] = [];
             const toNotify: db.store.Store[] = [];
@@ -301,9 +305,10 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new DbInconsistencyError(`store=${file.storeId} does not exist, from file=${fileId}`);
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGet", ["storeId=" + store.id, "fileId=" + fileId]);
-            if (!this.policy.canReadItem(user, context, store, file)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -315,9 +320,10 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGetMany", ["storeId=" + storeId]);
-            if (!this.policy.canListAllItems(user, context, store)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -360,8 +366,9 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, store)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
@@ -375,8 +382,9 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
-            if (!this.policy.canListMyItems(user, context, store)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListMyItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileListMy", ["storeId=" + storeId]);
@@ -390,8 +398,9 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, store)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
@@ -401,8 +410,8 @@ export class StoreService extends BaseContainerService {
     }
     
     async createStoreFile(cloudUser: CloudUser, model: storeApi.StoreFileCreateModel) {
-        const {user, context, store} = await this.getStoreAndUser(cloudUser, model.storeId);
-        if (!this.policy.canCreateItem(user, context, store)) {
+        const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, model.storeId);
+        if (!this.policy.canCreateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileCreate", ["storeId=" + model.storeId]);
@@ -425,7 +434,7 @@ export class StoreService extends BaseContainerService {
         }
         const uploadedFile = request.files[model.fileIndex];
         const uploadedThumb = typeof(model.thumbIndex) === "number" ? request.files[model.thumbIndex] : undefined;
-
+        
         await this.storageService.getStorageService(uploadedFile.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedFile.id);
         if (uploadedThumb) {
             await this.storageService.getStorageService(uploadedThumb.supportsRandomWrite ? "randomWrite" : "regular").commit(uploadedThumb.id);
@@ -453,9 +462,9 @@ export class StoreService extends BaseContainerService {
         if (!oldFile) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
         }
-        const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
+        const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
-        if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
+        if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), oldFile)) {
             throw new AppException("ACCESS_DENIED");
         }
         if (model.keyId !== store.keyId) {
@@ -501,9 +510,9 @@ export class StoreService extends BaseContainerService {
             if (!oldFile) {
                 throw new AppException("STORE_FILE_DOES_NOT_EXIST");
             }
-            const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
+            const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + model.fileId]);
-            if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
+            if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), oldFile)) {
                 throw new AppException("ACCESS_DENIED");
             }
             if (model.keyId !== store.keyId) {
@@ -533,9 +542,9 @@ export class StoreService extends BaseContainerService {
         if (!oldFile) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
         }
-        const {user, context, store} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
+        const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, oldFile.storeId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileUpdate", ["storeId=" + store.id, "fileId=" + model.fileId]);
-        if (!this.policy.canUpdateItem(user, context, store, oldFile)) {
+        if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), oldFile)) {
             throw new AppException("ACCESS_DENIED");
         }
         if (model.keyId !== store.keyId) {
@@ -571,9 +580,10 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new DbInconsistencyError(`store=${file.storeId} does not exist, from file=${fileId}`);
         }
-        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, (user, context) => {
+        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileDelete", ["storeId=" + store.id, "fileId=" + fileId]);
-            if (!this.policy.canDeleteItem(user, context, store, file)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canDeleteItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -606,11 +616,13 @@ export class StoreService extends BaseContainerService {
             }
             const contextId = store.contextId;
             let additionalAccessCheck: ((file: db.store.StoreFile) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 if (checkAccess) {
                     this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileDeleteMany", ["storeId=" + store.id]);
                 }
-                additionalAccessCheck = file => this.policy.canDeleteItem(user, context, store, file);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                const groupAwareStore = this.withGroupMembership(store, user.userId, userGroupIds);
+                additionalAccessCheck = file => this.policy.canDeleteItem(user, context, groupAwareStore, file);
             });
             const toDelete: types.store.StoreFileId[] = [];
             const filesToDeleteData: db.store.StoreFile[] = [];
@@ -667,8 +679,8 @@ export class StoreService extends BaseContainerService {
         if (!file) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
         }
-        const {user, context, store} = await this.getStoreAndUser(cloudUser, file.storeId);
-        if (!this.policy.canReadItem(user, context, store, file)) {
+        const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, file.storeId);
+        if (!this.policy.canReadItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
             throw new AppException("ACCESS_DENIED");
         }
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileRead", ["storeId=" + store.id, "fileId=" + fileId]);
@@ -695,7 +707,8 @@ export class StoreService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, store.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeSendCustomNotification", ["storeId=" + storeId]);
-        if (!this.policy.canSendCustomNotification(user, context, store)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canSendCustomNotification(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (users && users.some(element => !store.users.includes(element))) {
@@ -717,7 +730,8 @@ export class StoreService extends BaseContainerService {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, store.contextId);
-        return {user, context, store};
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        return {user, context, store, userGroupIds};
     }
     
     private async removeFileFromStorage(file: db.store.StoreFile) {

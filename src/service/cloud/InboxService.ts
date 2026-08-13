@@ -94,7 +94,8 @@ export class InboxService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxUpdate", ["inboxId=" + model.id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldInbox, model.managers, model.policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds), model.managers, model.policy);
             const last = oldInbox.history[oldInbox.history.length - 1];
             if (last.data.threadId != model.data.threadId) {
                 await this.validateAccessToThread(model.data.threadId, user);
@@ -140,7 +141,8 @@ export class InboxService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxRotateKeys", ["inboxId=" + model.id]);
-            if (!this.policy.canRotateContainerKeys(user, context, oldInbox)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             const currentVersion = <types.inbox.InboxVersion>oldInbox.history.length;
@@ -165,8 +167,9 @@ export class InboxService extends BaseContainerService {
             if (!inbox) {
                 throw new AppException("INBOX_DOES_NOT_EXIST");
             }
-            const userContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
-                if (!this.policy.canDeleteContainer(user, context, inbox)) {
+            const userContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, async (user, context) => {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED");
                 }
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDelete", ["inboxId=" + id]);
@@ -192,9 +195,10 @@ export class InboxService extends BaseContainerService {
             }
             const contextId = inboxes[0].contextId;
             let additionalAccessCheck: ((inbox: db.inbox.Inbox) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDeleteMany", []);
-                additionalAccessCheck = inbox => this.policy.canDeleteContainer(user, context, inbox);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = inbox => this.policy.canDeleteContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds));
             });
             const toDelete: types.inbox.InboxId[] = [];
             const toNotify: db.inbox.Inbox[] = [];
@@ -389,7 +393,8 @@ export class InboxService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, inbox.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxSendCustomNotification", ["inboxId=" + inboxId]);
-        if (!this.policy.canSendCustomNotification(user, context, inbox)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canSendCustomNotification(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (users && users.some(element => !inbox.users.includes(element))) {

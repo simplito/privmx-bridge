@@ -518,8 +518,7 @@ export class GroupService extends BaseContainerService {
             ...existing,
             ...inserts.map(insert => ({
                 group: insert.group,
-                groupEpoch: insert.groupEpoch,
-                keys: [{keyId: insert.keyId, data: insert.data}],
+                keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}],
             })),
         ];
     }

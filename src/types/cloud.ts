@@ -77,11 +77,17 @@ export interface KeyEntrySet {
     data: types.core.UserKeyData;
 }
 
+/** One container-key blob wrapped to a group's pubkey, tagged with the epoch it was wrapped at. */
+export interface GroupKeyEntry {
+    keyId: types.core.KeyId;
+    data: types.core.UserKeyData;
+    groupEpoch?: number;
+}
+
 /** Container key blobs distributed to a group grantee (the container key encrypted to the group's pubkey). */
 export interface GroupKeysEntry {
     group: types.group.GroupId;
-    groupEpoch?: number;
-    keys: types.core.KeyEntry[];
+    keys: GroupKeyEntry[];
 }
 
 export interface GroupKeyEntrySet {
