@@ -28,7 +28,7 @@ export class ManagementStreamApiValidator extends BaseValidator {
             from: this.builder.nullable(this.tv.streamRoomId),
             limit: this.tv.limit,
             sortOrder: this.tv.sortOrder,
-            state: this.builder.optional(this.builder.createEnum(["all", "active", "closed"])),
+            state: this.builder.optional(this.builder.createEnum(["all", "created", "open", "closed"])),
         }));
         
         this.registerMethod("deleteStreamRoom", this.builder.createObject({
@@ -37,6 +37,10 @@ export class ManagementStreamApiValidator extends BaseValidator {
         
         this.registerMethod("deleteManyStreamRooms", this.builder.createObject({
             streamRoomIds: this.builder.createListWithMaxLength(this.tv.streamRoomId, 128),
+        }));
+        
+        this.registerMethod("listStreamRoomParticipants", this.builder.createObject({
+            streamRoomId: this.tv.streamRoomId,
         }));
     }
 }

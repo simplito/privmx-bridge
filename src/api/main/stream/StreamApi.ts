@@ -21,6 +21,7 @@ import { RequestLogger } from "../../../service/log/RequestLogger";
 import { WebSocketExtendedWithJanus } from "../../../CommonTypes";
 import { AppException } from "../../AppException";
 import { TurnCredentialsService } from "../../../service/webrtc/v2/TurnCredentialsService";
+import { DateUtils } from "../../../utils/DateUtils";
 
 export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     
@@ -39,7 +40,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomCreate(model: streamApi.StreamRoomCreateModel): Promise<streamApi.StreamRoomCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const streamRoom = await this.streamService.createStreamRoom(cloudUser, model.contextId, model.resourceId || null, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.emptyRoomTtl ?? DateUtils.ZERO_TIME);
         this.requestLogger.setContextId(streamRoom.contextId);
         return {streamRoomId: streamRoom.id};
     }
@@ -102,6 +103,13 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
+    async streamRoomListParticipants(model: streamApi.StreamRoomListParticipantsModel): Promise<streamApi.StreamRoomListParticipantsResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const list = await this.streamService.listParticipants(cloudUser, model.streamRoomId);
+        return {list};
+    }
+    
+    @ApiMethod({})
     async streamPublish(model: streamApi.StreamPublishModel): Promise<streamApi.StreamPublishResult> {
         if (!this.websocket) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
@@ -124,35 +132,13 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
-    async streamsSubscribeToRemote(model: streamApi.StreamsSubscribeModel): Promise<streamApi.StreamSubscribeResult> {
+    async streamsUpdateRemoteSubscriptions(model: streamApi.StreamUpdateRemoteSubscriptionsModel): Promise<streamApi.StreamSubscribeResult> {
         if (!this.websocket) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.subscribeToRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToAdd, this.websocket, wsId);
-        return res;
-    }
-    
-    @ApiMethod({})
-    async streamsModifyRemoteSubscriptions(model: streamApi.StreamModifySubscriptionModel): Promise<streamApi.StreamSubscribeResult> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.modifyRemoteSubscriptions(cloudUser, model.streamRoomId, model.subscriptionsToAdd, model.subscriptionsToRemove, this.websocket, wsId);
-        return res;
-    }
-    
-    @ApiMethod({})
-    async streamsUnsubscribeFromRemote(model: streamApi.StreamsUnsubscribeModel): Promise<streamApi.StreamSubscribeResult> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        const res = await this.streamService.unsubscribeFromRemoteStreams(cloudUser, model.streamRoomId, model.subscriptionsToRemove, this.websocket, wsId);
+        const res = await this.streamService.updateRemoteSubscriptions(cloudUser, model.streamRoomId, model.subscriptionsToAdd, model.subscriptionsToRemove, this.websocket, wsId);
         return res;
     }
     
@@ -233,17 +219,6 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
         await this.streamService.leaveStreamRoom(cloudUser, model.streamRoomId, this.websocket, wsId);
-        return "OK";
-    }
-    
-    @ApiMethod({})
-    async streamRoomEnableRecording(model: streamApi.StreamRoomRecordingModel): Promise<types.core.OK> {
-        if (!this.websocket) {
-            throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
-        }
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const wsId = this.sessionService.getSessionUser().getWsId();
-        await this.streamService.enableStreamRoomRecording(cloudUser, model.streamRoomId, this.websocket, wsId);
         return "OK";
     }
     

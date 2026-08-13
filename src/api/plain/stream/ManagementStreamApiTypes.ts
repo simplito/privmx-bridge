@@ -24,7 +24,8 @@ export interface GetStreamRoomResult {
 export interface ListStreamRoomsModel extends types.core.ListModel2<types.stream.StreamRoomId> {
     /** Context's ID */
     contextId: types.context.ContextId;
-    state?: "all"|"closed"|"active";
+    /** Filter by stream room state, "all" returns rooms in any state */
+    state?: "all"|"created"|"open"|"closed";
 }
 
 export interface ListStreamRoomsResult {
@@ -47,6 +48,51 @@ export interface DeleteManyStreamRoomsModel {
 export interface DeleteManyStreamRoomsResult {
     /** List of deletions status */
     results: types.stream.StreamRoomDeleteStatus[];
+}
+
+export interface StreamSubscription {
+    /** Subscribed stream ID */
+    streamId: types.stream.StreamId;
+    /** Optional specific track ID of the subscribed stream */
+    streamTrackId?: types.stream.StreamTrackId;
+}
+
+export interface StreamTrack {
+    type: "audio" | "video" | "data";
+    mindex: number;
+    mid: string;
+    disabled?: boolean;
+    codec?: string;
+    description?: string;
+    moderated?: boolean;
+    simulcast?: boolean;
+    svc?: boolean;
+    talking?: boolean;
+}
+
+export interface PublishedStream {
+    streamId: number;
+    userId: string;
+    tracks: StreamTrack[];
+}
+
+export interface StreamSubscriber {
+    /** Subscriber user ID */
+    userId: types.cloud.UserId;
+    /** Subscriptions held by the user in the room */
+    subscriptions: StreamSubscription[];
+    /** Published stream info if the participant is also publishing */
+    publishedStream?: PublishedStream;
+}
+
+export interface ListStreamRoomParticipantsModel {
+    /** Stream room ID */
+    streamRoomId: types.stream.StreamRoomId;
+}
+
+export interface ListStreamRoomParticipantsResult {
+    /** List of participants and their subscriptions */
+    list: StreamSubscriber[];
 }
 
 export interface StreamRoom {
@@ -72,8 +118,10 @@ export interface StreamRoom {
     version: types.stream.StreamRoomVersion;
     /** Public meta data set by user, equal to null if does not exist */
     publicMeta: unknown;
-    /** If stream room is closed */
-    closed: boolean;
+    /** Stream room state: "created" (no one joined yet), "open" (active participants) or "closed" */
+    state: types.stream.StreamRoomState;
+    /** Grace period (ms) the room stays open after the last participant leaves, before being closed. 0 closes it immediately. */
+    emptyRoomTtl: types.core.Timespan;
 }
 
 export interface StreamRoomDeletedData {
@@ -132,4 +180,11 @@ export interface IStreamApi {
      * @returns List of ID and status for every deletion attempt
      */
     deleteManyStreamRooms(model: DeleteManyStreamRoomsModel): Promise<DeleteManyStreamRoomsResult>;
+    
+    /**
+     * Lists subscribers and their current subscriptions in a given stream room
+     * @param model stream room's ID
+     * @returns List of subscribers with their subscriptions
+     */
+    listStreamRoomParticipants(model: ListStreamRoomParticipantsModel): Promise<ListStreamRoomParticipantsResult>;
 }

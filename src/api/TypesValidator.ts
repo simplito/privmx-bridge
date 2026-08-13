@@ -64,6 +64,7 @@ export class TypesValidator {
     storeData: Validator;
     storeFileId: Validator;
     storeFileMeta: Validator;
+    storeFileOperations: Validator;
     listModel: ObjectValidator;
     inboxId: Validator;
     inboxData: Validator;
@@ -236,6 +237,20 @@ export class TypesValidator {
         this.storeData = this.unknown4Kb;
         this.storeFileId = id;
         this.storeFileMeta = this.unknown4Kb;
+        this.storeFileOperations = this.builder.createCustom((value, _validator, checker) => {
+            const storeFileOperation = this.builder.createObject({
+                type: this.builder.createEnum(["file", "checksum"]),
+                pos: this.builder.min(this.builder.int, -1),
+                data: this.byteBuffer,
+                truncate: this.builder.bool,
+            });
+            const maxSize = 5242880;
+            checker.validateValue(value, this.builder.createList(storeFileOperation));
+            const totalDataSize = (value as {data: Buffer}[]).reduce((sum, op) => sum + op.data.length, 0);
+            if (totalDataSize > maxSize) {
+                throw new Error(`Total operations data size ${totalDataSize} exceeds limit of ${maxSize} bytes`);
+            }
+        });
         this.queryValue = this.builder.createOneOf([this.builder.int, this.builder.string, this.builder.bool, this.builder.nullValue]);
         this.queryProperty = this.builder.createOneOf([this.queryValue, this.builder.createObject({
             $gt: this.builder.optional(this.builder.int),

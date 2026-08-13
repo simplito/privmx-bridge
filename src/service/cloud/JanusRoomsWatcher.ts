@@ -15,6 +15,9 @@ import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
 import { JanusConnection } from "../../CommonTypes";
 import { StreamRoomId } from "../../types/stream";
+import { UserId } from "../../types/cloud";
+import { Timespan } from "../../types/core";
+import { StreamSubscription } from "../../api/main/stream/StreamApiTypes";
 import { JanusRoomsWatcherCache } from "../../cluster/master/ipcServices/JanusRoomsWatcherCache";
 import { JanusApi } from "../webrtc/v2/janus/JanusApi";
 import { JanusConnector } from "./JanusConnector";
@@ -26,6 +29,7 @@ export interface JanusRoomWatch {
     streamRoomId: StreamRoomId;
     janusRoomId: number;
     publisherId: number;
+    ttl?: Timespan;
 }
 interface VideoPluginEvent {
     janus: "event";
@@ -60,12 +64,12 @@ export class JanusRoomsWatcher {
         if (!this.isVideoPluginEvent(evt)) {
             return;
         }
-        if (!this.isPublisherLeaving(evt)) {
-            return;
-        }
         
         const data = evt.plugindata.data as Record<string, unknown>;
-        const rawPublisherId = data.leaving;
+        const rawPublisherId = this.extractDepartingPublisherId(data);
+        if (rawPublisherId === undefined) {
+            return;
+        }
         
         if (this.isLeaveConfirmationEchoToOriginator(rawPublisherId)) {
             return;
@@ -89,11 +93,14 @@ export class JanusRoomsWatcher {
         }
         
         const watcherModel = roomPublishers[publisherId];
-        const isRoomEmpty = await this.cache.removePublisher(watcherModel);
+        // The cache returns true only when the room is empty AND has no grace period (ttl <= 0).
+        // Rooms with a ttl stay queued in the cache and are closed later by the empty-rooms job,
+        // unless someone rejoins in the meantime.
+        const shouldCloseNow = await this.cache.removePublisher(watcherModel);
         
-        this.logger.debug({ publisherId, isRoomEmpty }, "Publisher removed via Watcher");
+        this.logger.debug({ publisherId, shouldCloseNow }, "Publisher removed via Watcher");
         
-        if (isRoomEmpty) {
+        if (shouldCloseNow) {
             this.logger.debug({ host, streamRoomId }, "LAST PUBLISHER LEFT. SETTING ROOM TO CLOSED");
             await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
         }
@@ -104,7 +111,7 @@ export class JanusRoomsWatcher {
             const repo = this.repositoryFactory.createStreamRoomRepository(session);
             const streamRoom = await repo.get(id);
             
-            if (!streamRoom || streamRoom.closed) {
+            if (!streamRoom || streamRoom.state === "closed") {
                 return;
             }
             
@@ -139,22 +146,63 @@ export class JanusRoomsWatcher {
     
     async addSessionToWatch(model: JanusRoomWatch) {
         await this.ensureConnection();
-        await this.cache.addPublisher(model);
+        const wasEmpty = await this.cache.addPublisher(model);
+        
+        if (wasEmpty) {
+            await this.openDbRoom(model.streamRoomId);
+        }
         
         if (!this.roomHandles.has(model.janusRoomId)) {
             return this.startOrJoinRoomAttachment(model);
         }
     }
     
+    private async openDbRoom(id: StreamRoomId) {
+        await this.repositoryFactory.withTransaction(async (session) => {
+            const repo = this.repositoryFactory.createStreamRoomRepository(session);
+            const streamRoom = await repo.get(id);
+            
+            if (!streamRoom || streamRoom.state !== "created") {
+                return;
+            }
+            
+            this.logger.debug("FIRST PUBLISHER JOINED. SETTING ROOM TO OPEN", id);
+            await repo.openStreamRoom(id);
+        });
+    }
+    
     async removeSessionFromWatch(model: JanusRoomWatch) {
-        const isRoomEmpty = await this.cache.removePublisher(model);
-        if (isRoomEmpty) {
+        const shouldCloseNow = await this.cache.removePublisher(model);
+        if (shouldCloseNow) {
             await this.closeDbRoomAndTriggerAutoDestroy(model.host, model.streamRoomId);
         }
     }
     
     async removeRoomWatcher(host: string, streamRoomId: StreamRoomId) {
         await this.cache.removeRoomWatcher({host, streamRoomId});
+    }
+    
+    async addSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.addSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async removeSubscriptions(host: string, streamRoomId: StreamRoomId, userId: UserId, subscriptions: StreamSubscription[]) {
+        await this.cache.removeSubscriptions({host, streamRoomId, userId, subscriptions});
+    }
+    
+    async addSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId, ttl?: Timespan) {
+        await this.cache.addSubscriber({host, streamRoomId, userId, ttl});
+    }
+    
+    async removeSubscriber(host: string, streamRoomId: StreamRoomId, userId: UserId) {
+        const shouldCloseNow = await this.cache.removeSubscriber({host, streamRoomId, userId});
+        if (shouldCloseNow) {
+            await this.closeDbRoomAndTriggerAutoDestroy(host, streamRoomId);
+        }
+    }
+    
+    async getRoomSubscribers(host: string, streamRoomId: StreamRoomId) {
+        return this.cache.getRoomSubscribers({host, streamRoomId});
     }
     
     async stopWatchingJanusRoom(janusRoomId: number) {
@@ -312,13 +360,17 @@ export class JanusRoomsWatcher {
         return attach;
     }
     
-    private isPublisherLeaving(evt: VideoPluginEvent): boolean {
-        const data = evt.plugindata.data as Record<string, unknown>;
-        return (
-            typeof data === "object" && data !== null &&
-            "room" in data &&
-            "leaving" in data
-        );
+    private extractDepartingPublisherId(data: Record<string, unknown>): unknown {
+        if (typeof data !== "object" || data === null || !("room" in data)) {
+            return undefined;
+        }
+        if ("leaving" in data) {
+            return data.leaving;
+        }
+        if ("unpublished" in data) {
+            return data.unpublished;
+        }
+        return undefined;
     }
     
     private isLeaveConfirmationEchoToOriginator(publisherId: unknown): boolean {

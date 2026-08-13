@@ -31,7 +31,8 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
             managers: ["john" as types.cloud.UserId],
             version: 1 as types.stream.StreamRoomVersion,
             publicMeta: null,
-            closed: false,
+            state: "created",
+            emptyRoomTtl: 60000 as types.core.Timespan,
         },
     });
     call("listStreamRooms", api => api.listStreamRooms({
@@ -54,7 +55,8 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
                 managers: ["john" as types.cloud.UserId],
                 version: 1 as types.stream.StreamRoomVersion,
                 publicMeta: null,
-                closed: false,
+                state: "created",
+                emptyRoomTtl: 60000 as types.core.Timespan,
             },
         ],
     });
@@ -71,6 +73,21 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
             {
                 id: "65ad8f6c2e4f4f1adb40bf81" as types.stream.StreamRoomId,
                 status: "OK",
+            },
+        ],
+    });
+    call("listStreamRoomParticipants", api => api.listStreamRoomParticipants({
+        streamRoomId: "664775ddb5d9a3f95b619ef0" as types.stream.StreamRoomId,
+    })).setResult({
+        list: [
+            {
+                userId: "john" as types.cloud.UserId,
+                subscriptions: [
+                    {
+                        streamId: 1234 as types.stream.StreamId,
+                        streamTrackId: "0" as types.stream.StreamTrackId,
+                    },
+                ],
             },
         ],
     });

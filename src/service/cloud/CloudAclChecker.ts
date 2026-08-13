@@ -74,7 +74,7 @@ export type AclFunctionNameX =
     | "stream/streamRoomList"
     | "stream/streamRoomListAll"
     | "stream/streamList"
-    | "stream/streamRoomEnableRecording"
+    | "stream/streamRoomListParticipants"
     | "stream/READ"
     | "stream/streamRoomCreate"
     | "stream/streamRoomUpdate"
@@ -87,9 +87,7 @@ export type AclFunctionNameX =
     | "stream/streamPublish"
     | "stream/streamUpdate"
     | "stream/streamUnpublish"
-    | "stream/streamSubscribe"
-    | "stream/streamUnsubscribe"
-    | "stream/streamModifySubscription"
+    | "stream/streamUpdateSubscriptions"
     | "stream/streamTrickle"
     | "stream/streamAcceptOffer"
     | "stream/streamSetNewOffer"
@@ -108,6 +106,7 @@ export type AclFunctionNameX =
     | "kvdb/kvdbSendCustomNotification"
     | "kvdb/kvdbEntrySet"
     | "kvdb/kvdbEntryGet"
+    | "kvdb/kvdbEntryFind"
     | "kvdb/kvdbEntryDelete"
     | "kvdb/kvdbEntryDeleteMany"
     | "kvdb/WRITE"
@@ -226,6 +225,7 @@ export class CloudAclChecker {
             "stream/streamRoomList": [],
             "stream/streamRoomListAll": [],
             "stream/streamList": ["streamRoomId"],
+            "stream/streamRoomListParticipants": ["streamRoomId"],
         } as types.cloud.AclFunctions;
         this.groups.set("stream/READ" as types.cloud.AclGroupName, streamRead);
         
@@ -235,16 +235,13 @@ export class CloudAclChecker {
             "stream/streamRoomDelete": ["streamRoomId"],
             "stream/streamRoomDeleteMany": [],
             "stream/streamRoomClose": ["streamRoomId"],
-            "stream/streamRoomEnableRecording": ["streamRoomId"],
             "stream/streamSendCustomNotification": ["streamRoomId"],
             "stream/streamRoomJoin": ["streamRoomId"],
             "stream/streamRoomLeave": ["streamRoomId"],
             "stream/streamPublish": ["streamRoomId"],
             "stream/streamUpdate": ["streamRoomId"],
             "stream/streamUnpublish": ["streamRoomId"],
-            "stream/streamSubscribe": ["streamRoomId"],
-            "stream/streamUnsubscribe": ["streamRoomId"],
-            "stream/streamModifySubscription": ["streamRoomId"],
+            "stream/streamUpdateSubscriptions": ["streamRoomId"],
             "stream/streamTrickle": ["streamRoomId"],
             "stream/streamAcceptOffer": ["streamRoomId"],
             "stream/streamSetNewOffer": ["streamRoomId"],
@@ -263,6 +260,7 @@ export class CloudAclChecker {
             "kvdb/kvdbList": [],
             "kvdb/kvdbListAll": [],
             "kvdb/kvdbEntryGet": ["kvdbId", "entryKey"],
+            "kvdb/kvdbEntryFind": ["kvdbId", "entryKey"],
             "kvdb/kvdbListKeys": ["kvdbId"],
             "kvdb/getKvdbEntries": ["kvdbId"],
         } as types.cloud.AclFunctions;

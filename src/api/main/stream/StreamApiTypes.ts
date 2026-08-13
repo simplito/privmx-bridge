@@ -31,7 +31,8 @@ export interface StreamRoom {
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;
-    closed: boolean;
+    state: types.stream.StreamRoomState;
+    emptyRoomTtl: types.core.Timespan;
 }
 
 export interface StreamRoomCreateModel {
@@ -44,6 +45,7 @@ export interface StreamRoomCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
+    emptyRoomTtl?: types.core.Timespan;
 }
 
 export interface StreamRoomCreateResult {
@@ -156,17 +158,21 @@ export interface StreamUpdateResult {
 // for API consumers that import it from the stream API types.
 export type { StreamSubscription };
 
-export interface StreamsSubscribeModel {
-    streamRoomId: types.stream.StreamRoomId;
-    subscriptionsToAdd: StreamSubscription[];
+export interface StreamSubscriber {
+    userId: types.cloud.UserId;
+    subscriptions: StreamSubscription[];
+    publishedStream?: PublisherAsStream;
 }
 
-export interface StreamsUnsubscribeModel {
+export interface StreamRoomListParticipantsModel {
     streamRoomId: types.stream.StreamRoomId;
-    subscriptionsToRemove: StreamSubscription[];
 }
 
-export interface StreamModifySubscriptionModel {
+export interface StreamRoomListParticipantsResult {
+    list: StreamSubscriber[];
+}
+
+export interface StreamUpdateRemoteSubscriptionsModel {
     streamRoomId: types.stream.StreamRoomId;
     subscriptionsToAdd: StreamSubscription[];
     subscriptionsToRemove: StreamSubscription[];
@@ -310,10 +316,6 @@ export interface StreamRoomLeaveModel {
     streamRoomId: types.stream.StreamRoomId;
 }
 
-export interface StreamRoomRecordingModel {
-    streamRoomId: types.stream.StreamRoomId;
-}
-
 export interface StreamRoomCloseModel {
     streamRoomId: types.stream.StreamRoomId;
 }
@@ -327,11 +329,10 @@ export interface IStreamApi {
     streamRoomList(model: StreamRoomListModel): Promise<StreamRoomListResult>;
     streamRoomListAll(model: StreamRoomListAllModel): Promise<StreamRoomListAllResult>;
     streamList(model: StreamListModel): Promise<StreamListResult>;
+    streamRoomListParticipants(model: StreamRoomListParticipantsModel): Promise<StreamRoomListParticipantsResult>;
     streamPublish(model: StreamPublishModel): Promise<StreamPublishResult>;
     streamUpdate(model: StreamUpdateModel): Promise<StreamUpdateResult>;
-    streamsSubscribeToRemote(model: StreamsSubscribeModel): Promise<StreamSubscribeResult>;
-    streamsModifyRemoteSubscriptions(model: StreamModifySubscriptionModel): Promise<StreamSubscribeResult>;
-    streamsUnsubscribeFromRemote(model: StreamsUnsubscribeModel): Promise<StreamSubscribeResult>
+    streamsUpdateRemoteSubscriptions(model: StreamUpdateRemoteSubscriptionsModel): Promise<StreamSubscribeResult>;
     streamAcceptOffer(model: StreamAcceptOfferModel): Promise<types.core.OK>;
     streamSetNewOffer(model: StreamSetNewOfferModel): Promise<types.core.OK>;
     streamTrickle(model: StreamTrickleModel): Promise<types.core.OK>;

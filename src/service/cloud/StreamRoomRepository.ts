@@ -70,15 +70,11 @@ export class StreamRoomRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async getPageOfClosedStreamsByContext(contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>) {
-        return this.repository.matchX2({contextId: contextId, closed: true}, listParams);
+    async getPageOfStreamsByContextAndState(contextId: types.context.ContextId, state: types.stream.StreamRoomState, listParams: types.core.ListModel2<types.stream.StreamRoomId>) {
+        return this.repository.matchX2({contextId: contextId, state: state}, listParams);
     }
     
-    async getPageOfActiveStreamsByContext(contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>) {
-        return this.repository.matchX2({contextId: contextId, closed: false}, listParams);
-    }
-    
-    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number) {
+    async createStreamRoom(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.stream.StreamRoomType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, janusRoomId: number, emptyRoomTtl: types.core.Timespan) {
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -104,8 +100,11 @@ export class StreamRoomRepository {
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
             janusRoomId: janusRoomId,
-            closed: false,
+            state: "created",
         };
+        if (emptyRoomTtl > 0) {
+            streamRoom.emptyRoomTtl = emptyRoomTtl;
+        }
         if (resourceId) {
             streamRoom.clientResourceId = resourceId;
         }
@@ -140,8 +139,11 @@ export class StreamRoomRepository {
             allTimeUsers: Utils.uniqueFromArrays(oldStreamRoom.allTimeUsers, entry.users, entry.managers),
             policy: policy === undefined ? oldStreamRoom.policy : policy,
             janusRoomId: oldStreamRoom.janusRoomId,
-            closed: oldStreamRoom.closed,
+            state: oldStreamRoom.state,
         };
+        if (oldStreamRoom.emptyRoomTtl) {
+            updatedStreamRoom.emptyRoomTtl = oldStreamRoom.emptyRoomTtl;
+        }
         if (resourceId && !oldStreamRoom.clientResourceId) {
             updatedStreamRoom.clientResourceId = resourceId;
         }
@@ -166,7 +168,19 @@ export class StreamRoomRepository {
         },
         {
             $set: {
-                closed: true,
+                state: "closed",
+            },
+        });
+    }
+    
+    async openStreamRoom(id: types.stream.StreamRoomId) {
+        await this.repository.col().updateOne({
+            _id: id,
+            state: "created",
+        },
+        {
+            $set: {
+                state: "open",
             },
         });
     }

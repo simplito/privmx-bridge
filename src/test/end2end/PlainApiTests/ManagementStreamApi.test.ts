@@ -54,7 +54,7 @@ export class ManagementStreamApiTest extends BaseTestSet {
         await this.createNewStreamRooms();
         await this.listAllStreamRooms();
         await this.listClosedStreamRooms();
-        await this.listActiveStreamRooms();
+        await this.listCreatedStreamRooms();
         await this.deleteAllNewStreamRooms();
         await this.validateStreamRoomCount();
     }
@@ -114,13 +114,13 @@ export class ManagementStreamApiTest extends BaseTestSet {
         assert(result.count === 0);
     }
     
-    private async listActiveStreamRooms() {
+    private async listCreatedStreamRooms() {
         const result = await this.plainApis.streamApi.listStreamRooms({
             contextId: testData.contextId,
             limit: 10,
             sortOrder: "asc",
             from: null,
-            state: "active",
+            state: "created",
         });
         verifyResponseFor("listTlistStreameshreads", result, ["list", "count"]);
         assert(result.count === this.newStreamRooms.length + 1);

@@ -316,7 +316,8 @@ export namespace stream {
         history: StreamRoomHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
         janusRoomId: number;
-        closed: boolean;
+        state: types.stream.StreamRoomState;
+        emptyRoomTtl?: types.core.Timespan;
     }
     
     export interface StreamRoomHistoryEntry {

@@ -18,7 +18,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { CloudUser, Executor } from "../../CommonTypes";
 import { CloudKeyService } from "./CloudKeyService";
 import { KvdbNotificationService } from "./KvdbNotificationService";
-import { CloudAclChecker } from "./CloudAclChecker";
+import { AclFunctionNameX, CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
@@ -272,9 +272,21 @@ export class KvdbService extends BaseContainerService {
     }
     
     async getKvdbEntry(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKey: types.kvdb.KvdbEntryKey) {
+        const result = await this.tryGetKvdbEntry(executor, kvdbId, entryKey, "kvdb/kvdbEntryGet");
+        if (!result) {
+            throw new AppException("KVDB_ENTRY_DOES_NOT_EXIST");
+        }
+        return result;
+    }
+    
+    async findKvdbEntry(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKey: types.kvdb.KvdbEntryKey) {
+        return this.tryGetKvdbEntry(executor, kvdbId, entryKey, "kvdb/kvdbEntryFind");
+    }
+    
+    private async tryGetKvdbEntry(executor: Executor, kvdbId: types.kvdb.KvdbId, entryKey: types.kvdb.KvdbEntryKey, aclFunction: AclFunctionNameX) {
         const item = await this.repositoryFactory.createKvdbEntryRepository().get(kvdbId, entryKey);
         if (!item) {
-            throw new AppException("KVDB_ENTRY_DOES_NOT_EXIST");
+            return null;
         }
         const kvdb = await this.repositoryFactory.createKvdbRepository().get(item.kvdbId);
         if (!kvdb) {
@@ -284,7 +296,7 @@ export class KvdbService extends BaseContainerService {
             if (!this.policy.canReadItem(user, context, kvdb, item)) {
                 throw new AppException("ACCESS_DENIED");
             }
-            this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryGet", ["kvdbId=" + kvdb.id, "entryKey=" + entryKey]);
+            this.cloudAclChecker.verifyAccess(user.acl, aclFunction, ["kvdbId=" + kvdb.id, "entryKey=" + entryKey]);
         });
         return {kvdb, item};
     }
