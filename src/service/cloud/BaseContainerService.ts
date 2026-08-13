@@ -64,8 +64,12 @@ export class BaseContainerService {
         groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
     }, enforced: boolean): Promise<void> {
-        if (!enforced) return;
-        if ((container.groups || []).length === 0) return;
+        if (!enforced) {
+            return;
+        }
+        if ((container.groups || []).length === 0) {
+            return;
+        }
         const groupIds = (container.groups || []).map(g => g.groupId);
         const currentVersions = await this.repositoryFactory.createGroupRepository()
             .getKeyVersions(container.contextId, groupIds);
@@ -77,7 +81,7 @@ export class BaseContainerService {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");
         }
     }
-
+    
     protected async getUsersWithStatus(userIds: types.cloud.UserId[], contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {
         if (userIds.length == 0) {
             return [];
