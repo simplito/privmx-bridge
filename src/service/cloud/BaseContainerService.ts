@@ -55,27 +55,46 @@ export class BaseContainerService {
     }
     
     /**
-     * Throws CONTAINER_GROUP_EPOCH_OUTDATED if any grantee group's stored epoch is behind
-     * the group's current keyVersion. Call this on every item-write path (sendMessage,
-     * createFile, setEntry, …) before accepting new encrypted content.
+     * Throws CONTAINER_GROUP_EPOCH_OUTDATED if the key the container **currently** encrypts with
+     * (`container.keyId`) was wrapped to an epoch behind a grantee group's current keyVersion. Call this on
+     * every item-write path (sendMessage, createFile, setEntry, …) before accepting new encrypted content:
+     * after a group re-key the container must be re-keyed (threadUpdate/*RotateKeys) before new content is
+     * written, otherwise the removed member could still read it.
+     *
+     * Only the current `keyId` is examined. Historical entries are kept on purpose — buildGroupKeys copies
+     * `oldGroupKeys` forward and every past keyId stays in `availableKeyIds` so pre-rotation content remains
+     * readable — so they are *expected* to sit on older epochs. Checking all of them (BR-31's literal "any
+     * entry" rule) made the container permanently unwritable after the first removal, since nothing ever
+     * removes those entries (BR-36). New content can only be written under `container.keyId` anyway: a
+     * mismatched keyId is rejected earlier as INVALID_THREAD_KEY / INVALID_KEY / INVALID_KEY_ID.
+     *
+     * This guards the *write* path only. The read-path threat BR-31 describes (a removed member replaying an
+     * old epoch key to decrypt content encrypted under a historical keyId) is not addressed here and cannot
+     * be — see documents/bridge_phase_two/02-services-and-rpc.md §5a.
      */
     protected async checkGroupEpochs(container: {
         contextId: types.context.ContextId;
+        keyId: types.core.KeyId;
         groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
     }, enforced: boolean): Promise<void> {
         if (!enforced) {
             return;
         }
-        if ((container.groups || []).length === 0) {
+        const groupIds = (container.groups || []).map(g => g.groupId);
+        if (groupIds.length === 0) {
             return;
         }
-        const groupIds = (container.groups || []).map(g => g.groupId);
         const currentVersions = await this.repositoryFactory.createGroupRepository()
             .getKeyVersions(container.contextId, groupIds);
-        const isStale = (container.groupKeys || []).some(entry => {
-            const current = currentVersions.get(entry.group) ?? 1;
-            return entry.keys.some(k => (k.groupEpoch ?? 0) < current);
+        const groupKeys = container.groupKeys || [];
+        const isStale = groupIds.some(groupId => {
+            const current = currentVersions.get(groupId) ?? 1;
+            const currentKey = groupKeys.find(entry => entry.group === groupId)?.keys.find(k => k.keyId === container.keyId);
+            // No entry for the current keyId ⇒ nothing was claimed for this group at this key, so there is no
+            // stale claim to reject (verifyThatOnlyGivenGroupsHaveAccess already rejects a grant without one).
+            // A missing groupEpoch counts as epoch 0 — pre-BR-5 data that must be re-keyed before writing.
+            return currentKey !== undefined && (currentKey.groupEpoch ?? 0) < current;
         });
         if (isStale) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");

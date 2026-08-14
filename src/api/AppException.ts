@@ -48,7 +48,7 @@ export const API_ERROR_CODES = {
     
     "THREAD_DOES_NOT_EXIST"                : {code: 0x6001, message: "Thread does not exist"},
     "INVALID_THREAD_KEY"                   : {code: 0x6002, message: "Invalid thread key"},
-    "CONTAINER_GROUP_EPOCH_OUTDATED"       : {code: 0x600E, message: "Container group key epoch is outdated; call rotate*Keys first"},
+    "CONTAINER_GROUP_EPOCH_OUTDATED"       : {code: 0x600E, message: "The container's current key was wrapped to an outdated group epoch; re-key the container to the group's current keyVersion (rotate*Keys or *Update) before writing"},
     "REQUEST_DOES_NOT_EXIST"               : {code: 0x6003, message: "Request does not exist"},
     "REQUEST_FILE_DOES_NOT_EXIST"          : {code: 0x6004, message: "Request file does not exist"},
     "REQUEST_FILE_ALREADY_CLOSED"          : {code: 0x6005, message: "Request file aready closed"},

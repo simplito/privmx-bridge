@@ -105,6 +105,48 @@ group grantees; index already covers it.)
 
 ---
 
+## 5a. Write-path epoch enforcement (BR-31) — scope and the read path (BR-36)
+
+§5 guards the *key-write*. The complement, on containers with `policy.forwardSecrecy == "yes"`, guards the
+*item-write*: `BaseContainerService.checkGroupEpochs`, called from `threadMessageSend`, `storeFileCreate` /
+`Write` / `randomWrite` / `Update`, and `kvdbEntrySet`. It rejects new content with
+`CONTAINER_GROUP_EPOCH_OUTDATED` while the container still encrypts under a key wrapped to a superseded group
+epoch — that is the lazy-re-key deadline: after a removal the container must be re-keyed
+(`*RotateKeys` / `*Update`) before it accepts anything new.
+
+**Only the key the container currently encrypts with (`container.keyId`) is examined.** Historical
+`groupKeys[g].keys[…]` entries are *expected* to sit on older epochs and are kept deliberately —
+`buildGroupKeys` copies `oldGroupKeys` forward and every past `keyId` stays in `availableKeyIds`, which is what
+keeps pre-rotation content readable. BR-31's literal rule ("stale ⇔ **any** key entry below the current epoch")
+therefore became permanently true after the first removal and bricked the container for writes, with no client
+API able to clear it (BR-36). Narrowing to the current `keyId` loses nothing: new content can only be written
+under `container.keyId` — any other key is rejected earlier as `INVALID_THREAD_KEY` / `INVALID_KEY` /
+`INVALID_KEY_ID` — so a stale *historical* entry can never cover new content.
+
+### Decision — the read-path threat stays out of scope (settles the BR-31 ↔ BR-36 open question)
+
+BR-31 justifies itself with a *read* threat: a removed member who kept their old epoch key unwraps the old `CK`
+from the historical `groupKeys` entry and decrypts content encrypted under the old `keyId`. A write-path check
+cannot address that, and neither of the two options BR-31 floats is adopted:
+
+- **(a) Delete older-epoch entries on re-key** — rejected. It buys nothing against the actual attacker: a
+  member who cached the old `CK` (or the plaintext) needs no bridge round trip, and one who did *not* cache it
+  is already refused the historical entries by layer 1 below. It would only strip remaining members of access
+  to their own history, contradicting the documented model
+  ([../plan/01-architecture-overview.md](../plan/01-architecture-overview.md) §5: "Old content is never
+  re-encrypted (you can't un-share the past)").
+- **(b) An epoch check on the read path** — rejected as redundant. Server-enforced revocation *is* the read-path
+  control: `getCallerGroupIds` resolves group membership live, so from the instant the group write commits a
+  removed member is refused the container, its items and its key entries. An epoch comparison would add nothing
+  on top of an authorization check that already denies the request.
+
+What remains is the documented, irreducible residue: **forward secrecy covers new content only**, and during
+the lazy window `server access ⊇ cryptographic access`. Not a defect, not PCS
+([../endpoint_phase_two/README.md](../endpoint_phase_two/README.md) "Forward secrecy vs PCS"). If BR-20
+revisits the read path, it should start from layer 1, not from epoch tags.
+
+---
+
 ## 6. `groupUpdate` (unchanged by Phase 2 — membership/metadata only)
 
 `groupUpdate` is **not** a rotation path. Phase 2 adds exactly one constraint to the Phase-1 method: it must
