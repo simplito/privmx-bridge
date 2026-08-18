@@ -55,12 +55,18 @@ export class BaseContainerService {
     }
     
     /**
-     * Throws CONTAINER_GROUP_EPOCH_OUTDATED if any grantee group's stored epoch is behind
-     * the group's current keyVersion. Call this on every item-write path (sendMessage,
-     * createFile, setEntry, …) before accepting new encrypted content.
+     * Throws CONTAINER_GROUP_EPOCH_OUTDATED if the container's current key is wrapped to a grantee group at an
+     * epoch that group has left behind. Call it on every item-write path before accepting new content.
+     *
+     * Only the entry for `container.keyId` decides this — that is the key new content is encrypted under. Older
+     * entries are kept on purpose (they open what was written under earlier keys) and one accumulates per
+     * re-key, so a check over all of them would block a correctly re-keyed container forever.
+     *
+     * No entry at the current key means unwrapped, not stale: nobody reads this content through the group.
      */
     protected async checkGroupEpochs(container: {
         contextId: types.context.ContextId;
+        keyId: types.core.KeyId;
         groups?: types.cloud.GroupGrant[];
         groupKeys?: types.cloud.GroupKeysEntry[];
     }, enforced: boolean): Promise<void> {
@@ -75,7 +81,8 @@ export class BaseContainerService {
             .getKeyVersions(container.contextId, groupIds);
         const isStale = (container.groupKeys || []).some(entry => {
             const current = currentVersions.get(entry.group) ?? 1;
-            return entry.keys.some(k => (k.groupEpoch ?? 0) < current);
+            const atCurrentKey = entry.keys.find(k => k.keyId === container.keyId);
+            return atCurrentKey !== undefined && (atCurrentKey.groupEpoch ?? 0) < current;
         });
         if (isStale) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");

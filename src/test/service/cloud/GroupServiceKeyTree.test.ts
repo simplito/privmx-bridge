@@ -100,8 +100,18 @@ function contextUser(userId: types.cloud.UserId, pub: types.cloud.UserPubKey): d
 const janekUser = contextUser(janek, janekPub);
 const aliceUser = contextUser(alice, alicePub);
 
+/**
+ * The group document paired with its tree.
+ *
+ * The tree lives in its own collections now, so the document itself carries only the seating. The fixture keeps
+ * the two together because a test almost always wants to talk about both, and `createGroupService` serves the
+ * tree from here the way the repository serves it from `groupTreeNode`/`groupTreeEdge`.
+ */
+type TreeGroup = db.group.Group&{tree: types.cloud.GroupTreeState|null};
+
 /** A tree-backed group at epoch 5 with four members, janek being the only manager. */
-function treeBackedGroup(overrides: Partial<db.group.Group> = {}): db.group.Group {
+function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
+    const tree = "tree" in overrides ? overrides.tree ?? null : buildTree(SEATING, EPOCH);
     return {
         id: groupId,
         contextId: contextId,
@@ -112,30 +122,22 @@ function treeBackedGroup(overrides: Partial<db.group.Group> = {}): db.group.Grou
         lastModifier: janek,
         keyId: keyId,
         data: data,
-        allTimeUsers: [janek, alice, bob, carol],
         users: [alice, bob, carol],
         managers: [janek],
         keys: [],
-        history: [{
-            keyId: keyId,
-            data: data,
-            users: [alice, bob, carol],
-            managers: [janek],
-            groupPubKey: groupPubKey,
-            created: DateUtils.now(),
-            author: janek,
-        }],
+        version: 1 as types.group.GroupVersion,
         policy: {},
         keyVersion: EPOCH,
         keyHistory: [],
-        tree: buildTree(SEATING, EPOCH),
-        archiveRungs: [],
         eraFloor: 1,
+        ...(tree ? {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment} : {}),
         ...overrides,
+        tree: tree,
     };
 }
 
-function createGroupService(group: db.group.Group = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean} = {}) {
+function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[]} = {}) {
+    let archiveWindow: {from?: number, to?: number}|null = null;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const groupNotificationService = createMock<GroupNotificationService>({});
@@ -164,6 +166,15 @@ function createGroupService(group: db.group.Group = treeBackedGroup(), options: 
     mock(groupRepository, "get", async (id) => id === groupId ? group : null);
     mock(groupRepository, "getKeyVersion", ((g: db.group.Group) => g.keyVersion ?? 0) as never);
     mock(groupRepository, "createGroup", async () => group);
+    // The tree and the keyIds come from their own collections now; the service asks the repository for them.
+    mock(groupRepository, "getTree", async () => group.tree);
+    mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
+    mock(groupRepository, "getArchiveRungs", (async (_id: types.group.GroupId, from?: number, to?: number) => {
+        // Stands in for the indexed range read — the window itself is the repository's business, so what these
+        // tests check is that the service hands it over untouched.
+        archiveWindow = {from, to};
+        return options.rungs ?? [];
+    }) as never);
     const applied = options.casMiss
         ? (async () => null)
         : (async (params: {tree?: types.cloud.GroupTreeState}) => ({...group, ...(params.tree ? {tree: params.tree} : {})}) as db.group.Group);
@@ -192,11 +203,11 @@ function createGroupService(group: db.group.Group = treeBackedGroup(), options: 
         return context;
     });
     
-    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group};
+    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow};
 }
 
 /** The payload an honest client submits to seat `dave` in a blank at position 1. */
-function additionModel(group: db.group.Group, position = 1) {
+function additionModel(group: TreeGroup, position = 1) {
     const tree = cloneTree(group.tree!);
     tree.leafAssignment[position] = dave;
     const parentIndex = TreeMath.parent(TreeMath.leafNode(position), tree.numLeaves);
@@ -222,7 +233,7 @@ function additionModel(group: db.group.Group, position = 1) {
 }
 
 /** The payload an honest client submits to remove the member at `position`, rungs included. */
-function removalModel(group: db.group.Group, position: number) {
+function removalModel(group: TreeGroup, position: number) {
     const {after} = treeAfterRemoval(SEATING, position, group.keyVersion!);
     const newEpoch = group.keyVersion! + 1;
     const rungs: types.cloud.GroupArchiveRung[] = LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
@@ -690,26 +701,26 @@ it("pruneArchive refuses to prune past the current epoch", async () => {
 // serving the archive
 // ─────────────────────────────────────────────────────────────────────────────
 
+const ladder: types.cloud.GroupArchiveRung[] = [2, 3, 4, 5].map(at => ({
+    atKeyVersion: at,
+    targetKeyVersion: at - 1,
+    data: `rung:${at}` as types.core.UserKeyData,
+}));
+
 it("getKeyArchive serves the whole ladder by default", async () => {
-    const rungs: types.cloud.GroupArchiveRung[] = [2, 3, 4, 5].map(at => ({
-        atKeyVersion: at,
-        targetKeyVersion: at - 1,
-        data: `rung:${at}` as types.core.UserKeyData,
-    }));
-    const {groupService} = createGroupService(treeBackedGroup({archiveRungs: rungs}));
+    const {groupService, getArchiveWindow} = createGroupService(treeBackedGroup(), {rungs: ladder});
     const result = await groupService.getKeyArchive(janekCloudUser, groupId);
     expect(result.rungs.length).toBe(4);
+    // No bounds asked for, no bounds imposed: the read is unwindowed rather than windowed to something invented.
+    assert.deepStrictEqual(getArchiveWindow(), {from: undefined, to: undefined});
 });
 
 it("getKeyArchive windows by epoch, so a client fetches only what it is descending through", async () => {
-    const rungs: types.cloud.GroupArchiveRung[] = [2, 3, 4, 5].map(at => ({
-        atKeyVersion: at,
-        targetKeyVersion: at - 1,
-        data: `rung:${at}` as types.core.UserKeyData,
-    }));
-    const {groupService} = createGroupService(treeBackedGroup({archiveRungs: rungs}));
-    const result = await groupService.getKeyArchive(janekCloudUser, groupId, 3, 4);
-    expect(result.rungs.map(r => r.atKeyVersion).join(",")).toBe("3,4");
+    // The window has to reach the query — filtering a fully loaded archive is exactly what the group's state was
+    // moved out of the document to stop doing.
+    const {groupService, getArchiveWindow} = createGroupService(treeBackedGroup(), {rungs: ladder});
+    await groupService.getKeyArchive(janekCloudUser, groupId, 3, 4);
+    assert.deepStrictEqual(getArchiveWindow(), {from: 3, to: 4});
 });
 
 it("getKeyArchive is readable by an ordinary member", async () => {

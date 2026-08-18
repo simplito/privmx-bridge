@@ -264,8 +264,30 @@ export interface GroupListModel extends types.core.ListModel {
 }
 
 export interface GroupListResult {
-    groups: GroupInfo[];
+    groups: GroupSummary[];
     count: number;
+}
+
+/**
+ * A group as a listing serves it: identity, roster, epoch, policy. No `data`, `history`, `keys`, `groupKeys` or
+ * tree state — those grow with membership and with every change, so a page of them grows as `groups × state`.
+ * Use `groupGet` for one group's state.
+ */
+export interface GroupSummary {
+    id: types.group.GroupId;
+    groupPubKey: types.cloud.GroupPubKey;
+    contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
+    type?: types.group.GroupType;
+    createDate: types.core.Timestamp;
+    creator: types.cloud.UserId;
+    lastModificationDate: types.core.Timestamp;
+    lastModifier: types.cloud.UserId;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    version: types.group.GroupVersion;
+    keyVersion: number;
+    policy: types.cloud.ContainerPolicy;
 }
 
 export interface GroupDataEntry {

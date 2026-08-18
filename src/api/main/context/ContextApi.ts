@@ -103,17 +103,17 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGet(model: contextApi.GroupGetModel): Promise<contextApi.GroupGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.getGroup(cloudUser, model.groupId, model.type);
+        const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type);
         this.requestLogger.setContextId(group.contextId);
-        return {group: this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group)};
+        return {group: this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group, state)};
     }
     
     @ApiMethod({})
     async groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, groups} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
+        const {groups} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {groups: groups.list.map(x => this.groupConverter.convertGroup(user.userId, x)), count: groups.count};
+        return {groups: groups.list.map(x => this.groupConverter.convertGroupSummary(x)), count: groups.count};
     }
     
     @ApiMethod({})

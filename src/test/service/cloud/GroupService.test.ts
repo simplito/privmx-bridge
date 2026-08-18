@@ -98,19 +98,11 @@ const group: db.group.Group = {
     lastModifier: janek,
     keyId: keyId,
     data: data,
-    allTimeUsers: [janek, alice],
     users: [janek, alice],
     managers: [janek],
     keys: [],
-    history: [{
-        keyId: keyId,
-        data: data,
-        users: [janek, alice],
-        managers: [janek],
-        groupPubKey: groupPubKey,
-        created: DateUtils.now(),
-        author: janek,
-    }],
+    // The genesis entry lives in `groupHistoryEntry`; the document keeps the count.
+    version: 1 as types.group.GroupVersion,
     policy: {},
 };
 
@@ -152,7 +144,8 @@ function createGroupService(groupReferenced = false) {
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
     // Phase 2 (epochs/CAS): default mocks — success path.
     mock(groupRepository, "getKeyVersion", ((g: db.group.Group) => g.keyVersion ?? 1) as never);
-    mock(groupRepository, "casRotate", (async (_old: db.group.Group, _expected: number, updated: db.group.Group) => updated) as never);
+    mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
+    mock(groupRepository, "casRotate", (async () => true) as never);
     mock(groupRepository, "generateNewGroupKey", (async () => ({...group, keyVersion: 2}) as db.group.Group) as never);
     
     mock(contextUserRepository, "getUsers", async () => []);

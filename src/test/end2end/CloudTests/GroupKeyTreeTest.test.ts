@@ -1,0 +1,555 @@
+/*!
+PrivMX Bridge.
+Copyright © 2024 Simplito sp. z o.o.
+
+This file is part of the PrivMX Platform (https://privmx.dev).
+This software is Licensed under the PrivMX Free License.
+
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
+import * as assert from "assert";
+import { testData } from "../../datasets/testData";
+import * as types from "../../../types";
+import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { applyAddition, applyRemoval, buildTree, withNodeKeys } from "../../testUtils/TreeFixtures";
+import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
+
+/**
+ * A tree-backed group against a real database: the unit tests state what the write path intends to do, this
+ * states what Mongo ends up holding.
+ *
+ * Four members — three internal nodes and seven edges — small enough to assert on document by document.
+ */
+
+const SEATING = ["janek", "alice", "bob", "carol"];
+const BOB_POSITION = 2;
+
+const alice = "alice" as types.cloud.UserId;
+const bob = "bob" as types.cloud.UserId;
+const carol = "carol" as types.cloud.UserId;
+const dave = "dave" as types.cloud.UserId;
+
+/** Real ECC keys, memoized per `(nodeIndex, generation)`: the API validator rejects placeholder public keys. */
+const nodeKeys = new Map<string, types.core.EccPubKey>();
+function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
+    const cacheKey = `${nodeIndex}/${generation}`;
+    const existing = nodeKeys.get(cacheKey);
+    if (existing) {
+        return existing;
+    }
+    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
+    nodeKeys.set(cacheKey, generated);
+    return generated;
+}
+
+/** The group's grant public key at a given epoch — rotated by every removal. */
+const epochKeys = new Map<number, types.cloud.GroupPubKey>();
+function epochKey(epoch: number): types.cloud.GroupPubKey {
+    const existing = epochKeys.get(epoch);
+    if (existing) {
+        return existing;
+    }
+    const generated = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+    epochKeys.set(epoch, generated);
+    return generated;
+}
+
+function keyIdAt(epoch: number) {
+    return `group-key-${epoch}` as types.core.KeyId;
+}
+
+interface EdgeDocument {
+    _id: string;
+    isGrantEdge?: boolean;
+    parentIndex?: number;
+    parentGeneration: number;
+    childIndex?: number;
+    childGeneration?: number;
+    childUserId?: string;
+    data: string;
+}
+
+interface NodeDocument {
+    _id: string;
+    nodeIndex: number;
+    generation: number;
+    publicKey: string;
+}
+
+export class GroupKeyTreeTests extends BaseTestSet {
+    
+    private groupId?: types.group.GroupId;
+    private keyVersion = 1;
+    private version = 1;
+    
+    @Test()
+    async shouldKeepGroupStateOutOfTheDocument() {
+        await this.addMembersToContext([alice, bob, carol]);
+        const submitted = await this.createTreeBackedGroup();
+        await this.verifyTheDocumentCarriesNoState();
+        await this.verifyTheCollectionsCarryIt(submitted);
+        await this.verifyGroupGetReassemblesTheTree(submitted);
+    }
+    
+    @Test()
+    async shouldRewriteOnlyThePathWhenRemovingAMember() {
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        const edgesBefore = await this.readEdges();
+        const nodesBefore = await this.readNodes();
+        await this.removeMember(bob, BOB_POSITION);
+        await this.verifyOnlyThePathWasRewritten(edgesBefore, nodesBefore);
+        await this.verifyTheRemovalLanded();
+    }
+    
+    @Test()
+    async shouldSeatANewcomerWithoutAdvancingTheEpoch() {
+        await this.addMembersToContext([alice, bob, carol, dave]);
+        await this.createTreeBackedGroup();
+        await this.removeMember(bob, BOB_POSITION);
+        const edgesBefore = await this.readEdges();
+        const epochBefore = this.keyVersion;
+        await this.addMember(dave, BOB_POSITION);
+        await this.verifyTheAdditionCostOneEdge(edgesBefore, epochBefore);
+    }
+    
+    @Test()
+    async shouldServePruneAndCutTheEpochLadder() {
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        await this.removeMember(carol, 3);
+        await this.removeMember(bob, BOB_POSITION);
+        await this.removeMember(alice, 1);
+        await this.verifyTheArchiveIsServedFromItsCollection();
+        await this.verifyTheArchiveIsWindowed();
+        await this.verifyPruningDeletesRungsAndRecordsAWatermark();
+        await this.verifyCuttingAnEraDropsTheRungsBelowTheFloor();
+    }
+    
+    @Test()
+    async shouldNotServeTreeStateInListings() {
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        await this.verifyListingCarriesNoState();
+    }
+    
+    @Test()
+    async shouldLeaveNothingBehindWhenATransitionIsRejected() {
+        // A transition spans several documents now, so half a tree left in the collections would be read as real.
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        await this.verifyAStaleEpochIsRefused();
+        await this.verifyASkippedRefreshIsRefused();
+        await this.verifyAnUpwardRungIsRefused();
+        await this.verifyNothingWasWritten();
+    }
+    
+    @Test()
+    async shouldTakeTheGroupStateDownWithTheGroup() {
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        await this.removeMember(bob, BOB_POSITION);
+        await this.verifyDeletingTheGroupEmptiesEveryCollection();
+    }
+    
+    // ── the group under test ─────────────────────────────────────────────────────────────────────────────────
+    
+    private async addMembersToContext(users: types.cloud.UserId[]) {
+        this.helpers.authorizePlainApi();
+        for (const userId of users) {
+            const res = await this.plainApis.contextApi.addUserToContext({
+                contextId: testData.contextId,
+                userId: userId,
+                userPubKey: ECUtils.generateKeyPair().pub58 as types.cloud.UserPubKey,
+                acl: "ALLOW ALL" as types.cloud.ContextAcl,
+            });
+            assert(res === "OK", `addUserToContext(${userId}) did not return OK`);
+        }
+    }
+    
+    private async createTreeBackedGroup() {
+        const tree = withNodeKeys(buildTree(SEATING, 1), nodeKey);
+        const res = await this.apis.contextApi.groupCreate({
+            contextId: testData.contextId,
+            groupPubKey: epochKey(1),
+            users: [alice, bob, carol],
+            managers: [testData.userId],
+            data: "group-data" as types.group.GroupData,
+            keyId: keyIdAt(1),
+            // A tree-backed group hands out its key by climbing, so it needs no entry per member.
+            keys: [],
+            tree: tree,
+        });
+        assert(!!res.groupId, "groupCreate did not return a groupId");
+        this.groupId = res.groupId;
+        this.keyVersion = 1;
+        this.version = 1;
+        return tree;
+    }
+    
+    /** Removes a member the way an honest client does: from the state the server just served. */
+    private async removeMember(userId: types.cloud.UserId, position: number) {
+        const groupId = this.requireGroupId();
+        const current = await this.currentTree();
+        const newEpoch = this.keyVersion + 1;
+        const tree = withNodeKeys(applyRemoval(current, position, newEpoch), nodeKey);
+        const res = await this.apis.contextApi.groupRemoveMember({
+            id: groupId,
+            userId: userId,
+            groupPubKey: epochKey(newEpoch),
+            keyId: keyIdAt(newEpoch),
+            data: "group-data" as types.group.GroupData,
+            tree: tree,
+            rungs: this.rungsFor(newEpoch),
+            keys: [],
+            // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
+            groupKeys: [{
+                group: groupId,
+                groupEpoch: newEpoch,
+                keyId: keyIdAt(newEpoch),
+                data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
+            }],
+            expectedKeyVersion: this.keyVersion,
+        });
+        assert(res === "OK", "groupRemoveMember did not return OK");
+        this.keyVersion = newEpoch;
+        this.version += 1;
+    }
+    
+    private async addMember(userId: types.cloud.UserId, position: number) {
+        const groupId = this.requireGroupId();
+        const current = await this.currentTree();
+        const res = await this.apis.contextApi.groupAddMember({
+            id: groupId,
+            userId: userId,
+            role: "user",
+            position: position,
+            keyId: keyIdAt(this.keyVersion),
+            data: "group-data" as types.group.GroupData,
+            tree: applyAddition(current, userId, position),
+            expectedKeyVersion: this.keyVersion,
+        });
+        assert(res === "OK", "groupAddMember did not return OK");
+        this.version += 1;
+    }
+    
+    /** One epoch's worth of rungs: the mandatory unit rung down to the previous epoch, plus the skips. */
+    private rungsFor(newEpoch: number, floor = 1): types.cloud.GroupArchiveRung[] {
+        return LadderMath.rungSpansFor(newEpoch, floor).map(span => ({
+            atKeyVersion: span.at,
+            targetKeyVersion: span.target,
+            recipientKind: "epoch" as const,
+            data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
+            author: testData.userId,
+        }));
+    }
+    
+    // ── what the database holds ──────────────────────────────────────────────────────────────────────────────
+    
+    private async verifyTheDocumentCarriesNoState() {
+        const document = await this.readGroupDocument();
+        // The four fields that used to grow without a ceiling.
+        for (const field of ["tree", "history", "archiveRungs", "allTimeUsers"]) {
+            assert(!(field in document), `the group document must not carry '${field}'`);
+        }
+        assert(document.version === 1, `version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
+        assert(document.numLeaves === 4, "the seating stays on the document");
+        assert(Array.isArray(document.leafAssignment) && document.leafAssignment.length === 4, "leafAssignment stays on the document");
+        assert(document.keyVersion === 1, "a new tree-backed group starts at epoch 1");
+        assert(document.eraFloor === 1, "and at era floor 1");
+    }
+    
+    private async verifyTheCollectionsCarryIt(submitted: types.cloud.GroupTreeState) {
+        const groupId = this.requireGroupId();
+        const nodes = await this.readNodes();
+        const edges = await this.readEdges();
+        const history = await this.helpers.readCollection("groupHistoryEntry", {groupId}) as unknown as {_id: string, version: number, author: string}[];
+        assert(nodes.length === submitted.nodes.length, `expected ${submitted.nodes.length} node documents, got ${nodes.length}`);
+        assert(edges.length === submitted.edges.length, `expected ${submitted.edges.length} edge documents, got ${edges.length}`);
+        assert(history.length === 1, `expected a single genesis entry, got ${history.length}`);
+        assert(history[0]._id === `${groupId}|1`, "a history entry is identified by (groupId, version), so appending one is an insert");
+        assert(history[0].version === 1, "genesis is version 1");
+        assert(history[0].author === testData.userId, "genesis author mismatch");
+        // Identity derived from the seat, which is what makes a refresh an update in place.
+        assert(nodes.every(node => node._id === `${groupId}|${node.nodeIndex}`), "node ids are derived from (groupId, nodeIndex)");
+        assert(edges.filter(edge => edge._id.includes("grant")).length === 1, "exactly one grant edge");
+    }
+    
+    private async verifyGroupGetReassemblesTheTree(submitted: types.cloud.GroupTreeState) {
+        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId()});
+        assert(group.numLeaves === submitted.numLeaves, "numLeaves round-trip");
+        assert.deepStrictEqual(group.leafAssignment, submitted.leafAssignment);
+        assert.deepStrictEqual(sortNodes(group.treeNodes ?? []), sortNodes(submitted.nodes));
+        assert.deepStrictEqual(sortEdges(group.treeEdges ?? []), sortEdges(submitted.edges));
+        assert(group.ownLeafPosition === 0, "janek sits in seat 0");
+        assert(group.version === 1, "version comes from the counter");
+        assert(group.history.length === 1, "the history is served from its collection");
+        // Storage detail must not leak into the API.
+        assert(group.treeNodes?.every(node => !("groupId" in node) && !("id" in node)), "served nodes carry no storage fields");
+    }
+    
+    private async verifyOnlyThePathWasRewritten(edgesBefore: EdgeDocument[], nodesBefore: NodeDocument[]) {
+        const edgesAfter = await this.readEdges();
+        const nodesAfter = await this.readNodes();
+        assert(edgesAfter.length === edgesBefore.length - 1, "the departing member's edge is the only one that disappears");
+        assert(!edgesAfter.some(edge => edge._id.includes("user:bob")), "bob's edge is gone");
+        assert(edgesBefore.some(edge => edge._id.includes("user:bob")), "bob had an edge to begin with");
+        
+        // An edge names the current generation of both endpoints, so a refresh obliges the client to resubmit
+        // exactly the edges incident to a refreshed node — no fewer, no more. The rest must be byte-identical.
+        const refreshed = new Set(nodesAfter
+            .filter(node => node.generation !== nodesBefore.find(n => n.nodeIndex === node.nodeIndex)?.generation)
+            .map(node => node.nodeIndex));
+        assert(refreshed.size > 0, "a removal has to refresh something");
+        const isIncident = (edge: EdgeDocument) =>
+            (edge.parentIndex !== undefined && refreshed.has(edge.parentIndex))
+            || (edge.childIndex !== undefined && refreshed.has(edge.childIndex));
+        const before = new Map(edgesBefore.map(edge => [edge._id, JSON.stringify(edge)]));
+        for (const edge of edgesAfter) {
+            const unchanged = before.get(edge._id) === JSON.stringify(edge);
+            assert(unchanged !== isIncident(edge),
+                `edge '${edge._id}' ${unchanged ? "was not rewritten but names a refreshed node" : "was rewritten without naming a refreshed node"}`);
+        }
+        assert(edgesAfter.some(edge => !isIncident(edge)), "and some edges really are off the path, or this proves nothing");
+        
+        assert(nodesAfter.length === nodesBefore.length, "a removal blanks a seat, it does not drop nodes");
+        const generationOf = (nodes: NodeDocument[], nodeIndex: number) => nodes.find(n => n.nodeIndex === nodeIndex)?.generation;
+        // Bob sits under node 5, whose direct path is 5 then the root 3. Node 1 is off the path.
+        assert(generationOf(nodesAfter, 5) === (generationOf(nodesBefore, 5) ?? 0) + 1, "node 5 refreshed");
+        assert(generationOf(nodesAfter, 3) === (generationOf(nodesBefore, 3) ?? 0) + 1, "node 3 refreshed");
+        assert(generationOf(nodesAfter, 1) === generationOf(nodesBefore, 1), "node 1 is off the path and must not be touched");
+        const keyOf = (nodes: NodeDocument[], nodeIndex: number) => nodes.find(n => n.nodeIndex === nodeIndex)?.publicKey;
+        assert(keyOf(nodesAfter, 5) !== keyOf(nodesBefore, 5), "SECURITY: a refreshed node must carry a genuinely new key");
+    }
+    
+    private async verifyTheRemovalLanded() {
+        const groupId = this.requireGroupId();
+        const document = await this.readGroupDocument();
+        assert(document.keyVersion === 2, "a removal advances the epoch");
+        assert(document.version === 2, "and appends a version");
+        assert(!(document.users as string[]).includes(bob), "bob is out of the roster");
+        assert((document.leafAssignment as string[])[BOB_POSITION] === "", "his seat is left blank rather than compacted");
+        const history = await this.helpers.readCollection("groupHistoryEntry", {groupId});
+        assert(history.length === 2, `expected 2 history entries, got ${history.length}`);
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.length === 1, `a step from epoch 1 to 2 needs one unit rung, got ${rungs.length}`);
+        assert(rungs[0].atKeyVersion === 2 && rungs[0].targetKeyVersion === 1, "and it must point downwards");
+        const {group} = await this.apis.contextApi.groupGet({groupId});
+        assert(group.keyVersion === 2 && group.leafAssignment?.[BOB_POSITION] === "", "the served state matches the stored one");
+    }
+    
+    private async verifyTheAdditionCostOneEdge(edgesBefore: EdgeDocument[], epochBefore: number) {
+        const document = await this.readGroupDocument();
+        assert(document.keyVersion === epochBefore, "an addition must not advance the epoch — that is the whole economy of the tree");
+        assert(document.version === this.version, "it does append a version");
+        assert((document.users as string[]).includes(dave), "dave joined the roster");
+        assert((document.leafAssignment as string[])[BOB_POSITION] === dave, "dave took the blank seat");
+        const edgesAfter = await this.readEdges();
+        assert(edgesAfter.length === edgesBefore.length + 1, "one new edge, and only one");
+        const before = new Map(edgesBefore.map(edge => [edge._id, JSON.stringify(edge)]));
+        const changed = edgesAfter.filter(edge => before.get(edge._id) !== JSON.stringify(edge));
+        assert(changed.length === 1 && changed[0]._id.includes("user:dave"), "no existing edge is rewritten by an addition");
+    }
+    
+    private async verifyTheArchiveIsServedFromItsCollection() {
+        const groupId = this.requireGroupId();
+        const document = await this.readGroupDocument();
+        assert(!("archiveRungs" in document), "rungs are not on the document");
+        const stored = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        const served = await this.apis.contextApi.groupGetKeyArchive({id: groupId});
+        assert(served.rungs.length === stored.length, "the whole ladder is served by default");
+        assert(served.keyVersion === 4 && served.eraFloor === 1, "three removals put the group at epoch 4");
+        assert(served.rungs.every(rung => rung.targetKeyVersion < rung.atKeyVersion), "SECURITY: every rung points downwards");
+    }
+    
+    private async verifyTheArchiveIsWindowed() {
+        const groupId = this.requireGroupId();
+        // Descending from one epoch reads that epoch's rungs, not the whole archive.
+        const served = await this.apis.contextApi.groupGetKeyArchive({id: groupId, fromKeyVersion: 3, toKeyVersion: 3});
+        assert(served.rungs.length > 0, "epoch 3 has rungs");
+        assert(served.rungs.every(rung => rung.atKeyVersion === 3), "and only epoch 3's are served");
+        const all = await this.apis.contextApi.groupGetKeyArchive({id: groupId});
+        assert(served.rungs.length < all.rungs.length, "the window actually narrows the answer");
+    }
+    
+    private async verifyPruningDeletesRungsAndRecordsAWatermark() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.contextApi.groupPruneArchive({id: groupId, belowEpoch: 2, expectedKeyVersion: this.keyVersion});
+        assert(res === "OK", "groupPruneArchive did not return OK");
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.every(rung => rung.targetKeyVersion >= 2), "rungs below the watermark are deleted, not filtered on read");
+        const document = await this.readGroupDocument();
+        assert(document.archivePrunedBelow === 2, "the watermark tells a client it was pruned, not tampered with");
+        assert(Array.isArray(document.keyHistory) && (document.keyHistory as unknown[]).length === 3,
+            "pruning is housekeeping: it leaves the epoch registry alone for a member still holding an old key");
+    }
+    
+    private async verifyCuttingAnEraDropsTheRungsBelowTheFloor() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.contextApi.groupCutEra({id: groupId, newFloor: 3, expectedKeyVersion: this.keyVersion});
+        assert(res === "OK", "groupCutEra did not return OK");
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor can be descended to any more");
+        const document = await this.readGroupDocument();
+        assert(document.eraFloor === 3, "the floor is recorded");
+        // Key material on the document is left alone: entries below the floor are unreachable, but dropping them
+        // is BR-14's decision, not a side effect of cutting an era.
+        const keyHistory = document.keyHistory as {keyVersion: number}[];
+        assert(keyHistory.some(entry => entry.keyVersion < 3), "the epoch registry keeps its entries below the floor");
+        const groupKeys = document.groupKeys as {keys: {groupEpoch: number}[]}[];
+        assert(groupKeys.length > 0, "and so do the metadata keys wrapped to the group");
+    }
+    
+    private async verifyListingCarriesNoState() {
+        const res = await this.apis.contextApi.groupList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc"});
+        assert(res.groups.length === 1, `expected 1 group, got ${res.groups.length}`);
+        const listed = res.groups[0] as unknown as Record<string, unknown>;
+        for (const field of ["treeNodes", "treeEdges", "leafAssignment", "numLeaves", "history", "data", "keys", "groupKeys"]) {
+            assert(!(field in listed), `groupList must not serve '${field}' — a page of these is the payload problem, not the fix`);
+        }
+        assert(listed.keyVersion === 1 && listed.version === 1, "a listing does carry the epoch and the version");
+        // The same group asked for by id still serves everything.
+        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId()});
+        assert(!!group.treeNodes && !!group.leafAssignment, "groupGet still serves the tree");
+    }
+    
+    private async verifyAStaleEpochIsRefused() {
+        // Computed against a tree that no longer exists.
+        await shouldThrowErrorWithCode2(async () => {
+            const tree = withNodeKeys(applyRemoval(await this.currentTree(), BOB_POSITION, this.keyVersion + 1), nodeKey);
+            await this.apis.contextApi.groupRemoveMember({
+                ...this.removalPayload(bob, tree),
+                expectedKeyVersion: this.keyVersion - 1,
+            });
+        }, "ROTATED_ALREADY");
+    }
+    
+    private async verifyASkippedRefreshIsRefused() {
+        // SECURITY: one unrefreshed node on the path leaves the departing member holding a live key.
+        await shouldThrowErrorWithCode2(async () => {
+            const current = await this.currentTree();
+            const tree = withNodeKeys(applyRemoval(current, BOB_POSITION, this.keyVersion + 1), nodeKey);
+            const root = tree.nodes.find(node => node.nodeIndex === 3);
+            const stale = current.nodes.find(node => node.nodeIndex === 3);
+            assert(!!root && !!stale, "the tree of four has a root at index 3");
+            root.generation = stale.generation;
+            root.publicKey = stale.publicKey;
+            await this.apis.contextApi.groupRemoveMember(this.removalPayload(bob, tree));
+        }, "GROUP_TREE_INVALID");
+    }
+    
+    private async verifyAnUpwardRungIsRefused() {
+        // SECURITY: an upward rung hands the departing member everything written after their removal.
+        await shouldThrowErrorWithCode2(async () => {
+            const tree = withNodeKeys(applyRemoval(await this.currentTree(), BOB_POSITION, this.keyVersion + 1), nodeKey);
+            await this.apis.contextApi.groupRemoveMember({
+                ...this.removalPayload(bob, tree),
+                rungs: [
+                    ...this.rungsFor(this.keyVersion + 1),
+                    {
+                        atKeyVersion: this.keyVersion,
+                        targetKeyVersion: this.keyVersion + 1,
+                        data: "rung:upwards" as types.core.UserKeyData,
+                    },
+                ],
+            });
+        }, "GROUP_ARCHIVE_INVALID");
+    }
+    
+    private async verifyNothingWasWritten() {
+        const groupId = this.requireGroupId();
+        const document = await this.readGroupDocument();
+        assert(document.keyVersion === 1, "three refusals must leave the epoch where it was");
+        assert(document.version === 1, "and append no version");
+        assert((document.users as string[]).includes(bob), "bob is still a member");
+        const history = await this.helpers.readCollection("groupHistoryEntry", {groupId});
+        assert(history.length === 1, `a refused removal must not append a history entry, found ${history.length}`);
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.length === 0, `a refused removal must not leave rungs behind, found ${rungs.length}`);
+        const edges = await this.readEdges();
+        assert(edges.some(edge => edge.childUserId === bob), "bob's edge is untouched");
+        // A refresh leaked through from any of the three refused calls would show up as a generation nothing
+        // ever adopted.
+        const nodes = await this.readNodes();
+        assert(nodes.every(node => node.generation === 0), "no node was refreshed by a refused removal");
+        assert(edges.every(edge => (edge.isGrantEdge ? edge.parentGeneration === 1 : edge.parentGeneration === 0)),
+            "no edge was re-wrapped to a generation or an epoch that never came to exist");
+    }
+    
+    private removalPayload(userId: types.cloud.UserId, tree: types.cloud.GroupTreeState) {
+        const newEpoch = this.keyVersion + 1;
+        return {
+            id: this.requireGroupId(),
+            userId: userId,
+            groupPubKey: epochKey(newEpoch),
+            keyId: keyIdAt(newEpoch),
+            data: "group-data" as types.group.GroupData,
+            tree: tree,
+            rungs: this.rungsFor(newEpoch),
+            keys: [],
+            expectedKeyVersion: this.keyVersion,
+        };
+    }
+    
+    private async verifyDeletingTheGroupEmptiesEveryCollection() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.contextApi.groupDelete({groupId});
+        assert(res === "OK", "groupDelete did not return OK");
+        for (const collection of ["group", "groupTreeNode", "groupTreeEdge", "groupHistoryEntry", "groupArchiveRung"]) {
+            const filter = collection === "group" ? {_id: groupId} : {groupId};
+            const left = await this.helpers.readCollection(collection, filter);
+            assert(left.length === 0, `'${collection}' still holds ${left.length} document(s) of a deleted group`);
+        }
+    }
+    
+    // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────
+    
+    /** The tree as the server serves it — what a client computes its next transition against. */
+    private async currentTree(): Promise<types.cloud.GroupTreeState> {
+        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId()});
+        assert(group.numLeaves !== undefined && group.leafAssignment && group.treeNodes && group.treeEdges, "groupGet served no tree");
+        return {
+            numLeaves: group.numLeaves,
+            leafAssignment: group.leafAssignment,
+            nodes: group.treeNodes,
+            edges: group.treeEdges,
+        };
+    }
+    
+    private async readGroupDocument(): Promise<Record<string, unknown>> {
+        const documents = await this.helpers.readCollection("group", {_id: this.requireGroupId()});
+        assert(documents.length === 1, "the group document is missing");
+        return documents[0] as unknown as Record<string, unknown>;
+    }
+    
+    private async readNodes(): Promise<NodeDocument[]> {
+        const documents = await this.helpers.readCollection("groupTreeNode", {groupId: this.requireGroupId()});
+        return documents as unknown as NodeDocument[];
+    }
+    
+    private async readEdges(): Promise<EdgeDocument[]> {
+        const documents = await this.helpers.readCollection("groupTreeEdge", {groupId: this.requireGroupId()});
+        return documents as unknown as EdgeDocument[];
+    }
+    
+    private requireGroupId(): types.group.GroupId {
+        if (!this.groupId) {
+            throw new Error("groupId not initialized yet");
+        }
+        return this.groupId;
+    }
+}
+
+function sortNodes(nodes: types.cloud.GroupTreeNode[]) {
+    return [...nodes].sort((a, b) => a.nodeIndex - b.nodeIndex);
+}
+
+/** Order is not part of the contract — a client looks an edge up by its parent and child. */
+function sortEdges(edges: types.cloud.GroupTreeEdge[]) {
+    const key = (edge: types.cloud.GroupTreeEdge) =>
+        `${edge.isGrantEdge ? "grant" : edge.parentIndex ?? -1}>${edge.childKind}:${edge.childUserId ?? edge.childIndex ?? -1}`;
+    return [...edges].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+}

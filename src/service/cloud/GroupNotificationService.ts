@@ -32,9 +32,18 @@ export class GroupNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    /**
+     * Read here rather than threaded in from the write path: these run in a background job after the transaction
+     * commits. That the payload carries the whole tree and history at all is what `BR-03` removes.
+     */
+    private async getState(group: db.group.Group) {
+        return this.repositoryFactory.createGroupRepository().getFullState(group);
+    }
+    
     sendCreatedGroup(group: db.group.Group, _solution: types.cloud.SolutionId) {
         this.safe("groupCreated", async () => {
             const now = DateUtils.now();
+            const state = await this.getState(group);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
             for (const user of contextUsers) {
                 this.webSocketSender.sendCloudEventAtChannel<contextApi.GroupCreatedEvent>(
@@ -46,7 +55,7 @@ export class GroupNotificationService {
                     {
                         channel: "context",
                         type: "groupCreated",
-                        data: this.groupConverter.convertGroup(user.userId, group),
+                        data: this.groupConverter.convertGroup(user.userId, group, state),
                         timestamp: now,
                     },
                 );
@@ -57,6 +66,7 @@ export class GroupNotificationService {
     sendUpdatedGroup(group: db.group.Group, _solution: types.cloud.SolutionId, additionalUsers: types.cloud.UserIdentityWithStatus[]) {
         this.safe("groupUpdated", async () => {
             const now = DateUtils.now();
+            const state = await this.getState(group);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
             const targetChannel = {
                 contextId: group.contextId,
@@ -69,7 +79,7 @@ export class GroupNotificationService {
                     {
                         channel: "context",
                         type: "groupUpdated",
-                        data: this.groupConverter.convertGroup(user.userId, group),
+                        data: this.groupConverter.convertGroup(user.userId, group, state),
                         timestamp: now,
                     },
                 );
@@ -78,7 +88,7 @@ export class GroupNotificationService {
                 const notification: contextApi.GroupUpdatedEvent = {
                     channel: "context",
                     type: "groupUpdated",
-                    data: this.groupConverter.convertGroup(user.id, group),
+                    data: this.groupConverter.convertGroup(user.id, group, state),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {

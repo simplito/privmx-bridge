@@ -87,6 +87,12 @@ export class GroupApiTests extends BaseTestSet {
         const res = await this.apis.contextApi.groupList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc"});
         assert(res.count === 1 && res.groups.length === 1, `expected 1 group, got ${res.count}`);
         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
+        assert(res.groups[0].version === 1, `listed version should be 1, got ${res.groups[0].version}`);
+        // A listing must grow as `groups × roster`, not `groups × state`.
+        const served = res.groups[0] as unknown as Record<string, unknown>;
+        for (const field of ["data", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
+            assert(!(field in served), `groupList must not serve '${field}'`);
+        }
     }
     
     private async updateGroup() {
