@@ -81,6 +81,7 @@ export class TypesValidator {
     streamRoomData: Validator;
     unknown4Kb: Validator;
     unknown16Kb: Validator;
+    unknown1Mb: Validator;
     resourceType: Validator;
     optResourceType: Validator;
     contextAcl: Validator;
@@ -196,6 +197,13 @@ export class TypesValidator {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
         });
+        this.unknown1Mb = this.builder.createCustom(value => {
+            const size = this.getValueSize(value, "<root>");
+            const maxSize = 1024 * 1024;
+            if (size > maxSize) {
+                throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
+            }
+        });
         this.loginProperty = this.builder.optional(this.builder.maxLength(this.builder.string, 150));
         this.loginProperties = this.builder.createObject({
             appVersion: this.loginProperty,
@@ -243,7 +251,9 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.groupId = id;
-        this.groupData = this.unknown16Kb;
+        // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
+        // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
+        this.groupData = this.unknown1Mb;
         this.groupPubKey = this.eccPub;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,

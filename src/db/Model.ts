@@ -201,6 +201,10 @@ export namespace thread {
 
 export namespace group {
     
+    /**
+     * The group document. Everything that grows with the group's lifetime lives in its own collection instead —
+     * see `GroupTreeNode`, `GroupTreeEdge`, `GroupHistoryEntry`, `GroupArchiveRung` below.
+     */
     export interface Group {
         id: types.group.GroupId;
         clientResourceId?: types.core.ClientResourceId;
@@ -213,32 +217,88 @@ export namespace group {
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
         data: types.group.GroupData;
-        allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        /**
+         * Per-member key entries for the group's own metadata key. A flat group needs one per member; a
+         * tree-backed group should carry none and use `groupKeys` instead.
+         *
+         * NOTE: it still does today — the endpoint sends one wrap per member at creation, 1.29 KB each, which
+         * measured 95% of a 996-member document. See BR-14 and EP-23.
+         */
         keys: types.cloud.UserKeysEntry[];
-        history: GroupHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
+        /** Number of history entries. A counter, because the entries live in `groupHistoryEntry` and appending
+         *  one has to stay a single insert. */
+        version: types.group.GroupVersion;
         keyVersion?: number;
         keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
-        /** Hidden key tree. Absent on a flat group, which keeps behaving exactly as it did before. */
-        tree?: types.cloud.GroupTreeState;
+        /** Size of the hidden key tree. Absent on a flat group, which keeps behaving exactly as it did before. */
+        numLeaves?: number;
+        /**
+         * Seat → member, `""` for a blank left by a removal. Stays on the document although it is `O(members)`:
+         * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
+         */
+        leafAssignment?: types.cloud.UserId[];
         /**
          * The group's own metadata key, wrapped **once** to the group's grant public key per epoch, instead of
          * once per member. The group is a grantee of itself, using the same mechanism a thread or store uses to
          * grant access to a group. This is what keeps a removal off the O(n) path — see
          * documents/nested_groups/09-hidden-key-tree.md §9.1.
+         *
+         * One entry per epoch that rotated the key, so it grows with rotations — nothing prunes it yet (BR-14).
          */
         groupKeys?: types.cloud.GroupKeysEntry[];
-        /** Epoch Ladder rungs, append-only apart from pruning. */
-        archiveRungs?: types.cloud.GroupArchiveRung[];
         /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
         eraFloor?: number;
         /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
         archivePrunedBelow?: number;
     }
     
+    /**
+     * The fields a listing needs. Named so the projection in `GroupRepository.getPage` and what
+     * `convertGroupSummary` serves cannot drift apart: widening one without the other stops compiling.
+     */
+    export type GroupSummaryFields = Pick<Group,
+        "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
+        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"keyVersion"|"policy">;
+    
+    export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
+    export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
+    export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};
+    export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
+    
+    /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
+    export interface GroupTreeNode {
+        id: GroupTreeNodeId;
+        groupId: types.group.GroupId;
+        nodeIndex: number;
+        generation: number;
+        publicKey: types.core.EccPubKey;
+    }
+    
+    /**
+     * One edge of the hidden key tree. `id` is derived from `(groupId, parent, child)`; generations are not part
+     * of it, because a refresh replaces the wrap on the same edge rather than making a new one.
+     */
+    export interface GroupTreeEdge {
+        id: GroupTreeEdgeId;
+        groupId: types.group.GroupId;
+        isGrantEdge?: boolean;
+        parentIndex?: number;
+        parentGeneration: number;
+        childKind: types.cloud.GroupTreeChildKind;
+        childIndex?: number;
+        childGeneration?: number;
+        childUserId?: types.cloud.UserId;
+        data: types.core.UserKeyData;
+    }
+    
+    /** One group version. `id` is derived from `(groupId, version)`, so appending is an insert. */
     export interface GroupHistoryEntry {
+        id: GroupHistoryEntryId;
+        groupId: types.group.GroupId;
+        version: types.group.GroupVersion;
         keyId: types.core.KeyId;
         data: types.group.GroupData;        // opaque; carries the endpoint's DIO (members + chain-link committed inside)
         users: types.cloud.UserId[];
@@ -247,6 +307,24 @@ export namespace group {
         created: types.core.Timestamp;
         author: types.cloud.UserId;
         confirmationTag?: types.core.Base64;
+    }
+    
+    /** One Epoch Ladder rung. Append-only apart from pruning, a range delete over `targetKeyVersion`. */
+    export interface GroupArchiveRung {
+        id: GroupArchiveRungId;
+        groupId: types.group.GroupId;
+        atKeyVersion: number;
+        targetKeyVersion: number;
+        recipientKind?: "epoch"|"user"|"group";
+        recipient?: string;
+        data: types.core.UserKeyData;
+        author?: types.cloud.UserId;
+    }
+    
+    /** A group's out-of-document state, assembled for the read path. */
+    export interface GroupState {
+        tree: types.cloud.GroupTreeState|null;
+        history: GroupHistoryEntry[];
     }
 }
 

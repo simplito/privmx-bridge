@@ -15,7 +15,9 @@ import * as db from "../../../db/Model";
 
 export class GroupConverter {
     
-    convertGroup(user: types.cloud.UserId, group: db.group.Group): contextApi.GroupInfo {
+    /** The whole group: document plus state. `state` is passed in, not fetched, so a caller that does not need
+     *  it cannot pay for it by accident. */
+    convertGroup(user: types.cloud.UserId, group: db.group.Group, state: db.group.GroupState): contextApi.GroupInfo {
         const res: contextApi.GroupInfo = {
             id: group.id,
             groupPubKey: group.groupPubKey,
@@ -25,21 +27,47 @@ export class GroupConverter {
             creator: group.creator,
             lastModificationDate: group.lastModificationDate,
             lastModifier: group.lastModifier,
-            data: group.history.map(x => ({keyId: x.keyId, data: x.data})),
+            data: state.history.map(x => ({keyId: x.keyId, data: x.data})),
             users: group.users,
             managers: group.managers,
             keys: (group.keys.find(x => x.user === user)?.keys) || [],
-            version: group.history.length as types.group.GroupVersion,
+            version: group.version,
             keyVersion: group.keyVersion ?? 0,
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
-            history: group.history.map(x => this.convertHistoryEntry(x)),
+            history: state.history.map(x => this.convertHistoryEntry(x)),
             groupKeys: group.groupKeys ?? [],
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
         }
-        this.addTreeState(res, group, user);
+        this.addTreeState(res, group, state.tree, user);
+        return res;
+    }
+    
+    /**
+     * What a listing serves: identity, roster, epoch. A page of a hundred groups through `convertGroup` would
+     * carry a hundred trees and histories; a client that wants state asks for one group.
+     */
+    convertGroupSummary(group: db.group.GroupSummaryFields): contextApi.GroupSummary {
+        const res: contextApi.GroupSummary = {
+            id: group.id,
+            groupPubKey: group.groupPubKey,
+            contextId: group.contextId,
+            type: group.type,
+            createDate: group.createDate,
+            creator: group.creator,
+            lastModificationDate: group.lastModificationDate,
+            lastModifier: group.lastModifier,
+            users: group.users,
+            managers: group.managers,
+            version: group.version,
+            keyVersion: group.keyVersion ?? 0,
+            policy: group.policy || {},
+        };
+        if (group.clientResourceId) {
+            res.resourceId = group.clientResourceId;
+        }
         return res;
     }
     
@@ -49,19 +77,19 @@ export class GroupConverter {
      * The archive is deliberately *not* included: it grows with the group's entire history, while a client needs
      * it only when reaching for an older epoch. `groupGetKeyArchive` serves it on demand instead.
      */
-    private addTreeState(res: contextApi.GroupInfo, group: db.group.Group, user: types.cloud.UserId) {
-        if (!group.tree) {
+    private addTreeState(res: contextApi.GroupInfo, group: db.group.Group, tree: types.cloud.GroupTreeState|null, user: types.cloud.UserId) {
+        if (!tree) {
             return;
         }
-        res.numLeaves = group.tree.numLeaves;
-        res.leafAssignment = group.tree.leafAssignment;
-        res.treeNodes = group.tree.nodes;
-        res.treeEdges = group.tree.edges;
+        res.numLeaves = tree.numLeaves;
+        res.leafAssignment = tree.leafAssignment;
+        res.treeNodes = tree.nodes;
+        res.treeEdges = tree.edges;
         res.eraFloor = group.eraFloor ?? 1;
         if (group.archivePrunedBelow !== undefined) {
             res.archivePrunedBelow = group.archivePrunedBelow;
         }
-        const position = group.tree.leafAssignment.indexOf(user);
+        const position = tree.leafAssignment.indexOf(user);
         if (position >= 0) {
             res.ownLeafPosition = position;
         }

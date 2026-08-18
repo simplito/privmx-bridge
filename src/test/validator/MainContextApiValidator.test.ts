@@ -43,6 +43,21 @@ it("ContextApiValidator.groupCreate valid", () => {
     expect(result.success).toBe(true);
 });
 
+it("ContextApiValidator.groupCreate accepts the data a group of sixteen thousand needs", () => {
+    // A group's data carries the endpoint's DIO, which names every member, so it grows with the roster where a
+    // thread's or a store's does not. Measured against a live bridge: ~19 B per member — 154 KB at 8 190 members.
+    // The old 16 KB ceiling stopped a tree-backed group at ~870, which is not the scale the tree is for.
+    const model = {...validGroupCreate(), data: "x".repeat(400 * 1024) as unknown as types.group.GroupData};
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCreate still refuses data past a megabyte", () => {
+    const model = {...validGroupCreate(), data: "x".repeat(1024 * 1024 + 1) as unknown as types.group.GroupData};
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(false);
+});
+
 it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
     const model = {...validGroupCreate(), groupPubKey: "not-a-valid-ecc-key!!!" as types.cloud.GroupPubKey};
     const result = Utils.try(() => validator().validate("groupCreate", model));

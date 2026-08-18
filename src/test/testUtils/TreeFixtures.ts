@@ -134,12 +134,58 @@ export function treeAfterRemoval(
     oldKeyVersion: number,
 ): {before: types.cloud.GroupTreeState, after: types.cloud.GroupTreeState} {
     const before = buildTree(assignment, oldKeyVersion);
-    const after = refreshNodes(before, TreeMath.directPath(position, assignment.length));
+    return {before, after: applyRemoval(before, position, oldKeyVersion + 1)};
+}
+
+/** The same removal applied to a tree that was served rather than freshly built — the only way to chain two
+ *  operations, since the second starts from generations the first advanced. */
+export function applyRemoval(
+    tree: types.cloud.GroupTreeState,
+    position: number,
+    newKeyVersion: number,
+): types.cloud.GroupTreeState {
+    const removed = tree.leafAssignment[position];
+    const after = refreshNodes(tree, TreeMath.directPath(position, tree.numLeaves));
     after.leafAssignment[position] = "" as types.cloud.UserId;
-    after.edges = after.edges.filter(e => !(e.childKind === "user" && e.childUserId === userId(assignment[position])));
+    after.edges = after.edges.filter(e => !(e.childKind === "user" && e.childUserId === removed));
     const grant = after.edges.find(e => e.isGrantEdge);
     if (grant) {
-        grant.parentGeneration = oldKeyVersion + 1;
+        grant.parentGeneration = newKeyVersion;
     }
-    return {before, after};
+    return after;
+}
+
+/** Seating a newcomer in a blank: one new edge, nothing refreshed, epoch unchanged. */
+export function applyAddition(
+    tree: types.cloud.GroupTreeState,
+    newMember: types.cloud.UserId,
+    position: number,
+): types.cloud.GroupTreeState {
+    const after = cloneTree(tree);
+    after.leafAssignment[position] = newMember;
+    const parentIndex = TreeMath.parent(TreeMath.leafNode(position), after.numLeaves);
+    after.edges.push({
+        parentIndex,
+        parentGeneration: after.nodes.find(n => n.nodeIndex === parentIndex)?.generation ?? 0,
+        childKind: "user",
+        childUserId: newMember,
+        data: `wrap:${parentIndex}->${newMember}` as types.core.UserKeyData,
+    });
+    return after;
+}
+
+/**
+ * Swaps placeholder node keys for whatever `keyFor` returns — the API validator insists on real ECC keys, which
+ * unit tests calling the service directly do not need. Keyed by `(nodeIndex, generation)` so a memoizing caller
+ * keeps untouched nodes identical and gives refreshed ones a genuinely different key.
+ */
+export function withNodeKeys(
+    tree: types.cloud.GroupTreeState,
+    keyFor: (nodeIndex: number, generation: number) => types.core.EccPubKey,
+): types.cloud.GroupTreeState {
+    const result = cloneTree(tree);
+    for (const node of result.nodes) {
+        node.publicKey = keyFor(node.nodeIndex, node.generation);
+    }
+    return result;
 }
