@@ -213,6 +213,10 @@ export interface KvdbEntryGetResult {
     kvdbEntry: KvdbEntryInfo;
 }
 
+export interface KvdbEntryFindResult {
+    kvdbEntry: KvdbEntryInfo | null;
+}
+
 export type KvdbListAllResult = KvdbListResult;
 
 export interface KvdbListKeysModel extends types.core.ListModel {
@@ -255,6 +259,7 @@ export interface IKvdbApi {
     kvdbList(model: KvdbListModel): Promise<KvdbListResult>;
     kvdbListAll(model: KvdbListAllModel): Promise<KvdbListAllResult>;
     kvdbEntryGet(model: KvdbEntryGetModel): Promise<KvdbEntryGetResult>;
+    kvdbEntryFind(model: KvdbEntryGetModel): Promise<KvdbEntryFindResult>;
     kvdbEntrySet(model: KvdbEntrySetModel): Promise<types.core.OK>;
     kvdbEntryDelete(model: KvdbEntryDeleteModel): Promise<types.core.OK>;
     kvdbListKeys(model: KvdbListKeysModel): Promise<KvdbListKeysResult>;

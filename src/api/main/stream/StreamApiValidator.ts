@@ -11,6 +11,7 @@ limitations under the License.
 
 import { BaseValidator } from "../../BaseValidator";
 import { TypesValidator } from "../../TypesValidator";
+import { DateUtils } from "../../../utils/DateUtils";
 
 export class StreamApiValidator extends BaseValidator {
     
@@ -29,6 +30,7 @@ export class StreamApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             policy: this.builder.optional(this.tv.containerWithoutItemPolicy),
+            emptyRoomTtl: this.builder.optional(this.builder.range(this.builder.int, 0, DateUtils.DAY)),
             groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupGrant, 16384)),
             groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),
         }));
@@ -108,31 +110,10 @@ export class StreamApiValidator extends BaseValidator {
         this.registerMethod("streamRoomJoin", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
-        this.registerMethod("streamRoomEnableRecording", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-        }));
         this.registerMethod("streamRoomLeave", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
         }));
-        this.registerMethod("streamsSubscribeToRemote", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-            subscriptionsToAdd: this.builder.createList(
-                this.builder.createObject({
-                    streamId: this.tv.streamId,
-                    streamTrackId: this.builder.optional(this.builder.string),
-                }),
-            ),
-        }));
-        this.registerMethod("streamsUnsubscribeFromRemote", this.builder.createObject({
-            streamRoomId: this.tv.streamRoomId,
-            subscriptionsToRemove: this.builder.createList(
-                this.builder.createObject({
-                    streamId: this.tv.streamId,
-                    streamTrackId: this.builder.optional(this.builder.string),
-                }),
-            ),
-        }));
-        this.registerMethod("streamsModifyRemoteSubscriptions", this.builder.createObject({
+        this.registerMethod("streamsUpdateRemoteSubscriptions", this.builder.createObject({
             streamRoomId: this.tv.streamRoomId,
             subscriptionsToAdd: this.builder.createListWithMinLength(
                 this.builder.createObject({

@@ -32,6 +32,7 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
             version: 1 as types.stream.StreamRoomVersion,
             publicMeta: null,
             state: "created",
+            emptyRoomTtl: 60000 as types.core.Timespan,
         },
     });
     call("listStreamRooms", api => api.listStreamRooms({
@@ -55,6 +56,7 @@ export const test = testApi("client", "stream/", ManagementStreamApi, new Manage
                 version: 1 as types.stream.StreamRoomVersion,
                 publicMeta: null,
                 state: "created",
+                emptyRoomTtl: 60000 as types.core.Timespan,
             },
         ],
     });

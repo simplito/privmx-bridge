@@ -466,9 +466,6 @@ export interface VideoRoom {
     videocodec: string; // "<comma separated list of allowed video codecs>",
     opus_fec: boolean; // <true|false, whether inband FEC must be negotiated (note: only available for Opus) (optional)>,
     opus_dtx: boolean; // <true|false, whether DTX must be negotiated (note: only available for Opus) (optional)>,
-    record: boolean; // <true|false, whether the room is being recorded>,
-    rec_dir: string; // "<if recording, the path where the .mjr files are being saved>",
-    lock_record: boolean; // <true|false, whether the room recording state can only be changed providing the secret>,
     num_participants: number; // <count of the participants (publishers, active or not; not subscribers)>
     audiolevel_ext: boolean; // <true|false, whether the ssrc-audio-level extension must be negotiated or not for new publishers>,
     audiolevel_event: boolean; // <true|false, whether to emit event to other users about audiolevel>,
@@ -529,8 +526,6 @@ export interface VideoRoomDescription {
 export interface RoomPublishOptions {
     videocodec?: string; // "<video codec to prefer among the negotiated ones; optional>",
     bitrate?: number; // <bitrate cap to return via REMB; optional, overrides the global room value if present>,
-    record?: boolean; // <true|false, whether this publisher should be recorded or not; optional>,
-    filename?: string; // "<if recording, the base path/file to use for the recording files; optional>",
     display?: string; // "<display name to use in the room; optional>",
     audio_level_average?: number; // "<if provided, overrided the room audio_level_average for this user; optional>",
     audio_active_packets?: any; // "<if provided, overrided the room audio_active_packets for this user; optional>",
@@ -542,8 +537,6 @@ export interface RoomPublishOptions {
 export interface RoomConfigureOptions {
     keyframe?: boolean;
     bitrate?: number; // <bitrate cap to return via REMB; optional, overrides the global room value if present>,
-    record?: boolean; // <true|false, whether this publisher should be recorded or not; optional>,
-    filename?: string; // "<if recording, the base path/file to use for the recording files; optional>",
     display?: string; // "<display name to use in the room; optional>",
     audio_level_average?: number; // "<if provided, overrided the room audio_level_average for this user; optional>",
     audio_active_packets?: any; // "<if provided, overrided the room audio_active_packets for this user; optional>",
@@ -573,7 +566,6 @@ export interface RoomUnsubscribeOptions {
 export interface EditRoomOptions {
     room: VideoRoomId;          // <unique numeric ID, optional, chosen by plugin if missing>,
     new_description?: string;   // "<pretty name of the room, optional>",
-    new_rec_dir?: string;
 }
 
 export interface EditRoomResult {
@@ -631,12 +623,6 @@ export interface RoomModerateOptions {
 
 export interface RoomListParticipantsOptions {
     room: VideoRoomId;
-}
-
-export interface EnableRecordingOptions {
-    room: VideoRoomId;
-    secret?: string;
-    record: boolean;
 }
 
 export interface RoomListParticipantsResult {

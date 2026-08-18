@@ -72,7 +72,7 @@ Read more about versioning in PrivMX in [our docs](https://docs.privmx.dev/docs/
 ## Additional Resources
 
 - [PrivMX Documentation](https://docs.privmx.dev/)
-- [Project map](https://docs.privmx.dev/docs/latest/start/quick-start)
+- [API Reference](https://docs.privmx.dev/docs/latest/start/api-reference)
 
 ## Questions?
 

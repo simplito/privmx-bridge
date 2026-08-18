@@ -380,6 +380,7 @@ export namespace stream {
         policy?: types.cloud.ContainerWithoutItemPolicy;
         janusRoomId: number;
         state: types.stream.StreamRoomState;
+        emptyRoomTtl?: types.core.Timespan;
     }
     
     export interface StreamRoomHistoryEntry {

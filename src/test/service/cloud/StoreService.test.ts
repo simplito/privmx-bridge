@@ -151,6 +151,20 @@ const groupGrantStoreFile: db.store.StoreFile = {
     id: groupGrantStoreFileId,
     storeId: groupGrantStoreId,
 };
+const randomWriteStoreFileId = "MyRandomWriteStoreFileId" as types.store.StoreFileId;
+const randomWriteStoreFile: db.store.StoreFile = {
+    id: randomWriteStoreFileId,
+    clientResourceId: resourceId,
+    fileId: "zxc" as types.request.FileId,
+    storeId: storeId,
+    author: janek,
+    createDate: DateUtils.now(),
+    meta: "" as types.store.StoreFileMeta,
+    size: 1024 as types.core.SizeInBytes,
+    checksumSize: 128 as types.core.SizeInBytes,
+    keyId: keyId,
+    supportsRandomWrite: true,
+};
 const request: db.request.Request = {
     id: requestId,
     author: "janek" as types.core.Username,
@@ -694,6 +708,26 @@ testFail("Should fails on reading not exisitng thumb", "FILES_CONTAINER_FILE_HAS
     storeService.readStoreFile(janekUserPubKey, storeFileIdWithoutThumb, true, undefined, {type: "all"}),
 );
 
+testFail("Should fail locking a not existing file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
+    storeService.assertCanLockRandomWriteFile(janekUserPubKey, notExistingStoreFileId),
+);
+
+testFail("Should fail locking a file that does not support random write", "UNSUPPORTED_OPERATION", storeService =>
+    storeService.assertCanLockRandomWriteFile(janekUserPubKey, storeFileId),
+);
+
+testFail("Should fail locking a random-write file without access", "ACCESS_DENIED", storeService =>
+    storeService.assertCanLockRandomWriteFile(bobUserPubKey, randomWriteStoreFileId),
+);
+
+it("Should authorize locking a random-write file for a user with write access", async () => {
+    // Setup
+    const {storeService} = createStoreService();
+    
+    // Act & Assert (resolves without throwing)
+    await storeService.assertCanLockRandomWriteFile(janekUserPubKey, randomWriteStoreFileId);
+});
+
 function createStoreService() {
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -751,7 +785,7 @@ function createStoreService() {
     mock(requestRepository, "getReadyForUser", async () => request);
     mock(requestRepository, "delete", async () => {});
     
-    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : null)));
+    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : (id === randomWriteStoreFileId ? randomWriteStoreFile : null))));
     mock(storeFileRepository, "getPageByStore", async () => ({list: [storeFile], count: 1}));
     mock(storeFileRepository, "create", async () => storeFile);
     mock(storeFileRepository, "update", async () => storeFile);

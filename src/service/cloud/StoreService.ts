@@ -54,6 +54,27 @@ export class StoreService extends BaseContainerService {
         this.policy = new StorePolicy(this.policyService);
     }
     
+    /**
+     * Authorizes a distributed lock request against a store file. A file may only be
+     * locked if it exists, supports random write, and the caller has write access to
+     * it - the same gate {@link StoreService.randomWrite} enforces. Throws on failure;
+     * returns normally when the caller may lock the file.
+     */
+    async assertCanLockRandomWriteFile(cloudUser: CloudUser, fileId: types.store.StoreFileId) {
+        const file = await this.repositoryFactory.createStoreFileRepository().get(fileId);
+        if (!file) {
+            throw new AppException("STORE_FILE_DOES_NOT_EXIST");
+        }
+        if (!file.supportsRandomWrite) {
+            throw new AppException("UNSUPPORTED_OPERATION", "Locking is only supported for files supporting random write");
+        }
+        const {user, context, store} = await this.getStoreAndUser(cloudUser, file.storeId);
+        this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + fileId]);
+        if (!this.policy.canUpdateItem(user, context, store, file)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+    }
+    
     async createStore(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.store.StoreType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.store.StoreData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
