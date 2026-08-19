@@ -166,7 +166,7 @@ export class GroupService extends BaseContainerService {
         const updatedUsers = rGroup.managers.concat(rGroup.users);
         const deletedUsers = old.managers.concat(old.users).filter(u => !updatedUsers.includes(u));
         const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
-        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify);
+        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify, "updated");
         return rGroup;
     }
     
@@ -207,7 +207,7 @@ export class GroupService extends BaseContainerService {
         // Charge the rotation rate-limit budget only on a committed rotation, so lost CAS races / version
         // mismatches (ROTATED_ALREADY) don't consume the group's quota.
         await this.groupRotationRateLimiter.record({key: this.rotationRateLimitKey(model.id)});
-        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, []);
+        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, [], "keyRotated");
         return rGroup;
     }
     
@@ -261,7 +261,7 @@ export class GroupService extends BaseContainerService {
             }
             return {group: result, context: usedContext};
         });
-        this.groupNotificationService.sendUpdatedGroup(group, context.solution, []);
+        this.groupNotificationService.sendUpdatedGroup(group, context.solution, [], "memberAdded");
         return group;
     }
     
@@ -327,7 +327,7 @@ export class GroupService extends BaseContainerService {
         await this.groupRotationRateLimiter.record({key: this.rotationRateLimitKey(model.id)});
         // The removed member is notified too: their client needs to learn it can stop trying to climb.
         const additionalUsersToNotify = await this.getUsersWithStatus([removed], context.id, context.solution);
-        this.groupNotificationService.sendUpdatedGroup(group, context.solution, additionalUsersToNotify);
+        this.groupNotificationService.sendUpdatedGroup(group, context.solution, additionalUsersToNotify, "memberRemoved");
         return group;
     }
     
@@ -360,7 +360,7 @@ export class GroupService extends BaseContainerService {
             }
             return {group: result, context: usedContext};
         });
-        this.groupNotificationService.sendUpdatedGroup(group, context.solution, []);
+        this.groupNotificationService.sendUpdatedGroup(group, context.solution, [], "eraCut");
         return group;
     }
     
@@ -388,7 +388,7 @@ export class GroupService extends BaseContainerService {
             }
             return {group: result, context: usedContext};
         });
-        this.groupNotificationService.sendUpdatedGroup(group, context.solution, []);
+        this.groupNotificationService.sendUpdatedGroup(group, context.solution, [], "archivePruned");
         return group;
     }
     

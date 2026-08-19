@@ -342,8 +342,28 @@ export interface GroupInfo {
     archivePrunedBelow?: number;
 }
 
-export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupInfo>;
-export type GroupUpdatedEvent = types.cloud.Event<"groupUpdated", "context", GroupInfo>;
+/** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
+export type GroupChangeKind = "created"|"updated"|"keyRotated"|"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned";
+
+/**
+ * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
+ * grows with the group.
+ *
+ * The state used to travel in here, converted once per recipient — a thousand members meant a thousand copies of
+ * the tree and the history, hundreds of megabytes over the socket for one membership change. A client that cares
+ * about the change calls `groupGet`; one that does not pays nothing. `version` and `keyVersion` are what let it
+ * decide without asking.
+ */
+export interface GroupChangedEventData {
+    groupId: types.group.GroupId;
+    contextId: types.context.ContextId;
+    version: types.group.GroupVersion;
+    keyVersion: number;
+    changeKind: GroupChangeKind;
+}
+
+export type GroupCreatedEvent = types.cloud.Event<"groupCreated", "context", GroupChangedEventData>;
+export type GroupUpdatedEvent = types.cloud.Event<"groupUpdated", "context", GroupChangedEventData>;
 export type GroupDeletedEvent = types.cloud.Event<"groupDeleted", "context", GroupDeletedEventData>;
 
 export interface GroupDeletedEventData {

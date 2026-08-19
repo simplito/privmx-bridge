@@ -1141,7 +1141,6 @@ export class IOC {
             this.groupNotificationService = new GroupNotificationService(
                 this.getJobService(),
                 this.getWebSocketSender(),
-                this.getGroupConverter(),
                 this.getRepositoryFactory(),
             );
         }
