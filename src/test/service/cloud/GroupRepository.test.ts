@@ -337,3 +337,73 @@ it("a tree-backed group still accepts one entry per member, which is what a migr
     const result = await repository.removeMemberWithTree({...removal(group()), keys: oneEach});
     assert.strictEqual(result?.keys.length, 3);
 });
+
+/**
+ * `getMemberGroupsMap` replaced `getMembersOfGroups`, which read the same documents and then threw the
+ * grouping away. Both halves of its result now have a consumer: the keys are the notification recipient list, and
+ * the values narrow each recipient's `groupKeys` — so the fan-out matches what `threadGet` serves without a
+ * second lookup.
+ */
+function createMembershipRepository(groups: db.group.Group[]) {
+    const queried: types.group.GroupId[][] = [];
+    const objectRepository = createFake<MongoObjectRepository<types.group.GroupId, db.group.Group>>({
+        getMulti: (async (ids: types.group.GroupId[]) => {
+            queried.push(ids);
+            return groups.filter(g => ids.includes(g.id));
+        }) as never,
+    });
+    const repository = new GroupRepository(objectRepository, createMock<GroupStateRepository>({}));
+    return {repository, queried};
+}
+
+const engineeringId = "engineering" as types.group.GroupId;
+const legalId = "legal" as types.group.GroupId;
+
+/** alice sits in both groups, bob only in engineering, carol only in legal, janek manages engineering. */
+const TWO_GROUPS = [
+    group({id: engineeringId, users: [alice, bob], managers: [janek]}),
+    group({id: legalId, users: [alice, carol], managers: []}),
+];
+
+it("getMemberGroupsMap reports each member's own groups out of one query", async () => {
+    const {repository, queried} = createMembershipRepository(TWO_GROUPS);
+    const membership = await repository.getMemberGroupsMap([engineeringId, legalId]);
+    assert.deepStrictEqual(queried, [[engineeringId, legalId]], "one lookup, not one per member");
+    assert.deepStrictEqual(membership.get(alice), [engineeringId, legalId]);
+    assert.deepStrictEqual(membership.get(bob), [engineeringId]);
+    assert.deepStrictEqual(membership.get(carol), [legalId]);
+    assert.deepStrictEqual(membership.get(janek), [engineeringId], "a manager belongs to the group too");
+});
+
+it("getMemberGroupsMap keys are the recipient list the fan-out sends to", async () => {
+    const {repository} = createMembershipRepository(TWO_GROUPS);
+    const membership = await repository.getMemberGroupsMap([engineeringId, legalId]);
+    assert.deepStrictEqual([...membership.keys()].sort(), [alice, bob, carol, janek].sort());
+});
+
+it("getMemberGroupsMap does not list a group twice for someone who is both member and manager of it", async () => {
+    const {repository} = createMembershipRepository([group({id: engineeringId, users: [alice], managers: [alice]})]);
+    const membership = await repository.getMemberGroupsMap([engineeringId]);
+    assert.deepStrictEqual(membership.get(alice), [engineeringId]);
+});
+
+it("getMemberGroupsMap agrees with the per-caller lookup the request path uses", async () => {
+    // `getGroupsOfUser` matches on `users` OR `managers` within a context; the map has to draw the same line, or
+    // a notification would narrow a payload differently from the `threadGet` for the same container.
+    const {repository} = createMembershipRepository(TWO_GROUPS);
+    const granted = [engineeringId, legalId];
+    const membership = await repository.getMemberGroupsMap(granted);
+    for (const user of [alice, bob, carol, janek]) {
+        const viaQuery = TWO_GROUPS
+            .filter(g => granted.includes(g.id) && (g.users.includes(user) || g.managers.includes(user)))
+            .map(g => g.id);
+        assert.deepStrictEqual(membership.get(user) ?? [], viaQuery, `membership of ${user} must match`);
+    }
+});
+
+it("getMemberGroupsMap on a container with no group grants asks nothing", async () => {
+    const {repository, queried} = createMembershipRepository(TWO_GROUPS);
+    const membership = await repository.getMemberGroupsMap([]);
+    assert.strictEqual(membership.size, 0);
+    assert.deepStrictEqual(queried, [], "no grants, no lookup");
+});

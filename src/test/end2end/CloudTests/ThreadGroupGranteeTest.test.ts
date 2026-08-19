@@ -25,6 +25,13 @@ const aliceId = "alice" as types.cloud.UserId;
 const alicePubKey = aliceIdentity.pub58 as types.cloud.UserPubKey;
 const aliceWif = aliceIdentity.privWif as string;
 
+// A third context user ("bob") — a DIRECT member of the thread who is in no granted group. He is the control for
+// `groupKeys` narrowing: he must see that the grant exists and none of the key material wrapped to it.
+const bobIdentity = ECUtils.generateKeyPair();
+const bobId = "bob" as types.cloud.UserId;
+const bobPubKey = bobIdentity.pub58 as types.cloud.UserPubKey;
+const bobWif = bobIdentity.privWif as string;
+
 const groupKeyId = "group-key" as types.core.KeyId;
 const threadKeyId = "thread-key" as types.core.KeyId;
 const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
@@ -34,7 +41,21 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     private groupId?: types.group.GroupId;
     private threadId?: types.thread.ThreadId;
     private aliceThreadApi?: ThreadApiClient;
+    private bobThreadApi?: ThreadApiClient;
     private aliceMessageId?: types.thread.ThreadMessageId;
+    
+    @Test()
+    async shouldNarrowGroupKeysToTheCallersOwnGroups() {
+        await this.addAliceToContext();
+        await this.addBobToContext();
+        await this.createGroupWithAlice();
+        await this.createThreadGrantingGroup();
+        await this.addBobAsDirectThreadUser();
+        await this.connectAsAlice();
+        await this.connectAsBob();
+        await this.aliceGetsTheBlobWrappedToHerGroup();
+        await this.bobSeesTheGrantButNoneOfItsKeyMaterial();
+    }
     
     @Test()
     async shouldGrantThreadAccessThroughGroupAndRevokeOnRemoval() {
@@ -105,9 +126,71 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
         this.threadId = res.threadId;
     }
     
+    private async addBobToContext() {
+        this.helpers.authorizePlainApi();
+        const res = await this.plainApis.contextApi.addUserToContext({
+            contextId: testData.contextId,
+            userId: bobId,
+            userPubKey: bobPubKey,
+            acl: "ALLOW ALL" as types.cloud.ContextAcl,
+        });
+        assert(res === "OK", "addUserToContext did not return OK");
+    }
+    
+    /** Bob joins as a plain user of the thread. The group grant is carried over untouched. */
+    private async addBobAsDirectThreadUser() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.threadApi.threadUpdate({
+            id: this.requireThreadId(),
+            data: "AAAA" as types.thread.ThreadData,
+            keyId: threadKeyId,
+            keys: [
+                {user: testData.userId, keyId: threadKeyId, data: "AAAA" as types.core.UserKeyData},
+                {user: bobId, keyId: threadKeyId, data: "DDDD" as types.core.UserKeyData},
+            ],
+            managers: [testData.userId],
+            users: [testData.userId, bobId],
+            groups: [{groupId: groupId, role: "user"}],
+            // Empty: the stored entry at this keyId already covers the grant, and re-sending it would have to
+            // carry a fresh epoch. Nothing about the grant changes here.
+            groupKeys: [],
+            version: 0 as types.thread.ThreadVersion,
+            force: true,
+        });
+        assert(res === "OK", "threadUpdate did not return OK");
+    }
+    
     private async connectAsAlice() {
         const conn = await this.helpers.createNewConnection(aliceWif, testData.solutionId);
         this.aliceThreadApi = new ThreadApiClient(conn);
+    }
+    
+    private async connectAsBob() {
+        const conn = await this.helpers.createNewConnection(bobWif, testData.solutionId);
+        this.bobThreadApi = new ThreadApiClient(conn);
+    }
+    
+    /** Alice reaches the thread only through the group, so the blob wrapped to it has to reach her. */
+    private async aliceGetsTheBlobWrappedToHerGroup() {
+        const groupId = this.requireGroupId();
+        const res = await this.requireAliceThreadApi().threadGet({threadId: this.requireThreadId()});
+        assert(res.thread.groupKeys.length === 1, `alice should get exactly her group's entry, got ${res.thread.groupKeys.length}`);
+        assert(res.thread.groupKeys[0].group === groupId, "and it should be the group she belongs to");
+        assert(res.thread.groupKeys[0].keys.some(k => k.keyId === threadKeyId), "carrying the blob at the thread's current key");
+        assert(res.thread.keys.length === 0, "while she holds no per-user key — the group is her only way in");
+    }
+    
+    /**
+     * Bob is a direct user of the thread and in no granted group. He still sees *that* the group is granted — a
+     * manager needs that list — but none of the key material wrapped to it, and an empty `groupKeys` is how he
+     * knows not to attempt a group descent at all.
+     */
+    private async bobSeesTheGrantButNoneOfItsKeyMaterial() {
+        const groupId = this.requireGroupId();
+        const res = await this.requireBobThreadApi().threadGet({threadId: this.requireThreadId()});
+        assert(res.thread.groups.some(g => g.groupId === groupId), "bob should still see which groups are granted");
+        assert(res.thread.groupKeys.length === 0, `bob belongs to no granted group, so no blobs are his: got ${res.thread.groupKeys.length}`);
+        assert(res.thread.keys.length > 0, "he reads the thread through his own per-user key instead");
     }
     
     private async aliceCanGetThreadViaGroup() {
@@ -204,5 +287,12 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             throw new Error("alice connection not initialized yet");
         }
         return this.aliceThreadApi;
+    }
+    
+    private requireBobThreadApi(): ThreadApiClient {
+        if (!this.bobThreadApi) {
+            throw new Error("bob connection not initialized yet");
+        }
+        return this.bobThreadApi;
     }
 }

@@ -245,9 +245,10 @@ export class InboxService extends BaseContainerService {
         if (!inbox) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, async (user, context) => {
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(inbox, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxGet", ["inboxId=" + inboxId]);
@@ -255,7 +256,7 @@ export class InboxService extends BaseContainerService {
         if (type && inbox.type !== type) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
-        return inbox;
+        return {inbox, ownGroupIds};
     }
     
     async getInboxWithoutCheckingAccess(inboxId: types.inbox.InboxId, solutionId: types.cloud.SolutionId) {
@@ -279,8 +280,9 @@ export class InboxService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const inboxes = await this.repositoryFactory.createInboxRepository().getAllInboxes(contextId, type, listParams, sortBy);
-        return {user, inboxes};
+        return {user, inboxes, ownGroupIds};
     }
     
     async getMyInboxes(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope) {
@@ -296,9 +298,9 @@ export class InboxService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
-        return {user, inboxes};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        return {user, inboxes, ownGroupIds};
     }
     
     async getInboxesByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.inbox.InboxId>) {

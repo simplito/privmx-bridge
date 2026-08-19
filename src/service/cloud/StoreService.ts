@@ -261,17 +261,18 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeGet", ["storeId=" + storeId]);
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(store, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED", "policy is not met");
             }
         });
         if (type && store.type !== type) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        return store;
+        return {store, ownGroupIds};
     }
     
     async getAllStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store) {
@@ -280,8 +281,9 @@ export class StoreService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const stores = await this.repositoryFactory.createStoreRepository().getAllStores(contextId, type, listParams, sortBy);
-        return {user, stores};
+        return {user, stores, ownGroupIds};
     }
     
     async getMyStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope) {
@@ -297,9 +299,9 @@ export class StoreService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
-        return {user, stores};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        return {user, stores, ownGroupIds};
     }
     
     async getStoresByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.store.StoreId>) {
@@ -326,14 +328,15 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new DbInconsistencyError(`store=${file.storeId} does not exist, from file=${fileId}`);
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGet", ["storeId=" + store.id, "fileId=" + fileId]);
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canReadItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadItem(user, context, this.withGroupMembership(store, user.userId, ownGroupIds), file)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return {file, store};
+        return {file, store, ownGroupIds};
     }
     
     async getStoreFileMany(executor: Executor, storeId: types.store.StoreId, fileIds: types.store.StoreFileId[], failOnError: boolean) {
@@ -341,10 +344,11 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileGetMany", ["storeId=" + storeId]);
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -379,7 +383,7 @@ export class StoreService extends BaseContainerService {
             }
             files.push(file);
         }
-        return {store, files};
+        return {store, files, ownGroupIds};
     }
     
     async getStoreFiles(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
@@ -387,15 +391,16 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(store, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
         });
         const files = await this.repositoryFactory.createStoreFileRepository().getPageByStore(storeId, listParams, sortBy || "createDate");
-        return {store, files};
+        return {store, files, ownGroupIds};
     }
     
     async getMyStoreFiles(executor: CloudUser, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
@@ -403,15 +408,16 @@ export class StoreService extends BaseContainerService {
         if (!store) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, store.contextId, async (user, context) => {
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canListMyItems(user, context, this.withGroupMembership(store, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListMyItems(user, context, this.withGroupMembership(store, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileListMy", ["storeId=" + storeId]);
         });
         const files = await this.repositoryFactory.createStoreFileRepository().getPageByStoreAndUser(storeId, executor.getUser(store.contextId), listParams, sortBy || "createDate");
-        return {store, files};
+        return {store, files, ownGroupIds};
     }
     
     async getStoreFiles2(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel2<types.store.StoreFileId>) {

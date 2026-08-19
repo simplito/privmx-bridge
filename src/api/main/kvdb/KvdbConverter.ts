@@ -12,10 +12,16 @@ limitations under the License.
 import * as types from "../../../types";
 import * as kvdbApi from "./KvdbApiTypes";
 import * as db from "../../../db/Model";
+import { ownGroupKeysOf } from "../GroupKeysNarrowing";
 
 export class KvdbConverter {
     
-    convertKvdb(user: types.cloud.UserId, kvdb: db.kvdb.Kvdb) {
+    /**
+     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
+     *                    optional so the compiler names every path that serves a kvdb to a user; `undefined`
+     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
+     */
+    convertKvdb(user: types.cloud.UserId, kvdb: db.kvdb.Kvdb, ownGroupIds: types.group.GroupId[]|undefined) {
         const res: kvdbApi.KvdbInfo = {
             id: kvdb.id,
             resourceId: kvdb.clientResourceId,
@@ -30,7 +36,7 @@ export class KvdbConverter {
             data: kvdb.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (kvdb.keys.find(x => x.user === user)?.keys) || [],
             groups: kvdb.groups || [],
-            groupKeys: kvdb.groupKeys || [],
+            groupKeys: ownGroupKeysOf(kvdb.groupKeys || [], ownGroupIds),
             version: <types.kvdb.KvdbVersion>kvdb.history.length,
             type: kvdb.type,
             policy: kvdb.policy || {},

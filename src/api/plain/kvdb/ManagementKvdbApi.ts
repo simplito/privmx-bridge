@@ -34,7 +34,7 @@ export class ManagementKvdbApi extends ManagementBaseApi implements managementKv
     @ApiMethod({errorCodes: ["KVDB_DOES_NOT_EXIST"] })
     async getKvdb(model: managementKvdbApi.GetKvdbModel): Promise<managementKvdbApi.GetKvdbResult> {
         this.validateScope("kvdb");
-        const kvdb = await this.kvdbService.getKvdb(this.getPlainUser(), model.kvdbId, undefined);
+        const {kvdb} = await this.kvdbService.getKvdb(this.getPlainUser(), model.kvdbId, undefined);
         return {kvdb: this.managementKvdbConverter.convertKvdb(kvdb)};
     }
     
