@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as kvdbApi from "./KvdbApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { grantsWithEpochOf } from "../GroupEpochStaleness";
 
 export class KvdbConverter {
     
@@ -35,7 +36,7 @@ export class KvdbConverter {
             keyId: kvdb.keyId,
             data: kvdb.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (kvdb.keys.find(x => x.user === user)?.keys) || [],
-            groups: kvdb.groups || [],
+            groups: grantsWithEpochOf(kvdb),
             groupKeys: ownGroupKeysOf(kvdb.groupKeys || [], ownGroupIds),
             version: <types.kvdb.KvdbVersion>kvdb.history.length,
             type: kvdb.type,

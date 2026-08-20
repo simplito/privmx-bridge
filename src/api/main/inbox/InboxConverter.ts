@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as inboxApi from "./InboxApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { grantsWithEpochOf } from "../GroupEpochStaleness";
 
 export class InboxConverter {
     
@@ -34,7 +35,7 @@ export class InboxConverter {
             keyId: inbox.keyId,
             data: inbox.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (inbox.keys.find(x => x.user === user)?.keys) || [],
-            groups: inbox.groups || [],
+            groups: grantsWithEpochOf(inbox),
             groupKeys: ownGroupKeysOf(inbox.groupKeys || [], ownGroupIds),
             version: <types.inbox.InboxVersion>inbox.history.length,
             type: inbox.type,

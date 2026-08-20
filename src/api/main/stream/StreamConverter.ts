@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as streamApi from "./StreamApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { grantsWithEpochOf } from "../GroupEpochStaleness";
 
 export class StreamConverter {
     
@@ -35,7 +36,7 @@ export class StreamConverter {
             keyId: stream.keyId,
             data: stream.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (stream.keys.find(x => x.user === user)?.keys) || [],
-            groups: stream.groups || [],
+            groups: grantsWithEpochOf(stream),
             groupKeys: ownGroupKeysOf(stream.groupKeys || [], ownGroupIds),
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,

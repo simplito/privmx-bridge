@@ -96,7 +96,7 @@ export interface Store {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.cloud.GroupGrant[];
+    groups: types.cloud.GroupGrantInfo[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.store.StoreVersion;
     lastFileDate: types.core.Timestamp;

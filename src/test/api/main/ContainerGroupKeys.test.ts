@@ -150,7 +150,16 @@ function grantsOpenableNow(container: NarrowedContainer): types.cloud.GroupGrant
     return container.groupKeys
         .filter(entry => entry.keys.some(k => k.keyId === container.keyId))
         .map(entry => container.groups.find(grant => grant.groupId === entry.group))
-        .filter((grant): grant is types.cloud.GroupGrant => grant !== undefined);
+        .filter((grant): grant is types.cloud.GroupGrant => grant !== undefined)
+        .map(bare);
+}
+
+/**
+ * A served grant with its derived `groupEpoch` dropped. This file is about the narrowing of `groupKeys`; what the
+ * epoch on a grant says is `ContainerGrantEpochs.test.ts`, and comparing whole grants here would fail on it.
+ */
+function bare(grant: types.cloud.GroupGrantInfo): types.cloud.GroupGrant {
+    return {groupId: grant.groupId, role: grant.role};
 }
 
 it("ownGroupKeysOf keeps the entries of the groups the caller holds", async () => {
@@ -195,7 +204,7 @@ it("a revoked grant stays readable but is not openable under the current key", a
 for (const {name, convert} of CONVERTERS) {
     it(`${name}: the caller's key blobs only, out of four entries`, async () => {
         const converted = convert(GRANTS, GROUP_KEYS, [legal]);
-        assert.deepStrictEqual(converted.groups, GRANTS, "the full grant list stays — a manager needs it");
+        assert.deepStrictEqual(converted.groups.map(bare), GRANTS, "the full grant list stays — a manager needs it");
         assert.deepStrictEqual(converted.groupKeys, [entryOf(legal)]);
     });
     
@@ -207,7 +216,7 @@ for (const {name, convert} of CONVERTERS) {
     it(`${name}: a caller in none of the granted groups gets an empty list`, async () => {
         const converted = convert(GRANTS, GROUP_KEYS, []);
         assert.deepStrictEqual(converted.groupKeys, []);
-        assert.deepStrictEqual(converted.groups, GRANTS, "which grants exist is still public to the container");
+        assert.deepStrictEqual(converted.groups.map(bare), GRANTS, "which grants exist is still public to the container");
     });
     
     it(`${name}: a path that did not compute caller membership fails instead of stripping keys`, async () => {

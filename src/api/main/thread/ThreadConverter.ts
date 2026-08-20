@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as threadApi from "./ThreadApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { grantsWithEpochOf } from "../GroupEpochStaleness";
 
 export class ThreadConverter {
     
@@ -35,7 +36,7 @@ export class ThreadConverter {
             keeper: thread.keeper,
             data: thread.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (thread.keys.find(x => x.user === user)?.keys) || [],
-            groups: thread.groups || [],
+            groups: grantsWithEpochOf(thread),
             groupKeys: ownGroupKeysOf(thread.groupKeys || [], ownGroupIds),
             version: <types.thread.ThreadVersion>thread.history.length,
             lastMsgDate: thread.lastMsgDate,

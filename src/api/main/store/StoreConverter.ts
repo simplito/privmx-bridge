@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as storeApi from "./StoreApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { grantsWithEpochOf } from "../GroupEpochStaleness";
 
 export class StoreConverter {
     
@@ -34,7 +35,7 @@ export class StoreConverter {
             keyId: store.keyId,
             data: store.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
-            groups: store.groups || [],
+            groups: grantsWithEpochOf(store),
             groupKeys: ownGroupKeysOf(store.groupKeys || [], ownGroupIds),
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,

@@ -78,7 +78,7 @@ export interface KvdbInfo {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.cloud.GroupGrant[];
+    groups: types.cloud.GroupGrantInfo[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.kvdb.KvdbVersion;
     type?: types.kvdb.KvdbType;

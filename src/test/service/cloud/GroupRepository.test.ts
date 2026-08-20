@@ -367,24 +367,24 @@ const TWO_GROUPS = [
 
 it("getMemberGroupsMap reports each member's own groups out of one query", async () => {
     const {repository, queried} = createMembershipRepository(TWO_GROUPS);
-    const membership = await repository.getMemberGroupsMap([engineeringId, legalId]);
+    const groupsByUser = await repository.getMemberGroupsMap([engineeringId, legalId]);
     assert.deepStrictEqual(queried, [[engineeringId, legalId]], "one lookup, not one per member");
-    assert.deepStrictEqual(membership.get(alice), [engineeringId, legalId]);
-    assert.deepStrictEqual(membership.get(bob), [engineeringId]);
-    assert.deepStrictEqual(membership.get(carol), [legalId]);
-    assert.deepStrictEqual(membership.get(janek), [engineeringId], "a manager belongs to the group too");
+    assert.deepStrictEqual(groupsByUser.get(alice), [engineeringId, legalId]);
+    assert.deepStrictEqual(groupsByUser.get(bob), [engineeringId]);
+    assert.deepStrictEqual(groupsByUser.get(carol), [legalId]);
+    assert.deepStrictEqual(groupsByUser.get(janek), [engineeringId], "a manager belongs to the group too");
 });
 
 it("getMemberGroupsMap keys are the recipient list the fan-out sends to", async () => {
     const {repository} = createMembershipRepository(TWO_GROUPS);
-    const membership = await repository.getMemberGroupsMap([engineeringId, legalId]);
-    assert.deepStrictEqual([...membership.keys()].sort(), [alice, bob, carol, janek].sort());
+    const groupsByUser = await repository.getMemberGroupsMap([engineeringId, legalId]);
+    assert.deepStrictEqual([...groupsByUser.keys()].sort(), [alice, bob, carol, janek].sort());
 });
 
 it("getMemberGroupsMap does not list a group twice for someone who is both member and manager of it", async () => {
     const {repository} = createMembershipRepository([group({id: engineeringId, users: [alice], managers: [alice]})]);
-    const membership = await repository.getMemberGroupsMap([engineeringId]);
-    assert.deepStrictEqual(membership.get(alice), [engineeringId]);
+    const groupsByUser = await repository.getMemberGroupsMap([engineeringId]);
+    assert.deepStrictEqual(groupsByUser.get(alice), [engineeringId]);
 });
 
 it("getMemberGroupsMap agrees with the per-caller lookup the request path uses", async () => {
@@ -392,12 +392,12 @@ it("getMemberGroupsMap agrees with the per-caller lookup the request path uses",
     // a notification would narrow a payload differently from the `threadGet` for the same container.
     const {repository} = createMembershipRepository(TWO_GROUPS);
     const granted = [engineeringId, legalId];
-    const membership = await repository.getMemberGroupsMap(granted);
+    const groupsByUser = await repository.getMemberGroupsMap(granted);
     for (const user of [alice, bob, carol, janek]) {
         const viaQuery = TWO_GROUPS
             .filter(g => granted.includes(g.id) && (g.users.includes(user) || g.managers.includes(user)))
             .map(g => g.id);
-        assert.deepStrictEqual(membership.get(user) ?? [], viaQuery, `membership of ${user} must match`);
+        assert.deepStrictEqual(groupsByUser.get(user) ?? [], viaQuery, `membership of ${user} must match`);
     }
 });
 
@@ -406,4 +406,114 @@ it("getMemberGroupsMap on a container with no group grants asks nothing", async 
     const membership = await repository.getMemberGroupsMap([]);
     assert.strictEqual(membership.size, 0);
     assert.deepStrictEqual(queried, [], "no grants, no lookup");
+});
+
+/**
+ * `getKeyVersions` answers the epoch check on every item write into a group-granted container, and one integer
+ * per group is all it yields. So it must not read documents: `keys` alone is ~1.29 KB per member, and a caller
+ * can ask about a hundred groups at once. The projection is the whole point of the method, which is why it is
+ * asserted here.
+ */
+function createEpochRepository(groups: db.group.Group[]) {
+    const projections: {[field: string]: 1}[] = [];
+    const objectRepository = createFake<MongoObjectRepository<types.group.GroupId, db.group.Group>>({
+        getMulti: (async () => {
+            throw new Error("getKeyVersions must not read whole group documents");
+        }) as never,
+        getMultiProjected: (async (ids: types.group.GroupId[], projection: {[field: string]: 1}) => {
+            projections.push(projection);
+            // What Mongo would hand back: the projected fields only, so a rule reaching for anything else fails.
+            return groups
+                .filter(g => ids.includes(g.id))
+                .map(g => ({id: g.id, contextId: g.contextId, keyVersion: g.keyVersion}));
+        }) as never,
+    });
+    const repository = new GroupRepository(objectRepository, createMock<GroupStateRepository>({}));
+    return {repository, projections};
+}
+
+it("getKeyVersions reads three fields, not the documents", async () => {
+    const {repository, projections} = createEpochRepository(TWO_GROUPS);
+    const epochs = await repository.getKeyVersions(contextId, [engineeringId, legalId]);
+    assert.deepStrictEqual(epochs.get(engineeringId), EPOCH);
+    assert.deepStrictEqual(epochs.get(legalId), EPOCH);
+    assert.deepStrictEqual(projections, [{contextId: 1, keyVersion: 1}], "`_id` comes along on its own");
+});
+
+it("getKeyVersions asks about each group once and about none when there are none", async () => {
+    const {repository, projections} = createEpochRepository(TWO_GROUPS);
+    const epochs = await repository.getKeyVersions(contextId, [engineeringId, engineeringId, legalId]);
+    assert.strictEqual(epochs.size, 2);
+    assert.strictEqual((await repository.getKeyVersions(contextId, [])).size, 0);
+    assert.strictEqual(projections.length, 1, "an empty grant list costs no query");
+});
+
+it("getKeyVersions drops a group from another context", async () => {
+    // A grant cannot cross contexts, so a group answering from a different one is a mismatch, not an epoch: it
+    // must not be able to mark a container stale.
+    const otherContext = "OtherContextId" as types.context.ContextId;
+    const {repository} = createEpochRepository([group({id: engineeringId, contextId: otherContext})]);
+    const epochs = await repository.getKeyVersions(contextId, [engineeringId]);
+    assert.strictEqual(epochs.size, 0);
+});
+
+it("getKeyVersions reports a never-rotated group as epoch 0", async () => {
+    // A flat Phase-1 group carries no `keyVersion` at all; it has to read as an epoch, not as absent, or it would
+    // fall back to the "deleted group" assumption in `staleGroupsOf`.
+    const {repository} = createEpochRepository([group({id: engineeringId, keyVersion: undefined})]);
+    const epochs = await repository.getKeyVersions(contextId, [engineeringId]);
+    assert.strictEqual(epochs.get(engineeringId), 0);
+});
+
+/**
+ * `getPage` serves `groupList`, and a client filters it by id: having read its grants' `groupEpoch` off a
+ * container, it asks for those groups' current `keyVersion` and `groupPubKey` in one request instead of a
+ * `groupGet` each.
+ *
+ * What is asserted is the pipeline, because the pipeline is where the guarantees live. Two of them cannot be seen
+ * from the result of a single query and would fail silently: a caller's query landing *before* the `contextId`
+ * match could read a group from another context, and landing *after* the `$project` could only ever match the
+ * summary fields.
+ */
+function createPageRepository() {
+    const pipelines: any[][] = [];
+    const objectRepository = createFake<MongoObjectRepository<types.group.GroupId, db.group.Group>>({
+        getMatchingPage: (async (stages: any[]) => {
+            pipelines.push(stages);
+            return {list: [], count: 0};
+        }) as never,
+    });
+    const repository = new GroupRepository(objectRepository, createMock<GroupStateRepository>({}));
+    return {repository, pipelines};
+}
+
+const LIST_PARAMS: types.core.ListModel = {skip: 0, limit: 100, sortOrder: "asc"};
+
+it("getPage without a query filters by context and projects, and nothing else", async () => {
+    const {repository, pipelines} = createPageRepository();
+    await repository.getPage(contextId, LIST_PARAMS, "createDate");
+    assert.strictEqual(pipelines.length, 1);
+    assert.strictEqual(pipelines[0].length, 2, "no query, no extra stage");
+    assert.deepStrictEqual(pipelines[0][0], {$match: {contextId: contextId}});
+    assert.ok("$project" in pipelines[0][1], "the projection is still last");
+});
+
+it("getPage turns an id query into an `_id` match between the context filter and the projection", async () => {
+    const {repository, pipelines} = createPageRepository();
+    await repository.getPage(contextId, {...LIST_PARAMS, query: {"#id": {$in: [engineeringId, legalId]}}}, "createDate");
+    const [contextStage, queryStage, projectStage] = pipelines[0];
+    assert.strictEqual(pipelines[0].length, 3);
+    assert.deepStrictEqual(contextStage, {$match: {contextId: contextId}}, "the context filter runs first, so a foreign id cannot be reached");
+    assert.deepStrictEqual(queryStage, {$match: {$and: [{_id: {$in: [engineeringId, legalId]}}]}}, "`#id` addresses `_id`");
+    assert.ok("$project" in projectStage, "and the query sees whole documents, not the summary");
+});
+
+it("getPage refuses a query naming a field outside the whitelist", async () => {
+    // The filter must not become a way to probe key material: `groupKeys` is not queryable, and neither is
+    // anything else the whitelist leaves out.
+    const {repository} = createPageRepository();
+    await assert.rejects(
+        () => repository.getPage(contextId, {...LIST_PARAMS, query: {"#groupKeys": {$exists: true}}}, "createDate"),
+        (e: unknown) => AppException.is(e, "INVALID_PARAMS"),
+    );
 });

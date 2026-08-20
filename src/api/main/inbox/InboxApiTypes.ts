@@ -24,7 +24,7 @@ export interface Inbox {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
-    groups: types.cloud.GroupGrant[];
+    groups: types.cloud.GroupGrantInfo[];
     groupKeys: types.cloud.GroupKeysEntry[];
     version: types.inbox.InboxVersion;
     type?: types.inbox.InboxType;

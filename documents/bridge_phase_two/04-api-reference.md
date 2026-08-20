@@ -137,6 +137,67 @@ the group has `keyVersion === 0` (not yet rotated) — the bridge skips the chec
 
 ---
 
+### 2.4 `groups[].groupEpoch` (on every container payload)
+
+Every user-facing container payload — `threadGet`/`threadList`, and the same for store, inbox, kvdb and stream
+room, plus the per-recipient container in a WebSocket notification — serves its grants as:
+
+```ts
+groups: {groupId: string, role: "user"|"manager", groupEpoch?: number}[]
+```
+
+`groupEpoch` is the epoch at which **this group's wrap of the container's current `keyId`** was made. Compare it
+with the group's current `keyVersion` and you have the re-key decision, without a `groupGet` per grant:
+
+```
+rekeyNeeded(grant) := grant.groupEpoch !== undefined && grant.groupEpoch < currentEpochOf(grant.groupId)
+```
+
+with a group absent from wherever you read epochs counting as `1`. That is exactly the rule the bridge applies
+before accepting an item write, so a client following it is never refused by surprise
+(`CONTAINER_GROUP_EPOCH_OUTDATED`).
+
+- **`0` vs absent.** `0` is a wrap that declared no epoch (a Phase-1 wrap — behind any rotation). The field is
+  absent when the current key is not wrapped to that group at all: nothing is read through it at the current key,
+  so there is nothing to re-key for it either.
+- **Not narrowed** to the caller's own groups, unlike `groupKeys`: the manager doing the re-key is often a member
+  of none of the granted groups.
+- **Output only.** On writes, grants are `{groupId, role}` and the epoch travels — mandatory — in
+  `groupKeys[].groupEpoch`. Do not echo a served `groups` array back into `update*`/`rotateKeys`; strip the field.
+- **Costs the server nothing.** It is read off the container document, which the request already loaded. The
+  bridge performs no group lookup on a container read; the comparison is the client's, against epochs it can
+  verify cryptographically rather than a boolean it has to trust.
+
+Where to get the current epochs: `groupUpdated` events carry `keyVersion` (free, but only for members of the
+group — see `GroupNotificationService`), and §2.5 resolves many groups in one call.
+
+---
+
+### 2.5 `groupList` filtered by id (the follow-up call)
+
+`groups[].groupEpoch` says what a container was wrapped at; the decision needs the groups' current epoch, and a
+re-key then needs their `groupPubKey`. `groupList` takes the same `query` every container listing takes, and
+`#id` addresses the group id:
+
+```json
+{"contextId": "…", "query": {"#id": {"$in": ["g1", "g2"]}}, "skip": 0, "limit": 100, "sortOrder": "asc"}
+```
+
+One request returns a `GroupSummary` per id, carrying `groupPubKey` and `keyVersion` — no `groupGet` per
+grant, and no full group state. Notes:
+
+- `limit` caps at 100, so that is the most ids one call resolves.
+- An id that does not exist, or belongs to another context, is simply absent — the `contextId` filter is
+  applied before the query. A client's id list comes from a container payload that may be out of date, so this
+  is a skip, not an error.
+- Results are ordered by `sortBy` (`createDate`/`lastModificationDate`), not by the order of the id list.
+- Only whitelisted `#`-prefixed fields are queryable (`MongoQueryConverter`); a bare key resolves against
+  `data.publicMetaObject`, which is meaningless for a group.
+- `groupGet` remains the only call serving `keyHistory`, tree state and history — and it requires membership in
+  the group under the default `group.get: "user"` policy, while `groupList` is open under `group.listAll: "all"`.
+
+---
+
 ## 3. Policy changes
 
 ### 3.1 New `rotateKeys` policy entry
@@ -191,9 +252,11 @@ When a group member is removed (handled by `groupUpdate`), any containers that l
 must be re-keyed so the removed member can no longer decrypt new content.
 
 1. After a `groupUpdate` that bumps `keyVersion`, enumerate all containers that have the group in
-   `groupKeys`.
+   `groupKeys`. Which of them actually need it you can tell from the container itself: compare each grant's
+   `groupEpoch` (§2.4) with the new `keyVersion` — no `groupGet` per grant.
 2. For each container: call `{module}RotateKeys` with a fresh `keyId` and new `keys` for all direct
-   members.  When re-supplying `groupKeys`, set `groupEpoch` to the group's new `keyVersion`.
+   members.  When re-supplying `groupKeys`, set `groupEpoch` to the group's new `keyVersion`. Every currently
+   granted group needs an entry at the new `keyId`, not only the ones that were behind.
 3. The bridge validates that `groupEpoch` matches; it rejects stale entries.
 
 ### 5.3 `update*` vs `rotateKeys`

@@ -159,10 +159,34 @@ export interface GroupArchiveRung {
 /** Role a group grantee holds in a container. Role-tagged so it generalizes to RBAC (widen this union). */
 export type ContainerRole = "user"|"manager";
 
-/** A group granted access to a container, with the role it holds there. */
+/**
+ * A group granted access to a container, with the role it holds there.
+ *
+ * This is the shape a client submits and the shape the bridge stores — on the container and on every history
+ * entry. What a read serves is `GroupGrantInfo`, which adds a field derived at conversion time.
+ */
 export interface GroupGrant {
     groupId: types.group.GroupId;
     role: ContainerRole;
+}
+
+/**
+ * A grant as a container payload serves it: the stored grant plus the epoch its wrap of the container's
+ * **current** key was made at. Derived from `groupKeys` on the way out, never stored and never accepted on
+ * input — on writes the epoch travels, mandatory, in `GroupKeyEntrySet.groupEpoch`.
+ *
+ * `groupEpoch` present is the epoch that wrap declared; `0` means it declared none (a Phase-1 wrap, therefore
+ * behind any rotation). The field is **absent** when the current key is not wrapped to the group at all — a
+ * grant whose wrap has not caught up with a container re-key yet. Nothing is read through that group at the
+ * current key, so there is nothing to re-key for it either.
+ *
+ * A client decides a grant needs re-keying exactly when
+ * `groupEpoch !== undefined && groupEpoch < currentEpochOf(groupId)` — where a group absent from whatever it
+ * reads epochs from (`groupList`, `groupGet`, a `groupUpdated` event) counts as `1`. That is the same rule the
+ * bridge applies before accepting an item write, so a client following it is never refused by surprise.
+ */
+export interface GroupGrantInfo extends GroupGrant {
+    groupEpoch?: number;
 }
 
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */

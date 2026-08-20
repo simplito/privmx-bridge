@@ -32,6 +32,12 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldListOnlyTheRequestedGroupIds() {
+        await this.createGroup();
+        await this.listGroupsByIdAndVerify();
+    }
+    
+    @Test()
     async shouldUpdateGroupAndEnforceVersion() {
         await this.createGroup();
         await this.updateGroup();
@@ -56,10 +62,14 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     private async createGroup() {
+        this.groupId = await this.createGroupIn(testData.contextId);
+    }
+    
+    private async createGroupIn(contextId: types.context.ContextId): Promise<types.group.GroupId> {
         const users = [testData.userId];
         const managers = [testData.userId];
         const res = await this.apis.contextApi.groupCreate({
-            contextId: testData.contextId,
+            contextId: contextId,
             groupPubKey: groupPubKey,
             users: users,
             managers: managers,
@@ -68,7 +78,7 @@ export class GroupApiTests extends BaseTestSet {
             keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
-        this.groupId = res.groupId;
+        return res.groupId;
     }
     
     private async getGroupAndVerify() {
@@ -93,6 +103,34 @@ export class GroupApiTests extends BaseTestSet {
         for (const field of ["data", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
             assert(!(field in served), `groupList must not serve '${field}'`);
         }
+    }
+    
+    /**
+     * `groupList` filtered by id — the call a client makes after reading its grants' `groupEpoch` off a container,
+     * to learn those groups' current `keyVersion` and `groupPubKey` without one `groupGet` per grant.
+     *
+     * The two ids that must *not* come back are the point of the test: one belongs to another context, one does
+     * not exist. Both are skipped rather than raising, because the id list a client filters by comes from a
+     * container payload that may already be out of date.
+     */
+    private async listGroupsByIdAndVerify() {
+        const mine = this.requireGroupId();
+        const elsewhere = await this.createGroupIn(testData.contextId2);
+        const missing = "000000000000000000000000" as types.group.GroupId;
+        const res = await this.apis.contextApi.groupList({
+            contextId: testData.contextId,
+            limit: 10,
+            skip: 0,
+            sortOrder: "asc",
+            query: {"#id": {$in: [mine, elsewhere, missing]}},
+        });
+        assert(res.count === 1 && res.groups.length === 1, `expected 1 group, got ${res.count}`);
+        assert(res.groups[0].id === mine, "the filter served a group that was not asked for");
+        assert(res.groups[0].groupPubKey === groupPubKey, "the summary must carry the pubkey a re-key wraps to");
+        assert(res.groups[0].keyVersion !== undefined, "the summary must carry the epoch a re-key declares");
+        // Unfiltered, the context still serves its own group and nothing from the other one.
+        const all = await this.apis.contextApi.groupList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc"});
+        assert(all.count === 1 && all.groups[0].id === mine, `expected 1 group unfiltered, got ${all.count}`);
     }
     
     private async updateGroup() {

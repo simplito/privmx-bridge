@@ -16,6 +16,7 @@ import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { createMock, mock } from "../../testUtils/TestUtils";
 import { AppException } from "../../../api/AppException";
+import { grantsWithEpochOf, staleGroupsOf } from "../../../api/main/GroupEpochStaleness";
 import * as types from "../../../types";
 
 /**
@@ -122,4 +123,44 @@ it("does not enforce anything when the container has not asked for forward secre
     // Enforcement costs a re-key on every group rotation, so it is opt-in per container.
     const service = createService(2);
     await service.check(grantedContainer(oldKeyId, [{keyId: oldKeyId, groupEpoch: 1}]), false);
+});
+
+/**
+ * The client's side of the same question, and the reason the bridge no longer answers it on every read: a
+ * container payload carries each grant's wrap epoch (`groups[].groupEpoch`), and the client compares it against
+ * the group's current epoch itself.
+ *
+ * This is the rule documented on `types.cloud.GroupGrantInfo`, written out exactly as a client applies it.
+ */
+function clientSaysRekeyNeeded(container: {keyId: types.core.KeyId, groups?: types.cloud.GroupGrant[], groupKeys?: types.cloud.GroupKeysEntry[]}, currentEpochs: Map<types.group.GroupId, number>) {
+    return grantsWithEpochOf(container).some(grant =>
+        grant.groupEpoch !== undefined && grant.groupEpoch < (currentEpochs.get(grant.groupId) ?? 1));
+}
+
+it("refuses exactly what a client predicts from the epochs it was served", async () => {
+    // A client that acted on a payload disagreeing with this refusal would loop — re-key, still refused, re-key
+    // again — or worse, skip a re-key it owes and keep a removed member reading. Both halves read the same wrap
+    // for that reason, and this pins the pairing fixture by fixture.
+    const service = createService(2);
+    const epochs = new Map([[groupId, 2]]);
+    const fixtures = [
+        grantedContainer(oldKeyId, [{keyId: oldKeyId, groupEpoch: 1}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}, {keyId: newKeyId, groupEpoch: 2}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}, {keyId: newKeyId, groupEpoch: 1}]),
+        grantedContainer(oldKeyId, [{keyId: oldKeyId}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}]),
+    ];
+    for (const container of fixtures) {
+        const predicted = clientSaysRekeyNeeded(container, epochs);
+        const stale = staleGroupsOf(container, epochs).length > 0;
+        let refused = false;
+        try {
+            await service.check(container);
+        }
+        catch {
+            refused = true;
+        }
+        expect(refused).toBe(stale);
+        expect(predicted).toBe(refused);
+    }
 });
