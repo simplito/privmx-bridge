@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as storeApi from "./StoreApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { GroupEpochs, staleGroupsOf } from "../GroupEpochStaleness";
 
 export class StoreConverter {
     
@@ -20,8 +21,12 @@ export class StoreConverter {
      * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
      *                    optional so the compiler names every path that serves a store to a user; `undefined`
      *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
+     * @param groupEpochs current epochs of this container's granted groups, from
+     *                    `BaseContainerService.getGroupEpochs`; `staleGroups` is derived from it. Empty is the
+     *                    honest answer for a container with no grants, and for one with grants it would claim
+     *                    nothing needs re-keying — so every read path resolves it rather than defaulting it.
      */
-    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined) {
+    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: storeApi.Store = {
             id: store.id,
             contextId: store.contextId,
@@ -36,6 +41,7 @@ export class StoreConverter {
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
             groups: store.groups || [],
             groupKeys: ownGroupKeysOf(store.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(store, groupEpochs),
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,
             files: store.files,

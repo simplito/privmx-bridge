@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as threadApi from "./ThreadApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { GroupEpochs, staleGroupsOf } from "../GroupEpochStaleness";
 
 export class ThreadConverter {
     
@@ -20,8 +21,12 @@ export class ThreadConverter {
      * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
      *                    optional so the compiler names every path that serves a thread to a user; `undefined`
      *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
+     * @param groupEpochs current epochs of this container's granted groups, from
+     *                    `BaseContainerService.getGroupEpochs`; `staleGroups` is derived from it. Empty is the
+     *                    honest answer for a container with no grants, and for one with grants it would claim
+     *                    nothing needs re-keying — so every read path resolves it rather than defaulting it.
      */
-    convertThread(user: types.cloud.UserId, thread: db.thread.Thread, ownGroupIds: types.group.GroupId[]|undefined) {
+    convertThread(user: types.cloud.UserId, thread: db.thread.Thread, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: threadApi.ThreadInfo = {
             id: thread.id,
             contextId: thread.contextId,
@@ -37,6 +42,7 @@ export class ThreadConverter {
             keys: (thread.keys.find(x => x.user === user)?.keys) || [],
             groups: thread.groups || [],
             groupKeys: ownGroupKeysOf(thread.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(thread, groupEpochs),
             version: <types.thread.ThreadVersion>thread.history.length,
             lastMsgDate: thread.lastMsgDate,
             messages: thread.messages,

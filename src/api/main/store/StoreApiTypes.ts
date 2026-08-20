@@ -98,6 +98,7 @@ export interface Store {
     keys: types.core.KeyEntry[];
     groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.store.StoreVersion;
     lastFileDate: types.core.Timestamp;
     files: number;

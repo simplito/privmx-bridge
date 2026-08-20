@@ -14,6 +14,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { Utils } from "../../utils/Utils";
 import { AppException } from "../../api/AppException";
+import { GroupEpochs, staleGroupsOf } from "../../api/main/GroupEpochStaleness";
 
 interface GranteeContainer {
     users: types.cloud.UserId[];
@@ -55,14 +56,31 @@ export class BaseContainerService {
     }
     
     /**
+     * Current epoch of every group granted on the given containers, in one query.
+     *
+     * Takes a list so a page of containers costs the same as one: the ids are unioned and looked up together.
+     * A page whose containers grant no groups — every container until Phase 2 is adopted — costs no query at all.
+     *
+     * All containers must belong to `contextId`: a group grant cannot cross contexts (`checkGroupsExistence`
+     * enforces that on write), and `getKeyVersions` drops anything that does.
+     */
+    protected async getGroupEpochs(
+        contextId: types.context.ContextId,
+        containers: {groups?: types.cloud.GroupGrant[]}[],
+    ): Promise<GroupEpochs> {
+        const groupIds = Utils.unique(containers.flatMap(c => (c.groups || []).map(g => g.groupId)));
+        if (groupIds.length === 0) {
+            return new Map();
+        }
+        return this.repositoryFactory.createGroupRepository().getKeyVersions(contextId, groupIds);
+    }
+    
+    /**
      * Throws CONTAINER_GROUP_EPOCH_OUTDATED if the container's current key is wrapped to a grantee group at an
      * epoch that group has left behind. Call it on every item-write path before accepting new content.
      *
-     * Only the entry for `container.keyId` decides this — that is the key new content is encrypted under. Older
-     * entries are kept on purpose (they open what was written under earlier keys) and one accumulates per
-     * re-key, so a check over all of them would block a correctly re-keyed container forever.
-     *
-     * No entry at the current key means unwrapped, not stale: nobody reads this content through the group.
+     * The rule itself is `staleGroupsOf`, shared with the `staleGroups` field the read paths serve, so what a
+     * client is told before it writes is what it is held to when it does.
      */
     protected async checkGroupEpochs(container: {
         contextId: types.context.ContextId;
@@ -76,15 +94,8 @@ export class BaseContainerService {
         if ((container.groups || []).length === 0) {
             return;
         }
-        const groupIds = (container.groups || []).map(g => g.groupId);
-        const currentVersions = await this.repositoryFactory.createGroupRepository()
-            .getKeyVersions(container.contextId, groupIds);
-        const isStale = (container.groupKeys || []).some(entry => {
-            const current = currentVersions.get(entry.group) ?? 1;
-            const atCurrentKey = entry.keys.find(k => k.keyId === container.keyId);
-            return atCurrentKey !== undefined && (atCurrentKey.groupEpoch ?? 0) < current;
-        });
-        if (isStale) {
+        const groupEpochs = await this.getGroupEpochs(container.contextId, [container]);
+        if (staleGroupsOf(container, groupEpochs).length > 0) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");
         }
     }

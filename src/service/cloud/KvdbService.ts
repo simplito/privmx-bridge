@@ -58,7 +58,8 @@ export class KvdbService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return {kvdb, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, ownGroupIds, groupEpochs};
     }
     
     async getMyKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope) {
@@ -76,7 +77,8 @@ export class KvdbService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
-        return {user, kvdbs, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, kvdbs.list);
+        return {user, kvdbs, ownGroupIds, groupEpochs};
     }
     
     async getAllKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb) {
@@ -87,7 +89,8 @@ export class KvdbService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getAllKvdbs(contextId, type, listParams, sortBy);
-        return {user, kvdbs, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, kvdbs.list);
+        return {user, kvdbs, ownGroupIds, groupEpochs};
     }
     
     async createKvdb(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
@@ -384,7 +387,8 @@ export class KvdbService extends BaseContainerService {
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdb(kvdbId, listParams);
-        return {kvdb, items, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, items, ownGroupIds, groupEpochs};
     }
     
     async getKvdbEntriesKeysWithListModel2(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>) {
@@ -423,7 +427,8 @@ export class KvdbService extends BaseContainerService {
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefix(kvdbId, listParams, sortBy);
-        return {kvdb, items, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, items, ownGroupIds, groupEpochs};
     }
     
     async getKvdbEntriesWithPlainUser(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>, prefix: string|undefined) {

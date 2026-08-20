@@ -28,9 +28,9 @@ import { Utils } from "../../utils/Utils";
  * narrowed to that recipient's own groups — the same guarantee `storeGet` gives.
  *
  * It costs nothing extra. Expanding group grantees into a recipient list already reads the whole group
- * documents, so `getMemberGroupsMap` hands back each recipient's grants out of that one query instead of
- * discarding them. Serving an unnarrowed list here would be the anomaly: a client would have no way to tell a
- * payload it may trust from one it may not.
+ * documents, so `getGranteeView` hands back each recipient's grants — and every group's current epoch, which
+ * `staleGroups` needs — out of that one query instead of discarding them. Serving an unnarrowed list here would
+ * be the anomaly: a client would have no way to tell a payload it may trust from one it may not.
  */
 export class StoreNotificationService {
     
@@ -50,16 +50,17 @@ export class StoreNotificationService {
     
     /**
      * Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications), along
-     * with each recipient's own grants on this store — both from the single group lookup the expansion
-     * already does, so a per-recipient payload can be narrowed for free. Recipients in no granted group
-     * map to `[]`.
+     * with each recipient's own grants on this store and the granted groups' current epochs — all from the
+     * single group lookup the expansion already does, so a per-recipient payload can be narrowed, and carry
+     * the same `staleGroups` a `storeGet` would, for free. Recipients in no granted group map to `[]`.
      */
-    private async getStoreRecipients(store: db.store.Store): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>}> {
+    private async getStoreRecipients(store: db.store.Store): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupIds = (store.groups || []).map(g => g.groupId);
-        const groupsByUser = await this.repositoryFactory.createGroupRepository().getMemberGroupsMap(groupIds);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
         return {
             userIds: Utils.unique([...store.users, ...store.managers, ...groupsByUser.keys()]),
             groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
         };
     }
     
@@ -93,7 +94,7 @@ export class StoreNotificationService {
     sendStoreCreated(store: db.store.Store, solution: types.cloud.SolutionId) {
         this.safe("storeCreated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getStoreRecipients(store);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStoreRecipients(store);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, userIds);
             const notification: managementStoreApi.StoreCreatedEvent = {
                 channel: "store",
@@ -114,7 +115,7 @@ export class StoreNotificationService {
                     {
                         channel: "store",
                         type: "storeCreated",
-                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? []),
+                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -125,7 +126,7 @@ export class StoreNotificationService {
     sendStoreUpdated(store: db.store.Store, solution: types.cloud.SolutionId, additionalUsers: types.cloud.UserIdentityWithStatus[]) {
         this.safe("storeUpdated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getStoreRecipients(store);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStoreRecipients(store);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, userIds);
             const notification: managementStoreApi.StoreUpdatedEvent = {
                 channel: "store",
@@ -147,7 +148,7 @@ export class StoreNotificationService {
                     {
                         channel: "store",
                         type: "storeUpdated",
-                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? []),
+                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -159,7 +160,7 @@ export class StoreNotificationService {
                     // These are the users this update removed, so they hold no grant on the store any
                     // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
                     // is the answer.
-                    data: this.storeConverter.convertStore(user.id, store, groupsByUser.get(user.id) ?? []),
+                    data: this.storeConverter.convertStore(user.id, store, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {

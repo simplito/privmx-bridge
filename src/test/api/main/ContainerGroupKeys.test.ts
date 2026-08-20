@@ -116,27 +116,35 @@ type Convert = (
     ownGroupIds: types.group.GroupId[]|undefined,
 ) => NarrowedContainer;
 
-/** One entry per container type, so a module that forgets to wire `ownGroupIds` through fails here. */
+/**
+ * One entry per container type, so a module that forgets to wire `ownGroupIds` through fails here.
+ *
+ * The epoch map every converter also takes is empty on purpose: it feeds `staleGroups`, which is not what this
+ * file is about — `ContainerStaleGroups.test.ts` covers that field, and none of the fixtures here is stale under
+ * an empty map anyway.
+ */
+const NO_EPOCHS = new Map<types.group.GroupId, number>();
+
 const CONVERTERS: {name: string, convert: Convert}[] = [
     {
         name: "thread",
-        convert: (groups, groupKeys, ids) => new ThreadConverter().convertThread(alice, containerFields(groups, groupKeys) as unknown as db.thread.Thread, ids),
+        convert: (groups, groupKeys, ids) => new ThreadConverter().convertThread(alice, containerFields(groups, groupKeys) as unknown as db.thread.Thread, ids, NO_EPOCHS),
     },
     {
         name: "store",
-        convert: (groups, groupKeys, ids) => new StoreConverter().convertStore(alice, containerFields(groups, groupKeys) as unknown as db.store.Store, ids),
+        convert: (groups, groupKeys, ids) => new StoreConverter().convertStore(alice, containerFields(groups, groupKeys) as unknown as db.store.Store, ids, NO_EPOCHS),
     },
     {
         name: "inbox",
-        convert: (groups, groupKeys, ids) => new InboxConverter().convertInbox(alice, containerFields(groups, groupKeys) as unknown as db.inbox.Inbox, ids),
+        convert: (groups, groupKeys, ids) => new InboxConverter().convertInbox(alice, containerFields(groups, groupKeys) as unknown as db.inbox.Inbox, ids, NO_EPOCHS),
     },
     {
         name: "kvdb",
-        convert: (groups, groupKeys, ids) => new KvdbConverter().convertKvdb(alice, containerFields(groups, groupKeys) as unknown as db.kvdb.Kvdb, ids),
+        convert: (groups, groupKeys, ids) => new KvdbConverter().convertKvdb(alice, containerFields(groups, groupKeys) as unknown as db.kvdb.Kvdb, ids, NO_EPOCHS),
     },
     {
         name: "stream room",
-        convert: (groups, groupKeys, ids) => new StreamConverter().convertStreamRoom(alice, containerFields(groups, groupKeys) as unknown as db.stream.StreamRoom, ids),
+        convert: (groups, groupKeys, ids) => new StreamConverter().convertStreamRoom(alice, containerFields(groups, groupKeys) as unknown as db.stream.StreamRoom, ids, NO_EPOCHS),
     },
 ];
 

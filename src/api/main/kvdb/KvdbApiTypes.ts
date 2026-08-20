@@ -80,6 +80,7 @@ export interface KvdbInfo {
     keys: types.core.KeyEntry[];
     groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.kvdb.KvdbVersion;
     type?: types.kvdb.KvdbType;
     policy: types.cloud.ContainerPolicy;

@@ -13,6 +13,7 @@ import * as types from "../../../types";
 import * as streamApi from "./StreamApiTypes";
 import * as db from "../../../db/Model";
 import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { GroupEpochs, staleGroupsOf } from "../GroupEpochStaleness";
 
 export class StreamConverter {
     
@@ -21,8 +22,12 @@ export class StreamConverter {
      *                    optional so the compiler names every path that serves a stream room to a user;
      *                    `undefined` throws in `ownGroupKeysOf` instead of quietly stripping the caller's key
      *                    material.
+     * @param groupEpochs current epochs of this container's granted groups, from
+     *                    `BaseContainerService.getGroupEpochs`; `staleGroups` is derived from it. Empty is the
+     *                    honest answer for a container with no grants, and for one with grants it would claim
+     *                    nothing needs re-keying — so every read path resolves it rather than defaulting it.
      */
-    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom, ownGroupIds: types.group.GroupId[]|undefined) {
+    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: streamApi.StreamRoom = {
             id: stream.id,
             contextId: stream.contextId,
@@ -37,6 +42,7 @@ export class StreamConverter {
             keys: (stream.keys.find(x => x.user === user)?.keys) || [],
             groups: stream.groups || [],
             groupKeys: ownGroupKeysOf(stream.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(stream, groupEpochs),
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,
             policy: stream.policy || {},

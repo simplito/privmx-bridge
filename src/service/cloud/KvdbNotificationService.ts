@@ -29,9 +29,9 @@ import { Utils } from "../../utils/Utils";
  * narrowed to that recipient's own groups — the same guarantee `kvdbGet` gives.
  *
  * It costs nothing extra. Expanding group grantees into a recipient list already reads the whole group
- * documents, so `getMemberGroupsMap` hands back each recipient's grants out of that one query instead of
- * discarding them. Serving an unnarrowed list here would be the anomaly: a client would have no way to tell a
- * payload it may trust from one it may not.
+ * documents, so `getGranteeView` hands back each recipient's grants — and every group's current epoch, which
+ * `staleGroups` needs — out of that one query instead of discarding them. Serving an unnarrowed list here would
+ * be the anomaly: a client would have no way to tell a payload it may trust from one it may not.
  */
 export class KvdbNotificationService {
     
@@ -51,16 +51,17 @@ export class KvdbNotificationService {
     
     /**
      * Kvdb users plus the expanded members of any granted groups (Phase 2 grantee notifications), along
-     * with each recipient's own grants on this kvdb — both from the single group lookup the expansion
-     * already does, so a per-recipient payload can be narrowed for free. Recipients in no granted group
-     * map to `[]`.
+     * with each recipient's own grants on this kvdb and the granted groups' current epochs — all from the
+     * single group lookup the expansion already does, so a per-recipient payload can be narrowed, and carry
+     * the same `staleGroups` a `kvdbGet` would, for free. Recipients in no granted group map to `[]`.
      */
-    private async getKvdbRecipients(kvdb: db.kvdb.Kvdb): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>}> {
+    private async getKvdbRecipients(kvdb: db.kvdb.Kvdb): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupIds = (kvdb.groups || []).map(g => g.groupId);
-        const groupsByUser = await this.repositoryFactory.createGroupRepository().getMemberGroupsMap(groupIds);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
         return {
             userIds: Utils.unique([...kvdb.users, ...groupsByUser.keys()]),
             groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
         };
     }
     
@@ -94,7 +95,7 @@ export class KvdbNotificationService {
     sendKvdbCreated(kvdb: db.kvdb.Kvdb, solution: types.cloud.SolutionId) {
         this.safe("kvdbCreated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getKvdbRecipients(kvdb);
+            const {userIds, groupsByUser, groupEpochs} = await this.getKvdbRecipients(kvdb);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(kvdb.contextId, userIds);
             const notification: managementKvdbApi.KvdbCreatedEvent = {
                 channel: "kvdb",
@@ -115,7 +116,7 @@ export class KvdbNotificationService {
                     {
                         channel: "kvdb",
                         type: "kvdbCreated",
-                        data: this.kvdbConverter.convertKvdb(user.userId, kvdb, groupsByUser.get(user.userId) ?? []),
+                        data: this.kvdbConverter.convertKvdb(user.userId, kvdb, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -126,7 +127,7 @@ export class KvdbNotificationService {
     sendKvdbUpdated(kvdb: db.kvdb.Kvdb, solution: types.cloud.SolutionId, additionalUsers: UserIdentityWithStatus[]) {
         this.safe("kvdbUpdated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getKvdbRecipients(kvdb);
+            const {userIds, groupsByUser, groupEpochs} = await this.getKvdbRecipients(kvdb);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(kvdb.contextId, userIds);
             const notification: managementKvdbApi.KvdbUpdatedEvent = {
                 channel: "kvdb",
@@ -148,7 +149,7 @@ export class KvdbNotificationService {
                     {
                         channel: "kvdb",
                         type: "kvdbUpdated",
-                        data: this.kvdbConverter.convertKvdb(user.userId, kvdb, groupsByUser.get(user.userId) ?? []),
+                        data: this.kvdbConverter.convertKvdb(user.userId, kvdb, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -160,7 +161,7 @@ export class KvdbNotificationService {
                     // These are the users this update removed, so they hold no grant on the kvdb any
                     // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
                     // is the answer.
-                    data: this.kvdbConverter.convertKvdb(user.id, kvdb, groupsByUser.get(user.id) ?? []),
+                    data: this.kvdbConverter.convertKvdb(user.id, kvdb, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {

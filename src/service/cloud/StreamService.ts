@@ -322,7 +322,8 @@ export class StreamService extends BaseContainerService {
         if (type && streamRoom.type !== type) {
             throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
         }
-        return {streamRoom, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(streamRoom.contextId, [streamRoom]);
+        return {streamRoom, ownGroupIds, groupEpochs};
     }
     
     // =================================================================================================
@@ -874,7 +875,8 @@ export class StreamService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getAllStreams(contextId, type, listParams, sortBy);
-        return { user, streamRooms, ownGroupIds };
+        const groupEpochs = await this.getGroupEpochs(contextId, streamRooms.list);
+        return { user, streamRooms, ownGroupIds, groupEpochs };
     }
     
     async getMyStreamRooms(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType | undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
@@ -891,7 +893,8 @@ export class StreamService extends BaseContainerService {
         
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
-        return { user, streamRooms, ownGroupIds };
+        const groupEpochs = await this.getGroupEpochs(contextId, streamRooms.list);
+        return { user, streamRooms, ownGroupIds, groupEpochs };
     }
     
     async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "all" | types.stream.StreamRoomState) {

@@ -16,6 +16,7 @@ import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { createMock, mock } from "../../testUtils/TestUtils";
 import { AppException } from "../../../api/AppException";
+import { staleGroupsOf } from "../../../api/main/GroupEpochStaleness";
 import * as types from "../../../types";
 
 /**
@@ -122,4 +123,30 @@ it("does not enforce anything when the container has not asked for forward secre
     // Enforcement costs a re-key on every group rotation, so it is opt-in per container.
     const service = createService(2);
     await service.check(grantedContainer(oldKeyId, [{keyId: oldKeyId, groupEpoch: 1}]), false);
+});
+
+it("refuses exactly what the read paths report as stale", async () => {
+    // `staleGroups` is served on every container read so a client can re-key before it is refused. The two answers
+    // come from one function for that reason; this pins the pairing, because a client acting on a field that
+    // disagreed with the refusal would loop — re-key, still refused, re-key again.
+    const service = createService(2);
+    const epochs = new Map([[groupId, 2]]);
+    const fixtures = [
+        grantedContainer(oldKeyId, [{keyId: oldKeyId, groupEpoch: 1}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}, {keyId: newKeyId, groupEpoch: 2}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}, {keyId: newKeyId, groupEpoch: 1}]),
+        grantedContainer(oldKeyId, [{keyId: oldKeyId}]),
+        grantedContainer(newKeyId, [{keyId: oldKeyId, groupEpoch: 1}]),
+    ];
+    for (const container of fixtures) {
+        const reportedStale = staleGroupsOf(container, epochs).length > 0;
+        let refused = false;
+        try {
+            await service.check(container);
+        }
+        catch {
+            refused = true;
+        }
+        expect(refused).toBe(reportedStale);
+    }
 });
