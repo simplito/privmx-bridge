@@ -151,12 +151,23 @@ export class TreeValidator {
     }
     
     /**
-     * Validates an addition: the newcomer takes a blank (or an appended position), no existing node key
-     * changes, and **the epoch does not move**.
+     * Validates an addition: the newcomer takes a blank (or an appended position), the epoch does not move, and
+     * nothing outside the new leaf's direct path changes.
      *
-     * That last point is the reason the grant keypair sits one indirection above the root. Growth may create a
-     * new root and re-link the grant edge to it, but the grant keypair itself is untouched, so no container
-     * holding a wrap of it goes stale. Adding a member costs the group nothing beyond the wraps on one path.
+     * The epoch not moving is the reason the grant keypair sits one indirection above the root. Growth may
+     * create a new root and re-link the grant edge to it, but the grant keypair itself is untouched, so no
+     * container holding a wrap of it goes stale. Adding a member costs the group nothing beyond one path.
+     *
+     * The path **may** be refreshed, and usually has to be. An edge wraps the parent's private key, so seating
+     * somebody under an existing node means holding that node's private key — and keys are only ever recovered
+     * by climbing from one's own leaf, which reaches exactly one lowest-level node: the caller's own parent. A
+     * caller who cannot refresh can therefore fill only the seat next to their own, which is not a permission
+     * rule and not one anybody can satisfy on purpose. Refreshing the path replaces that with wraps to public
+     * keys, which need no secret at all.
+     *
+     * Unlike a removal, the refresh is optional rather than obligatory: nobody loses access here, and the
+     * newcomer learns the current keys on their path either way. A client that can seat somebody without
+     * refreshing still may.
      */
     static validateAddition(
         oldTree: types.cloud.GroupTreeState,
@@ -190,20 +201,23 @@ export class TreeValidator {
                 problems.push({kind: "LEAF_ASSIGNMENT_CHANGED", position: i, from: before, to: newTree.leafAssignment[i]});
             }
         }
-        // Nodes that existed before must come through untouched. Nodes that did not (growth creates them) are
-        // free — they carry no history anyone relies on.
-        problems.push(...TreeValidator.compareNodes(oldTree, newTree, new Set()));
+        // Nodes on the new leaf's path may be refreshed; nodes that did not exist before (growth creates them)
+        // are free — they carry no history anyone relies on. Everything else must come through untouched.
+        const mayRefresh = new Set(TreeMath.directPath(position, newTree.numLeaves));
+        problems.push(...TreeValidator.compareNodes(oldTree, newTree, new Set(), mayRefresh));
         return problems;
     }
     
     /**
-     * Compares node sets: `mustRefresh` has to advance its generation and change its public key, everything
-     * present in both trees has to be byte-identical.
+     * Compares node sets: `mustRefresh` has to advance its generation and change its public key, `mayRefresh` is
+     * allowed to do either that or nothing at all, and everything else present in both trees has to be
+     * byte-identical.
      */
     private static compareNodes(
         oldTree: types.cloud.GroupTreeState,
         newTree: types.cloud.GroupTreeState,
         mustRefresh: Set<number>,
+        mayRefresh: Set<number> = new Set(),
     ): TransitionProblem[] {
         const problems: TransitionProblem[] = [];
         const before = new Map(oldTree.nodes.map(n => [n.nodeIndex, n]));
@@ -224,8 +238,22 @@ export class TreeValidator {
                     problems.push({kind: "NODE_KEY_REUSED", nodeIndex});
                 }
             }
-            else if (newNode.generation !== oldNode.generation || newNode.publicKey !== oldNode.publicKey) {
+            else if (newNode.generation === oldNode.generation && newNode.publicKey === oldNode.publicKey) {
+                continue; // untouched, which is what every node outside a refresh has to be
+            }
+            else if (!mayRefresh.has(nodeIndex)) {
                 problems.push({kind: "NODE_REFRESHED_NEEDLESSLY", nodeIndex});
+            }
+            else {
+                // Refreshing was allowed, so the only thing left to check is that it is a real refresh: a bumped
+                // generation carrying the old public key, or a new key at the old generation, leaves the stored
+                // state describing something that is not what the client holds.
+                if (newNode.generation <= oldNode.generation) {
+                    problems.push({kind: "NODE_NOT_REFRESHED", nodeIndex});
+                }
+                if (newNode.publicKey === oldNode.publicKey) {
+                    problems.push({kind: "NODE_KEY_REUSED", nodeIndex});
+                }
             }
         }
         for (const nodeIndex of mustRefresh) {

@@ -27,6 +27,7 @@ import { BaseContainerService } from "./BaseContainerService";
 import type { GroupAddMemberModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMemberModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TransitionProblem, TreeProblem, TreeValidator } from "./keytree/TreeValidator";
+import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
 import { TreeMath } from "./keytree/TreeMath";
 
@@ -234,28 +235,47 @@ export class GroupService extends BaseContainerService {
             }
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, [model.userId]);
             const keyVersion = groupRepository.getKeyVersion(oldGroup);
-            this.assertTransitionIsValid(TreeValidator.validateAddition(
-                oldTree, model.tree, model.userId, model.position, keyVersion, model.tree.edges.find(e => e.isGrantEdge)?.parentGeneration ?? keyVersion,
-            ));
             const users = model.role === "user" ? [...oldGroup.users, model.userId] : oldGroup.users;
-            this.assertTreeIsValid(model.tree, {users, managers}, keyVersion);
+            if (model.transition) {
+                await this.assertAdditionTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
+            }
+            else if (model.tree) {
+                this.assertTransitionIsValid(TreeValidator.validateAddition(
+                    oldTree, model.tree, model.userId, model.position, keyVersion, model.tree.edges.find(e => e.isGrantEdge)?.parentGeneration ?? keyVersion,
+                ));
+                this.assertTreeIsValid(model.tree, {users, managers}, keyVersion);
+            }
+            else {
+                throw new AppException("INVALID_PARAMS", "an addition needs either `transition` or `tree`");
+            }
             // One entry for the newcomer at the existing keyId — the group's metadata key, which the tree does
             // not carry. No rotation, so nobody else is disturbed.
             const newKeys = this.buildTreeGroupKeys(
                 [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId], oldGroup.keys, model.keys ?? [], model.keyId,
                 [...users, ...managers],
             );
-            const result = await groupRepository.addMemberWithTree({
-                oldGroup,
-                oldTree,
-                modifier: user.userId,
-                addedUser: model.userId,
-                role: model.role,
-                keyId: model.keyId,
-                data: model.data,
-                tree: model.tree,
-                keys: newKeys,
-            });
+            const result = model.transition
+                ? await groupRepository.addMemberWithTransition({
+                    oldGroup,
+                    transition: model.transition,
+                    modifier: user.userId,
+                    addedUser: model.userId,
+                    role: model.role,
+                    keyId: model.keyId,
+                    data: model.data,
+                    keys: newKeys,
+                })
+                : await groupRepository.addMemberWithTree({
+                    oldGroup,
+                    oldTree,
+                    modifier: user.userId,
+                    addedUser: model.userId,
+                    role: model.role,
+                    keyId: model.keyId,
+                    data: model.data,
+                    tree: model.tree!,
+                    keys: newKeys,
+                });
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
             }
@@ -281,7 +301,6 @@ export class GroupService extends BaseContainerService {
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
             const managers = oldGroup.managers.filter(u => u !== model.userId);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
-            const oldTree = await this.requireTree(groupRepository, oldGroup);
             if (!oldGroup.users.includes(model.userId) && !oldGroup.managers.includes(model.userId)) {
                 throw new AppException("INVALID_PARAMS", `user '${model.userId}' is not a member`);
             }
@@ -293,9 +312,21 @@ export class GroupService extends BaseContainerService {
             await this.checkRotationRateLimit(model.id);
             const oldKeyVersion = groupRepository.getKeyVersion(oldGroup);
             const newKeyVersion = oldKeyVersion + 1;
-            this.assertTransitionIsValid(TreeValidator.validateRemoval(oldTree, model.tree, model.userId, oldKeyVersion, newKeyVersion));
             const users = oldGroup.users.filter(u => u !== model.userId);
-            this.assertTreeIsValid(model.tree, {users, managers}, newKeyVersion);
+            // Two shapes, one outcome. A transition is checked against the stored path — `O(log n)` read, no whole
+            // tree on either side. A whole submitted tree is still accepted, because a client that has one has
+            // nothing to gain from being refused.
+            if (model.transition) {
+                await this.assertTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
+            }
+            else if (model.tree) {
+                const oldTree = await this.requireTree(groupRepository, oldGroup);
+                this.assertTransitionIsValid(TreeValidator.validateRemoval(oldTree, model.tree, model.userId, oldKeyVersion, newKeyVersion));
+                this.assertTreeIsValid(model.tree, {users, managers}, newKeyVersion);
+            }
+            else {
+                throw new AppException("INVALID_PARAMS", "a removal needs either `transition` or `tree`");
+            }
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
             // Fresh metadata-key entries, if the caller supplied any. The departing member's own entries are
             // dropped by the repository either way, so they cannot read metadata written under a new keyId.
@@ -305,20 +336,25 @@ export class GroupService extends BaseContainerService {
                 model.keys ?? [], model.keyId, [...users, ...managers],
             );
             const newGroupKeys = this.buildSelfAddressedKeys(oldGroup, model.groupKeys ?? [], model.keyId, newKeyVersion);
-            const result = await groupRepository.removeMemberWithTree({
+            const common = {
                 keys: newKeys,
                 groupKeys: newGroupKeys,
                 oldGroup,
-                oldTree,
                 modifier: user.userId,
                 removedUser: model.userId,
                 newGroupPubKey: model.groupPubKey,
                 keyId: model.keyId,
                 data: model.data,
-                tree: model.tree,
                 rungs: model.rungs,
                 ...(model.confirmationTag ? {confirmationTag: model.confirmationTag} : {}),
-            });
+            };
+            const result = model.transition
+                ? await groupRepository.removeMemberWithTransition({...common, transition: model.transition})
+                : await groupRepository.removeMemberWithTree({
+                    ...common,
+                    oldTree: await this.requireTree(groupRepository, oldGroup),
+                    tree: model.tree!,
+                });
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
             }
@@ -538,6 +574,56 @@ export class GroupService extends BaseContainerService {
                 keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}],
             })),
         ];
+    }
+    
+    /**
+     * Checks a removal expressed as a delta against what the bridge holds.
+     *
+     * Reads the affected path and copath — `O(log n)` documents — and applies the same rules the whole-tree
+     * validator would: exactly the path refreshed, genuinely new keys, exactly the edges the refresh owes, the
+     * grant edge at the new epoch. The preconditions in the transition are what make that sound: a delta computed
+     * against a state that has since moved is refused rather than applied to a base it never saw.
+     */
+    private async assertTransitionIsAcceptable(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        group: db.group.Group,
+        transition: types.cloud.GroupTreeTransition,
+        removedUser: types.cloud.UserId,
+    ) {
+        if (group.numLeaves === undefined) {
+            throw new AppException("GROUP_HAS_NO_TREE");
+        }
+        const nodes = await groupRepository.getPathNodes(group, transition.blankedPosition);
+        const problems = TreeTransitionValidator.validateRemoval({
+            numLeaves: group.numLeaves,
+            leafAssignment: group.leafAssignment ?? [],
+            keyVersion: groupRepository.getKeyVersion(group),
+            nodes: nodes,
+        }, transition, removedUser);
+        if (problems.length > 0) {
+            throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));
+        }
+    }
+    
+    private async assertAdditionTransitionIsAcceptable(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        group: db.group.Group,
+        transition: types.cloud.GroupTreeAdditionTransition,
+        addedUser: types.cloud.UserId,
+    ) {
+        if (group.numLeaves === undefined) {
+            throw new AppException("GROUP_HAS_NO_TREE");
+        }
+        const nodes = await groupRepository.getSeatNodes(group, transition.position);
+        const problems = TreeTransitionValidator.validateAddition({
+            numLeaves: group.numLeaves,
+            leafAssignment: group.leafAssignment ?? [],
+            keyVersion: groupRepository.getKeyVersion(group),
+            nodes: nodes,
+        }, transition, addedUser);
+        if (problems.length > 0) {
+            throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));
+        }
     }
     
     private assertTreeIsValid(tree: types.cloud.GroupTreeState, roster: {users: types.cloud.UserId[], managers: types.cloud.UserId[]}, keyVersion: number) {

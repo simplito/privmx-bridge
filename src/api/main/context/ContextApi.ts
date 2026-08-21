@@ -105,7 +105,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type);
         this.requestLogger.setContextId(group.contextId);
-        return {group: this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group, state)};
+        return {group: this.groupConverter.convertGroup(
+            cloudUser.getUser(group.contextId), group, state, model.scope ?? "path", model.forUserId, model.forPosition,
+        )};
     }
     
     @ApiMethod({})

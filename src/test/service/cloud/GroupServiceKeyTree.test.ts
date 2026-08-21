@@ -20,7 +20,7 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
 import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { buildTree, cloneTree, refreshNodes, treeAfterRemoval } from "../../testUtils/TreeFixtures";
+import { applyAdditionWithPathRefresh, buildTree, cloneTree, refreshNodes, treeAfterRemoval } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -344,15 +344,35 @@ it("SECURITY: addMember refuses a payload that advances the epoch", async () => 
     hasNoCalls(groupRepository.addMemberWithTree);
 });
 
-it("SECURITY: addMember refuses a payload that also refreshes a node", async () => {
-    // Refreshing during an addition would let a caller replace keys other members depend on, outside the one
-    // operation (removal) whose refresh coverage the bridge checks.
+it("SECURITY: addMember refuses a payload that refreshes a node off the new leaf's path", async () => {
+    // The new leaf's own path is fair game — a caller has no other way to wrap to a node they cannot reach.
+    // Anything beyond it replaces keys members of an unrelated subtree depend on, in an operation that does not
+    // advance the epoch and so accounts for nothing.
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
     const model = additionModel(group);
-    model.tree = refreshNodes(model.tree, [3]);
+    model.tree = refreshNodes(model.tree, [5]);
+    assert.ok(!TreeMath.directPath(1, 4).includes(5));
     await expectFailure("GROUP_TREE_INVALID", () => groupService.addMember(janekCloudUser, model));
     hasNoCalls(groupRepository.addMemberWithTree);
+});
+
+it("addMember seats a newcomer under a node the caller cannot reach, by refreshing the path", async () => {
+    // The operation an eight-seat group needs and a four-seat group hides: seat 5 sits under node 11, which
+    // nobody climbing from seat 0 ever recovers. The client refreshes the path instead of borrowing that key.
+    const seating = ["janek", "alice", "bob", "carol", "dave", "", "erin", "frank"];
+    const roster = [alice, bob, carol, dave, "erin" as types.cloud.UserId, "frank" as types.cloud.UserId];
+    const group = treeBackedGroup({users: roster, tree: buildTree(seating, EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group);
+    const tree = applyAdditionWithPathRefresh(group.tree!, "grace" as types.cloud.UserId, 5, EPOCH);
+    await groupService.addMember(janekCloudUser, {
+        ...additionModel(group, 5),
+        userId: "grace" as types.cloud.UserId,
+        tree,
+    });
+    const call = groupRepository.addMemberWithTree.mock.calls[0];
+    assert.ok(call, "expected the addition to be written");
+    assert.strictEqual(group.keyVersion, EPOCH, "an addition must not move the epoch");
 });
 
 it("addMember refuses to seat somebody who is already a member", async () => {

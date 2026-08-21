@@ -208,6 +208,29 @@ describe("tree states produced by the endpoint", () => {
         }
     });
     
+    it("an addition re-keys the new leaf's path and files it under a new generation", () => {
+        // The client cannot wrap to a node it has no key for, so seating anybody below an existing node means
+        // re-keying the path to it. What must not happen is the re-keyed node arriving *alongside* the one it
+        // replaces: the state would then hold two entries for one index, one of them a key nobody holds.
+        for (const testCase of additions) {
+            const indices = testCase.after.nodes.map(n => n.nodeIndex);
+            assert.strictEqual(
+                new Set(indices).size, indices.length,
+                `addition at ${testCase.position} left duplicate node entries: ${JSON.stringify(indices)}`,
+            );
+            const before = new Map(testCase.before.nodes.map(n => [n.nodeIndex, n]));
+            for (const node of testCase.after.nodes) {
+                const previous = before.get(node.nodeIndex);
+                if (previous && previous.publicKey !== node.publicKey) {
+                    assert.ok(
+                        node.generation > previous.generation,
+                        `node ${node.nodeIndex} changed key without advancing its generation`,
+                    );
+                }
+            }
+        }
+    });
+    
     it("SECURITY: a removal refreshes every node on the departing leaf's path and no other", () => {
         for (const testCase of removals) {
             const before = new Map(testCase.before.nodes.map(n => [n.nodeIndex, n]));

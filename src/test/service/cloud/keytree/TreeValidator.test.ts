@@ -14,7 +14,7 @@ import * as assert from "assert";
 import * as types from "../../../../types";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import { TreeProblem, TransitionProblem, TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
-import { buildTree as buildTreeAt, cloneTree, refreshNodes, treeAfterRemoval, userId } from "../../../testUtils/TreeFixtures";
+import { applyAdditionWithPathRefresh, buildTree as buildTreeAt, cloneTree, refreshNodes, treeAfterRemoval, userId } from "../../../testUtils/TreeFixtures";
 
 /**
  * Unit tests for the bridge's structural validation of the hidden key tree.
@@ -470,11 +470,63 @@ describe("TreeValidator.validateAddition", () => {
         assertHas(TreeValidator.validateAddition(before, after, user("newcomer"), 2, EPOCH, EPOCH + 1), "EPOCH_CHANGED");
     });
     
-    it("rejects refreshing an existing node while adding", () => {
+    it("accepts an addition that refreshes the new leaf's path, at a seat far from anybody's own", () => {
+        // The case the old rule made impossible. An edge wraps the parent's private key, and a caller only ever
+        // recovers keys on their own path, so seating somebody under a stranger's parent is out of reach unless
+        // the path is refreshed. A group of eight is the smallest where the blank is guaranteed to be somewhere
+        // no single member can reach — which is why no test caught this before.
+        const before = buildTree(["u0", "u1", "u2", "u3", "u4", "", "u6", "u7"], EPOCH);
+        const after = applyAdditionWithPathRefresh(before, user("newcomer"), 5, EPOCH);
+        const problems = TreeValidator.validateAddition(before, after, user("newcomer"), 5, EPOCH, EPOCH);
+        assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+        const roster8 = roster(["u0", "u1", "u2", "u3", "u4", "newcomer", "u6", "u7"]);
+        assert.deepStrictEqual(TreeValidator.validateState(after, roster8, EPOCH), []);
+        // Exactly the path moved: three nodes for eight leaves, and nothing else in the tree.
+        const moved = after.nodes.filter(node => {
+            const old = before.nodes.find(n => n.nodeIndex === node.nodeIndex);
+            return old !== undefined && (old.generation !== node.generation || old.publicKey !== node.publicKey);
+        }).map(node => node.nodeIndex).sort((a, b) => a - b);
+        assert.deepStrictEqual(moved, [...TreeMath.directPath(5, 8)].sort((a, b) => a - b));
+    });
+    
+    it("accepts growth that refreshes the new leaf's path", () => {
+        const before = buildTree(["u0", "u1", "u2"], EPOCH);
+        const after = applyAdditionWithPathRefresh(before, user("newcomer"), 3, EPOCH);
+        const problems = TreeValidator.validateAddition(before, after, user("newcomer"), 3, EPOCH, EPOCH);
+        assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+        const grown = roster(["u0", "u1", "u2", "newcomer"]);
+        assert.deepStrictEqual(TreeValidator.validateState(after, grown, EPOCH), []);
+    });
+    
+    it("SECURITY: rejects refreshing a node outside the new leaf's path", () => {
+        // Off-path work is charged to members who are not part of this operation, and an addition does not bump
+        // the epoch, so nothing accounts for it.
         const before = buildTree(["u0", "u1", "", "u3"], EPOCH);
-        const after = refresh(clone(before), [3]);
+        const after = refresh(clone(before), [1]);
         after.leafAssignment[2] = user("newcomer");
+        assert.ok(!TreeMath.directPath(2, 4).includes(1));
         assertHas(TreeValidator.validateAddition(before, after, user("newcomer"), 2, EPOCH, EPOCH), "NODE_REFRESHED_NEEDLESSLY");
+    });
+    
+    it("SECURITY: rejects a refreshed path node that reuses its public key", () => {
+        const before = buildTree(["u0", "u1", "", "u3"], EPOCH);
+        const after = applyAdditionWithPathRefresh(before, user("newcomer"), 2, EPOCH);
+        const node = after.nodes.find(n => n.nodeIndex === 3);
+        const old = before.nodes.find(n => n.nodeIndex === 3);
+        assert.ok(node && old);
+        node.publicKey = old.publicKey;
+        assertHas(TreeValidator.validateAddition(before, after, user("newcomer"), 2, EPOCH, EPOCH), "NODE_KEY_REUSED");
+    });
+    
+    it("rejects a new path key filed under the generation it replaces", () => {
+        // Same generation, different key: every edge naming that node then reads as current while pointing at a
+        // key nobody holds, and the members under it would be climbing to nothing.
+        const before = buildTree(["u0", "u1", "", "u3"], EPOCH);
+        const after = applyAdditionWithPathRefresh(before, user("newcomer"), 2, EPOCH);
+        const node = after.nodes.find(n => n.nodeIndex === 3);
+        assert.ok(node);
+        node.generation -= 1;
+        assertHas(TreeValidator.validateAddition(before, after, user("newcomer"), 2, EPOCH, EPOCH), "NODE_NOT_REFRESHED");
     });
     
     it("rejects seating over an occupied leaf", () => {

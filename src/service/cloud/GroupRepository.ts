@@ -16,6 +16,8 @@ import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { AppException } from "../../api/AppException";
 import { GroupStateRepository } from "./GroupStateRepository";
+import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
+import { TreeMath } from "./keytree/TreeMath";
 
 export class GroupRepository {
     
@@ -277,6 +279,155 @@ export class GroupRepository {
         });
         await this.state.writeTree(oldGroup.id, params.oldTree, params.tree);
         await this.state.insertRungs(oldGroup.id, params.rungs);
+        return {...oldGroup, ...changes};
+    }
+    
+    /** The nodes needed to check a removal at `position`: its path and copath, `O(log n)` reads. */
+    async getPathNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
+        if (group.numLeaves === undefined) {
+            return [];
+        }
+        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededFor(position, group.numLeaves));
+    }
+    
+    /**
+     * Removes a member from a transition rather than from a whole submitted tree.
+     *
+     * Identical to `removeMemberWithTree` in what it leaves behind — the difference is that neither side ever
+     * handles the whole tree: the client sends `O(log n)`, the bridge reads `O(log n)` to check it, and writes
+     * `O(log n)`.
+     *
+     * @returns the updated group, or `null` on a lost CAS race
+     */
+    async removeMemberWithTransition(params: {
+        oldGroup: db.group.Group,
+        transition: types.cloud.GroupTreeTransition,
+        modifier: types.cloud.UserId,
+        removedUser: types.cloud.UserId,
+        newGroupPubKey: types.cloud.GroupPubKey,
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        rungs: types.cloud.GroupArchiveRung[],
+        keys?: types.cloud.UserKeysEntry[],
+        groupKeys?: types.cloud.GroupKeysEntry[],
+        confirmationTag?: types.core.Base64,
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier, removedUser, transition} = params;
+        const now = DateUtils.now();
+        const users = oldGroup.users.filter(u => u !== removedUser);
+        const managers = oldGroup.managers.filter(u => u !== removedUser);
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const version = this.nextVersion(oldGroup);
+        const keys = (params.keys ?? oldGroup.keys).filter(k => k.user !== removedUser);
+        this.assertKeysAreBounded(keys, users, managers);
+        const leafAssignment = [...(oldGroup.leafAssignment ?? [])];
+        leafAssignment[transition.blankedPosition] = "" as types.cloud.UserId;
+        const changes: Partial<db.group.Group> = {
+            groupPubKey: params.newGroupPubKey,
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            keys: keys,
+            version: version,
+            keyVersion: expectedKeyVersion + 1,
+            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
+            leafAssignment: leafAssignment,
+            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
+        };
+        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+            return null;
+        }
+        await this.state.insertHistoryEntry({
+            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
+            groupId: oldGroup.id,
+            version: version,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            groupPubKey: params.newGroupPubKey,
+            created: now,
+            author: modifier,
+            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
+        });
+        await this.state.applyRemovalTransition(oldGroup.id, transition, removedUser, oldGroup.numLeaves ?? 0);
+        await this.state.insertRungs(oldGroup.id, params.rungs);
+        return {...oldGroup, ...changes};
+    }
+    
+    /** Which nodes checking an addition at `position` needs: the seat's path and copath in the grown geometry. */
+    async getSeatNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
+        if (group.numLeaves === undefined) {
+            return [];
+        }
+        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededForSeat(position, group.numLeaves));
+    }
+    
+    /**
+     * Seats a member from a transition rather than from a whole submitted tree.
+     *
+     * Same outcome as `addMemberWithTree`, without either side handling the whole tree — and, as there, still a
+     * CAS on the unchanged epoch, so an addition racing a removal loses.
+     *
+     * @returns the updated group, or `null` on a lost CAS race
+     */
+    async addMemberWithTransition(params: {
+        oldGroup: db.group.Group,
+        transition: types.cloud.GroupTreeAdditionTransition,
+        modifier: types.cloud.UserId,
+        addedUser: types.cloud.UserId,
+        role: types.cloud.ContainerRole,
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        keys?: types.cloud.UserKeysEntry[],
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier, addedUser, transition} = params;
+        const now = DateUtils.now();
+        const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
+        const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
+        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const version = this.nextVersion(oldGroup);
+        const keys = params.keys ?? oldGroup.keys;
+        this.assertKeysAreBounded(keys, users, managers);
+        const oldNumLeaves = oldGroup.numLeaves ?? 0;
+        const oldLeafAssignment = [...(oldGroup.leafAssignment ?? [])];
+        const numLeaves = TreeMath.numLeavesToSeat(transition.position, oldNumLeaves);
+        const leafAssignment = [...oldLeafAssignment];
+        while (leafAssignment.length < numLeaves) {
+            leafAssignment.push("" as types.cloud.UserId);
+        }
+        leafAssignment[transition.position] = addedUser;
+        const changes: Partial<db.group.Group> = {
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            keys: keys,
+            version: version,
+            numLeaves: numLeaves,
+            leafAssignment: leafAssignment,
+        };
+        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+            return null;
+        }
+        await this.state.insertHistoryEntry({
+            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
+            groupId: oldGroup.id,
+            version: version,
+            keyId: params.keyId,
+            data: params.data,
+            users: users,
+            managers: managers,
+            groupPubKey: oldGroup.groupPubKey,
+            created: now,
+            author: modifier,
+        });
+        await this.state.applyAdditionTransition(oldGroup.id, transition, addedUser, oldNumLeaves, oldLeafAssignment);
         return {...oldGroup, ...changes};
     }
     

@@ -69,7 +69,7 @@ function state(): db.group.GroupState {
 }
 
 it("convertGroup serves the state it was handed, and the version from the counter", async () => {
-    const converted = new GroupConverter().convertGroup(alice, group, state());
+    const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
     // Four entries in the collection, and a counter that says four.
     assert.strictEqual(converted.version, 4);
     assert.strictEqual(converted.history.length, 4);
@@ -97,4 +97,43 @@ it("a listing carries the roster and the epoch, and nothing that grows with hist
     ]);
     assert.strictEqual(summary.version, 4);
     assert.strictEqual(summary.keyVersion, 3);
+});
+
+it("the default view serves the caller's climb, not the whole tree", async () => {
+    // Eight seats: one edge per level plus the grant edge, and public keys for the path and the copath. The
+    // difference is the point — at 16 384 members the full tree is 32 767 edges.
+    const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
+    const big = buildTree(seating, 3);
+    const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
+    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    
+    assert.strictEqual(converted.treeScope, "path");
+    assert.strictEqual(converted.ownLeafPosition, 1);
+    // alice sits at seat 1: three nodes on her path, and two of her three copath entries are internal nodes.
+    // The third is her leaf sibling, whose key comes from the roster — a leaf carries no node keypair at all.
+    assert.strictEqual(converted.treeNodes?.length, 5);
+    assert.ok((converted.treeEdges?.length ?? 0) < big.edges.length, "the view must be smaller than the tree");
+    assert.strictEqual(converted.treeEdges?.filter(e => e.isGrantEdge).length, 1, "the grant edge is what the climb ends on");
+    assert.strictEqual(
+        converted.treeEdges?.filter(e => e.childKind === "user").length, 1,
+        "exactly one leaf edge: the caller's own",
+    );
+    assert.strictEqual(converted.treeEdges?.find(e => e.childKind === "user")?.childUserId, alice);
+});
+
+it("scope full serves the whole tree, for a client that validates it itself", async () => {
+    const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
+    const big = buildTree(seating, 3);
+    const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
+    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history}, "full");
+    
+    assert.strictEqual(converted.treeScope, "full");
+    assert.strictEqual(converted.treeNodes?.length, big.nodes.length);
+    assert.strictEqual(converted.treeEdges?.length, big.edges.length);
+});
+
+it("a caller with no leaf gets the full tree, having no path of their own", async () => {
+    const converted = new GroupConverter().convertGroup("outsider" as types.cloud.UserId, group, state());
+    assert.strictEqual(converted.treeScope, "full");
+    assert.strictEqual(converted.ownLeafPosition, undefined);
 });
