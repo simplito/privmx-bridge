@@ -156,6 +156,7 @@ A container can grant access to whole groups. Container documents gained (all op
 ```ts
 groups?: GroupGrant[];         // [{groupId, role: "user"|"manager"}] — role-tagged for RBAC-readiness
 groupKeys?: GroupKeysEntry[];  // container key encrypted to each group's pubkey (keyed by groupId, role-independent)
+                               // stored whole; SERVED narrowed to the caller's own groups (see group-api-reference.md)
 ```
 
 The grant list is **role-tagged** (one entry per group, with its role) rather than two parallel

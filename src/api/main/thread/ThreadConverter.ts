@@ -12,10 +12,16 @@ limitations under the License.
 import * as types from "../../../types";
 import * as threadApi from "./ThreadApiTypes";
 import * as db from "../../../db/Model";
+import { ownGroupKeysOf } from "../GroupKeysNarrowing";
 
 export class ThreadConverter {
     
-    convertThread(user: types.cloud.UserId, thread: db.thread.Thread) {
+    /**
+     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
+     *                    optional so the compiler names every path that serves a thread to a user; `undefined`
+     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
+     */
+    convertThread(user: types.cloud.UserId, thread: db.thread.Thread, ownGroupIds: types.group.GroupId[]|undefined) {
         const res: threadApi.ThreadInfo = {
             id: thread.id,
             contextId: thread.contextId,
@@ -30,7 +36,7 @@ export class ThreadConverter {
             data: thread.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (thread.keys.find(x => x.user === user)?.keys) || [],
             groups: thread.groups || [],
-            groupKeys: thread.groupKeys || [],
+            groupKeys: ownGroupKeysOf(thread.groupKeys || [], ownGroupIds),
             version: <types.thread.ThreadVersion>thread.history.length,
             lastMsgDate: thread.lastMsgDate,
             messages: thread.messages,

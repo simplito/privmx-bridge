@@ -218,8 +218,21 @@ shape on the other four. The container key (`keyId`) is wrapped once to each gra
                    "data": "BASE64_CK_wrapped_to_groupPubKey" } ]                     // NEW
 }
 ```
-On read, `ThreadInfo` echoes `groups` and `groupKeys` (the latter is the DB shape
-`{group, groupEpoch?, keys:[{keyId,data}]}`). Coverage rules the bridge enforces:
+On read, `ThreadInfo` echoes `groups` in full, and serves `groupKeys` (DB shape
+`{group, keys:[{keyId, data, groupEpoch?}]}`) **narrowed to the groups the caller belongs to** — the same
+per-caller filtering `keys` already gets, for the same reason: blobs wrapped to a group the caller is not in are
+unusable to it. `[]` therefore means "no group grant applies to you", and every path that serves a container to a
+user narrows it, notification payloads included; an unnarrowed list is never served. A surviving entry keeps all
+of its `keys`, older `keyId`s included, since those open content written under earlier container keys.
+
+This is also where a caller reads its own membership on the container:
+- **grants worth opening now** = entries holding a blob at the container's current `keyId`. Set-equality below
+  makes that exact: a group has an entry at the current `keyId` **iff** it is currently granted.
+- an entry present only at older `keyId`s is a **revoked** grant, kept because it still opens what was written
+  while the grant stood.
+- the **role** comes from `groups`, which stays unnarrowed — a manager needs the whole grant list.
+
+Coverage rules the bridge enforces:
 - **set-equality**: exactly the listed grantee groups are covered for `keyId` (no missing → anti-ghosting, no
   extra).
 - **per-epoch (Phase 2)**: `groupEpoch` is **required** on every group key entry and must equal the group's
@@ -343,10 +356,15 @@ Bridge coverage check: exactly `group_5f3a` covered for `7c1e…`, and `groupEpo
 A group member who is **not** a direct user of the thread:
 ```
 → thread.threadGet { threadId:"thread_77c0" }
-← ThreadInfo { …, groups:[…], groupKeys:[{group:"group_5f3a", groupEpoch:3, keys:[{keyId:"7c1e…", data:…}]}] }
+← ThreadInfo { …, groups:[…], groupKeys:[{group:"group_5f3a", keys:[{keyId:"7c1e…", data:…, groupEpoch:3}]}] }
+   // `groupKeys` holds only the caller's own groups, so it doubles as "which grants are worth trying":
+   //   openable now = entries with a blob at the container's keyId ("7c1e…") → [group_5f3a]
+   //   role         = groups.find(g => g.groupId === "group_5f3a").role      → "user"
    // endpoint resolves:  my group data-key entry → group `data` → GroupPriv(epoch 3)
    //                     → ECIES-decrypt(groupKeys[group_5f3a].data, GroupPriv) → CK → decrypt thread
 ```
+A caller in **no** granted group gets `groupKeys: []` here and skips the group route entirely — without it, a
+`groupGet` plus a full key-tree climb per listed grant, all of them failing.
 
 ### I. Lazy re-key on write (forward secrecy) — Phase 2 endpoint
 Forward secrecy is **opt-in, lazy, best-effort**, controlled by a container policy flag

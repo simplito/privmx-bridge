@@ -72,22 +72,33 @@ export class GroupRepository {
         return this.repository.query(q => q.and(q.eq("contextId", contextId), q.or(q.includes("users", userId), q.includes("managers", userId)))).array();
     }
     
-    /** Distinct member userIds across the given groups (union of users+managers) — used to expand grantees for notifications. */
-    async getMembersOfGroups(groupIds: types.group.GroupId[]): Promise<types.cloud.UserId[]> {
+    /**
+     * Which of the given groups each of their members belongs to (users+managers), keyed by userId.
+     *
+     * Used to expand grantees for notifications: the keys are the distinct member userIds, and each value is
+     * that recipient's own grants among `groupIds`. Both come out of the one `getMulti` this always did, so a
+     * fan-out can narrow a payload per recipient without a second lookup — the same information
+     * `getGroupsOfUser` returns for a single caller, already intersected with the container's grants.
+     */
+    async getMemberGroupsMap(groupIds: types.group.GroupId[]): Promise<Map<types.cloud.UserId, types.group.GroupId[]>> {
+        const membership = new Map<types.cloud.UserId, types.group.GroupId[]>();
         if (groupIds.length === 0) {
-            return [];
+            return membership;
         }
         const groups = await this.repository.getMulti(groupIds);
-        const members = new Set<types.cloud.UserId>();
         for (const group of groups) {
-            for (const u of group.users) {
-                members.add(u);
-            }
-            for (const m of group.managers) {
-                members.add(m);
+            for (const member of [...group.users, ...group.managers]) {
+                const own = membership.get(member);
+                if (!own) {
+                    membership.set(member, [group.id]);
+                }
+                else if (!own.includes(group.id)) {
+                    // A user listed as both member and manager of the same group must not get it twice.
+                    own.push(group.id);
+                }
             }
         }
-        return [...members];
+        return membership;
     }
     
     /** Verifies that all given groups exist in the given context (mirrors CloudKeyService.checkUsersExistance). */

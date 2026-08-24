@@ -318,11 +318,11 @@ export class StreamService extends BaseContainerService {
     
     async getStreamRoom(executor: Executor, streamRoomId: types.stream.StreamRoomId, type: types.stream.StreamRoomType | undefined) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomGet");
+        const ownGroupIds = await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomGet");
         if (type && streamRoom.type !== type) {
             throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
         }
-        return streamRoom;
+        return {streamRoom, ownGroupIds};
     }
     
     // =================================================================================================
@@ -872,8 +872,9 @@ export class StreamService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getAllStreams(contextId, type, listParams, sortBy);
-        return { user, streamRooms };
+        return { user, streamRooms, ownGroupIds };
     }
     
     async getMyStreamRooms(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType | undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
@@ -888,9 +889,9 @@ export class StreamService extends BaseContainerService {
             throw new AppException("ACCESS_DENIED");
         }
         
-        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
-        return { user, streamRooms };
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        return { user, streamRooms, ownGroupIds };
     }
     
     async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "all" | types.stream.StreamRoomState) {
@@ -992,14 +993,24 @@ export class StreamService extends BaseContainerService {
         return streamRoom;
     }
     
+    /**
+     * @returns the caller's group ids, computed here for the policy check and reused to narrow
+     *          `StreamRoom.groupKeys`. `undefined` for a plain executor: `checkIfCanExecuteInContext` runs the
+     *          callback only for a cloud one, and a plain caller has no group membership to narrow by. Not `[]` —
+     *          that would read as "belongs to no group" and would strip the key blobs from a user-facing payload.
+     *          Plain callers serve `ManagementStreamConverter`, which carries no key blobs at all, so they
+     *          discard this.
+     */
     private async verifyRoomAccess(executor: Executor, streamRoom: db.stream.StreamRoom, requiredAcl: AclFunctionNameX) {
-        return await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, async (user, context) => {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, requiredAcl, ["streamRoomId=" + streamRoom.id]);
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(streamRoom, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
+        return ownGroupIds;
     }
     
     private async ensureActiveStreamRoomWithAcl(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, requiredAcl: AclFunctionNameX) {

@@ -76,9 +76,9 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
     @ApiMethod({})
     async inboxGet(model: inboxApi.InboxGetModel): Promise<inboxApi.InboxGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const inbox = await this.inboxService.getInbox(cloudUser, model.id, model.type);
+        const {inbox, ownGroupIds} = await this.inboxService.getInbox(cloudUser, model.id, model.type);
         this.requestLogger.setContextId(inbox.contextId);
-        return {inbox: this.inboxConverter.convertInbox(cloudUser.getUser(inbox.contextId), inbox)};
+        return {inbox: this.inboxConverter.convertInbox(cloudUser.getUser(inbox.contextId), inbox, ownGroupIds)};
     }
     
     @ApiMethod({})
@@ -92,17 +92,17 @@ export class InboxApi extends BaseApi implements inboxApi.IInboxApi {
     @ApiMethod({})
     async inboxList(model: inboxApi.InboxListModel): Promise<inboxApi.InboxListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {inboxes, user} = await this.inboxService.getMyInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
+        const {inboxes, user, ownGroupIds} = await this.inboxService.getMyInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
-        return {inboxes: inboxes.list.map(x => this.inboxConverter.convertInbox(user.userId, x)), count: inboxes.count};
+        return {inboxes: inboxes.list.map(x => this.inboxConverter.convertInbox(user.userId, x, ownGroupIds)), count: inboxes.count};
     }
     
     @ApiMethod({})
     async inboxListAll(model: inboxApi.InboxListAllModel): Promise<inboxApi.InboxListAllResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {inboxes, user} = await this.inboxService.getAllInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {inboxes, user, ownGroupIds} = await this.inboxService.getAllInboxes(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {inboxes: inboxes.list.map(x => this.inboxConverter.convertInbox(user.userId, x)), count: inboxes.count};
+        return {inboxes: inboxes.list.map(x => this.inboxConverter.convertInbox(user.userId, x, ownGroupIds)), count: inboxes.count};
     }
     
     @ApiMethod({})

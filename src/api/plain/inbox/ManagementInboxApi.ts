@@ -34,7 +34,7 @@ export class ManagementInboxApi extends ManagementBaseApi implements managementI
     @ApiMethod({errorCodes: ["INBOX_DOES_NOT_EXIST"] })
     async getInbox(model: managementInboxApi.GetInboxModel): Promise<managementInboxApi.GetInboxResult> {
         this.validateScope("inbox");
-        const inbox = await this.inboxService.getInbox(this.getPlainUser(), model.inboxId, undefined);
+        const {inbox} = await this.inboxService.getInbox(this.getPlainUser(), model.inboxId, undefined);
         return {inbox: this.managementInboxConverter.convertInbox(inbox)};
     }
     

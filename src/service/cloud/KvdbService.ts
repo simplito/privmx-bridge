@@ -50,14 +50,15 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb || (type && kvdb.type !== type)) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbGet", ["kvdbId=" + kvdbId]);
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return kvdb;
+        return {kvdb, ownGroupIds};
     }
     
     async getMyKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope) {
@@ -73,9 +74,9 @@ export class KvdbService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, userGroupIds);
-        return {user, kvdbs};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        return {user, kvdbs, ownGroupIds};
     }
     
     async getAllKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb) {
@@ -84,8 +85,9 @@ export class KvdbService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getAllKvdbs(contextId, type, listParams, sortBy);
-        return {user, kvdbs};
+        return {user, kvdbs, ownGroupIds};
     }
     
     async createKvdb(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
@@ -372,16 +374,17 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdb(kvdbId, listParams);
-        return {kvdb, items};
+        return {kvdb, items, ownGroupIds};
     }
     
     async getKvdbEntriesKeysWithListModel2(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>) {
@@ -410,16 +413,17 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
+        let ownGroupIds: types.group.GroupId[]|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
-            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds))) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefix(kvdbId, listParams, sortBy);
-        return {kvdb, items};
+        return {kvdb, items, ownGroupIds};
     }
     
     async getKvdbEntriesWithPlainUser(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>, prefix: string|undefined) {

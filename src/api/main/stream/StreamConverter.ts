@@ -12,10 +12,17 @@ limitations under the License.
 import * as types from "../../../types";
 import * as streamApi from "./StreamApiTypes";
 import * as db from "../../../db/Model";
+import { ownGroupKeysOf } from "../GroupKeysNarrowing";
 
 export class StreamConverter {
     
-    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom) {
+    /**
+     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
+     *                    optional so the compiler names every path that serves a stream room to a user;
+     *                    `undefined` throws in `ownGroupKeysOf` instead of quietly stripping the caller's key
+     *                    material.
+     */
+    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom, ownGroupIds: types.group.GroupId[]|undefined) {
         const res: streamApi.StreamRoom = {
             id: stream.id,
             contextId: stream.contextId,
@@ -29,7 +36,7 @@ export class StreamConverter {
             data: stream.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (stream.keys.find(x => x.user === user)?.keys) || [],
             groups: stream.groups || [],
-            groupKeys: stream.groupKeys || [],
+            groupKeys: ownGroupKeysOf(stream.groupKeys || [], ownGroupIds),
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,
             policy: stream.policy || {},

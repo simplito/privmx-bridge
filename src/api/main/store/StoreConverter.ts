@@ -12,10 +12,16 @@ limitations under the License.
 import * as types from "../../../types";
 import * as storeApi from "./StoreApiTypes";
 import * as db from "../../../db/Model";
+import { ownGroupKeysOf } from "../GroupKeysNarrowing";
 
 export class StoreConverter {
     
-    convertStore(user: types.cloud.UserId, store: db.store.Store) {
+    /**
+     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
+     *                    optional so the compiler names every path that serves a store to a user; `undefined`
+     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
+     */
+    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined) {
         const res: storeApi.Store = {
             id: store.id,
             contextId: store.contextId,
@@ -29,7 +35,7 @@ export class StoreConverter {
             data: store.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
             groups: store.groups || [],
-            groupKeys: store.groupKeys || [],
+            groupKeys: ownGroupKeysOf(store.groupKeys || [], ownGroupIds),
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,
             files: store.files,

@@ -34,7 +34,7 @@ export class ManagementThreadApi extends ManagementBaseApi implements management
     @ApiMethod({errorCodes: ["THREAD_DOES_NOT_EXIST"] })
     async getThread(model: managementThreadApi.GetThreadModel): Promise<managementThreadApi.GetThreadResult> {
         this.validateScope("thread");
-        const thread = await this.threadService.getThread(this.getPlainUser(), model.threadId, undefined);
+        const {thread} = await this.threadService.getThread(this.getPlainUser(), model.threadId, undefined);
         return {thread: this.managementThreadConverter.convertThread(thread)};
     }
     

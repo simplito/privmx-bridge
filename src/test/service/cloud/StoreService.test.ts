@@ -244,8 +244,7 @@ it("Should get store", async () => {
     const res = await storeService.getStore(janekUserPubKey, storeId, undefined);
     
     // Asserts
-    expect(res).not.toBeNull();
-    expect(store.id).toBe(storeId);
+    expect(res.store.id).toBe(storeId);
 });
 
 it("Should fails on getting not existing store", async () => {
