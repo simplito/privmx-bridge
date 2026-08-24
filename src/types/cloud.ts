@@ -130,6 +130,65 @@ export interface GroupTreeEdge {
     data: types.core.UserKeyData;
 }
 
+/**
+ * A removal expressed as what it changes, not as the whole tree it leaves behind.
+ *
+ * Submitting the complete state means uploading `O(n)` — ~13 MB of edges at 16 384 members — to change `O(log n)`
+ * of it, and the client must download the same amount first to build it. A transition carries only the refreshed
+ * path and the edges around it.
+ *
+ * Every refreshed node states the generation it was read at. That precondition is what makes the delta safe: a
+ * transition computed against a state that has since moved is refused rather than applied to a base it never
+ * saw, and a replayed transition is a no-op instead of a second refresh.
+ */
+export interface GroupTreeTransition {
+    /** The epoch the client planned against; must still be the group's current one. */
+    baseKeyVersion: number;
+    /** Seat being blanked — the removed member must hold it. */
+    blankedPosition: number;
+    /** Nodes on the blanked leaf's direct path, each with the generation it was read at. */
+    refreshedNodes: GroupTreeRefreshedNode[];
+    /** Edges to install: the ones out of the refreshed nodes, plus the grant edge at the new epoch. */
+    edges: GroupTreeEdge[];
+}
+
+export interface GroupTreeRefreshedNode {
+    nodeIndex: number;
+    /** Generation this node had when the client read it — the precondition. */
+    fromGeneration: number;
+    /** Must be `fromGeneration + 1`. */
+    generation: number;
+    /** Must differ from the key it replaces: a bumped generation with the old key revokes nothing. */
+    publicKey: types.core.EccPubKey;
+}
+
+/**
+ * An addition expressed as a delta: the new leaf's path re-keyed, at the same epoch.
+ *
+ * The whole-tree shape is still accepted, but it makes the client download and echo back `O(n)` state to change
+ * `O(log n)` of it. This carries only what moves.
+ */
+export interface GroupTreeAdditionTransition {
+    /** The epoch the client planned against; must still be the group's current one, and does not advance. */
+    baseKeyVersion: number;
+    /** Seat being taken: a blank, or the next position when the tree grows. */
+    position: number;
+    /** Nodes on the new leaf's direct path, in the geometry seating it produces. */
+    seatedNodes: GroupTreeSeatedNode[];
+    /** Edges to install: the ones out of the seated nodes, plus the grant edge re-issued to the new root. */
+    edges: GroupTreeEdge[];
+}
+
+export interface GroupTreeSeatedNode {
+    nodeIndex: number;
+    /** Generation this node had when the client read it. Absent when growth mints the node. */
+    fromGeneration?: number;
+    /** `fromGeneration + 1`, or 0 for a minted node. */
+    generation: number;
+    /** Must differ from the key it replaces, when it replaces one. */
+    publicKey: types.core.EccPubKey;
+}
+
 /** Complete public tree state of a group. `leafAssignment` uses "" for a blank left by a removal. */
 export interface GroupTreeState {
     numLeaves: number;

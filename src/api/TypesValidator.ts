@@ -66,6 +66,10 @@ export class TypesValidator {
     groupTreeNode: Validator;
     groupTreeEdge: Validator;
     groupTreeState: Validator;
+    groupTreeRefreshedNode: Validator;
+    groupTreeTransition: Validator;
+    groupTreeSeatedNode: Validator;
+    groupTreeAdditionTransition: Validator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -278,6 +282,33 @@ export class TypesValidator {
             leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), 16384),
             nodes: this.builder.createListWithMaxLength(this.groupTreeNode, 32768),
             edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 65536),
+        });
+        this.groupTreeRefreshedNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            fromGeneration: this.intNonNegative,
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        // A transition touches one path: `log2(16384) = 14` nodes, and the edges around them. The caps are an
+        // order of magnitude above that, not the 32 768 a whole tree needs.
+        this.groupTreeTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            blankedPosition: this.intNonNegative,
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 128),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
+        });
+        this.groupTreeSeatedNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            // Absent when growth mints the node: there is no generation it was read at.
+            fromGeneration: this.builder.optional(this.intNonNegative),
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        this.groupTreeAdditionTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            position: this.intNonNegative,
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 128),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
         });
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),

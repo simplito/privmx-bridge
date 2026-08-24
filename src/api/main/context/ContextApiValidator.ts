@@ -81,6 +81,13 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupGet", this.builder.createObject({
             groupId: this.tv.groupId,
             type: this.tv.optResourceType,
+            // Defaults to "path" — the caller's own climb. "full" is `O(n)` and only a client validating the whole
+            // structure for itself needs it.
+            scope: this.builder.optional(this.builder.createEnum(["path", "full"])),
+            // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
+            forUserId: this.builder.optional(this.tv.cloudUserId),
+            // The same, for a seat nobody holds yet — what an addition plans against.
+            forPosition: this.builder.optional(this.builder.range(this.builder.int, 0, 16384)),
         }));
         this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
@@ -93,7 +100,9 @@ export class ContextApiValidator extends BaseValidator {
             position: this.tv.intNonNegative,
             keyId: this.tv.keyId,
             data: this.tv.groupData,
-            tree: this.tv.groupTreeState,
+            // Exactly one of the two; the service refuses a call that brings neither.
+            transition: this.builder.optional(this.tv.groupTreeAdditionTransition),
+            tree: this.builder.optional(this.tv.groupTreeState),
             keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384)),
             expectedKeyVersion: this.builder.int,
         }));
@@ -103,7 +112,10 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             keyId: this.tv.keyId,
             data: this.tv.groupData,
-            tree: this.tv.groupTreeState,
+            // Exactly one of the two; the service refuses a call that brings neither. `transition` is the delta,
+            // `tree` the whole new state a client may still send.
+            transition: this.builder.optional(this.tv.groupTreeTransition),
+            tree: this.builder.optional(this.tv.groupTreeState),
             // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384)),

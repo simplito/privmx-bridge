@@ -135,7 +135,14 @@ export interface GroupAddMemberModel {
     position: number;
     keyId: types.core.KeyId;
     data: types.group.GroupData;
-    tree: types.cloud.GroupTreeState;
+    /**
+     * Exactly one of the two; a call with neither is refused.
+     *
+     * `transition` is the delta: the new leaf's path re-keyed, `O(log n)` to build, send and check. `tree` is the
+     * whole new state, which a client that wants to validate the structure for itself may still submit.
+     */
+    transition?: types.cloud.GroupTreeAdditionTransition;
+    tree?: types.cloud.GroupTreeState;
     /**
      * Key entries for the newcomer at the group's current `keyId`.
      *
@@ -159,7 +166,16 @@ export interface GroupRemoveMemberModel {
     groupPubKey: types.cloud.GroupPubKey;
     keyId: types.core.KeyId;
     data: types.group.GroupData;
-    tree: types.cloud.GroupTreeState;
+    /**
+     * The removal as a delta: the refreshed path and the edges around it, with the generations it was planned
+     * against. `O(log n)` instead of the whole tree, which at 16 384 members is ~13 MB in each direction.
+     *
+     * Exactly one of `transition` and `tree` is required. `tree` remains accepted for clients that hold the whole
+     * state anyway.
+     */
+    transition?: types.cloud.GroupTreeTransition;
+    /** The complete new state. Superseded by `transition`; kept for clients that already send it. */
+    tree?: types.cloud.GroupTreeState;
     rungs: types.cloud.GroupArchiveRung[];
     /**
      * Per-member entries for the new `keyId`. Normally **empty** for a tree-backed group: `groupKeys` below
@@ -249,9 +265,38 @@ export interface GroupDeleteModel {
     groupId: types.group.GroupId;
 }
 
+/**
+ * How much of the tree to serve.
+ *
+ * `path` — the caller's own climb: their leaf edge, the edges above it, the grant edge, and the public keys of
+ * the path and the copath. `O(log n)`, and everything a client needs to reach the group key or plan a removal.
+ * `full` — the whole structure, for a client that wants to validate it independently. At 16 384 members that is
+ * 32 767 edges, about 10.5 MB.
+ */
+export type GroupTreeScope = "path"|"full";
+
 export interface GroupGetModel {
     groupId: types.group.GroupId;
     type?: types.group.GroupType;
+    /** Defaults to `path`. */
+    scope?: GroupTreeScope;
+    /**
+     * Also serve the path and copath of this member's seat.
+     *
+     * Planning a removal needs the *subject's* path, not the caller's — a manager removing somebody sits
+     * elsewhere in the tree. Without this a manager has no `O(log n)` option and has to ask for `full`, which is
+     * the cost the path view exists to avoid.
+     */
+    forUserId?: types.cloud.UserId;
+    /**
+     * Also serve what seating a newcomer at this position needs.
+     *
+     * An addition re-keys the new leaf's path and wraps each new key to the subtrees beside it, so it needs those
+     * subtrees' *public* keys — and the caller cannot know which seat that is before reading `leafAssignment`,
+     * which every scope carries. Evaluated in the geometry seating it would produce, so appending past the last
+     * leaf serves the nodes that growth re-parents.
+     */
+    forPosition?: number;
 }
 
 export interface GroupGetResult {
@@ -336,6 +381,8 @@ export interface GroupInfo {
     ownLeafPosition?: number;
     treeNodes?: types.cloud.GroupTreeNode[];
     treeEdges?: types.cloud.GroupTreeEdge[];
+    /** Which of the two views the tree fields above hold. Absent on a flat group. */
+    treeScope?: GroupTreeScope;
     /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
     groupKeys: types.cloud.GroupKeysEntry[];
     eraFloor?: number;

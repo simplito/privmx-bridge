@@ -12,12 +12,20 @@ limitations under the License.
 import * as types from "../../../types";
 import * as contextApi from "./ContextApiTypes";
 import * as db from "../../../db/Model";
+import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 
 export class GroupConverter {
     
     /** The whole group: document plus state. `state` is passed in, not fetched, so a caller that does not need
      *  it cannot pay for it by accident. */
-    convertGroup(user: types.cloud.UserId, group: db.group.Group, state: db.group.GroupState): contextApi.GroupInfo {
+    convertGroup(
+        user: types.cloud.UserId,
+        group: db.group.Group,
+        state: db.group.GroupState,
+        scope: contextApi.GroupTreeScope = "path",
+        forUserId?: types.cloud.UserId,
+        forPosition?: number,
+    ): contextApi.GroupInfo {
         const res: contextApi.GroupInfo = {
             id: group.id,
             groupPubKey: group.groupPubKey,
@@ -41,7 +49,7 @@ export class GroupConverter {
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
         }
-        this.addTreeState(res, group, state.tree, user);
+        this.addTreeState(res, group, state.tree, user, scope, forUserId, forPosition);
         return res;
     }
     
@@ -77,14 +85,20 @@ export class GroupConverter {
      * The archive is deliberately *not* included: it grows with the group's entire history, while a client needs
      * it only when reaching for an older epoch. `groupGetKeyArchive` serves it on demand instead.
      */
-    private addTreeState(res: contextApi.GroupInfo, group: db.group.Group, tree: types.cloud.GroupTreeState|null, user: types.cloud.UserId) {
+    private addTreeState(
+        res: contextApi.GroupInfo,
+        group: db.group.Group,
+        tree: types.cloud.GroupTreeState|null,
+        user: types.cloud.UserId,
+        scope: contextApi.GroupTreeScope,
+        forUserId?: types.cloud.UserId,
+        forPosition?: number,
+    ) {
         if (!tree) {
             return;
         }
         res.numLeaves = tree.numLeaves;
         res.leafAssignment = tree.leafAssignment;
-        res.treeNodes = tree.nodes;
-        res.treeEdges = tree.edges;
         res.eraFloor = group.eraFloor ?? 1;
         if (group.archivePrunedBelow !== undefined) {
             res.archivePrunedBelow = group.archivePrunedBelow;
@@ -93,6 +107,76 @@ export class GroupConverter {
         if (position >= 0) {
             res.ownLeafPosition = position;
         }
+        const subject = forUserId === undefined ? -1 : tree.leafAssignment.indexOf(forUserId);
+        const view = scope === "full" || position < 0
+            ? tree
+            : GroupConverter.pathView(tree, position, subject >= 0 ? subject : undefined, forPosition);
+        res.treeNodes = view.nodes;
+        res.treeEdges = view.edges;
+        res.treeScope = scope === "full" || position < 0 ? "full" : "path";
+    }
+    
+    /**
+     * The part of the tree the caller actually uses.
+     *
+     * Climbing needs one edge per level — the one whose child is the caller, then the one whose child is each
+     * node above them — plus the grant edge at the top. Planning a removal needs the *public* keys of the copath
+     * as well, to re-wrap the refreshed path to the subtrees that keep their keys; the leaf siblings' keys come
+     * from the roster, not from here. That is `O(log n)` of both, against 32 767 edges (~10.5 MB) for a group of
+     * 16 384 if the whole tree is served.
+     *
+     * Independent validation of the whole structure is the one thing this view cannot do — and the server does
+     * it on every write anyway. A client that wants to check for itself asks for `scope: "full"`.
+     */
+    private static pathView(
+        tree: types.cloud.GroupTreeState,
+        position: number,
+        subjectPosition?: number,
+        seatPosition?: number,
+    ): types.cloud.GroupTreeState {
+        const path = TreeMath.directPath(position, tree.numLeaves);
+        const copath = TreeMath.copath(position, tree.numLeaves);
+        const onPath = new Set(path);
+        const needed = new Set([...path, ...copath]);
+        if (subjectPosition !== undefined) {
+            // A removal is planned against the subject's path: their nodes get new keys, and each new key is
+            // re-wrapped to the subtrees on their copath, whose *public* keys are needed for that.
+            for (const nodeIndex of TreeMath.directPath(subjectPosition, tree.numLeaves)) {
+                needed.add(nodeIndex);
+            }
+            for (const nodeIndex of TreeMath.copath(subjectPosition, tree.numLeaves)) {
+                needed.add(nodeIndex);
+            }
+        }
+        if (seatPosition !== undefined) {
+            // An addition is planned against a seat nobody holds yet, in the geometry seating it would produce:
+            // appending past the last leaf re-parents nodes along the truncated right edge, and the new keys are
+            // wrapped to whatever ends up beside them. Indices outside the tree as it stands are simply absent
+            // from `nodes`, so asking for them costs nothing.
+            const grown = TreeMath.numLeavesToSeat(seatPosition, tree.numLeaves);
+            for (const nodeIndex of TreeMath.directPath(seatPosition, grown)) {
+                needed.add(nodeIndex);
+            }
+            for (const nodeIndex of TreeMath.copath(seatPosition, grown)) {
+                needed.add(nodeIndex);
+            }
+        }
+        const holder = tree.leafAssignment[position];
+        const edges = tree.edges.filter(edge => {
+            if (edge.isGrantEdge) {
+                return true;
+            }
+            if (edge.childKind === "user") {
+                return edge.childUserId === holder;
+            }
+            return edge.childIndex !== undefined && onPath.has(edge.childIndex);
+        });
+        return {
+            numLeaves: tree.numLeaves,
+            leafAssignment: tree.leafAssignment,
+            nodes: tree.nodes.filter(node => needed.has(node.nodeIndex)),
+            edges: edges,
+        };
     }
     
     convertKeyArchive(group: db.group.Group, rungs: types.cloud.GroupArchiveRung[]): contextApi.GroupGetKeyArchiveResult {
