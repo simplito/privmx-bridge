@@ -76,25 +76,25 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbGet(model: kvdbApi.KvdbGetModel): Promise<kvdbApi.KvdbGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {kvdb, ownGroupIds} = await this.kvdbService.getKvdb(cloudUser, model.kvdbId, model.type);
+        const {kvdb, ownGroupIds, groupEpochs} = await this.kvdbService.getKvdb(cloudUser, model.kvdbId, model.type);
         this.requestLogger.setContextId(kvdb.contextId);
-        return {kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds)};
+        return {kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds, groupEpochs)};
     }
     
     @ApiMethod({})
     async kvdbList(model: kvdbApi.KvdbListModel): Promise<kvdbApi.KvdbListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, kvdbs, ownGroupIds} = await this.kvdbService.getMyKvdbs(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
+        const {user, kvdbs, ownGroupIds, groupEpochs} = await this.kvdbService.getMyKvdbs(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
-        return {kvdbs: kvdbs.list.map(x => this.kvdbConverter.convertKvdb(user.userId, x, ownGroupIds)), count: kvdbs.count};
+        return {kvdbs: kvdbs.list.map(x => this.kvdbConverter.convertKvdb(user.userId, x, ownGroupIds, groupEpochs)), count: kvdbs.count};
     }
     
     @ApiMethod({})
     async kvdbListAll(model: kvdbApi.KvdbListAllModel): Promise<kvdbApi.KvdbListAllResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, kvdbs, ownGroupIds} = await this.kvdbService.getAllKvdbs(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, kvdbs, ownGroupIds, groupEpochs} = await this.kvdbService.getAllKvdbs(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {kvdbs: kvdbs.list.map(x => this.kvdbConverter.convertKvdb(user.userId, x, ownGroupIds)), count: kvdbs.count};
+        return {kvdbs: kvdbs.list.map(x => this.kvdbConverter.convertKvdb(user.userId, x, ownGroupIds, groupEpochs)), count: kvdbs.count};
     }
     
     @ApiMethod({})
@@ -135,10 +135,10 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbListKeys(model: kvdbApi.KvdbListKeysModel): Promise<kvdbApi.KvdbListKeysResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {kvdb, items, ownGroupIds} = await this.kvdbService.getKvdbEntriesKeys(cloudUser, model.kvdbId, model);
+        const {kvdb, items, ownGroupIds, groupEpochs} = await this.kvdbService.getKvdbEntriesKeys(cloudUser, model.kvdbId, model);
         this.requestLogger.setContextId(kvdb.contextId);
         return {
-            kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds),
+            kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds, groupEpochs),
             kvdbEntryKeys: this.kvdbConverter.convertKvdbEntriesToKeys(items.list),
             count: items.count,
         };
@@ -147,10 +147,10 @@ export class KvdbApi extends BaseApi implements kvdbApi.IKvdbApi {
     @ApiMethod({})
     async kvdbListEntries(model: kvdbApi.KvdbListEntriesModel): Promise<kvdbApi.KvdbListItemsResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {kvdb, items, ownGroupIds} = await this.kvdbService.getKvdbEntries(cloudUser, model.kvdbId, model, model.sortBy || "createDate");
+        const {kvdb, items, ownGroupIds, groupEpochs} = await this.kvdbService.getKvdbEntries(cloudUser, model.kvdbId, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(kvdb.contextId);
         return {
-            kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds),
+            kvdb: this.kvdbConverter.convertKvdb(cloudUser.getUser(kvdb.contextId), kvdb, ownGroupIds, groupEpochs),
             kvdbEntries: items.list.map(item => this.kvdbConverter.convertKvdbEntry(kvdb, item)),
             count: items.count,
         };

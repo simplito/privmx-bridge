@@ -760,6 +760,8 @@ function createStoreService() {
     mock(repositoryFactory, "createStoreRepository", () => storeRepository);
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     mock(groupRepository, "getGroupsOfUser", async (_ctxId, userId) => userId === alice ? [createFake<db.group.Group>({id: groupId})] : []);
+    // The granted group has never rotated, so no read path here reports a stale grant and no write path refuses one.
+    mock(groupRepository, "getKeyVersions", async () => new Map([[groupId, 1]]));
     mock(repositoryFactory, "createStoreFileRepository", () => storeFileRepository);
     mock(repositoryFactory, "createRequestRepository", () => requestRepository);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);

@@ -12,16 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as inboxApi from "./InboxApiTypes";
 import * as db from "../../../db/Model";
-import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class InboxConverter {
     
-    /**
-     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
-     *                    optional so the compiler names every path that serves an inbox to a user; `undefined`
-     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
-     */
-    convertInbox(user: types.cloud.UserId, inbox: db.inbox.Inbox, ownGroupIds: types.group.GroupId[]|undefined) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertInbox(user: types.cloud.UserId, inbox: db.inbox.Inbox, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: inboxApi.Inbox = {
             id: inbox.id,
             contextId: inbox.contextId,
@@ -36,6 +32,7 @@ export class InboxConverter {
             keys: (inbox.keys.find(x => x.user === user)?.keys) || [],
             groups: inbox.groups || [],
             groupKeys: ownGroupKeysOf(inbox.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(inbox, groupEpochs),
             version: <types.inbox.InboxVersion>inbox.history.length,
             type: inbox.type,
             policy: inbox.policy || {},

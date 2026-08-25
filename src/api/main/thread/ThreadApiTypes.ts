@@ -119,6 +119,7 @@ export interface ThreadInfo {
     keys: types.core.KeyEntry[];
     groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.thread.ThreadVersion;
     lastMsgDate: types.core.Timestamp;
     messages: number;

@@ -80,25 +80,25 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     @ApiMethod({})
     async streamRoomGet(model: streamApi.StreamRoomGetModel): Promise<streamApi.StreamRoomGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {streamRoom, ownGroupIds} = await this.streamService.getStreamRoom(cloudUser, model.id, model.type);
+        const {streamRoom, ownGroupIds, groupEpochs} = await this.streamService.getStreamRoom(cloudUser, model.id, model.type);
         this.requestLogger.setContextId(streamRoom.contextId);
-        return {streamRoom: this.streamConverter.convertStreamRoom(cloudUser.getUser(streamRoom.contextId), streamRoom, ownGroupIds)};
+        return {streamRoom: this.streamConverter.convertStreamRoom(cloudUser.getUser(streamRoom.contextId), streamRoom, ownGroupIds, groupEpochs)};
     }
     
     @ApiMethod({})
     async streamRoomList(model: streamApi.StreamRoomListModel): Promise<streamApi.StreamRoomListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, streamRooms, ownGroupIds} = await this.streamService.getMyStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
+        const {user, streamRooms, ownGroupIds, groupEpochs} = await this.streamService.getMyStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
-        return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x, ownGroupIds)), count: streamRooms.count};
+        return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x, ownGroupIds, groupEpochs)), count: streamRooms.count};
     }
     
     @ApiMethod({})
     async streamRoomListAll(model: streamApi.StreamRoomListAllModel): Promise<streamApi.StreamRoomListAllResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, streamRooms, ownGroupIds} = await this.streamService.getAllStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, streamRooms, ownGroupIds, groupEpochs} = await this.streamService.getAllStreamRooms(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x, ownGroupIds)), count: streamRooms.count};
+        return {list: streamRooms.list.map(x => this.streamConverter.convertStreamRoom(user.userId, x, ownGroupIds, groupEpochs)), count: streamRooms.count};
     }
     
     @ApiMethod({})

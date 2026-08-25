@@ -46,13 +46,8 @@ export enum StreamRoomStreamChannelType {
 }
 
 /**
- * Every payload here is converted **once per recipient**, so each one carries a `StreamRoom.groupKeys`
- * narrowed to that recipient's own groups — the same guarantee `streamRoomGet` gives.
- *
- * It costs nothing extra. Expanding group grantees into a recipient list already reads the whole group
- * documents, so `getMemberGroupsMap` hands back each recipient's grants out of that one query instead of
- * discarding them. Serving an unnarrowed list here would be the anomaly: a client would have no way to tell a
- * payload it may trust from one it may not.
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `streamRoomGet` would serve — see `getStreamRoomRecipients`.
  */
 export class StreamNotificationService {
     
@@ -71,18 +66,15 @@ export class StreamNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
-    /**
-     * Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications), along
-     * with each recipient's own grants on this stream room — both from the single group lookup the expansion
-     * already does, so a per-recipient payload can be narrowed for free. Recipients in no granted group
-     * map to `[]`.
-     */
-    private async getStreamRoomRecipients(streamRoom: db.stream.StreamRoom): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>}> {
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
+    private async getStreamRoomRecipients(streamRoom: db.stream.StreamRoom): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupIds = (streamRoom.groups || []).map(g => g.groupId);
-        const groupsByUser = await this.repositoryFactory.createGroupRepository().getMemberGroupsMap(groupIds);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
         return {
             userIds: Utils.unique([...streamRoom.users, ...streamRoom.managers, ...groupsByUser.keys()]),
             groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
         };
     }
     
@@ -167,7 +159,7 @@ export class StreamNotificationService {
     sendStreamRoomCreated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId) {
         this.safe("streamRoomCreated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getStreamRoomRecipients(streamRoom);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStreamRoomRecipients(streamRoom);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, userIds);
             const notification: managementStreamApi.StreamRoomCreatedEvent = {
                 channel: "stream",
@@ -188,7 +180,7 @@ export class StreamNotificationService {
                     {
                         channel: "stream",
                         type: "streamRoomCreated",
-                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? []),
+                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -199,7 +191,7 @@ export class StreamNotificationService {
     sendStreamRoomUpdated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId, additionalUsers: UserIdentityWithStatus[]) {
         this.safe("streamRoomUpdated", async () => {
             const now = DateUtils.now();
-            const {userIds, groupsByUser} = await this.getStreamRoomRecipients(streamRoom);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStreamRoomRecipients(streamRoom);
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, userIds);
             const notification: managementStreamApi.StreamRoomUpdatedEvent = {
                 channel: "stream",
@@ -221,7 +213,7 @@ export class StreamNotificationService {
                     {
                         channel: "stream",
                         type: "streamRoomUpdated",
-                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? []),
+                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -233,7 +225,7 @@ export class StreamNotificationService {
                     // These are the users this update removed, so they hold no grant on the streamRoom any
                     // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
                     // is the answer.
-                    data: this.streamConverter.convertStreamRoom(user.id, streamRoom, groupsByUser.get(user.id) ?? []),
+                    data: this.streamConverter.convertStreamRoom(user.id, streamRoom, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {

@@ -30,6 +30,7 @@ export interface StreamRoom {
     keys: types.core.KeyEntry[];
     groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;

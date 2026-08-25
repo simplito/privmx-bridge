@@ -256,6 +256,13 @@ export namespace group {
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
         |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"keyVersion"|"policy">;
     
+    /**
+     * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is
+     * asked on every container read and on every item write, and everything it leaves out (`keys`, `groupKeys`,
+     * `leafAssignment`) is what grows with the group's membership and history.
+     */
+    export type GroupEpochFields = Pick<Group, "id"|"contextId"|"keyVersion">;
+    
     export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
     export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
     export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};
