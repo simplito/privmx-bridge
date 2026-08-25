@@ -219,38 +219,31 @@ export namespace group {
         data: types.group.GroupData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
-        /**
-         * Per-member key entries for the group's own metadata key. A flat group needs one per member; a
-         * tree-backed group should carry none and use `groupKeys` instead.
-         *
-         * NOTE: it still does today — the endpoint sends one wrap per member at creation, 1.29 KB each, which
-         * measured 95% of a 996-member document. See BR-14 and EP-23.
-         */
-        keys: types.cloud.UserKeysEntry[];
         policy?: types.cloud.ContainerPolicy;
         /** Number of history entries. A counter, because the entries live in `groupHistoryEntry` and appending
          *  one has to stay a single insert. */
         version: types.group.GroupVersion;
-        keyVersion?: number;
+        /** Current epoch. Every group starts at 1 and only a rotation advances it. */
+        keyVersion: number;
         keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
-        /** Size of the hidden key tree. Absent on a flat group, which keeps behaving exactly as it did before. */
-        numLeaves?: number;
+        /** Size of the hidden key tree. Every group is tree-backed, so this is always present. */
+        numLeaves: number;
         /**
          * Seat → member, `""` for a blank left by a removal. Stays on the document although it is `O(members)`:
          * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
          */
-        leafAssignment?: types.cloud.UserId[];
+        leafAssignment: types.cloud.UserId[];
         /**
-         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch, instead of
-         * once per member. The group is a grantee of itself, using the same mechanism a thread or store uses to
-         * grant access to a group. This is what keeps a removal off the O(n) path — see
-         * documents/nested_groups/09-hidden-key-tree.md §9.1.
+         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch. The group is
+         * a grantee of itself, using the same mechanism a thread or store uses to grant access to a group, and
+         * members open it by climbing — see documents/nested_groups/09-hidden-key-tree.md §9.1.
          *
-         * One entry per epoch that rotated the key, so it grows with rotations — nothing prunes it yet (BR-14).
+         * One entry per epoch that rotated the key, so it grows with rotations, never with members. `cutEra`
+         * drops the entries below its floor.
          */
         groupKeys?: types.cloud.GroupKeysEntry[];
         /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
-        eraFloor?: number;
+        eraFloor: number;
         /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
         archivePrunedBelow?: number;
     }
@@ -330,7 +323,7 @@ export namespace group {
     
     /** A group's out-of-document state, assembled for the read path. */
     export interface GroupState {
-        tree: types.cloud.GroupTreeState|null;
+        tree: types.cloud.GroupTreeState;
         history: GroupHistoryEntry[];
     }
 }

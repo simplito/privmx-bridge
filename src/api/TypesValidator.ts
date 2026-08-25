@@ -23,6 +23,9 @@ export interface CustomValidatorWithLength extends AdvValidator.Types.CustomVali
 
 export class TypesValidator {
     
+    /** The largest group the protocol accepts. Every group-shaped limit derives from this one number. */
+    static readonly MAX_GROUP_MEMBERS = 16384;
+    
     builder: AdvValidator.ValidatorBuilder;
     checker: AdvValidator.ValidatorChecker;
     
@@ -73,6 +76,7 @@ export class TypesValidator {
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
+    cloudGroupKeyEntrySetForNewGroup: Validator;
     storeId: Validator;
     storeData: Validator;
     storeFileId: Validator;
@@ -276,12 +280,16 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.groupTreeState = this.builder.createObject({
-            numLeaves: this.builder.min(this.builder.int, 1),
+            // Bounded on both sides. Without an upper bound this was held down only indirectly, by the length of
+            // `leafAssignment` — and a client could name a geometry the server would then compute paths in.
+            numLeaves: this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_MEMBERS),
             // An empty string marks a blank left by a removal, so this is not cloudUserId (which requires a
             // non-empty id). The structural validator checks the entries against the roster.
-            leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), 16384),
-            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, 32768),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 65536),
+            leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), TypesValidator.MAX_GROUP_MEMBERS),
+            // A tree of N leaves has N-1 internal nodes and 2(N-1) edges; both follow from the one number above
+            // rather than being their own dials that could drift out of agreement with it.
+            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, 2 * TypesValidator.MAX_GROUP_MEMBERS),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4 * TypesValidator.MAX_GROUP_MEMBERS),
         });
         this.groupTreeRefreshedNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
@@ -324,6 +332,13 @@ export class TypesValidator {
         });
         this.cloudGroupKeyEntrySet = this.builder.createObject({
             group: this.groupId,
+            groupEpoch: this.builder.int,
+            keyId: this.keyId,
+            data: this.userKeyData,
+        });
+        // The same entry at creation time, minus `group`: the id does not exist until the server generates it,
+        // and the repository files the entry against the group it is creating.
+        this.cloudGroupKeyEntrySetForNewGroup = this.builder.createObject({
             groupEpoch: this.builder.int,
             keyId: this.keyId,
             data: this.userKeyData,

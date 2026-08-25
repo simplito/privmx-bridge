@@ -105,7 +105,7 @@ export class GroupRepository {
         }
         const groups = await this.repository.getMulti(groupIds);
         for (const group of groups) {
-            groupEpochs.set(group.id, this.getKeyVersion(group));
+            groupEpochs.set(group.id, group.keyVersion);
             // A Set over the group's own roster: a user listed as both member and manager must not get it twice.
             for (const member of new Set([...group.users, ...group.managers])) {
                 groupsByUser.set(member, [...(groupsByUser.get(member) ?? []), group.id]);
@@ -149,7 +149,7 @@ export class GroupRepository {
     }
     
     /** The hidden key tree, assembled in the shape the validator and the API have always seen. */
-    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState|null> {
+    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
         return this.state.getTree(group);
     }
     
@@ -167,10 +167,10 @@ export class GroupRepository {
     }
     
     /** Tree plus history, for the read paths that serve a whole group. */
-    async getFullState(group: db.group.Group): Promise<db.group.GroupState> {
+    async getFullState(group: db.group.Group, fromVersion?: number): Promise<db.group.GroupState> {
         const [tree, history] = await Promise.all([
             this.state.getTree(group),
-            this.state.getHistory(group.id),
+            this.state.getHistory(group.id, fromVersion),
         ]);
         return {tree, history};
     }
@@ -179,12 +179,13 @@ export class GroupRepository {
     
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy,
-        tree?: types.cloud.GroupTreeState) {
+        data: types.group.GroupData, keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
+        tree: types.cloud.GroupTreeState, groupKeys: Omit<types.cloud.GroupKeysEntry, "group">[] = []) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
+        const id = this.repository.generateId() as types.group.GroupId;
         const group: db.group.Group = {
-            id: this.repository.generateId() as types.group.GroupId,
+            id: id,
             contextId: contextId,
             type: type,
             groupPubKey: groupPubKey,
@@ -196,21 +197,20 @@ export class GroupRepository {
             data: data,
             users: users,
             managers: managers,
-            keys: keys,
             version: firstVersion,
             policy: policy,
+            // A group starts at epoch 1 with an era floor of 1: there is no earlier epoch to descend to, and the
+            // floor is what every later rung is measured against.
+            numLeaves: tree.numLeaves,
+            leafAssignment: tree.leafAssignment,
+            keyVersion: 1,
+            eraFloor: 1,
+            // The client cannot name the group it is creating, so the entry is filed against the id generated
+            // here. Nothing inside the ciphertext depends on it — it binds contextId and resourceId.
+            ...(groupKeys.length > 0 ? {groupKeys: groupKeys.map(entry => ({...entry, group: id}))} : {}),
         };
         if (resourceId) {
             group.clientResourceId = resourceId;
-        }
-        if (tree) {
-            // A tree-backed group starts at epoch 1 with an era floor of 1: there is no earlier epoch to
-            // descend to, and the floor is what every later rung is measured against.
-            group.numLeaves = tree.numLeaves;
-            group.leafAssignment = tree.leafAssignment;
-            group.keyVersion = 1;
-            group.eraFloor = 1;
-            this.assertKeysAreBounded(group.keys, users, managers);
         }
         // The document first: a duplicate resourceId is the one failure that is its own, and failing before any
         // state is written keeps that case clean.
@@ -227,9 +227,7 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        if (tree) {
-            await this.state.writeTree(group.id, null, tree);
-        }
+        await this.state.writeTree(group.id, null, tree);
         return group;
     }
     
@@ -251,9 +249,7 @@ export class GroupRepository {
         data: types.group.GroupData,
         tree: types.cloud.GroupTreeState,
         rungs: types.cloud.GroupArchiveRung[],
-        /** Metadata-key entries for the members who stay; the departing member's are dropped regardless. */
-        keys?: types.cloud.UserKeysEntry[],
-        /** The metadata key wrapped once to the group's own grant key — the O(1) replacement for the above. */
+        /** The metadata key wrapped once to the group's new grant key. */
         groupKeys?: types.cloud.GroupKeysEntry[],
         confirmationTag?: types.core.Base64,
     }): Promise<db.group.Group|null> {
@@ -261,12 +257,8 @@ export class GroupRepository {
         const now = DateUtils.now();
         const users = oldGroup.users.filter(u => u !== removedUser);
         const managers = oldGroup.managers.filter(u => u !== removedUser);
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
-        // Per-member key entries for the removed user go with them. A tree-backed group holds none, but a
-        // group that still carries some from before the tree must not keep the departed member's.
-        const keys = (params.keys ?? oldGroup.keys).filter(k => k.user !== removedUser);
-        this.assertKeysAreBounded(keys, users, managers);
         const changes: Partial<db.group.Group> = {
             groupPubKey: params.newGroupPubKey,
             lastModifier: modifier,
@@ -275,7 +267,6 @@ export class GroupRepository {
             data: params.data,
             users: users,
             managers: managers,
-            keys: keys,
             version: version,
             keyVersion: expectedKeyVersion + 1,
             keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
@@ -306,10 +297,12 @@ export class GroupRepository {
     
     /** The nodes needed to check a removal at `position`: its path and copath, `O(log n)` reads. */
     async getPathNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
-        if (group.numLeaves === undefined) {
-            return [];
-        }
         return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededFor(position, group.numLeaves));
+    }
+    
+    /** The root node alone, which is all a rotation is checked against. */
+    async getRootNode(group: db.group.Group): Promise<types.cloud.GroupTreeNode|undefined> {
+        return (await this.state.getNodesAt(group.id, [TreeMath.root(group.numLeaves)]))[0];
     }
     
     /**
@@ -330,7 +323,6 @@ export class GroupRepository {
         keyId: types.core.KeyId,
         data: types.group.GroupData,
         rungs: types.cloud.GroupArchiveRung[],
-        keys?: types.cloud.UserKeysEntry[],
         groupKeys?: types.cloud.GroupKeysEntry[],
         confirmationTag?: types.core.Base64,
     }): Promise<db.group.Group|null> {
@@ -338,11 +330,9 @@ export class GroupRepository {
         const now = DateUtils.now();
         const users = oldGroup.users.filter(u => u !== removedUser);
         const managers = oldGroup.managers.filter(u => u !== removedUser);
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
-        const keys = (params.keys ?? oldGroup.keys).filter(k => k.user !== removedUser);
-        this.assertKeysAreBounded(keys, users, managers);
-        const leafAssignment = [...(oldGroup.leafAssignment ?? [])];
+        const leafAssignment = [...oldGroup.leafAssignment];
         leafAssignment[transition.blankedPosition] = "" as types.cloud.UserId;
         const changes: Partial<db.group.Group> = {
             groupPubKey: params.newGroupPubKey,
@@ -352,7 +342,6 @@ export class GroupRepository {
             data: params.data,
             users: users,
             managers: managers,
-            keys: keys,
             version: version,
             keyVersion: expectedKeyVersion + 1,
             keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
@@ -382,9 +371,6 @@ export class GroupRepository {
     
     /** Which nodes checking an addition at `position` needs: the seat's path and copath in the grown geometry. */
     async getSeatNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
-        if (group.numLeaves === undefined) {
-            return [];
-        }
         return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededForSeat(position, group.numLeaves));
     }
     
@@ -404,18 +390,15 @@ export class GroupRepository {
         role: types.cloud.ContainerRole,
         keyId: types.core.KeyId,
         data: types.group.GroupData,
-        keys?: types.cloud.UserKeysEntry[],
     }): Promise<db.group.Group|null> {
         const {oldGroup, modifier, addedUser, transition} = params;
         const now = DateUtils.now();
         const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
         const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
-        const keys = params.keys ?? oldGroup.keys;
-        this.assertKeysAreBounded(keys, users, managers);
-        const oldNumLeaves = oldGroup.numLeaves ?? 0;
-        const oldLeafAssignment = [...(oldGroup.leafAssignment ?? [])];
+        const oldNumLeaves = oldGroup.numLeaves;
+        const oldLeafAssignment = [...oldGroup.leafAssignment];
         const numLeaves = TreeMath.numLeavesToSeat(transition.position, oldNumLeaves);
         const leafAssignment = [...oldLeafAssignment];
         while (leafAssignment.length < numLeaves) {
@@ -429,7 +412,6 @@ export class GroupRepository {
             data: params.data,
             users: users,
             managers: managers,
-            keys: keys,
             version: version,
             numLeaves: numLeaves,
             leafAssignment: leafAssignment,
@@ -466,17 +448,13 @@ export class GroupRepository {
         keyId: types.core.KeyId,
         data: types.group.GroupData,
         tree: types.cloud.GroupTreeState,
-        /** The newcomer's entry for the group's existing metadata key. */
-        keys?: types.cloud.UserKeysEntry[],
     }): Promise<db.group.Group|null> {
         const {oldGroup, modifier, addedUser} = params;
         const now = DateUtils.now();
         const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
         const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
-        const keys = params.keys ?? oldGroup.keys;
-        this.assertKeysAreBounded(keys, users, managers);
         const changes: Partial<db.group.Group> = {
             lastModifier: modifier,
             lastModificationDate: now,
@@ -484,7 +462,6 @@ export class GroupRepository {
             data: params.data,
             users: users,
             managers: managers,
-            keys: keys,
             version: version,
             numLeaves: params.tree.numLeaves,
             leafAssignment: params.tree.leafAssignment,
@@ -512,16 +489,26 @@ export class GroupRepository {
     
     /**
      * Closes the current era at `newFloor`: nothing below it can be reached by descending any more, so the rungs
-     * pointing there are dropped.
+     * pointing there go, and so does the key material that described those epochs.
      *
-     * Touches no key material on the document: `keyHistory` and `groupKeys` keep their entries for epochs below
-     * the floor even though nothing can climb to them any more. Dropping those is BR-14.
+     * `keyHistory` and `groupKeys` are dropped below the floor because there is nothing left to do with them: the
+     * registry entry has no rung to verify against, and the ciphertext is addressed to a grant key nobody can
+     * climb to. Keeping them would leave two fields growing with every rotation for the life of the group.
+     *
+     * `pruneArchive` deliberately does **not** do this. It is housekeeping on the archive, and a member still
+     * holding an old epoch key locally has to keep being able to verify it and open what it wraps. Cutting an era
+     * is the operation that says those epochs are gone for good.
      */
     async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const changes: Partial<db.group.Group> = {
             eraFloor: newFloor,
             lastModificationDate: DateUtils.now(),
+            keyHistory: (oldGroup.keyHistory ?? []).filter(entry => entry.keyVersion >= newFloor),
+            groupKeys: (oldGroup.groupKeys ?? []).map(entry => ({
+                ...entry,
+                keys: entry.keys.filter(key => (key.groupEpoch ?? 0) >= newFloor),
+            })).filter(entry => entry.keys.length > 0),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
             return null;
@@ -538,7 +525,7 @@ export class GroupRepository {
      * and open what it wraps.
      */
     async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const changes: Partial<db.group.Group> = {
             archivePrunedBelow: Math.max(oldGroup.archivePrunedBelow ?? 0, belowEpoch),
             lastModificationDate: DateUtils.now(),
@@ -550,20 +537,16 @@ export class GroupRepository {
         return {...oldGroup, ...changes};
     }
     
-    async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, groupPubKey: types.cloud.GroupPubKey, managers: types.cloud.UserId[],
-        users: types.cloud.UserId[], data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[],
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    /** Metadata only: the roster and the tree are untouched, and so is the epoch. */
+    async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, data: types.group.GroupData,
+        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
         const now = DateUtils.now();
         const version = this.nextVersion(oldGroup);
         const changes: Partial<db.group.Group> = {
-            groupPubKey: groupPubKey,
             lastModifier: modifier,
             lastModificationDate: now,
             keyId: keyId,
             data: data,
-            users: users,
-            managers: managers,
-            keys: keys,
             version: version,
         };
         if (policy !== undefined) {
@@ -572,8 +555,6 @@ export class GroupRepository {
         if (resourceId && !oldGroup.clientResourceId) {
             changes.clientResourceId = resourceId;
         }
-        // A membership/metadata update does NOT rotate the key epoch — it is left untouched.
-        // (Rotation is done by generateNewGroupKey, which bumps keyVersion via casRotate.)
         await this.applyChanges(oldGroup.id, changes);
         await this.state.insertHistoryEntry({
             id: GroupStateRepository.historyEntryId(oldGroup.id, version),
@@ -581,9 +562,9 @@ export class GroupRepository {
             version: version,
             keyId: keyId,
             data: data,
-            users: users,
-            managers: managers,
-            groupPubKey: groupPubKey,
+            users: oldGroup.users,
+            managers: oldGroup.managers,
+            groupPubKey: oldGroup.groupPubKey,
             created: now,
             author: modifier,
         });
@@ -595,18 +576,13 @@ export class GroupRepository {
         await this.state.deleteState(id);
     }
     
-    /** Takes just the field, so the projected read in `getKeyVersions` answers with the same rule as a full document. */
-    getKeyVersion(group: Pick<db.group.Group, "keyVersion">): number {
-        return group.keyVersion ?? 0;
-    }
-    
     /**
      * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
      *
      * Projected down to `GroupEpochFields`, not read whole and filtered afterwards. This is asked on every
      * container read and on every item write into a group-granted container, and one int per group is all it
-     * yields — reading the documents would drag `keys` (~1.29 KB per member) and `groupKeys` (one entry per
-     * rotation) along for nothing, which on a page of containers is megabytes of BSON to answer a comparison.
+     * yields — reading the documents would drag `groupKeys` (one entry per rotation) and `leafAssignment` along
+     * for nothing, which on a page of containers is megabytes of BSON to answer a comparison.
      */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
@@ -616,7 +592,7 @@ export class GroupRepository {
         const map = new Map<types.group.GroupId, number>();
         for (const g of groups) {
             if (g.contextId === contextId) {
-                map.set(g.id, this.getKeyVersion(g));
+                map.set(g.id, g.keyVersion);
             }
         }
         return map;
@@ -635,33 +611,42 @@ export class GroupRepository {
      * @returns false on a CAS miss, in which case nothing has been written
      */
     async casRotate(oldGroup: db.group.Group, expectedKeyVersion: number, changes: Partial<db.group.Group>): Promise<boolean> {
-        const filter: Record<string, unknown> = {_id: oldGroup.id};
-        if (expectedKeyVersion === 0) {
-            filter.$or = [{keyVersion: 0}, {keyVersion: {$exists: false}}];
-        }
-        else {
-            filter.keyVersion = expectedKeyVersion;
-        }
+        const filter = {_id: oldGroup.id, keyVersion: expectedKeyVersion};
         const result = await this.repository.collection.updateOne(filter, {$set: this.toDbChanges(changes)}, this.repository.getOptions());
         return result.matchedCount > 0;
     }
     
-    async generateNewGroupKey(oldGroup: db.group.Group, modifier: types.cloud.UserId, newGroupPubKey: types.cloud.GroupPubKey,
-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[],
-        confirmationTag?: types.core.Base64): Promise<db.group.Group | null> {
+    /**
+     * Rotates the grant keypair, leaving the roster and every node key where they are.
+     *
+     * One edge written, whatever the group's size: the tree is what distributes the new grant key, and the tree
+     * did not move. The rungs are what keep the epochs below reachable.
+     */
+    async generateNewGroupKey(params: {
+        oldGroup: db.group.Group,
+        modifier: types.cloud.UserId,
+        newGroupPubKey: types.cloud.GroupPubKey,
+        data: types.group.GroupData,
+        keyId: types.core.KeyId,
+        grantEdge: types.cloud.GroupTreeEdge,
+        rungs: types.cloud.GroupArchiveRung[],
+        groupKeys?: types.cloud.GroupKeysEntry[],
+        confirmationTag?: types.core.Base64,
+    }): Promise<db.group.Group | null> {
+        const {oldGroup, modifier} = params;
         const now = DateUtils.now();
-        const expectedKeyVersion = this.getKeyVersion(oldGroup);
+        const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
         const changes: Partial<db.group.Group> = {
-            groupPubKey: newGroupPubKey,
+            groupPubKey: params.newGroupPubKey,
             lastModifier: modifier,
             lastModificationDate: now,
-            keyId: keyId,
-            data: data,
-            keys: keys,
+            keyId: params.keyId,
+            data: params.data,
             version: version,
             keyVersion: expectedKeyVersion + 1,
             keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
+            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
             return null;
@@ -670,15 +655,17 @@ export class GroupRepository {
             id: GroupStateRepository.historyEntryId(oldGroup.id, version),
             groupId: oldGroup.id,
             version: version,
-            keyId: keyId,
-            data: data,
+            keyId: params.keyId,
+            data: params.data,
             users: oldGroup.users,
             managers: oldGroup.managers,
-            groupPubKey: newGroupPubKey,
+            groupPubKey: params.newGroupPubKey,
             created: now,
             author: modifier,
-            ...(confirmationTag ? {confirmationTag} : {}),
+            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
         });
+        await this.state.replaceGrantEdge(oldGroup.id, params.grantEdge);
+        await this.state.insertRungs(oldGroup.id, params.rungs);
         return {...oldGroup, ...changes};
     }
     
@@ -705,20 +692,4 @@ export class GroupRepository {
         return (group.version + 1) as types.group.GroupVersion;
     }
     
-    /**
-     * A tree-backed group must not accumulate per-member wraps: members reach the metadata key by climbing to
-     * the grant key and opening the single `groupKeys` entry. One entry per member per keyId would put
-     * `members × epochs` back on the document.
-     *
-     * NOTE: measured at 796 members this bound is far too generous — the endpoint still sends one wrap per
-     * member at creation, which is 1.03 MB, 95% of the document. See BR-14 and EP-23.
-     */
-    private assertKeysAreBounded(keys: types.cloud.UserKeysEntry[], users: types.cloud.UserId[], managers: types.cloud.UserId[]) {
-        const blobs = keys.reduce((sum, entry) => sum + entry.keys.length, 0);
-        const members = Utils.uniqueFromArrays(users, managers).length;
-        if (blobs > members) {
-            throw new AppException("INVALID_PARAMS",
-                `a tree-backed group carries at most one key entry per member (got ${blobs} for ${members} members); the metadata key belongs in groupKeys`);
-        }
-    }
 }

@@ -16,6 +16,7 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { buildTree, rotationGrantEdge, rungsFor } from "../testUtils/TreeFixtures";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
@@ -34,7 +35,7 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         managers: ["janek"] as types.cloud.UserId[],
         data: "someData" as types.group.GroupData,
         keyId: keyId,
-        keys: [],
+        tree: buildTree(["janek"], 1),
     };
 }
 
@@ -67,12 +68,8 @@ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
 it("ContextApiValidator.groupUpdate valid", () => {
     const model: contextApi.GroupUpdateModel = {
         id: groupId,
-        groupPubKey: groupPubKey,
-        users: ["janek"] as types.cloud.UserId[],
-        managers: ["janek"] as types.cloud.UserId[],
         data: "someData" as types.group.GroupData,
         keyId: keyId,
-        keys: [],
         version: 1 as types.group.GroupVersion,
         force: false,
     };
@@ -112,12 +109,14 @@ it("ContextApiValidator.groupList rejects invalid sortBy", () => {
 // ---------- Phase 2: generateNewGroupKey + groupUpdate epoch CAS ----------
 
 it("ContextApiValidator.groupGenerateNewKey valid", () => {
+    const tree = buildTree(["janek"], 1);
     const model: contextApi.GroupGenerateNewKeyModel = {
         id: groupId,
         groupPubKey: groupPubKey,
         data: "someData" as types.group.GroupData,
         keyId: keyId,
-        keys: [],
+        grantEdge: rotationGrantEdge(tree, 2),
+        rungs: rungsFor(2, 1),
         expectedKeyVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));

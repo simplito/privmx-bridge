@@ -66,18 +66,15 @@ export class GroupStateRepository {
     // ── read ─────────────────────────────────────────────────────────────────────────────────────────────────
     
     /** The tree in the shape the validator and the API expect: geometry from the document, the rest from the
-     *  collections. `null` for a flat group. */
-    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState|null> {
-        if (group.numLeaves === undefined) {
-            return null;
-        }
+     *  collections. */
+    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
         const [nodeDocs, edgeDocs] = await Promise.all([
             this.nodes.query(q => q.eq("groupId", group.id)).array(),
             this.edges.query(q => q.eq("groupId", group.id)).array(),
         ]);
         return {
             numLeaves: group.numLeaves,
-            leafAssignment: group.leafAssignment ?? [],
+            leafAssignment: group.leafAssignment,
             nodes: nodeDocs
                 .map(doc => this.toTreeNode(doc))
                 .sort((a, b) => a.nodeIndex - b.nodeIndex),
@@ -88,8 +85,22 @@ export class GroupStateRepository {
         };
     }
     
-    async getHistory(groupId: types.group.GroupId): Promise<db.group.GroupHistoryEntry[]> {
-        return this.history.query(q => q.eq("groupId", groupId)).sort("version", true).array();
+    /**
+     * History entries of one group, optionally only those from `fromVersion` on. The window goes into the query
+     * rather than filtering afterwards: each entry carries the roster it was written with, and a client that has
+     * already verified the older ones has no use for them.
+     */
+    async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
+        const entries = await this.history.query(q => fromVersion === undefined
+            ? q.eq("groupId", groupId)
+            : q.and(q.eq("groupId", groupId), q.gte("version", fromVersion as types.group.GroupVersion)),
+        ).sort("version", true).array();
+        if (entries.length > 0 || fromVersion === undefined) {
+            return entries;
+        }
+        // The head entry is never windowed out: it carries the group's current `data` and names the current
+        // keyId, so a response without it is not a smaller answer, it is an unusable one.
+        return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
     /** Every keyId the group has ever used — what a submitted key entry is checked against. Projected, so a
@@ -116,6 +127,22 @@ export class GroupStateRepository {
     }
     
     // ── write ────────────────────────────────────────────────────────────────────────────────────────────────
+    
+    /**
+     * Replaces the grant edge, which is all a rotation writes to the tree.
+     *
+     * A rotation moves no node, so the root index does not change and the new edge lands on the same derived id
+     * as the one it supersedes — an upsert, not an insert-and-delete. The edge is written as submitted: the
+     * service has already refused anything that is not the grant edge addressed to the current root, and
+     * re-deriving it here would silently correct a caller that is wrong instead of failing.
+     */
+    async replaceGrantEdge(groupId: types.group.GroupId, edge: types.cloud.GroupTreeEdge): Promise<void> {
+        await this.edges.collection.updateOne(
+            {_id: GroupStateRepository.edgeId(groupId, edge)},
+            {$set: this.toEdgeDoc(groupId, edge)},
+            {...this.edges.getOptions(), upsert: true},
+        );
+    }
     
     /** Writes a transition as the difference against the state it replaces — a removal costs `O(log n)`
      *  documents. `oldTree` of `null` writes the whole tree, which is what creating a group does. */

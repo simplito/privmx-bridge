@@ -30,6 +30,8 @@ import { TransitionProblem, TreeProblem, TreeValidator } from "./keytree/TreeVal
 import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
 import { TreeMath } from "./keytree/TreeMath";
+import { Config } from "../../cluster/common/ConfigUtils";
+import { Utils } from "../../utils/Utils";
 
 export class GroupService extends BaseContainerService {
     
@@ -45,6 +47,7 @@ export class GroupService extends BaseContainerService {
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
         private groupRotationRateLimiter: GroupRotationRateLimiter,
+        private config: Config,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -70,9 +73,9 @@ export class GroupService extends BaseContainerService {
      * Separate from `getGroup` so that the callers which need only the document — every membership operation,
      * the rate limiter, the epoch check — do not drag a tree and a full history along with it.
      */
-    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined) {
+    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromVersion?: number) {
         const group = await this.getGroup(executor, groupId, type);
-        const state = await this.repositoryFactory.createGroupRepository().getFullState(group);
+        const state = await this.repositoryFactory.createGroupRepository().getFullState(group, fromVersion);
         return {group, state};
     }
     
@@ -88,21 +91,21 @@ export class GroupService extends BaseContainerService {
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, tree?: types.cloud.GroupTreeState) {
+        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState,
+        groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">) {
+        const allUsers = Utils.uniqueFromArrays(users, managers);
         this.policyService.validateContainerPolicyForContainer("policy", policy);
+        this.assertWithinMemberLimit(allUsers.length);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
-        // A tree-backed group distributes the grant key by climbing, so it is not required to carry one key
-        // entry per member. The tree takes over the job the `keys` list does for a flat group, and the
-        // structural check below takes over from verifyThatOnlyGivenClientsHaveAccess.
-        const newKeys = tree
-            ? await this.checkKeysForTreeBackedGroup(contextId, keys, keyId, users, managers)
-            : await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
-        if (tree) {
-            // Epoch 1: a new group's first grant keypair.
-            this.assertTreeIsValid(tree, {users, managers}, 1);
+        if (allUsers.length === 0) {
+            throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
+        await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
+        const newGroupKeys = this.buildSelfAddressedKeysForNewGroup(groupKeys, keyId);
+        // Epoch 1: a new group's first grant keypair.
+        this.assertTreeIsValid(tree, {users, managers}, 1);
         // Membership integrity (signature/chain) is committed inside the opaque `data` (endpoint DIO) and verified
         // client-side; the bridge only stores it. See documents/plan/10-endpoint-security-model-and-alignment.md.
         try {
@@ -110,7 +113,7 @@ export class GroupService extends BaseContainerService {
             // initial tree must not survive a failure that leaves the group itself uncreated, or the other way round.
             const group = await this.repositoryFactory.withTransaction(session =>
                 this.repositoryFactory.createGroupRepository(session)
-                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy, tree),
+                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, policy, tree, newGroupKeys),
             );
             this.groupNotificationService.sendCreatedGroup(group, context.solution);
             return group;
@@ -123,13 +126,20 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[],
-        data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.group.GroupVersion, force: boolean,
-        policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    /**
+     * Updates the group's metadata: `data`, its `keyId`, the policy and the resource id.
+     *
+     * Membership is deliberately not here. Seating a member and re-keying their path is one operation on the
+     * tree, and splitting it across a roster edit and a tree edit is how the two drift apart —
+     * `addMember`/`removeMember` are the only ways in.
+     */
+    async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, data: types.group.GroupData, keyId: types.core.KeyId,
+        version: types.group.GroupVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined,
+        resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
-        const {group: rGroup, context: usedContext, oldGroup: old} = await this.repositoryFactory.withTransaction(async session => {
+        const {group: rGroup, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await groupRepository.get(id);
             if (!oldGroup) {
@@ -137,25 +147,17 @@ export class GroupService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldGroup, managers, policy);
-            // updateGroup changes membership/metadata only — it must NOT rotate the group identity key (epoch).
-            // Key rotation is a separate, narrowly-scoped operation: context.groupGenerateNewKey (which cannot
-            // add/remove members). This keeps the two capabilities cleanly separable.
-            if (groupPubKey !== oldGroup.groupPubKey) {
-                throw new AppException("INVALID_PARAMS", "groupUpdate cannot rotate the group key; use generateNewGroupKey");
-            }
+            this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, policy);
             if (oldGroup.version !== version && !force) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
             }
-            const availableKeyIds = [...await groupRepository.getHistoryKeyIds(oldGroup.id), keyId];
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldGroup.contextId, availableKeyIds, oldGroup.keys, keys, keyId, users, managers);
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
-            // Membership integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
+            // Metadata integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
-                const group = await groupRepository.updateGroup(oldGroup, user.userId, groupPubKey, managers, users, data, keyId, newKeys, policy, resourceId);
-                return {group, context, oldGroup};
+                const group = await groupRepository.updateGroup(oldGroup, user.userId, data, keyId, policy, resourceId);
+                return {group, context};
             }
             catch (err) {
                 if (err instanceof DbDuplicateError) {
@@ -164,44 +166,44 @@ export class GroupService extends BaseContainerService {
                 throw err;
             }
         });
-        const updatedUsers = rGroup.managers.concat(rGroup.users);
-        const deletedUsers = old.managers.concat(old.users).filter(u => !updatedUsers.includes(u));
-        const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
-        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, additionalUsersToNotify, "updated");
+        this.groupNotificationService.sendUpdatedGroup(rGroup, usedContext.solution, [], "updated");
         return rGroup;
     }
     
+    /**
+     * Rotates the grant keypair without removing anybody.
+     *
+     * Everything a removal does to the epoch, minus the removal: the epoch advances, the new grant key is wrapped
+     * to the unchanged root, and the rungs keep the old epochs reachable. No node key changes, so it costs one
+     * edge whatever the group's size.
+     */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const {group: rGroup, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await groupRepository.get(model.id);
-            if (!oldGroup) {
-                throw new AppException("GROUP_DOES_NOT_EXIST");
-            }
+            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
             // Rotation is a container mutation, so it must pass the same manager/policy gate as updateGroup.
             // Rotation changes neither membership nor policy → reuse the existing managers and pass no policy.
             this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, undefined);
             await this.checkRotationRateLimit(model.id);
-            const currentKeyVersion = groupRepository.getKeyVersion(oldGroup);
-            if (currentKeyVersion !== model.expectedKeyVersion) {
-                const winner = await groupRepository.get(model.id);
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
-            }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(
-                oldGroup.contextId,
-                [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId],
-                oldGroup.keys,
-                model.keys,
-                model.keyId,
-                oldGroup.users,
-                oldGroup.managers,
-            );
-            const result = await groupRepository.generateNewGroupKey(oldGroup, user.userId, model.groupPubKey, model.data, model.keyId, newKeys, model.confirmationTag);
+            const newKeyVersion = oldGroup.keyVersion + 1;
+            await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
+            this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
+            const result = await groupRepository.generateNewGroupKey({
+                oldGroup,
+                modifier: user.userId,
+                newGroupPubKey: model.groupPubKey,
+                data: model.data,
+                keyId: model.keyId,
+                grantEdge: model.grantEdge,
+                rungs: model.rungs,
+                groupKeys: this.buildSelfAddressedKeys(oldGroup, model.groupKeys, model.keyId, newKeyVersion),
+                ...(model.confirmationTag ? {confirmationTag: model.confirmationTag} : {}),
+            });
             if (!result) {
                 const winner = await groupRepository.get(model.id);
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!, user.userId));
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!));
             }
             return {group: result, context};
         });
@@ -233,8 +235,9 @@ export class GroupService extends BaseContainerService {
             if (oldGroup.users.includes(model.userId) || oldGroup.managers.includes(model.userId)) {
                 throw new AppException("INVALID_PARAMS", `user '${model.userId}' is already a member`);
             }
+            this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, [model.userId]).length);
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, [model.userId]);
-            const keyVersion = groupRepository.getKeyVersion(oldGroup);
+            const keyVersion = oldGroup.keyVersion;
             const users = model.role === "user" ? [...oldGroup.users, model.userId] : oldGroup.users;
             if (model.transition) {
                 await this.assertAdditionTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
@@ -248,12 +251,8 @@ export class GroupService extends BaseContainerService {
             else {
                 throw new AppException("INVALID_PARAMS", "an addition needs either `transition` or `tree`");
             }
-            // One entry for the newcomer at the existing keyId — the group's metadata key, which the tree does
-            // not carry. No rotation, so nobody else is disturbed.
-            const newKeys = this.buildTreeGroupKeys(
-                [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId], oldGroup.keys, model.keys ?? [], model.keyId,
-                [...users, ...managers],
-            );
+            // The newcomer gets no key entry of their own: they climb to the grant key and open the group's
+            // single self-addressed metadata entry, the same way every other member does.
             const result = model.transition
                 ? await groupRepository.addMemberWithTransition({
                     oldGroup,
@@ -263,7 +262,6 @@ export class GroupService extends BaseContainerService {
                     role: model.role,
                     keyId: model.keyId,
                     data: model.data,
-                    keys: newKeys,
                 })
                 : await groupRepository.addMemberWithTree({
                     oldGroup,
@@ -274,10 +272,9 @@ export class GroupService extends BaseContainerService {
                     keyId: model.keyId,
                     data: model.data,
                     tree: model.tree!,
-                    keys: newKeys,
                 });
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -310,7 +307,7 @@ export class GroupService extends BaseContainerService {
             // A removal advances the epoch, so it is charged against the same per-group budget as an explicit
             // rotation: the cost falls on every container the group can read, not on the caller.
             await this.checkRotationRateLimit(model.id);
-            const oldKeyVersion = groupRepository.getKeyVersion(oldGroup);
+            const oldKeyVersion = oldGroup.keyVersion;
             const newKeyVersion = oldKeyVersion + 1;
             const users = oldGroup.users.filter(u => u !== model.userId);
             // Two shapes, one outcome. A transition is checked against the stored path — `O(log n)` read, no whole
@@ -328,17 +325,9 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("INVALID_PARAMS", "a removal needs either `transition` or `tree`");
             }
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
-            // Fresh metadata-key entries, if the caller supplied any. The departing member's own entries are
-            // dropped by the repository either way, so they cannot read metadata written under a new keyId.
-            const newKeys = this.buildTreeGroupKeys(
-                [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId],
-                oldGroup.keys.filter(k => k.user !== model.userId),
-                model.keys ?? [], model.keyId, [...users, ...managers],
-            );
-            const newGroupKeys = this.buildSelfAddressedKeys(oldGroup, model.groupKeys ?? [], model.keyId, newKeyVersion);
+            // The new epoch's metadata key travels as one self-addressed entry, not one wrap per survivor.
             const common = {
-                keys: newKeys,
-                groupKeys: newGroupKeys,
+                groupKeys: this.buildSelfAddressedKeys(oldGroup, model.groupKeys, model.keyId, newKeyVersion),
                 oldGroup,
                 modifier: user.userId,
                 removedUser: model.userId,
@@ -356,7 +345,7 @@ export class GroupService extends BaseContainerService {
                     tree: model.tree!,
                 });
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext, removed: model.userId};
         });
@@ -378,8 +367,8 @@ export class GroupService extends BaseContainerService {
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
-            const keyVersion = groupRepository.getKeyVersion(oldGroup);
-            const currentFloor = oldGroup.eraFloor ?? 1;
+            const keyVersion = oldGroup.keyVersion;
+            const currentFloor = oldGroup.eraFloor;
             if (!Number.isInteger(model.newFloor) || model.newFloor < 1) {
                 throw new AppException("INVALID_PARAMS", "newFloor must be a positive integer");
             }
@@ -392,7 +381,7 @@ export class GroupService extends BaseContainerService {
             }
             const result = await groupRepository.cutEra(oldGroup, model.newFloor);
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -411,7 +400,7 @@ export class GroupService extends BaseContainerService {
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
-            const keyVersion = groupRepository.getKeyVersion(oldGroup);
+            const keyVersion = oldGroup.keyVersion;
             if (!Number.isInteger(model.belowEpoch) || model.belowEpoch < 1) {
                 throw new AppException("INVALID_PARAMS", "belowEpoch must be a positive integer");
             }
@@ -420,7 +409,7 @@ export class GroupService extends BaseContainerService {
             }
             const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!, user.userId));
+                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -453,127 +442,142 @@ export class GroupService extends BaseContainerService {
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
         }
-        const currentKeyVersion = groupRepository.getKeyVersion(group);
+        const currentKeyVersion = group.keyVersion;
         if (currentKeyVersion !== expectedKeyVersion) {
             // The client computed its wraps against a tree that no longer exists. Handing back the winner's
-            // state lets it recompute instead of guessing.
-            const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
-            throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(group, user.userId));
+            // state lets it recompute instead of guessing — but only to somebody who belongs here: this runs
+            // before the caller has passed any other gate, and the payload carries the group's key material.
+            await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+            throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(group));
         }
         return group;
     }
     
+    /**
+     * The group's tree, refusing one that is not there.
+     *
+     * Every group is tree-backed, so an empty node set is not a flat group — it is a group whose state did not
+     * survive whatever wrote it. Serving an empty tree would let a client plan against nothing.
+     */
     private async requireTree(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group,
     ): Promise<types.cloud.GroupTreeState> {
         const tree = await groupRepository.getTree(group);
-        if (!tree) {
+        if (tree.nodes.length === 0) {
             throw new AppException("GROUP_HAS_NO_TREE");
         }
         return tree;
     }
     
     /**
-     * A tree-backed group still accepts per-member key entries — a group may carry both while migrating — but
-     * it does not require one per member, because climbing the tree is how members reach the key.
+     * Checks the one edge a rotation is allowed to write.
+     *
+     * A rotation re-wraps the *new* grant key to the root node, which it does not touch. So: exactly the grant
+     * edge, at the epoch being created, addressed to the current root at the generation the tree actually holds.
+     * `childGeneration` is the load-bearing one — an edge planned against a superseded root would wrap the new
+     * grant key to a node key that is no longer reachable, locking every member out of the epoch.
      */
-    private async checkKeysForTreeBackedGroup(
-        contextId: types.context.ContextId,
-        inserts: types.cloud.KeyEntrySet[],
-        keyId: types.core.KeyId,
-        users: types.cloud.UserId[],
-        managers: types.cloud.UserId[],
+    private async assertRotationGrantEdgeIsValid(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        group: db.group.Group,
+        edge: types.cloud.GroupTreeEdge,
+        newKeyVersion: number,
     ) {
-        const allUsers = [...new Set([...users, ...managers])];
-        if (allUsers.length === 0) {
-            throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
+        const problems: {kind: string, expected?: string|number, got?: string|number}[] = [];
+        if (!edge.isGrantEdge) {
+            problems.push({kind: "NOT_A_GRANT_EDGE"});
         }
-        await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
-        return this.buildTreeGroupKeys([keyId], [], inserts, keyId, allUsers);
+        if (edge.parentGeneration !== newKeyVersion) {
+            problems.push({kind: "GRANT_EDGE_WRONG_EPOCH", expected: newKeyVersion, got: edge.parentGeneration});
+        }
+        const rootIndex = TreeMath.root(group.numLeaves);
+        if (edge.childKind !== "node" || edge.childIndex !== rootIndex) {
+            problems.push({kind: "GRANT_EDGE_WRONG_CHILD", expected: `node:${rootIndex}`, got: `${edge.childKind}:${edge.childUserId ?? edge.childIndex}`});
+        }
+        else {
+            const root = await groupRepository.getRootNode(group);
+            if (!root) {
+                throw new AppException("GROUP_HAS_NO_TREE");
+            }
+            if (edge.childGeneration !== root.generation) {
+                problems.push({kind: "STALE_CHILD_GENERATION", expected: root.generation, got: edge.childGeneration ?? -1});
+            }
+        }
+        if (!edge.data) {
+            problems.push({kind: "EMPTY_EDGE_DATA"});
+        }
+        if (problems.length > 0) {
+            throw new AppException("GROUP_TREE_INVALID", problems);
+        }
     }
     
     /**
-     * Builds the per-member key entries of a tree-backed group.
+     * The one self-addressed entry a new tree-backed group may carry: its own metadata key at epoch 1.
      *
-     * Only one of the two directions `verifyThatOnlyGivenClientsHaveAccess` checks applies here. That no
-     * outsider holds an entry still matters and is enforced. That *every* member holds one does not: the tree is
-     * how members reach the grant key, and the entries only carry the group's metadata key, which a client may
-     * legitimately leave untouched.
+     * There is no `group` to check against the way an update checks it — the id does not exist yet, and the
+     * repository files the entry against the group it generates.
      */
-    private buildTreeGroupKeys(
-        availableKeyIds: types.core.KeyId[],
-        oldKeys: types.cloud.UserKeysEntry[],
-        inserts: types.cloud.KeyEntrySet[],
+    private buildSelfAddressedKeysForNewGroup(
+        insert: Omit<types.cloud.GroupKeyEntrySet, "group">|undefined,
         keyId: types.core.KeyId,
-        members: types.cloud.UserId[],
-    ) {
-        for (const insert of inserts) {
-            // Checked on the submitted entries rather than only on the merged result, so an entry addressed to a
-            // non-member is refused whichever keyId it names — including one the group used in an earlier epoch.
-            if (!members.includes(insert.user)) {
-                throw new AppException("INVALID_PARAMS", `user '${insert.user}' is not a member of this group`);
-            }
+    ): Omit<types.cloud.GroupKeysEntry, "group">[] {
+        if (!insert) {
+            return [];
         }
-        const newKeys = this.cloudKeyService.buildKeys(availableKeyIds, oldKeys, inserts);
-        for (const entry of newKeys) {
-            const hasAccess = entry.keys.some(k => k.keyId === keyId);
-            if (hasAccess && !members.includes(entry.user)) {
-                throw new AppException("INVALID_PARAMS", `user '${entry.user}' should not have access to key '${keyId}'`);
-            }
-        }
-        return newKeys;
+        GroupService.assertSelfAddressedEntry(insert, keyId, 1);
+        return [{keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}]}];
     }
     
     /**
-     * Merges the metadata key the group wrapped **to itself**.
-     *
-     * A tree-backed group does not need one metadata-key ciphertext per member: it can wrap the key once to its
-     * own grant public key, exactly as a thread or store does when granting access to a group, and every member
-     * opens it by climbing to a key they can already reach. That single entry is what keeps a removal from
-     * costing O(n) wraps.
-     *
-     * The bridge checks only what it can: that the entry names *this* group, the epoch being created, and the
-     * keyId being introduced. It cannot check what is inside — and does not need to, since a member who cannot
-     * open it simply cannot read the metadata.
+     * What the bridge can check about a metadata key wrapped to the group itself: that it names the keyId being
+     * introduced, the epoch being created, and carries something. It cannot check what is inside — and does not
+     * need to, since a member who cannot open it simply cannot read the metadata.
      */
+    private static assertSelfAddressedEntry(insert: Omit<types.cloud.GroupKeyEntrySet, "group">, keyId: types.core.KeyId, epoch: number) {
+        if (insert.keyId !== keyId) {
+            throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
+        }
+        if (insert.groupEpoch !== epoch) {
+            // An entry wrapped to an earlier epoch's grant key would still open for the member being removed,
+            // since that is the key they hold.
+            throw new AppException("INVALID_PARAMS", `groupKeys entry must name epoch ${epoch}`);
+        }
+        if (!insert.data) {
+            throw new AppException("INVALID_PARAMS", "groupKeys entry carries no data");
+        }
+    }
+    
+    /**
+     * One ceiling, stated once, checked before anything else about the group is validated — so exceeding it
+     * reads as "too many members" rather than as whichever field happens to overflow first.
+     */
+    private assertWithinMemberLimit(requested: number) {
+        const limit = this.config.maxGroupMembers;
+        if (requested > limit) {
+            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", {limit, requested});
+        }
+    }
+    
     private buildSelfAddressedKeys(
         group: db.group.Group,
-        inserts: types.cloud.GroupKeyEntrySet[],
+        insert: types.cloud.GroupKeyEntrySet|undefined,
         keyId: types.core.KeyId,
         newKeyVersion: number,
     ): types.cloud.GroupKeysEntry[] {
         const existing = group.groupKeys ?? [];
-        if (inserts.length === 0) {
+        if (!insert) {
             return existing;
         }
-        for (const insert of inserts) {
-            if (insert.group !== group.id) {
-                // Wrapping the group's metadata key to a *different* group would hand it to that group's
-                // members, who are not members here.
-                throw new AppException("INVALID_PARAMS", `groupKeys entry must be addressed to group '${group.id}'`);
-            }
-            if (insert.keyId !== keyId) {
-                throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
-            }
-            if (insert.groupEpoch !== newKeyVersion) {
-                // An entry wrapped to an earlier epoch's grant key would still open for the member being
-                // removed, since that is the key they hold.
-                throw new AppException("INVALID_PARAMS", `groupKeys entry must name epoch ${newKeyVersion}`);
-            }
-            if (!insert.data) {
-                throw new AppException("INVALID_PARAMS", "groupKeys entry carries no data");
-            }
+        if (insert.group !== group.id) {
+            // Wrapping the group's metadata key to a *different* group would hand it to that group's members,
+            // who are not members here.
+            throw new AppException("INVALID_PARAMS", `groupKeys entry must be addressed to group '${group.id}'`);
         }
+        GroupService.assertSelfAddressedEntry(insert, keyId, newKeyVersion);
         // Kept per epoch rather than replaced: an older `data` entry stays readable to whoever can descend the
         // ladder to the epoch it was written at.
-        return [
-            ...existing,
-            ...inserts.map(insert => ({
-                group: insert.group,
-                keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}],
-            })),
-        ];
+        return [...existing, {group: insert.group, keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}]}];
     }
     
     /**
@@ -590,14 +594,11 @@ export class GroupService extends BaseContainerService {
         transition: types.cloud.GroupTreeTransition,
         removedUser: types.cloud.UserId,
     ) {
-        if (group.numLeaves === undefined) {
-            throw new AppException("GROUP_HAS_NO_TREE");
-        }
         const nodes = await groupRepository.getPathNodes(group, transition.blankedPosition);
         const problems = TreeTransitionValidator.validateRemoval({
             numLeaves: group.numLeaves,
-            leafAssignment: group.leafAssignment ?? [],
-            keyVersion: groupRepository.getKeyVersion(group),
+            leafAssignment: group.leafAssignment,
+            keyVersion: group.keyVersion,
             nodes: nodes,
         }, transition, removedUser);
         if (problems.length > 0) {
@@ -611,14 +612,11 @@ export class GroupService extends BaseContainerService {
         transition: types.cloud.GroupTreeAdditionTransition,
         addedUser: types.cloud.UserId,
     ) {
-        if (group.numLeaves === undefined) {
-            throw new AppException("GROUP_HAS_NO_TREE");
-        }
         const nodes = await groupRepository.getSeatNodes(group, transition.position);
         const problems = TreeTransitionValidator.validateAddition({
             numLeaves: group.numLeaves,
-            leafAssignment: group.leafAssignment ?? [],
-            keyVersion: groupRepository.getKeyVersion(group),
+            leafAssignment: group.leafAssignment,
+            keyVersion: group.keyVersion,
             nodes: nodes,
         }, transition, addedUser);
         if (problems.length > 0) {
@@ -648,7 +646,7 @@ export class GroupService extends BaseContainerService {
      */
     private assertRungsAreValid(rungs: types.cloud.GroupArchiveRung[], newKeyVersion: number, group: db.group.Group) {
         const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
-        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor ?? 1, group.archivePrunedBelow);
+        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor, group.archivePrunedBelow);
         if (!result.ok) {
             throw new AppException("GROUP_ARCHIVE_INVALID", result.problem);
         }
@@ -668,16 +666,13 @@ export class GroupService extends BaseContainerService {
     
     /** The caller's own leaf, so the client does not have to know its user id to find its seat. */
     ownLeafPosition(group: db.group.Group, userId: types.cloud.UserId): number|undefined {
-        const position = (group.leafAssignment ?? []).indexOf(userId);
+        const position = group.leafAssignment.indexOf(userId);
         return position < 0 ? undefined : position;
     }
     
     /** Lowest free leaf position, growing the tree only when every existing seat is taken. */
     nextFreePosition(group: db.group.Group): number {
-        if (group.numLeaves === undefined) {
-            throw new AppException("GROUP_HAS_NO_TREE");
-        }
-        const blank = (group.leafAssignment ?? []).indexOf("" as types.cloud.UserId);
+        const blank = group.leafAssignment.indexOf("" as types.cloud.UserId);
         if (blank >= 0) {
             return blank;
         }
@@ -701,11 +696,19 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    private buildRotatedAlreadyData(winner: db.group.Group, callerId: types.cloud.UserId): RotatedAlreadyData {
-        const callerEntry = winner.keys.find(k => k.user === callerId);
-        const winnerKeyEntry = callerEntry?.keys.find(k => k.keyId === winner.keyId);
+    /**
+     * What a caller who lost the race needs to recompute against the winner.
+     *
+     * `winnerKeyEntry` is the group's own self-addressed metadata entry at the winning epoch — the same one every
+     * member opens by climbing. There is no per-caller entry to hand back any more, and there does not need to
+     * be: whoever can climb to the new grant key can open this.
+     */
+    private buildRotatedAlreadyData(winner: db.group.Group): RotatedAlreadyData {
+        const winnerKeyEntry = (winner.groupKeys ?? [])
+            .flatMap(entry => entry.keys)
+            .find(k => k.keyId === winner.keyId);
         return {
-            keyVersion: winner.keyVersion ?? 0,
+            keyVersion: winner.keyVersion,
             groupPubKey: winner.groupPubKey,
             winnerKeyEntry: winnerKeyEntry ?? {keyId: winner.keyId, data: "" as types.core.UserKeyData},
         };

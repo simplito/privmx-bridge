@@ -184,6 +184,17 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldServeOnlyTheHistoryTheClientIsMissing() {
+        // A client verifies the signed chain once and remembers where it got to; re-sending what it has already
+        // verified is pure weight, since each entry carries the roster it was written with.
+        await this.addMembersToContext([alice, bob, carol, dave]);
+        await this.createTreeBackedGroup();
+        await this.removeMember(bob, BOB_POSITION);
+        await this.addMemberByDelta(dave, BOB_POSITION);
+        await this.verifyHistoryIsWindowed();
+    }
+    
+    @Test()
     async shouldNotServeTreeStateInListings() {
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
@@ -233,8 +244,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             managers: [testData.userId],
             data: "group-data" as types.group.GroupData,
             keyId: keyIdAt(1),
-            // A tree-backed group hands out its key by climbing, so it needs no entry per member.
-            keys: [],
             tree: tree,
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
@@ -269,7 +278,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupRemoveMember with a transition did not return OK");
@@ -314,14 +322,13 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             tree: tree,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
-            groupKeys: [{
+            groupKeys: {
                 group: groupId,
                 groupEpoch: newEpoch,
                 keyId: keyIdAt(newEpoch),
                 data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
-            }],
+            },
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupRemoveMember did not return OK");
@@ -406,8 +413,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async verifyTheDocumentCarriesNoState() {
         const document = await this.readGroupDocument();
-        // The four fields that used to grow without a ceiling.
-        for (const field of ["tree", "history", "archiveRungs", "allTimeUsers"]) {
+        // The fields that used to grow without a ceiling. `keys` is here too: a group carries no per-member key
+        // entries at all — the metadata key is wrapped once, to its own grant key, in `groupKeys`.
+        for (const field of ["tree", "history", "archiveRungs", "allTimeUsers", "keys"]) {
             assert(!(field in document), `the group document must not carry '${field}'`);
         }
         assert(document.version === 1, `version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
@@ -597,12 +605,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor can be descended to any more");
         const document = await this.readGroupDocument();
         assert(document.eraFloor === 3, "the floor is recorded");
-        // Key material on the document is left alone: entries below the floor are unreachable, but dropping them
-        // is BR-14's decision, not a side effect of cutting an era.
+        // Key material for the closed epochs goes with them: the registry entry has no rung to verify against
+        // any more, and the wrapped key is addressed to a grant key nobody can climb to. These are the two
+        // fields that otherwise grow with every rotation for the life of the group.
         const keyHistory = document.keyHistory as {keyVersion: number}[];
-        assert(keyHistory.some(entry => entry.keyVersion < 3), "the epoch registry keeps its entries below the floor");
-        const groupKeys = document.groupKeys as {keys: {groupEpoch: number}[]}[];
-        assert(groupKeys.length > 0, "and so do the metadata keys wrapped to the group");
+        assert(keyHistory.every(entry => entry.keyVersion >= 3),
+            `the epoch registry must drop entries below the floor, got ${JSON.stringify(keyHistory.map(e => e.keyVersion))}`);
+        const groupKeys = (document.groupKeys ?? []) as {keys: {groupEpoch?: number}[]}[];
+        assert(groupKeys.every(entry => entry.keys.every(key => (key.groupEpoch ?? 0) >= 3)),
+            "the group's own key entries below the floor must go too");
     }
     
     private async verifyTheDefaultViewIsThePath() {
@@ -624,6 +635,27 @@ export class GroupKeyTreeTests extends BaseTestSet {
         // What the narrowing is for, in bytes.
         const sizeOf = (g: unknown) => JSON.stringify(g).length;
         assert(sizeOf(path) < sizeOf(full), `path view ${sizeOf(path)} B is not smaller than full ${sizeOf(full)} B`);
+    }
+    
+    private async verifyHistoryIsWindowed() {
+        const groupId = this.requireGroupId();
+        const {group: whole} = await this.apis.contextApi.groupGet({groupId});
+        assert.ok(whole.history.length === 3, `three versions so far, got ${whole.history.length}`);
+        assert.ok(whole.firstServedVersion === 1, "no parameter means from genesis");
+        
+        const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromVersion: 3});
+        assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
+        assert.ok(windowed.firstServedVersion === 3, `window starts at 3, said ${windowed.firstServedVersion}`);
+        assert.ok(windowed.data.length === 1, "the data array is windowed the same way");
+        assert.ok(windowed.version === whole.version, "the head version is unchanged by windowing");
+        const sizeOf = (g: unknown) => JSON.stringify(g).length;
+        assert.ok(sizeOf(windowed) < sizeOf(whole), `windowed ${sizeOf(windowed)} B is not smaller than ${sizeOf(whole)} B`);
+        
+        // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
+        const {group: past} = await this.apis.contextApi.groupGet({groupId, fromVersion: 99});
+        assert.ok(past.history.length === 1 && past.data.length === 1,
+            `asking past the head must still serve the head, got ${past.history.length} entries`);
+        assert.ok(past.firstServedVersion === whole.version, `the head is version ${whole.version}, said ${past.firstServedVersion}`);
     }
     
     private async verifyListingCarriesNoState() {
@@ -712,7 +744,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             tree: tree,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             expectedKeyVersion: this.keyVersion,
         };
     }

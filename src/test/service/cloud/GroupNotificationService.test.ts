@@ -23,6 +23,7 @@ import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { createMock, hasNoCalls, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
+import { buildTree } from "../../testUtils/TreeFixtures";
 
 /**
  * A group event says what changed, not what the group now looks like.
@@ -57,11 +58,11 @@ function group(memberCount = 3): db.group.Group {
         data: "SomeGroupData" as types.group.GroupData,
         users: users,
         managers: [janek],
-        keys: [],
         version: 7 as types.group.GroupVersion,
         keyVersion: 4,
         numLeaves: 4,
         leafAssignment: [janek, alice],
+        eraFloor: 1,
     };
 }
 
@@ -91,7 +92,7 @@ function createService() {
     
     // The notification path must not read group state any more; a call here is the regression.
     const groupRepository = createMock<GroupRepository>({});
-    mock(groupRepository, "getFullState", async () => ({tree: null, history: []}));
+    mock(groupRepository, "getFullState", async () => ({tree: buildTree(["janek"], 1), history: []}));
     
     const repositoryFactory = createMock<RepositoryFactory>({});
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
