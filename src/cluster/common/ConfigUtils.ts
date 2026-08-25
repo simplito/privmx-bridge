@@ -16,6 +16,7 @@ import { DateUtils } from "../../utils/DateUtils";
 import * as types from "../../types";
 import { Callbacks } from "../../service/event/Callbacks";
 import { Logger } from "../../service/log/Logger";
+import { TypesValidator } from "../../api/TypesValidator";
 
 export interface Config {
     cloudUrl?: string;
@@ -71,6 +72,8 @@ export interface Config {
         whitelist: types.core.IPAddress[];
     };
     maximumChannelsPerSession: number,
+    /** Largest group an operator allows, capped by `TypesValidator.MAX_GROUP_MEMBERS`. */
+    maxGroupMembers: number,
     streams: {
         enabled: boolean;
         mediaServer: {
@@ -179,6 +182,10 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             whitelist: process.env.PMX_LIMITER_WHITELIST ? process.env.PMX_LIMITER_WHITELIST.split(",") as types.core.IPAddress[] : [],
         },
         maximumChannelsPerSession: parseInt(process.env.PMX_MAX_CHANNELS_PER_SESSION || "", 10) || 128,
+        maxGroupMembers: Math.min(
+            parseInt(process.env.PMX_MAX_GROUP_MEMBERS || "", 10) || TypesValidator.MAX_GROUP_MEMBERS,
+            TypesValidator.MAX_GROUP_MEMBERS,
+        ),
         streams: {
             enabled: Boolean(process.env.PMX_STREAM_ENABLED === "true"),
             mediaServer: {

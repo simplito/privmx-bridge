@@ -254,9 +254,34 @@ it("pruning the archive keeps the epoch registry, because an old key held locall
     assert.strictEqual("keyHistory" in updates[0].set, false);
 });
 
-it("cutting an era records the floor and touches no key material", async () => {
-    // Entries below the floor are unreachable, but dropping them is a decision about key material and belongs to
-    // BR-14, not to a change of where state is stored.
+it("cutting an era drops the key material for the epochs it closes", async () => {
+    // Below the floor there is nothing left to do with either field: the registry entry has no rung to verify
+    // against, and the ciphertext is addressed to a grant key nobody can climb to.
+    const groupKeys: types.cloud.GroupKeysEntry[] = [
+        {group: groupId, keys: [
+            {keyId: keyId, data: "old" as types.core.UserKeyData, groupEpoch: 2},
+            {keyId: newKeyId, data: "current" as types.core.UserKeyData, groupEpoch: 5},
+        ]},
+    ];
+    const keyHistory: types.cloud.GroupPubKeyAtEpoch[] = [1, 2, 3, 5].map(keyVersion => ({
+        keyVersion: keyVersion,
+        groupPubKey: `pub-${keyVersion}` as unknown as types.cloud.GroupPubKey,
+    }));
+    const {repository, state, updates} = createRepository();
+    await repository.cutEra(group({groupKeys, keyHistory}), 4);
+    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["eraFloor", "groupKeys", "keyHistory", "lastModificationDate"]);
+    assert.deepStrictEqual(
+        (updates[0].set.keyHistory as types.cloud.GroupPubKeyAtEpoch[]).map(e => e.keyVersion), [5],
+        "only epochs at or above the floor survive",
+    );
+    const survivingGroupKeys = updates[0].set.groupKeys as types.cloud.GroupKeysEntry[];
+    assert.deepStrictEqual(survivingGroupKeys[0].keys.map(k => k.groupEpoch), [5]);
+    hasOneCall(state.deleteRungsTargetingBelow);
+});
+
+it("pruning the archive still touches no key material", async () => {
+    // The other direction, and deliberately so: pruning is housekeeping, and a member holding an old epoch key
+    // locally has to keep being able to verify it and open what it wraps.
     const groupKeys: types.cloud.GroupKeysEntry[] = [
         {group: groupId, keys: [{keyId: keyId, data: "old" as types.core.UserKeyData, groupEpoch: 2}]},
     ];
@@ -264,10 +289,9 @@ it("cutting an era records the floor and touches no key material", async () => {
         keyVersion: keyVersion,
         groupPubKey: `pub-${keyVersion}` as unknown as types.cloud.GroupPubKey,
     }));
-    const {repository, state, updates} = createRepository();
-    await repository.cutEra(group({groupKeys, keyHistory}), 4);
-    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["eraFloor", "lastModificationDate"]);
-    hasOneCall(state.deleteRungsTargetingBelow);
+    const {repository, updates} = createRepository();
+    await repository.pruneArchive(group({groupKeys, keyHistory}), 4);
+    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["archivePrunedBelow", "lastModificationDate"]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

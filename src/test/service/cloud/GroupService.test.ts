@@ -33,6 +33,8 @@ import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidato
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
+import { Config } from "../../../cluster/common/ConfigUtils";
+import { TypesValidator } from "../../../api/TypesValidator";
 
 // The bridge no longer signs or verifies group data: signing/verification is the endpoint's responsibility
 // (committed inside the opaque `data`). These tests exercise the bridge's storage, ACL, coverage, version-CAS
@@ -121,7 +123,7 @@ function createGroupService(groupReferenced = false) {
     const groupRotationRateLimiter = createMock<GroupRotationRateLimiter>({});
     mock(groupRotationRateLimiter, "check", async () => ({allowed: true}));
     mock(groupRotationRateLimiter, "record", async () => {});
-    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter);
+    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS} as Config);
     
     const containerRepo = {isGroupReferenced: async () => groupReferenced};
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);

@@ -137,3 +137,34 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
     assert.strictEqual(converted.treeScope, "full");
     assert.strictEqual(converted.ownLeafPosition, undefined);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// history windowing (BR-09)
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("serves the whole history, from genesis, when the caller does not say what it has", async () => {
+    const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
+    assert.strictEqual(converted.history.length, 4);
+    assert.strictEqual(converted.firstServedVersion, 1, "from genesis");
+});
+
+it("says where a windowed history starts", async () => {
+    // The window is applied by the repository query; the converter reports what it was handed, so a client can
+    // tell a window from a full history without repeating the server's arithmetic.
+    const windowed = state();
+    windowed.history = windowed.history.filter(entry => entry.version >= 3);
+    const converted = new GroupConverter().convertGroup(alice, group, windowed, "full");
+    assert.strictEqual(converted.history.length, 2);
+    assert.strictEqual(converted.data.length, 2);
+    assert.strictEqual(converted.firstServedVersion, 3);
+});
+
+it("reports the current version when the window turns out empty", async () => {
+    // A client asking from above the head has nothing to verify, and has to be able to see that rather than
+    // read an empty array as "this group has no history".
+    const empty = state();
+    empty.history = [];
+    const converted = new GroupConverter().convertGroup(alice, group, empty, "full");
+    assert.deepStrictEqual(converted.history, []);
+    assert.strictEqual(converted.firstServedVersion, group.version);
+});

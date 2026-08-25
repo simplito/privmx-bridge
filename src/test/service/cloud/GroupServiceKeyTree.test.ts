@@ -36,6 +36,8 @@ import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
+import { Config } from "../../../cluster/common/ConfigUtils";
+import { TypesValidator } from "../../../api/TypesValidator";
 
 /**
  * Service-level tests for tree-backed group membership.
@@ -136,7 +138,7 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
     };
 }
 
-function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[]} = {}) {
+function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number} = {}) {
     let archiveWindow: {from?: number, to?: number}|null = null;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -153,6 +155,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     const groupService = new GroupService(
         repositoryFactory, activeUsersMap, "localhost" as types.core.Host, cloudKeyService, groupNotificationService,
         cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter,
+        {maxGroupMembers: options.maxGroupMembers ?? TypesValidator.MAX_GROUP_MEMBERS} as Config,
     );
     
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
@@ -279,6 +282,57 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
         buildTree(SEATING, 1),
     );
     hasOneCall(groupRepository.createGroup);
+});
+
+it("SECURITY: createGroup refuses per-member key entries on a tree-backed group", async () => {
+    // There is nothing to distribute: members climb to the grant key instead.
+    const {groupService, groupRepository} = createGroupService();
+    await expectFailure("INVALID_PARAMS", () => groupService.createGroup(
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId,
+        [{user: alice, keyId: keyId, data: "blob" as types.core.UserKeyData}], {},
+        buildTree(SEATING, 1),
+    ));
+    hasNoCalls(groupRepository.createGroup);
+});
+
+it("createGroup stores the metadata key as one self-addressed entry", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    await groupService.createGroup(
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, [], {},
+        buildTree(SEATING, 1),
+        [{groupEpoch: 1, keyId: keyId, data: "self-addressed" as types.core.UserKeyData}],
+    );
+    const call = groupRepository.createGroup.mock.calls[0];
+    const groupKeys = [...call][12] as types.cloud.GroupKeysEntry[];
+    assert.strictEqual(groupKeys.length, 1, "one entry, whatever the group's size");
+    assert.strictEqual(groupKeys[0].keys[0].groupEpoch, 1);
+});
+
+it("createGroup refuses a self-addressed entry naming an epoch the group does not start at", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    await expectFailure("INVALID_PARAMS", () => groupService.createGroup(
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, [], {},
+        buildTree(SEATING, 1),
+        [{groupEpoch: 2, keyId: keyId, data: "self-addressed" as types.core.UserKeyData}],
+    ));
+    hasNoCalls(groupRepository.createGroup);
+});
+
+it("createGroup refuses more members than the configured limit, and says so", async () => {
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {maxGroupMembers: 3});
+    const tooMany = ["u1", "u2", "u3", "u4"].map(u => u as types.cloud.UserId);
+    const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.createGroup(
+        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, keyId, [], {},
+    ));
+    assert.deepStrictEqual(error.getData(), {limit: 3, requested: 5}, "the error carries both numbers");
+    hasNoCalls(groupRepository.createGroup);
+});
+
+it("addMember refuses to cross the limit", async () => {
+    const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group, {maxGroupMembers: 3});
+    await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.addMember(janekCloudUser, additionModel(group)));
+    hasNoCalls(groupRepository.addMemberWithTree);
 });
 
 it("createGroup rejects a tree that does not seat every member", async () => {
@@ -563,24 +617,31 @@ it("removeMember does not charge the rotation budget for a rejected removal", as
     hasNoCalls(groupRotationRateLimiter.record);
 });
 
-it("addMember accepts one metadata-key entry for the newcomer", async () => {
-    // The tree hands over the grant key; this entry is only the group's metadata key, and it is a single wrap.
+it("addMember refuses a key entry for the newcomer, who climbs instead", async () => {
+    // The newcomer reaches the metadata key by climbing to the grant key and opening the group's single
+    // self-addressed entry, like everybody else.
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
-    const {groupService, groupRepository, cloudKeyService} = createGroupService(group);
-    mock(cloudKeyService, "buildKeys", ((_ids: unknown, _old: unknown, inserts: types.cloud.KeyEntrySet[]) =>
-        inserts.map(i => ({user: i.user, keys: [{keyId: i.keyId, data: i.data}]}))) as never);
-    await groupService.addMember(janekCloudUser, {
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("INVALID_PARAMS", () => groupService.addMember(janekCloudUser, {
         ...additionModel(group),
         keys: [{user: dave, keyId: keyId, data: "blob" as types.core.UserKeyData}],
-    });
-    hasOneCall(groupRepository.addMemberWithTree);
+    }));
+    hasNoCalls(groupRepository.addMemberWithTree);
+});
+
+it("addMember leaves the entries an older group already carries alone", async () => {
+    // Groups made before the rule keep what they have: the rule stops the growth, it does not rewrite history.
+    const legacy = [{user: bob, keys: [{keyId: keyId, data: "old" as types.core.UserKeyData}]}];
+    const group = treeBackedGroup({users: [bob, carol], keys: legacy, tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group);
+    await groupService.addMember(janekCloudUser, additionModel(group));
+    const call = groupRepository.addMemberWithTree.mock.calls[0];
+    assert.deepStrictEqual([...call][0].keys, legacy, "existing entries must survive an addition untouched");
 });
 
 it("SECURITY: addMember refuses a key entry for somebody outside the group", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
-    const {groupService, groupRepository, cloudKeyService} = createGroupService(group);
-    mock(cloudKeyService, "buildKeys", ((_ids: unknown, _old: unknown, inserts: types.cloud.KeyEntrySet[]) =>
-        inserts.map(i => ({user: i.user, keys: [{keyId: i.keyId, data: i.data}]}))) as never);
+    const {groupService, groupRepository} = createGroupService(group);
     await expectFailure("INVALID_PARAMS", () => groupService.addMember(janekCloudUser, {
         ...additionModel(group),
         keys: [{user: "outsider" as types.cloud.UserId, keyId: keyId, data: "blob" as types.core.UserKeyData}],

@@ -45,11 +45,13 @@ export class ContextApiValidator extends BaseValidator {
             resourceId: this.builder.optional(this.tv.uuidv4),
             type: this.tv.optResourceType,
             groupPubKey: this.tv.groupPubKey,
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             data: this.tv.groupData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, TypesValidator.MAX_GROUP_MEMBERS),
+            // At most one: the group is a grantee of itself and has exactly one grant key per epoch.
+            groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySetForNewGroup, 1)),
             policy: this.builder.optional(this.tv.containerPolicy),
             tree: this.builder.optional(this.tv.groupTreeState),
         }));
@@ -57,11 +59,11 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.groupId,
             groupPubKey: this.tv.groupPubKey,
             resourceId: this.builder.optional(this.tv.uuidv4),
-            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
-            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384),
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             data: this.tv.groupData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, TypesValidator.MAX_GROUP_MEMBERS),
             version: this.builder.int,
             force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerPolicy),
@@ -71,7 +73,7 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             data: this.tv.groupData,
             keyId: this.tv.keyId,
-            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
+            keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, TypesValidator.MAX_GROUP_MEMBERS),
             expectedKeyVersion: this.builder.int,
             confirmationTag: this.builder.optional(this.tv.base64),
         }));
@@ -87,7 +89,9 @@ export class ContextApiValidator extends BaseValidator {
             // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
             forUserId: this.builder.optional(this.tv.cloudUserId),
             // The same, for a seat nobody holds yet — what an addition plans against.
-            forPosition: this.builder.optional(this.builder.range(this.builder.int, 0, 16384)),
+            forPosition: this.builder.optional(this.builder.range(this.builder.int, 0, TypesValidator.MAX_GROUP_MEMBERS - 1)),
+            // History from this version on: a warm client asks for what it has not verified yet.
+            fromVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
         this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
@@ -103,7 +107,7 @@ export class ContextApiValidator extends BaseValidator {
             // Exactly one of the two; the service refuses a call that brings neither.
             transition: this.builder.optional(this.tv.groupTreeAdditionTransition),
             tree: this.builder.optional(this.tv.groupTreeState),
-            keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384)),
+            keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, TypesValidator.MAX_GROUP_MEMBERS)),
             expectedKeyVersion: this.builder.int,
         }));
         this.registerMethod("groupRemoveMember", this.builder.createObject({
@@ -118,7 +122,7 @@ export class ContextApiValidator extends BaseValidator {
             tree: this.builder.optional(this.tv.groupTreeState),
             // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
-            keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384)),
+            keys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, TypesValidator.MAX_GROUP_MEMBERS)),
             // At most one: the group is a grantee of itself, and it has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 4)),
             expectedKeyVersion: this.builder.int,

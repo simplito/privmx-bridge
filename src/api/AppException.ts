@@ -137,6 +137,7 @@ export const API_ERROR_CODES = {
     "GROUP_TREE_INVALID"                    : {code: 0x621E, message: "Submitted group key tree is malformed or incomplete"},
     "GROUP_ARCHIVE_INVALID"                 : {code: 0x621F, message: "Submitted group key archive rungs are invalid"},
     "GROUP_HAS_NO_TREE"                     : {code: 0x6220, message: "Group is not backed by a key tree"},
+    "GROUP_MEMBER_LIMIT_EXCEEDED"           : {code: 0x6221, message: "Group would exceed the configured member limit"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

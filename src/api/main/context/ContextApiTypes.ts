@@ -114,7 +114,17 @@ export interface GroupCreateModel {
     managers: types.cloud.UserId[];
     data: types.group.GroupData;
     keyId: types.core.KeyId;
+    /**
+     * Per-member entries for the group's metadata key. A flat group needs one per member; a **tree-backed group
+     * must send none** and uses `groupKeys` instead.
+     */
     keys: types.cloud.KeyEntrySet[];
+    /**
+     * The metadata key wrapped once to the group's own grant public key, at epoch 1. One entry, whatever the
+     * group's size: members open it by climbing to a key they can already reach. No `group` — the id does not
+     * exist yet, and the server files the entry against the group it is creating.
+     */
+    groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">[];
     policy?: types.cloud.ContainerPolicy;
     /**
      * Hidden key tree for the group. Passing it makes the group tree-backed: members reach the grant key by
@@ -297,6 +307,12 @@ export interface GroupGetModel {
      * leaf serves the nodes that growth re-parents.
      */
     forPosition?: number;
+    /**
+     * Serve history from this version on. A client verifies the signed chain once and remembers where it got to;
+     * everything below that it already holds, and each entry carries the roster it was written with. Absent means
+     * from genesis, which is what a client seeing the group for the first time needs.
+     */
+    fromVersion?: number;
 }
 
 export interface GroupGetResult {
@@ -371,6 +387,11 @@ export interface GroupInfo {
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
+    /**
+     * Version of the first entry in `data` and `history`. Always present, so a client can tell what it was given
+     * rather than assuming: 1 means from genesis, anything higher means the response is a window.
+     */
+    firstServedVersion: types.group.GroupVersion;
     // ── Tree state, present only on a tree-backed group. Flat groups serve none of it and behave as before. ──
     numLeaves?: number;
     leafAssignment?: types.cloud.UserId[];

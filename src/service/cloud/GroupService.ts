@@ -30,6 +30,8 @@ import { TransitionProblem, TreeProblem, TreeValidator } from "./keytree/TreeVal
 import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
 import { TreeMath } from "./keytree/TreeMath";
+import { Config } from "../../cluster/common/ConfigUtils";
+import { Utils } from "../../utils/Utils";
 
 export class GroupService extends BaseContainerService {
     
@@ -45,6 +47,7 @@ export class GroupService extends BaseContainerService {
         private policyService: PolicyService,
         private cloudAccessValidator: CloudAccessValidator,
         private groupRotationRateLimiter: GroupRotationRateLimiter,
+        private config: Config,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -70,9 +73,9 @@ export class GroupService extends BaseContainerService {
      * Separate from `getGroup` so that the callers which need only the document — every membership operation,
      * the rate limiter, the epoch check — do not drag a tree and a full history along with it.
      */
-    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined) {
+    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromVersion?: number) {
         const group = await this.getGroup(executor, groupId, type);
-        const state = await this.repositoryFactory.createGroupRepository().getFullState(group);
+        const state = await this.repositoryFactory.createGroupRepository().getFullState(group, fromVersion);
         return {group, state};
     }
     
@@ -88,8 +91,10 @@ export class GroupService extends BaseContainerService {
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
-        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, tree?: types.cloud.GroupTreeState) {
+        keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, tree?: types.cloud.GroupTreeState,
+        groupKeys: Omit<types.cloud.GroupKeyEntrySet, "group">[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
+        this.assertWithinMemberLimit(Utils.uniqueFromArrays(users, managers).length);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
@@ -97,8 +102,9 @@ export class GroupService extends BaseContainerService {
         // entry per member. The tree takes over the job the `keys` list does for a flat group, and the
         // structural check below takes over from verifyThatOnlyGivenClientsHaveAccess.
         const newKeys = tree
-            ? await this.checkKeysForTreeBackedGroup(contextId, keys, keyId, users, managers)
+            ? await this.checkKeysForTreeBackedGroup(contextId, keys, users, managers)
             : await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = tree ? this.buildSelfAddressedKeysForNewGroup(groupKeys, keyId) : [];
         if (tree) {
             // Epoch 1: a new group's first grant keypair.
             this.assertTreeIsValid(tree, {users, managers}, 1);
@@ -110,7 +116,7 @@ export class GroupService extends BaseContainerService {
             // initial tree must not survive a failure that leaves the group itself uncreated, or the other way round.
             const group = await this.repositoryFactory.withTransaction(session =>
                 this.repositoryFactory.createGroupRepository(session)
-                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy, tree),
+                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, newKeys, policy, tree, newGroupKeys),
             );
             this.groupNotificationService.sendCreatedGroup(group, context.solution);
             return group;
@@ -233,6 +239,7 @@ export class GroupService extends BaseContainerService {
             if (oldGroup.users.includes(model.userId) || oldGroup.managers.includes(model.userId)) {
                 throw new AppException("INVALID_PARAMS", `user '${model.userId}' is already a member`);
             }
+            this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, [model.userId]).length);
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, [model.userId]);
             const keyVersion = groupRepository.getKeyVersion(oldGroup);
             const users = model.role === "user" ? [...oldGroup.users, model.userId] : oldGroup.users;
@@ -248,12 +255,11 @@ export class GroupService extends BaseContainerService {
             else {
                 throw new AppException("INVALID_PARAMS", "an addition needs either `transition` or `tree`");
             }
-            // One entry for the newcomer at the existing keyId — the group's metadata key, which the tree does
-            // not carry. No rotation, so nobody else is disturbed.
-            const newKeys = this.buildTreeGroupKeys(
-                [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId], oldGroup.keys, model.keys ?? [], model.keyId,
-                [...users, ...managers],
-            );
+            // The newcomer gets no key entry of their own: they climb to the grant key and open the group's
+            // single self-addressed metadata entry, the same way every other member does. Handing them one per
+            // historical keyId instead is what made the document grow with every join.
+            this.assertNoPerMemberKeys(model.keys ?? []);
+            const newKeys = oldGroup.keys;
             const result = model.transition
                 ? await groupRepository.addMemberWithTransition({
                     oldGroup,
@@ -330,11 +336,9 @@ export class GroupService extends BaseContainerService {
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
             // Fresh metadata-key entries, if the caller supplied any. The departing member's own entries are
             // dropped by the repository either way, so they cannot read metadata written under a new keyId.
-            const newKeys = this.buildTreeGroupKeys(
-                [...await groupRepository.getHistoryKeyIds(oldGroup.id), model.keyId],
-                oldGroup.keys.filter(k => k.user !== model.userId),
-                model.keys ?? [], model.keyId, [...users, ...managers],
-            );
+            // The new epoch's metadata key travels as one self-addressed entry, not one wrap per survivor.
+            this.assertNoPerMemberKeys(model.keys ?? []);
+            const newKeys = oldGroup.keys.filter(k => k.user !== model.userId);
             const newGroupKeys = this.buildSelfAddressedKeys(oldGroup, model.groupKeys ?? [], model.keyId, newKeyVersion);
             const common = {
                 keys: newKeys,
@@ -475,68 +479,73 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * A tree-backed group still accepts per-member key entries — a group may carry both while migrating — but
-     * it does not require one per member, because climbing the tree is how members reach the key.
+     * A tree-backed group carries **no** per-member key entries: the metadata key travels as a single
+     * `groupKeys` entry instead, and members open it by climbing.
      */
     private async checkKeysForTreeBackedGroup(
         contextId: types.context.ContextId,
         inserts: types.cloud.KeyEntrySet[],
-        keyId: types.core.KeyId,
         users: types.cloud.UserId[],
         managers: types.cloud.UserId[],
     ) {
-        const allUsers = [...new Set([...users, ...managers])];
+        const allUsers = Utils.uniqueFromArrays(users, managers);
         if (allUsers.length === 0) {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
+        this.assertNoPerMemberKeys(inserts);
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
-        return this.buildTreeGroupKeys([keyId], [], inserts, keyId, allUsers);
+        return [];
     }
     
     /**
-     * Builds the per-member key entries of a tree-backed group.
+     * The one self-addressed entry a new tree-backed group may carry: its own metadata key at epoch 1.
      *
-     * Only one of the two directions `verifyThatOnlyGivenClientsHaveAccess` checks applies here. That no
-     * outsider holds an entry still matters and is enforced. That *every* member holds one does not: the tree is
-     * how members reach the grant key, and the entries only carry the group's metadata key, which a client may
-     * legitimately leave untouched.
+     * There is no `group` to check against the way an update checks it — the id does not exist yet, and the
+     * repository files the entry against the group it generates.
      */
-    private buildTreeGroupKeys(
-        availableKeyIds: types.core.KeyId[],
-        oldKeys: types.cloud.UserKeysEntry[],
-        inserts: types.cloud.KeyEntrySet[],
+    private buildSelfAddressedKeysForNewGroup(
+        inserts: Omit<types.cloud.GroupKeyEntrySet, "group">[],
         keyId: types.core.KeyId,
-        members: types.cloud.UserId[],
-    ) {
+    ): Omit<types.cloud.GroupKeysEntry, "group">[] {
         for (const insert of inserts) {
-            // Checked on the submitted entries rather than only on the merged result, so an entry addressed to a
-            // non-member is refused whichever keyId it names — including one the group used in an earlier epoch.
-            if (!members.includes(insert.user)) {
-                throw new AppException("INVALID_PARAMS", `user '${insert.user}' is not a member of this group`);
+            if (insert.keyId !== keyId) {
+                throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
+            }
+            if (insert.groupEpoch !== 1) {
+                throw new AppException("INVALID_PARAMS", "a new group's groupKeys entry must name epoch 1");
+            }
+            if (!insert.data) {
+                throw new AppException("INVALID_PARAMS", "groupKeys entry carries no data");
             }
         }
-        const newKeys = this.cloudKeyService.buildKeys(availableKeyIds, oldKeys, inserts);
-        for (const entry of newKeys) {
-            const hasAccess = entry.keys.some(k => k.keyId === keyId);
-            if (hasAccess && !members.includes(entry.user)) {
-                throw new AppException("INVALID_PARAMS", `user '${entry.user}' should not have access to key '${keyId}'`);
-            }
-        }
-        return newKeys;
+        return inserts.map(insert => ({
+            keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}],
+        }));
     }
     
     /**
-     * Merges the metadata key the group wrapped **to itself**.
-     *
-     * A tree-backed group does not need one metadata-key ciphertext per member: it can wrap the key once to its
-     * own grant public key, exactly as a thread or store does when granting access to a group, and every member
-     * opens it by climbing to a key they can already reach. That single entry is what keeps a removal from
-     * costing O(n) wraps.
-     *
-     * The bridge checks only what it can: that the entry names *this* group, the epoch being created, and the
-     * keyId being introduced. It cannot check what is inside — and does not need to, since a member who cannot
-     * open it simply cannot read the metadata.
+     * One ceiling, stated once, checked before anything else about the group is validated — so exceeding it
+     * reads as "too many members" rather than as whichever field happens to overflow first.
      */
+    private assertWithinMemberLimit(requested: number) {
+        const limit = this.config.maxGroupMembers;
+        if (requested > limit) {
+            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", {limit, requested});
+        }
+    }
+    
+    /**
+     * Refuses per-member key entries on a tree-backed group, whatever the operation. This is the rule the whole
+     * design rests on, so it is checked rather than assumed. Groups created before it keep the entries they
+     * already have; nothing may add to them.
+     */
+    private assertNoPerMemberKeys(inserts: types.cloud.KeyEntrySet[]) {
+        if (inserts.length > 0) {
+            throw new AppException("INVALID_PARAMS",
+                `a tree-backed group carries no per-member key entries (got ${inserts.length}); the metadata key belongs in groupKeys`);
+        }
+    }
+    
     private buildSelfAddressedKeys(
         group: db.group.Group,
         inserts: types.cloud.GroupKeyEntrySet[],

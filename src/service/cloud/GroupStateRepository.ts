@@ -88,8 +88,22 @@ export class GroupStateRepository {
         };
     }
     
-    async getHistory(groupId: types.group.GroupId): Promise<db.group.GroupHistoryEntry[]> {
-        return this.history.query(q => q.eq("groupId", groupId)).sort("version", true).array();
+    /**
+     * History entries of one group, optionally only those from `fromVersion` on. The window goes into the query
+     * rather than filtering afterwards: each entry carries the roster it was written with, and a client that has
+     * already verified the older ones has no use for them.
+     */
+    async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
+        const entries = await this.history.query(q => fromVersion === undefined
+            ? q.eq("groupId", groupId)
+            : q.and(q.eq("groupId", groupId), q.gte("version", fromVersion as types.group.GroupVersion)),
+        ).sort("version", true).array();
+        if (entries.length > 0 || fromVersion === undefined) {
+            return entries;
+        }
+        // The head entry is never windowed out: it carries the group's current `data` and names the current
+        // keyId, so a response without it is not a smaller answer, it is an unusable one.
+        return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
     /** Every keyId the group has ever used — what a submitted key entry is checked against. Projected, so a

@@ -71,7 +71,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.tree);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.tree, model.groupKeys || []);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
@@ -103,7 +103,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGet(model: contextApi.GroupGetModel): Promise<contextApi.GroupGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type);
+        const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type, model.fromVersion);
         this.requestLogger.setContextId(group.contextId);
         return {group: this.groupConverter.convertGroup(
             cloudUser.getUser(group.contextId), group, state, model.scope ?? "path", model.forUserId, model.forPosition,

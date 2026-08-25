@@ -156,10 +156,10 @@ export class GroupRepository {
     }
     
     /** Tree plus history, for the read paths that serve a whole group. */
-    async getFullState(group: db.group.Group): Promise<db.group.GroupState> {
+    async getFullState(group: db.group.Group, fromVersion?: number): Promise<db.group.GroupState> {
         const [tree, history] = await Promise.all([
             this.state.getTree(group),
-            this.state.getHistory(group.id),
+            this.state.getHistory(group.id, fromVersion),
         ]);
         return {tree, history};
     }
@@ -169,11 +169,12 @@ export class GroupRepository {
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.group.GroupData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy,
-        tree?: types.cloud.GroupTreeState) {
+        tree?: types.cloud.GroupTreeState, groupKeys: Omit<types.cloud.GroupKeysEntry, "group">[] = []) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
+        const id = this.repository.generateId() as types.group.GroupId;
         const group: db.group.Group = {
-            id: this.repository.generateId() as types.group.GroupId,
+            id: id,
             contextId: contextId,
             type: type,
             groupPubKey: groupPubKey,
@@ -188,6 +189,9 @@ export class GroupRepository {
             keys: keys,
             version: firstVersion,
             policy: policy,
+            // The client cannot name the group it is creating, so the entry is filed against the id generated
+            // here. Nothing inside the ciphertext depends on it — it binds contextId and resourceId.
+            ...(groupKeys.length > 0 ? {groupKeys: groupKeys.map(entry => ({...entry, group: id}))} : {}),
         };
         if (resourceId) {
             group.clientResourceId = resourceId;
@@ -501,16 +505,26 @@ export class GroupRepository {
     
     /**
      * Closes the current era at `newFloor`: nothing below it can be reached by descending any more, so the rungs
-     * pointing there are dropped.
+     * pointing there go, and so does the key material that described those epochs.
      *
-     * Touches no key material on the document: `keyHistory` and `groupKeys` keep their entries for epochs below
-     * the floor even though nothing can climb to them any more. Dropping those is BR-14.
+     * `keyHistory` and `groupKeys` are dropped below the floor because there is nothing left to do with them: the
+     * registry entry has no rung to verify against, and the ciphertext is addressed to a grant key nobody can
+     * climb to. Keeping them would leave two fields growing with every rotation for the life of the group.
+     *
+     * `pruneArchive` deliberately does **not** do this. It is housekeeping on the archive, and a member still
+     * holding an old epoch key locally has to keep being able to verify it and open what it wraps. Cutting an era
+     * is the operation that says those epochs are gone for good.
      */
     async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = this.getKeyVersion(oldGroup);
         const changes: Partial<db.group.Group> = {
             eraFloor: newFloor,
             lastModificationDate: DateUtils.now(),
+            keyHistory: (oldGroup.keyHistory ?? []).filter(entry => entry.keyVersion >= newFloor),
+            groupKeys: (oldGroup.groupKeys ?? []).map(entry => ({
+                ...entry,
+                keys: entry.keys.filter(key => (key.groupEpoch ?? 0) >= newFloor),
+            })).filter(entry => entry.keys.length > 0),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
             return null;
