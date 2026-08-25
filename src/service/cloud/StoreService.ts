@@ -272,7 +272,8 @@ export class StoreService extends BaseContainerService {
         if (type && store.type !== type) {
             throw new AppException("STORE_DOES_NOT_EXIST");
         }
-        return {store, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(store.contextId, [store]);
+        return {store, ownGroupIds, groupEpochs};
     }
     
     async getAllStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store) {
@@ -283,7 +284,8 @@ export class StoreService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const stores = await this.repositoryFactory.createStoreRepository().getAllStores(contextId, type, listParams, sortBy);
-        return {user, stores, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, stores.list);
+        return {user, stores, ownGroupIds, groupEpochs};
     }
     
     async getMyStores(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.store.StoreType|undefined, listParams: types.core.ListModel, sortBy: keyof db.store.Store, scope: types.core.ContainerAccessScope) {
@@ -301,7 +303,8 @@ export class StoreService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const stores = await this.repositoryFactory.createStoreRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
-        return {user, stores, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, stores.list);
+        return {user, stores, ownGroupIds, groupEpochs};
     }
     
     async getStoresByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.store.StoreId>) {
@@ -336,7 +339,8 @@ export class StoreService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return {file, store, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(store.contextId, [store]);
+        return {file, store, ownGroupIds, groupEpochs};
     }
     
     async getStoreFileMany(executor: Executor, storeId: types.store.StoreId, fileIds: types.store.StoreFileId[], failOnError: boolean) {
@@ -383,7 +387,8 @@ export class StoreService extends BaseContainerService {
             }
             files.push(file);
         }
-        return {store, files, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(store.contextId, [store]);
+        return {store, files, ownGroupIds, groupEpochs};
     }
     
     async getStoreFiles(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
@@ -400,7 +405,8 @@ export class StoreService extends BaseContainerService {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileList", ["storeId=" + storeId]);
         });
         const files = await this.repositoryFactory.createStoreFileRepository().getPageByStore(storeId, listParams, sortBy || "createDate");
-        return {store, files, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(store.contextId, [store]);
+        return {store, files, ownGroupIds, groupEpochs};
     }
     
     async getMyStoreFiles(executor: CloudUser, storeId: types.store.StoreId, listParams: types.core.ListModel, sortBy?: keyof db.store.StoreFile) {
@@ -417,7 +423,8 @@ export class StoreService extends BaseContainerService {
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileListMy", ["storeId=" + storeId]);
         });
         const files = await this.repositoryFactory.createStoreFileRepository().getPageByStoreAndUser(storeId, executor.getUser(store.contextId), listParams, sortBy || "createDate");
-        return {store, files, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(store.contextId, [store]);
+        return {store, files, ownGroupIds, groupEpochs};
     }
     
     async getStoreFiles2(executor: Executor, storeId: types.store.StoreId, listParams: types.core.ListModel2<types.store.StoreFileId>) {

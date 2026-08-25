@@ -137,6 +137,52 @@ the group has `keyVersion === 0` (not yet rotated) — the bridge skips the chec
 
 ---
 
+### 2.4 `staleGroups` (on every container payload)
+
+Every user-facing container payload — `threadGet`/`threadList`, and the same for store, inbox, kvdb and stream
+room, plus the per-recipient container in a WebSocket notification — carries:
+
+```ts
+staleGroups: string[]   // ids of granted groups whose keyVersion is past the epoch the current keyId was wrapped to
+```
+
+Empty means there is nothing to re-key. Non-empty lists exactly the grants a `{module}RotateKeys` has to
+re-wrap, so **a client does not need a `groupGet` per grant to decide whether re-keying is due**.
+
+- Not narrowed to the caller's own groups: the manager doing the re-key is often a member of none of them.
+- Computed by the same rule as the write-side refusal (`CONTAINER_GROUP_EPOCH_OUTDATED`), so what a read tells
+  you agrees with what the next item write will accept.
+- A snapshot taken while the response was served: a rotation a moment later leaves it behind and the write is
+  still refused. It makes the refusal avoidable, it does not promise it cannot happen.
+- Cost on the server: one projected `keyVersion` lookup per request, unioned across the whole page. A container
+  with no group grants costs no query.
+
+---
+
+### 2.5 `groupList` filtered by id (the follow-up call)
+
+`staleGroups` names the groups; re-keying needs each one's current `groupPubKey` and epoch. `groupList` takes
+the same `query` every container listing takes, and `#id` addresses the group id:
+
+```json
+{"contextId": "…", "query": {"#id": {"$in": ["g1", "g2"]}}, "skip": 0, "limit": 100, "sortOrder": "asc"}
+```
+
+One request returns a `GroupSummary` per id, carrying `groupPubKey` and `keyVersion` — no `groupGet` per
+grant, and no full group state. Notes:
+
+- `limit` caps at 100, so that is the most ids one call resolves.
+- An id that does not exist, or belongs to another context, is simply absent — the `contextId` filter is
+  applied before the query. A client's id list comes from a container payload that may be out of date, so this
+  is a skip, not an error.
+- Results are ordered by `sortBy` (`createDate`/`lastModificationDate`), not by the order of the id list.
+- Only whitelisted `#`-prefixed fields are queryable (`MongoQueryConverter`); a bare key resolves against
+  `data.publicMetaObject`, which is meaningless for a group.
+- `groupGet` remains the only call serving `keyHistory`, tree state and history — and it requires membership in
+  the group under the default `group.get: "user"` policy, while `groupList` is open under `group.listAll: "all"`.
+
+---
+
 ## 3. Policy changes
 
 ### 3.1 New `rotateKeys` policy entry
@@ -191,7 +237,8 @@ When a group member is removed (handled by `groupUpdate`), any containers that l
 must be re-keyed so the removed member can no longer decrypt new content.
 
 1. After a `groupUpdate` that bumps `keyVersion`, enumerate all containers that have the group in
-   `groupKeys`.
+   `groupKeys`. Which of them actually need it is served with the container itself, in `staleGroups`
+   (§2.4) — no `groupGet` per grant.
 2. For each container: call `{module}RotateKeys` with a fresh `keyId` and new `keys` for all direct
    members.  When re-supplying `groupKeys`, set `groupEpoch` to the group's new `keyVersion`.
 3. The bridge validates that `groupEpoch` matches; it rejects stale entries.

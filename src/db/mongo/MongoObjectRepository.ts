@@ -111,6 +111,30 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         });
     }
     
+    /**
+     * `getMulti` reading only the named fields.
+     *
+     * A separate method rather than an argument on `getMulti`: the two hand back different shapes, and the
+     * single-flight cache is keyed per call — a projected read must not be served to a caller that asked for
+     * whole documents, nor the other way round.
+     */
+    async getMultiProjected<X>(keys: K[], projection: {[field: string]: 1}): Promise<X[]> {
+        return this.withSingleFlightCache(`${this.collectionName}/getMultiProjected:${Utils.hashObject({keys, projection})}`, async () => {
+            const startTime = MicroTimeUtils.now();
+            this.metricService.addDbRequest();
+            try {
+                if (keys.length === 0) {
+                    return [];
+                }
+                const list = await this.collection.find({_id: {$in: keys}}, this.getOptions<mongodb.FindOptions>({projection: projection})).toArray();
+                return list.map(x => this.convertFromDbObjEx(x as X));
+            }
+            finally {
+                this.logger.time(startTime, "Mongo getMultiProjected", this.collection.collectionName, keys);
+            }
+        });
+    }
+    
     async getOrDefault(key: K, def: V): Promise<V> {
         const startTime = MicroTimeUtils.now();
         this.metricService.addDbRequest();

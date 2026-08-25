@@ -10,6 +10,7 @@ limitations under the License.
 */
 
 import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
+import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
@@ -41,6 +42,12 @@ export class GroupRepository {
         policy: 1,
     };
     
+    /** Mirrors `db.group.GroupEpochFields`; see there for why this read is kept this narrow. */
+    private static readonly EPOCH_PROJECTION: {[K in Exclude<keyof db.group.GroupEpochFields, "id">]: 1} = {
+        contextId: 1,
+        keyVersion: 1,
+    };
+    
     constructor(
         private repository: MongoObjectRepository<types.group.GroupId, db.group.Group>,
         private state: GroupStateRepository,
@@ -56,14 +63,18 @@ export class GroupRepository {
     }
     
     /**
-     * A page of groups with only the fields a listing serves.
+     * A page of groups with only the fields a listing serves, optionally filtered by `listParams.query`.
      *
      * Projected, not filtered afterwards: the fields left out are the ones that grow with the group, so reading
      * whole documents would cost a page of them regardless of how small the response is.
+     *
+     * The `contextId` match runs first so no query can reach another context, and the query runs before the
+     * projection so a field left out of the summary stays filterable — same stage order as a container listing.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
+        const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
-            [{$match: {contextId: contextId}}, {$project: GroupRepository.SUMMARY_PROJECTION}],
+            [{$match: {contextId: contextId}}, ...mongoQueries, {$project: GroupRepository.SUMMARY_PROJECTION}],
             listParams,
             sortBy,
         );
@@ -75,32 +86,32 @@ export class GroupRepository {
     }
     
     /**
-     * Which of the given groups each of their members belongs to (users+managers), keyed by userId.
+     * Everything a fan-out over a container's group grantees needs, out of the one lookup it already does:
      *
-     * Used to expand grantees for notifications: the keys are the distinct member userIds, and each value is
-     * that recipient's own grants among `groupIds`. Both come out of the one `getMulti` this always did, so a
-     * fan-out can narrow a payload per recipient without a second lookup — the same information
-     * `getGroupsOfUser` returns for a single caller, already intersected with the container's grants.
+     * - `groupsByUser` — which of the given groups each of their members (users+managers) belongs to. The keys
+     *   are the distinct member userIds, so they double as the recipient list; each value narrows that
+     *   recipient's `groupKeys`. It is the same information `getGroupsOfUser` returns for a single caller,
+     *   already intersected with the container's grants.
+     * - `groupEpochs` — each group's current epoch, so a per-recipient payload can carry the same `staleGroups`
+     *   a `*Get` would serve. It is a field of the documents this reads anyway.
+     *
+     * Whole documents, unlike `getKeyVersions`: expanding grantees needs the membership lists.
      */
-    async getMemberGroupsMap(groupIds: types.group.GroupId[]): Promise<Map<types.cloud.UserId, types.group.GroupId[]>> {
-        const membership = new Map<types.cloud.UserId, types.group.GroupId[]>();
+    async getGranteeView(groupIds: types.group.GroupId[]): Promise<{groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
+        const groupsByUser = new Map<types.cloud.UserId, types.group.GroupId[]>();
+        const groupEpochs = new Map<types.group.GroupId, number>();
         if (groupIds.length === 0) {
-            return membership;
+            return {groupsByUser, groupEpochs};
         }
         const groups = await this.repository.getMulti(groupIds);
         for (const group of groups) {
-            for (const member of [...group.users, ...group.managers]) {
-                const own = membership.get(member);
-                if (!own) {
-                    membership.set(member, [group.id]);
-                }
-                else if (!own.includes(group.id)) {
-                    // A user listed as both member and manager of the same group must not get it twice.
-                    own.push(group.id);
-                }
+            groupEpochs.set(group.id, this.getKeyVersion(group));
+            // A Set over the group's own roster: a user listed as both member and manager must not get it twice.
+            for (const member of new Set([...group.users, ...group.managers])) {
+                groupsByUser.set(member, [...(groupsByUser.get(member) ?? []), group.id]);
             }
         }
-        return membership;
+        return {groupsByUser, groupEpochs};
     }
     
     /** Verifies that all given groups exist in the given context (mirrors CloudKeyService.checkUsersExistance). */
@@ -584,15 +595,24 @@ export class GroupRepository {
         await this.state.deleteState(id);
     }
     
-    getKeyVersion(group: db.group.Group): number {
+    /** Takes just the field, so the projected read in `getKeyVersions` answers with the same rule as a full document. */
+    getKeyVersion(group: Pick<db.group.Group, "keyVersion">): number {
         return group.keyVersion ?? 0;
     }
     
+    /**
+     * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
+     *
+     * Projected down to `GroupEpochFields`, not read whole and filtered afterwards. This is asked on every
+     * container read and on every item write into a group-granted container, and one int per group is all it
+     * yields — reading the documents would drag `keys` (~1.29 KB per member) and `groupKeys` (one entry per
+     * rotation) along for nothing, which on a page of containers is megabytes of BSON to answer a comparison.
+     */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
             return new Map();
         }
-        const groups = await this.repository.getMulti(groupIds);
+        const groups = await this.repository.getMultiProjected<db.group.GroupEpochFields>(Utils.unique(groupIds), GroupRepository.EPOCH_PROJECTION);
         const map = new Map<types.group.GroupId, number>();
         for (const g of groups) {
             if (g.contextId === contextId) {

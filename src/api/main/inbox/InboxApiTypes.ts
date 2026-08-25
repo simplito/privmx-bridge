@@ -26,6 +26,7 @@ export interface Inbox {
     keys: types.core.KeyEntry[];
     groups: types.cloud.GroupGrant[];
     groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.inbox.InboxVersion;
     type?: types.inbox.InboxType;
     policy: types.cloud.ContainerWithoutItemPolicy;

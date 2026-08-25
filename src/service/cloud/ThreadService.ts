@@ -57,7 +57,8 @@ export class ThreadService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return {thread, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, ownGroupIds, groupEpochs};
     }
     
     async getMyThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope) {
@@ -75,7 +76,8 @@ export class ThreadService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
-        return {user, threads, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, threads.list);
+        return {user, threads, ownGroupIds, groupEpochs};
     }
     
     async getAllThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
@@ -86,7 +88,8 @@ export class ThreadService extends BaseContainerService {
         }
         const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const threads = await this.repositoryFactory.createThreadRepository().getAllThreads(contextId, type, listParams, sortBy);
-        return {user, threads, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(contextId, threads.list);
+        return {user, threads, ownGroupIds, groupEpochs};
     }
     
     async getThreadsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.thread.ThreadId>) {
@@ -137,7 +140,8 @@ export class ThreadService extends BaseContainerService {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
         });
         const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThread(threadId, listParams, sortBy || "createDate");
-        return {thread, messages, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, messages, ownGroupIds, groupEpochs};
     }
     
     async getThreadMyMessages(executor: CloudUser, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy?: keyof db.thread.ThreadMessage) {
@@ -154,7 +158,8 @@ export class ThreadService extends BaseContainerService {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGetMy", ["threadId=" + thread.id]);
         });
         const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThreadAndUser(executor.getUser(thread.contextId), threadId, listParams, sortBy || "createDate");
-        return {thread, messages, ownGroupIds};
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, messages, ownGroupIds, groupEpochs};
     }
     
     async getThreadMessages2(executor: Executor, threadId: types.thread.ThreadId,  listParams: types.core.ListModel2<types.thread.ThreadMessageId>) {

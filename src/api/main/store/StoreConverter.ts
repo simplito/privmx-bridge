@@ -12,16 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as storeApi from "./StoreApiTypes";
 import * as db from "../../../db/Model";
-import { ownGroupKeysOf } from "../GroupKeysNarrowing";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class StoreConverter {
     
-    /**
-     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
-     *                    optional so the compiler names every path that serves a store to a user; `undefined`
-     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
-     */
-    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: storeApi.Store = {
             id: store.id,
             contextId: store.contextId,
@@ -36,6 +32,7 @@ export class StoreConverter {
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
             groups: store.groups || [],
             groupKeys: ownGroupKeysOf(store.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(store, groupEpochs),
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,
             files: store.files,
