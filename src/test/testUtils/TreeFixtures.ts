@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../types";
 import { TreeMath } from "../../service/cloud/keytree/TreeMath";
 import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
+import { LadderMath } from "../../service/cloud/keytree/LadderMath";
 
 /**
  * Hidden key tree fixtures for the bridge's tests.
@@ -379,4 +380,33 @@ export function withTransitionNodeKeys(
             publicKey: keyFor(node.nodeIndex, node.generation),
         })),
     };
+}
+
+/**
+ * The one edge a rotation writes: the new grant key wrapped to the root, which the rotation does not move.
+ *
+ * `childGeneration` is taken from the tree rather than assumed, so a fixture built against a refreshed root
+ * stays honest — that is exactly the staleness the bridge checks for.
+ */
+export function rotationGrantEdge(tree: types.cloud.GroupTreeState, newKeyVersion: number): types.cloud.GroupTreeEdge {
+    const rootIndex = TreeMath.root(tree.numLeaves);
+    const root = tree.nodes.find(node => node.nodeIndex === rootIndex);
+    return {
+        isGrantEdge: true,
+        parentGeneration: newKeyVersion,
+        childKind: "node",
+        childIndex: rootIndex,
+        childGeneration: root?.generation ?? 0,
+        data: `wrap:grant->${rootIndex}` as types.core.UserKeyData,
+    };
+}
+
+/** One epoch's worth of well-formed rungs, as an honest client would submit them. */
+export function rungsFor(newKeyVersion: number, eraFloor: number): types.cloud.GroupArchiveRung[] {
+    return LadderMath.rungSpansFor(newKeyVersion, eraFloor).map(span => ({
+        atKeyVersion: span.at,
+        targetKeyVersion: span.target,
+        recipientKind: "group" as const,
+        data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
+    }));
 }

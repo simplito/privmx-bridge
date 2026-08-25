@@ -38,9 +38,8 @@ export class GroupConverter {
             data: state.history.map(x => ({keyId: x.keyId, data: x.data})),
             users: group.users,
             managers: group.managers,
-            keys: (group.keys.find(x => x.user === user)?.keys) || [],
             version: group.version,
-            keyVersion: group.keyVersion ?? 0,
+            keyVersion: group.keyVersion,
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: state.history.map(x => this.convertHistoryEntry(x)),
@@ -48,11 +47,11 @@ export class GroupConverter {
             // actually given instead of trusting its own arithmetic.
             firstServedVersion: state.history[0]?.version ?? group.version,
             groupKeys: group.groupKeys ?? [],
+            ...this.treeState(group, state.tree, user, scope, forUserId, forPosition),
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
         }
-        this.addTreeState(res, group, state.tree, user, scope, forUserId, forPosition);
         return res;
     }
     
@@ -73,7 +72,7 @@ export class GroupConverter {
             users: group.users,
             managers: group.managers,
             version: group.version,
-            keyVersion: group.keyVersion ?? 0,
+            keyVersion: group.keyVersion,
             policy: group.policy || {},
         };
         if (group.clientResourceId) {
@@ -83,40 +82,36 @@ export class GroupConverter {
     }
     
     /**
-     * Serves the tree state, flattened, plus the caller's own leaf.
+     * The tree state, flattened, plus the caller's own leaf.
      *
      * The archive is deliberately *not* included: it grows with the group's entire history, while a client needs
      * it only when reaching for an older epoch. `groupGetKeyArchive` serves it on demand instead.
      */
-    private addTreeState(
-        res: contextApi.GroupInfo,
+    private treeState(
         group: db.group.Group,
-        tree: types.cloud.GroupTreeState|null,
+        tree: types.cloud.GroupTreeState,
         user: types.cloud.UserId,
         scope: contextApi.GroupTreeScope,
         forUserId?: types.cloud.UserId,
         forPosition?: number,
     ) {
-        if (!tree) {
-            return;
-        }
-        res.numLeaves = tree.numLeaves;
-        res.leafAssignment = tree.leafAssignment;
-        res.eraFloor = group.eraFloor ?? 1;
-        if (group.archivePrunedBelow !== undefined) {
-            res.archivePrunedBelow = group.archivePrunedBelow;
-        }
         const position = tree.leafAssignment.indexOf(user);
-        if (position >= 0) {
-            res.ownLeafPosition = position;
-        }
         const subject = forUserId === undefined ? -1 : tree.leafAssignment.indexOf(forUserId);
-        const view = scope === "full" || position < 0
+        // A caller with no seat has no path to serve, so they get the whole structure.
+        const full = scope === "full" || position < 0;
+        const view = full
             ? tree
             : GroupConverter.pathView(tree, position, subject >= 0 ? subject : undefined, forPosition);
-        res.treeNodes = view.nodes;
-        res.treeEdges = view.edges;
-        res.treeScope = scope === "full" || position < 0 ? "full" : "path";
+        return {
+            numLeaves: tree.numLeaves,
+            leafAssignment: tree.leafAssignment,
+            eraFloor: group.eraFloor,
+            treeNodes: view.nodes,
+            treeEdges: view.edges,
+            treeScope: (full ? "full" : "path") as contextApi.GroupTreeScope,
+            ...(position >= 0 ? {ownLeafPosition: position} : {}),
+            ...(group.archivePrunedBelow !== undefined ? {archivePrunedBelow: group.archivePrunedBelow} : {}),
+        };
     }
     
     /**
@@ -184,8 +179,8 @@ export class GroupConverter {
     
     convertKeyArchive(group: db.group.Group, rungs: types.cloud.GroupArchiveRung[]): contextApi.GroupGetKeyArchiveResult {
         const res: contextApi.GroupGetKeyArchiveResult = {
-            keyVersion: group.keyVersion ?? 0,
-            eraFloor: group.eraFloor ?? 1,
+            keyVersion: group.keyVersion,
+            eraFloor: group.eraFloor,
             keyHistory: group.keyHistory ?? [],
             rungs: rungs,
         };

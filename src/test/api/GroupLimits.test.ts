@@ -50,7 +50,7 @@ function createModel(overrides: Record<string, unknown> = {}) {
         managers: ["manager"],
         data: "group-data",
         keyId: KEY_ID,
-        keys: [],
+        tree: tree(4, {seats: 4}),
         ...overrides,
     };
 }

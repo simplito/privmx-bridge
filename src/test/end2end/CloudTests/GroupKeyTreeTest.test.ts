@@ -244,8 +244,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             managers: [testData.userId],
             data: "group-data" as types.group.GroupData,
             keyId: keyIdAt(1),
-            // A tree-backed group hands out its key by climbing, so it needs no entry per member.
-            keys: [],
             tree: tree,
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
@@ -280,7 +278,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupRemoveMember with a transition did not return OK");
@@ -325,14 +322,13 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             tree: tree,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
-            groupKeys: [{
+            groupKeys: {
                 group: groupId,
                 groupEpoch: newEpoch,
                 keyId: keyIdAt(newEpoch),
                 data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
-            }],
+            },
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupRemoveMember did not return OK");
@@ -750,7 +746,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             tree: tree,
             rungs: this.rungsFor(newEpoch),
-            keys: [],
             expectedKeyVersion: this.keyVersion,
         };
     }

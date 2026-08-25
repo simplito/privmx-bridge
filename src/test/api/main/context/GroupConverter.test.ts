@@ -41,7 +41,6 @@ const group: db.group.Group = {
     data: data,
     users: [alice],
     managers: [janek],
-    keys: [{user: alice, keys: [{keyId: keyId, data: "alice-blob" as types.core.UserKeyData}]}],
     version: 4 as types.group.GroupVersion,
     keyVersion: 3,
     keyHistory: [],
@@ -78,15 +77,6 @@ it("convertGroup serves the state it was handed, and the version from the counte
     assert.strictEqual(converted.treeEdges?.length, tree.edges.length);
     assert.strictEqual(converted.eraFloor, 2);
     assert.strictEqual(converted.ownLeafPosition, 1);
-    assert.strictEqual(converted.keys[0].data, "alice-blob");
-});
-
-it("convertGroup serves no tree for a flat group", async () => {
-    const flat: db.group.Group = {...group, numLeaves: undefined, leafAssignment: undefined};
-    const converted = new GroupConverter().convertGroup(alice, flat, {tree: null, history: state().history});
-    assert.strictEqual(converted.treeNodes, undefined);
-    assert.strictEqual(converted.leafAssignment, undefined);
-    assert.strictEqual(converted.eraFloor, undefined);
 });
 
 it("a listing carries the roster and the epoch, and nothing that grows with history", async () => {

@@ -12,6 +12,7 @@ limitations under the License.
 import { BaseTestSet, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
+import { buildTree } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
@@ -111,7 +112,7 @@ export class GroupEventsTest extends BaseTestSet {
             managers: [testData.userId],
             data: "AAAA" as types.group.GroupData,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            tree: buildTree([testData.userId], 1),
         });
         this.groupId = res.groupId;
     }
@@ -124,31 +125,27 @@ export class GroupEventsTest extends BaseTestSet {
             managers: [testData.userId],
             data: "BBBB" as types.group.GroupData,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "BBBB" as types.core.UserKeyData}],
+            tree: buildTree([testData.userId], 1),
         });
         this.otherGroupId = res.groupId;
     }
     
     private async updateGroup() {
-        await this.update(this.requireGroupId(), groupPubKey, "AAAAB" as types.group.GroupData);
+        await this.update(this.requireGroupId(), "AAAAB" as types.group.GroupData);
     }
     
     private async updateOtherGroup() {
         if (!this.otherGroupId) {
             throw new Error("second group not created yet");
         }
-        await this.update(this.otherGroupId, secondGroupPubKey, "BBBBC" as types.group.GroupData);
+        await this.update(this.otherGroupId, "BBBBC" as types.group.GroupData);
     }
     
-    private async update(id: types.group.GroupId, pubKey: types.cloud.GroupPubKey, data: types.group.GroupData) {
+    private async update(id: types.group.GroupId, data: types.group.GroupData) {
         const res = await this.apis.contextApi.groupUpdate({
             id: id,
-            groupPubKey: pubKey,
-            users: [testData.userId],
-            managers: [testData.userId],
             data: data,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
             version: 1 as types.group.GroupVersion,
             force: false,
         });

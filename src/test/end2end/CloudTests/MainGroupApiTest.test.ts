@@ -12,6 +12,7 @@ limitations under the License.
 import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
+import { buildTree } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 
@@ -65,7 +66,7 @@ export class GroupApiTests extends BaseTestSet {
             managers: managers,
             data: "AAAA" as types.group.GroupData,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
+            tree: buildTree(users, 1),
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         this.groupId = res.groupId;
@@ -99,12 +100,8 @@ export class GroupApiTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const res = await this.apis.contextApi.groupUpdate({
             id: groupId,
-            groupPubKey: groupPubKey,
-            users: [testData.userId],
-            managers: [testData.userId],
             data: "AAAAB" as types.group.GroupData,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
             version: 1 as types.group.GroupVersion,
             force: false,
         });
@@ -118,12 +115,8 @@ export class GroupApiTests extends BaseTestSet {
         // current version is now 2; submitting version 1 without force must be rejected (optimistic concurrency).
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdate({
             id: groupId,
-            groupPubKey: groupPubKey,
-            users: [testData.userId],
-            managers: [testData.userId],
             data: "AAAAC" as types.group.GroupData,
             keyId: testData.keyId,
-            keys: [{user: testData.userId, keyId: testData.keyId, data: "AAAA" as types.core.UserKeyData}],
             version: 1 as types.group.GroupVersion,
             force: false,
         }), "GROUP_VERSION_MISMATCH");

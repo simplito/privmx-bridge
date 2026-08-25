@@ -15,6 +15,8 @@ import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
+import { applyRemoval, buildTree, withNodeKeys } from "../../testUtils/TreeFixtures";
+import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
 const groupIdentity = ECUtils.generateKeyPair();
 const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
@@ -35,6 +37,20 @@ const bobWif = bobIdentity.privWif as string;
 const groupKeyId = "group-key" as types.core.KeyId;
 const threadKeyId = "thread-key" as types.core.KeyId;
 const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
+const rotatedGroupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+
+/** Real ECC keys, memoized per `(nodeIndex, generation)`: the validator refuses placeholder public keys. */
+const nodeKeys = new Map<string, types.core.EccPubKey>();
+function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
+    const cacheKey = `${nodeIndex}/${generation}`;
+    const existing = nodeKeys.get(cacheKey);
+    if (existing) {
+        return existing;
+    }
+    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
+    nodeKeys.set(cacheKey, generated);
+    return generated;
+}
 
 export class ThreadGroupGranteeTests extends BaseTestSet {
     
@@ -103,10 +119,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             managers: managers,
             data: "AAAA" as types.group.GroupData,
             keyId: groupKeyId,
-            keys: [
-                {user: testData.userId, keyId: groupKeyId, data: "AAAA" as types.core.UserKeyData},
-                {user: aliceId, keyId: groupKeyId, data: "BBBB" as types.core.UserKeyData},
-            ],
+            tree: withNodeKeys(buildTree(users, 1), nodeKey),
         });
         this.groupId = res.groupId;
     }
@@ -223,22 +236,41 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     }
     
     private async removeAliceFromGroup() {
-        // Removal via full-replace groupUpdate; membership integrity is committed inside `data` by the endpoint,
-        // not verified by the bridge. modifyMembers (delta) is deferred — see documents/plan/08-future-plans.md.
+        // The only way a member leaves: blanking the seat, re-keying the path and advancing the epoch happen in
+        // one call, so alice cannot keep reading through a key the group still hands out.
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId});
-        const res = await this.apis.contextApi.groupUpdate({
+        const {group} = await this.apis.contextApi.groupGet({groupId, scope: "full"});
+        const current: types.cloud.GroupTreeState = {
+            numLeaves: group.numLeaves,
+            leafAssignment: group.leafAssignment,
+            nodes: group.treeNodes,
+            edges: group.treeEdges,
+        };
+        const alicePosition = group.leafAssignment.indexOf(aliceId);
+        assert(alicePosition >= 0, "alice should hold a seat before she is removed");
+        const newEpoch = group.keyVersion + 1;
+        const res = await this.apis.contextApi.groupRemoveMember({
             id: groupId,
-            groupPubKey: groupPubKey,
-            users: [testData.userId],
-            managers: [testData.userId],
-            data: "AAAA" as types.group.GroupData,
+            userId: aliceId,
+            groupPubKey: rotatedGroupPubKey,
             keyId: rotatedGroupKeyId,
-            keys: [{user: testData.userId, keyId: rotatedGroupKeyId, data: "AAAA" as types.core.UserKeyData}],
-            version: group.version,
-            force: false,
+            data: "AAAA" as types.group.GroupData,
+            tree: withNodeKeys(applyRemoval(current, alicePosition, newEpoch), nodeKey),
+            rungs: LadderMath.rungSpansFor(newEpoch, 1).map(span => ({
+                atKeyVersion: span.at,
+                targetKeyVersion: span.target,
+                recipientKind: "epoch" as const,
+                data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
+            })),
+            groupKeys: {
+                group: groupId,
+                groupEpoch: newEpoch,
+                keyId: rotatedGroupKeyId,
+                data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
+            },
+            expectedKeyVersion: group.keyVersion,
         });
-        assert(res === "OK", "groupUpdate did not return OK");
+        assert(res === "OK", "groupRemoveMember did not return OK");
     }
     
     private async aliceCanNoLongerGetThread() {

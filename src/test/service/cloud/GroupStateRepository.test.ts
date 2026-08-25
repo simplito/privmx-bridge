@@ -84,7 +84,7 @@ function createStateRepository(docs: {
     return {repository, captured};
 }
 
-function groupDocument(tree: types.cloud.GroupTreeState|null): db.group.Group {
+function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
     return {
         id: groupId,
         contextId: "MyContextId" as types.context.ContextId,
@@ -97,9 +97,11 @@ function groupDocument(tree: types.cloud.GroupTreeState|null): db.group.Group {
         data: "SomeGroupData" as types.group.GroupData,
         users: [],
         managers: ["janek" as types.cloud.UserId],
-        keys: [],
         version: 1 as types.group.GroupVersion,
-        ...(tree ? {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment} : {}),
+        keyVersion: 1,
+        eraFloor: 1,
+        numLeaves: tree.numLeaves,
+        leafAssignment: tree.leafAssignment,
     };
 }
 
@@ -207,11 +209,14 @@ it("nodes come back in index order whatever order they were written in", async (
     assert.deepStrictEqual(indices, [...indices].sort((a, b) => a - b));
 });
 
-it("a flat group has no tree to read, and is not asked for one", async () => {
-    const {repository, captured} = createStateRepository();
-    const loaded = await repository.getTree(groupDocument(null));
-    assert.strictEqual(loaded, null);
-    assert.strictEqual(captured.nodes.filter, null);
+it("a group whose collections are empty reads back an empty tree, not a missing one", async () => {
+    // The geometry lives on the document, so `getTree` always answers; it is the service that refuses to plan
+    // against a tree with no nodes.
+    const tree = buildTree(SEATING, EPOCH);
+    const {repository} = createStateRepository();
+    const loaded = await repository.getTree(groupDocument(tree));
+    assert.strictEqual(loaded.nodes.length, 0);
+    assert.strictEqual(loaded.numLeaves, tree.numLeaves);
 });
 
 it("the archive is read through a windowed query, not filtered after loading", async () => {

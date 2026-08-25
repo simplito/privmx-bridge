@@ -19,11 +19,10 @@ import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { GroupStateRepository } from "../../../service/cloud/GroupStateRepository";
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { createFake, createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { buildTree, treeAfterRemoval } from "../../testUtils/TreeFixtures";
+import { buildTree, rotationGrantEdge, rungsFor, treeAfterRemoval } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { DateUtils } from "../../../utils/DateUtils";
-import { AppException } from "../../../api/AppException";
 
 /**
  * These tests are about *what gets written*, not what is returned: a removal must be a small `$set` plus
@@ -64,7 +63,6 @@ function group(overrides: Partial<db.group.Group> = {}): db.group.Group {
         data: data,
         users: [alice, bob, carol],
         managers: [janek],
-        keys: [],
         version: 7 as types.group.GroupVersion,
         policy: {},
         keyVersion: EPOCH,
@@ -106,6 +104,7 @@ function createRepository(options: {casMiss?: boolean} = {}) {
     mock(state, "insertRungs", async () => {});
     mock(state, "deleteRungsTargetingBelow", async () => {});
     mock(state, "deleteState", async () => {});
+    mock(state, "replaceGrantEdge", async () => {});
     const repository = new GroupRepository(objectRepository, state);
     return {repository, state, updates, replacements, inserted};
 }
@@ -142,7 +141,7 @@ it("a removal updates the fields that changed instead of replacing the document"
     assert.strictEqual(replacements.length, 0);
     const written = Object.keys(updates[0].set).sort();
     assert.deepStrictEqual(written, [
-        "data", "groupPubKey", "keyHistory", "keyId", "keyVersion", "keys",
+        "data", "groupPubKey", "keyHistory", "keyId", "keyVersion",
         "lastModificationDate", "lastModifier", "leafAssignment", "managers", "numLeaves", "users", "version",
     ]);
 });
@@ -213,13 +212,13 @@ it("an addition advances the version without advancing the epoch", async () => {
     assert.strictEqual(historyEntry(state).version, 8);
 });
 
-it("a flat update appends a version too, and touches nothing else", async () => {
+it("a metadata update appends a version and touches neither the tree nor the roster", async () => {
     const {repository, state, updates, replacements} = createRepository();
-    const oldGroup = group({numLeaves: undefined, leafAssignment: undefined});
-    const result = await repository.updateGroup(oldGroup, janek, groupPubKey, [janek], [alice], data, keyId, [], undefined, null);
+    const result = await repository.updateGroup(group(), janek, data, keyId, undefined, null);
     assert.strictEqual(result.version, 8);
     assert.strictEqual(replacements.length, 0);
     assert.strictEqual("numLeaves" in updates[0].set, false);
+    assert.strictEqual("users" in updates[0].set, false);
     assert.strictEqual("policy" in updates[0].set, false);
     assert.strictEqual(historyEntry(state).version, 8);
 });
@@ -301,7 +300,7 @@ it("pruning the archive still touches no key material", async () => {
 it("a new tree-backed group keeps its seating and writes the rest beside the document", async () => {
     const {repository, state, inserted} = createRepository();
     const tree = buildTree(SEATING, 1);
-    const created = await repository.createGroup(contextId, null, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, keyId, [], {}, tree);
+    const created = await repository.createGroup(contextId, null, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, keyId, {}, tree);
     assert.strictEqual(created.version, 1);
     assert.strictEqual(created.keyVersion, 1);
     assert.strictEqual(created.eraFloor, 1);
@@ -314,13 +313,6 @@ it("a new tree-backed group keeps its seating and writes the rest beside the doc
     assert.strictEqual(historyEntry(state).version, 1);
 });
 
-it("a flat group writes no tree at all", async () => {
-    const {repository, state} = createRepository();
-    await repository.createGroup(contextId, null, undefined, groupPubKey, janek, [janek], [alice], data, keyId, [], {});
-    hasNoCalls(state.writeTree);
-    hasOneCall(state.insertHistoryEntry);
-});
-
 it("deleting a group takes its state with it", async () => {
     // Keyed by groupId, so leaving them behind leaks the group's shape and never reclaims the space.
     const {repository, state} = createRepository();
@@ -329,37 +321,47 @@ it("deleting a group takes its state with it", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the one field that could still grow per member
+// rotation
 // ─────────────────────────────────────────────────────────────────────────────
 
-it("SECURITY: a tree-backed group refuses to accumulate one wrap per member per epoch", async () => {
-    // Per-member entries at every keyId would put `members × epochs` back on the document.
-    const {repository} = createRepository();
-    const perMemberPerEpoch: types.cloud.UserKeysEntry[] = [alice, bob, carol, janek].map(user => ({
-        user: user,
-        keys: [
-            {keyId: keyId, data: "epoch-5" as types.core.UserKeyData},
-            {keyId: newKeyId, data: "epoch-6" as types.core.UserKeyData},
-        ],
-    }));
-    try {
-        await repository.removeMemberWithTree({...removal(group()), keys: perMemberPerEpoch});
-    }
-    catch (e) {
-        expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
-        return;
-    }
-    throw new Error("expected INVALID_PARAMS");
+it("a rotation advances the epoch and writes exactly one edge", async () => {
+    // No node key moves, so the tree write is the grant edge and nothing else — the same cost at any group size.
+    const {repository, state, updates} = createRepository();
+    const tree = buildTree(SEATING, EPOCH);
+    const result = await repository.generateNewGroupKey({
+        oldGroup: group(),
+        modifier: janek,
+        newGroupPubKey: nextGroupPubKey,
+        data: data,
+        keyId: newKeyId,
+        grantEdge: rotationGrantEdge(tree, EPOCH + 1),
+        rungs: rungsFor(EPOCH + 1, 1),
+    });
+    assert.strictEqual(result?.keyVersion, EPOCH + 1);
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH});
+    assert.strictEqual("numLeaves" in updates[0].set, false, "a rotation does not touch the geometry");
+    assert.strictEqual("users" in updates[0].set, false, "nor the roster");
+    hasOneCall(state.replaceGrantEdge);
+    hasOneCall(state.insertRungs);
+    hasNoCalls(state.writeTree);
 });
 
-it("a tree-backed group still accepts one entry per member, which is what a migrating group carries", async () => {
-    const {repository} = createRepository();
-    const oneEach: types.cloud.UserKeysEntry[] = [alice, carol, janek].map(user => ({
-        user: user,
-        keys: [{keyId: newKeyId, data: "blob" as types.core.UserKeyData}],
-    }));
-    const result = await repository.removeMemberWithTree({...removal(group()), keys: oneEach});
-    assert.strictEqual(result?.keys.length, 3);
+it("a rotation that loses the race writes nothing beside the document either", async () => {
+    const {repository, state} = createRepository({casMiss: true});
+    const tree = buildTree(SEATING, EPOCH);
+    const result = await repository.generateNewGroupKey({
+        oldGroup: group(),
+        modifier: janek,
+        newGroupPubKey: nextGroupPubKey,
+        data: data,
+        keyId: newKeyId,
+        grantEdge: rotationGrantEdge(tree, EPOCH + 1),
+        rungs: rungsFor(EPOCH + 1, 1),
+    });
+    assert.strictEqual(result, null);
+    hasNoCalls(state.replaceGrantEdge);
+    hasNoCalls(state.insertRungs);
+    hasNoCalls(state.insertHistoryEntry);
 });
 
 /**
