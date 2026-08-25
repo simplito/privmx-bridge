@@ -48,6 +48,13 @@ export class GroupRepository {
         keyVersion: 1,
     };
     
+    /** Mirrors `db.group.GroupGranteeFields`; see there for why this read is kept this narrow. */
+    private static readonly GRANTEE_PROJECTION: {[K in Exclude<keyof db.group.GroupGranteeFields, "id">]: 1} = {
+        users: 1,
+        managers: 1,
+        keyVersion: 1,
+    };
+    
     constructor(
         private repository: MongoObjectRepository<types.group.GroupId, db.group.Group>,
         private state: GroupStateRepository,
@@ -95,7 +102,10 @@ export class GroupRepository {
      * - `groupEpochs` — each group's current epoch, so a per-recipient payload can carry the same `staleGroups`
      *   a `*Get` would serve. It is a field of the documents this reads anyway.
      *
-     * Whole documents, unlike `getKeyVersions`: expanding grantees needs the membership lists.
+     * Wider than `getKeyVersions`, but still projected: expanding grantees needs the membership lists, and those
+     * are all it needs. `leafAssignment` is an entry per seat, `groupKeys` and `keyHistory` an entry per
+     * rotation — none of them readable from the result, all of them dragged along by a whole-document read on the
+     * path that runs per item write.
      */
     async getGranteeView(groupIds: types.group.GroupId[]): Promise<{groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupsByUser = new Map<types.cloud.UserId, types.group.GroupId[]>();
@@ -103,7 +113,7 @@ export class GroupRepository {
         if (groupIds.length === 0) {
             return {groupsByUser, groupEpochs};
         }
-        const groups = await this.repository.getMulti(groupIds);
+        const groups = await this.repository.getMultiProjected<db.group.GroupGranteeFields>(groupIds, GroupRepository.GRANTEE_PROJECTION);
         for (const group of groups) {
             groupEpochs.set(group.id, group.keyVersion);
             // A Set over the group's own roster: a user listed as both member and manager must not get it twice.
@@ -114,12 +124,17 @@ export class GroupRepository {
         return {groupsByUser, groupEpochs};
     }
     
-    /** Verifies that all given groups exist in the given context (mirrors CloudKeyService.checkUsersExistance). */
+    /**
+     * Verifies that all given groups exist in the given context (mirrors CloudKeyService.checkUsersExistance).
+     *
+     * Reuses the epoch projection rather than declaring one for `contextId` alone: an existence check reads an id
+     * and a context, and one spare int is cheaper than a fourth projection to keep in step with the document.
+     */
     async checkGroupsExistence(contextId: types.context.ContextId, groupIds: types.group.GroupId[]) {
         if (groupIds.length === 0) {
             return;
         }
-        const groups = await this.repository.getMulti(Utils.unique(groupIds));
+        const groups = await this.repository.getMultiProjected<db.group.GroupEpochFields>(Utils.unique(groupIds), GroupRepository.EPOCH_PROJECTION);
         const existing = new Set(groups.filter(g => g.contextId === contextId).map(g => g.id));
         for (const id of groupIds) {
             if (!existing.has(id)) {

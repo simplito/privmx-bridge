@@ -370,17 +370,28 @@ it("a rotation that loses the race writes nothing beside the document either", a
  * member list away. Every part of its result now has a consumer: the membership keys are the notification
  * recipient list, the membership values narrow each recipient's `groupKeys`, and the epochs give the payload its
  * `staleGroups` — so a fan-out matches what `threadGet` serves without a second lookup.
+ *
+ * It reads the rosters and the epoch and nothing else. Wider than `getKeyVersions` below, but on the same hot
+ * path, so the fake refuses a whole-document read the same way that one does.
  */
 function createMembershipRepository(groups: db.group.Group[]) {
     const queried: types.group.GroupId[][] = [];
+    const projections: {[field: string]: 1}[] = [];
     const objectRepository = createFake<MongoObjectRepository<types.group.GroupId, db.group.Group>>({
-        getMulti: (async (ids: types.group.GroupId[]) => {
+        getMulti: (async () => {
+            throw new Error("getGranteeView must not read whole group documents");
+        }) as never,
+        getMultiProjected: (async (ids: types.group.GroupId[], projection: {[field: string]: 1}) => {
             queried.push(ids);
-            return groups.filter(g => ids.includes(g.id));
+            projections.push(projection);
+            // What Mongo would hand back: the projected fields only, so a rule reaching for anything else fails.
+            return groups
+                .filter(g => ids.includes(g.id))
+                .map(g => ({id: g.id, users: g.users, managers: g.managers, keyVersion: g.keyVersion}));
         }) as never,
     });
     const repository = new GroupRepository(objectRepository, createMock<GroupStateRepository>({}));
-    return {repository, queried};
+    return {repository, queried, projections};
 }
 
 const engineeringId = "engineering" as types.group.GroupId;
@@ -400,6 +411,14 @@ it("getGranteeView reports each member's own groups out of one query", async () 
     assert.deepStrictEqual(groupsByUser.get(bob), [engineeringId]);
     assert.deepStrictEqual(groupsByUser.get(carol), [legalId]);
     assert.deepStrictEqual(groupsByUser.get(janek), [engineeringId], "a manager belongs to the group too");
+});
+
+it("getGranteeView reads the rosters and the epoch, not the documents", async () => {
+    // `leafAssignment` is an entry per seat and `groupKeys` one per rotation; neither is readable from the result,
+    // and this runs on every item write into a group-granted container.
+    const {repository, projections} = createMembershipRepository(TWO_GROUPS);
+    await repository.getGranteeView([engineeringId, legalId]);
+    assert.deepStrictEqual(projections, [{users: 1, managers: 1, keyVersion: 1}], "`_id` comes along on its own");
 });
 
 it("getGranteeView reports the epochs out of that same query", async () => {
