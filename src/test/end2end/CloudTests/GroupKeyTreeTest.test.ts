@@ -413,8 +413,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async verifyTheDocumentCarriesNoState() {
         const document = await this.readGroupDocument();
-        // The four fields that used to grow without a ceiling.
-        for (const field of ["tree", "history", "archiveRungs", "allTimeUsers"]) {
+        // The fields that used to grow without a ceiling. `keys` is here too: a group carries no per-member key
+        // entries at all — the metadata key is wrapped once, to its own grant key, in `groupKeys`.
+        for (const field of ["tree", "history", "archiveRungs", "allTimeUsers", "keys"]) {
             assert(!(field in document), `the group document must not carry '${field}'`);
         }
         assert(document.version === 1, `version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
@@ -422,9 +423,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(Array.isArray(document.leafAssignment) && document.leafAssignment.length === 4, "leafAssignment stays on the document");
         assert(document.keyVersion === 1, "a new tree-backed group starts at epoch 1");
         assert(document.eraFloor === 1, "and at era floor 1");
-        // A tree-backed group carries no per-member entries: the metadata key is wrapped once, to its own grant key.
-        assert(Array.isArray(document.keys) && document.keys.length === 0,
-            `a tree-backed group must carry no per-member key entries, got ${JSON.stringify(document.keys)}`);
     }
     
     private async verifyTheCollectionsCarryIt(submitted: types.cloud.GroupTreeState) {

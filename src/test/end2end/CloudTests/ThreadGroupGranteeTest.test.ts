@@ -126,6 +126,8 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     
     private async createThreadGrantingGroup() {
         const groupId = this.requireGroupId();
+        // Read the epoch rather than assume one: a grant must name the group's current keyVersion (BR-5).
+        const {group} = await this.apis.contextApi.groupGet({groupId});
         const res = await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
             data: "AAAA" as types.thread.ThreadData,
@@ -134,7 +136,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             managers: [testData.userId],
             users: [testData.userId],
             groups: [{groupId: groupId, role: "user"}],
-            groupKeys: [{group: groupId, groupEpoch: 0, keyId: threadKeyId, data: "CCCC" as types.core.UserKeyData}],
+            groupKeys: [{group: groupId, groupEpoch: group.keyVersion, keyId: threadKeyId, data: "CCCC" as types.core.UserKeyData}],
         });
         this.threadId = res.threadId;
     }
