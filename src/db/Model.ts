@@ -263,6 +263,13 @@ export namespace group {
      */
     export type GroupEpochFields = Pick<Group, "id"|"contextId"|"keyVersion">;
     
+    /**
+     * All `GroupRepository.getGranteeView` reads. The rosters it does need, and nothing else: it runs on every
+     * item write into a group-granted container, and `leafAssignment` alone is another entry per seat on top of
+     * the rosters it would be read beside.
+     */
+    export type GroupGranteeFields = Pick<Group, "id"|"users"|"managers"|"keyVersion">;
+    
     export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
     export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
     export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};

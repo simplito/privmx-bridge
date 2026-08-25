@@ -42,6 +42,7 @@ import { Migration068KnownPublicKeysCollection } from "./Migration068KnownPublic
 import { Migration069IndexesForSession } from "./Migration069IndexesForSession";
 import { Migration070StreamRoomState } from "./Migration070StreamRoomState";
 import { Migration071GroupStateCollections } from "./Migration071GroupStateCollections";
+import { Migration072GroupMembershipIndexes } from "./Migration072GroupMembershipIndexes";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -89,6 +90,7 @@ export class MigrationManager {
         Migration069IndexesForSession,
         Migration070StreamRoomState,
         Migration071GroupStateCollections,
+        Migration072GroupMembershipIndexes,
     ];
     static DB_VERSION: string|null = null;
     
