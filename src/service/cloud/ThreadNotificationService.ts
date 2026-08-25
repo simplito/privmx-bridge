@@ -24,13 +24,8 @@ import { TargetChannel } from "../ws/WebSocketConnectionManager";
 import { Utils } from "../../utils/Utils";
 
 /**
- * Every payload here is converted **once per recipient**, so each one carries a `ThreadInfo.groupKeys` narrowed
- * to that recipient's own groups — the same guarantee `threadGet` gives.
- *
- * It costs nothing extra. Expanding group grantees into a recipient list already reads the whole group
- * documents, so `getGranteeView` hands back each recipient's grants — and every group's current epoch, which
- * `staleGroups` needs — out of that one query instead of discarding them. Serving an unnarrowed list here would
- * be the anomaly: a client would have no way to tell a payload it may trust from one it may not.
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `threadGet` would serve — see `getThreadRecipients`.
  */
 export class ThreadNotificationService {
     
@@ -48,12 +43,8 @@ export class ThreadNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
-    /**
-     * Direct members plus the expanded members of any granted groups (Phase 2 grantee notifications), along with
-     * each recipient's own grants on this thread and the granted groups' current epochs — all from the single
-     * group lookup the expansion already does, so a per-recipient payload can be narrowed, and carry the same
-     * `staleGroups` a `threadGet` would, for free. Direct members in no granted group map to `[]`.
-     */
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
     private async getThreadRecipients(thread: db.thread.Thread): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupIds = (thread.groups || []).map(g => g.groupId);
         const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);

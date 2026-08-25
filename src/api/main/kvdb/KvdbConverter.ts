@@ -12,20 +12,11 @@ limitations under the License.
 import * as types from "../../../types";
 import * as kvdbApi from "./KvdbApiTypes";
 import * as db from "../../../db/Model";
-import { ownGroupKeysOf } from "../GroupKeysNarrowing";
-import { GroupEpochs, staleGroupsOf } from "../GroupEpochStaleness";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class KvdbConverter {
     
-    /**
-     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
-     *                    optional so the compiler names every path that serves a kvdb to a user; `undefined`
-     *                    throws in `ownGroupKeysOf` instead of quietly stripping the caller's key material.
-     * @param groupEpochs current epochs of this container's granted groups, from
-     *                    `BaseContainerService.getGroupEpochs`; `staleGroups` is derived from it. Empty is the
-     *                    honest answer for a container with no grants, and for one with grants it would claim
-     *                    nothing needs re-keying — so every read path resolves it rather than defaulting it.
-     */
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
     convertKvdb(user: types.cloud.UserId, kvdb: db.kvdb.Kvdb, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: kvdbApi.KvdbInfo = {
             id: kvdb.id,

@@ -16,7 +16,7 @@ import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { createMock, mock } from "../../testUtils/TestUtils";
 import { AppException } from "../../../api/AppException";
-import { staleGroupsOf } from "../../../api/main/GroupEpochStaleness";
+import { staleGroupsOf } from "../../../api/main/GroupKeys";
 import * as types from "../../../types";
 
 /**

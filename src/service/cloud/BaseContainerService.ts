@@ -14,7 +14,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { Utils } from "../../utils/Utils";
 import { AppException } from "../../api/AppException";
-import { GroupEpochs, staleGroupsOf } from "../../api/main/GroupEpochStaleness";
+import { GroupEpochs, staleGroupsOf } from "../../api/main/GroupKeys";
 
 interface GranteeContainer {
     users: types.cloud.UserId[];
@@ -91,9 +91,7 @@ export class BaseContainerService {
         if (!enforced) {
             return;
         }
-        if ((container.groups || []).length === 0) {
-            return;
-        }
+        // A container with no grants costs no query: getGroupEpochs finds no ids and returns an empty map.
         const groupEpochs = await this.getGroupEpochs(container.contextId, [container]);
         if (staleGroupsOf(container, groupEpochs).length > 0) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");

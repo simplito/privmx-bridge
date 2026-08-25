@@ -12,21 +12,11 @@ limitations under the License.
 import * as types from "../../../types";
 import * as streamApi from "./StreamApiTypes";
 import * as db from "../../../db/Model";
-import { ownGroupKeysOf } from "../GroupKeysNarrowing";
-import { GroupEpochs, staleGroupsOf } from "../GroupEpochStaleness";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class StreamConverter {
     
-    /**
-     * @param ownGroupIds the groups the caller belongs to, used to narrow `groupKeys`. Required rather than
-     *                    optional so the compiler names every path that serves a stream room to a user;
-     *                    `undefined` throws in `ownGroupKeysOf` instead of quietly stripping the caller's key
-     *                    material.
-     * @param groupEpochs current epochs of this container's granted groups, from
-     *                    `BaseContainerService.getGroupEpochs`; `staleGroups` is derived from it. Empty is the
-     *                    honest answer for a container with no grants, and for one with grants it would claim
-     *                    nothing needs re-keying — so every read path resolves it rather than defaulting it.
-     */
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
     convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: streamApi.StreamRoom = {
             id: stream.id,

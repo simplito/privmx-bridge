@@ -66,16 +66,8 @@ export class GroupRepository {
      * Projected, not filtered afterwards: the fields left out are the ones that grow with the group, so reading
      * whole documents would cost a page of them regardless of how small the response is.
      *
-     * The caller's query is the same one every container listing accepts, so `{"#id": {$in: [...]}}` fetches the
-     * summaries of named groups — a client that has just read `staleGroups` off a container gets the
-     * `groupPubKey` and `keyVersion` of exactly those groups in one request, instead of a `groupGet` each.
-     *
-     * Stage order carries the guarantees:
-     *
-     * - the `contextId` match runs **first**, so no query can reach a group in another context;
-     * - the query runs **before** the projection, as it does for containers, so it sees whole documents and a
-     *   field left out of the summary stays filterable;
-     * - what `MongoQueryConverter` accepts is a whitelist, so a filter cannot probe key material.
+     * The `contextId` match runs first so no query can reach another context, and the query runs before the
+     * projection so a field left out of the summary stays filterable — same stage order as a container listing.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
@@ -112,15 +104,9 @@ export class GroupRepository {
         const groups = await this.repository.getMulti(groupIds);
         for (const group of groups) {
             groupEpochs.set(group.id, this.getKeyVersion(group));
-            for (const member of [...group.users, ...group.managers]) {
-                const own = groupsByUser.get(member);
-                if (!own) {
-                    groupsByUser.set(member, [group.id]);
-                }
-                else if (!own.includes(group.id)) {
-                    // A user listed as both member and manager of the same group must not get it twice.
-                    own.push(group.id);
-                }
+            // A Set over the group's own roster: a user listed as both member and manager must not get it twice.
+            for (const member of new Set([...group.users, ...group.managers])) {
+                groupsByUser.set(member, [...(groupsByUser.get(member) ?? []), group.id]);
             }
         }
         return {groupsByUser, groupEpochs};
