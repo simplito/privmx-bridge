@@ -20,7 +20,7 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
 import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { applyAdditionWithPathRefresh, buildTree, cloneTree, refreshNodes, treeAfterRemoval } from "../../testUtils/TreeFixtures";
+import { additionTransition, buildTree, removalTransition } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -35,17 +35,15 @@ import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers"
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
+import { TreeTransitionValidator } from "../../../service/cloud/keytree/TreeTransitionValidator";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
 
 /**
- * Service-level tests for tree-backed group membership.
- *
- * What is under test is the bridge's half of the contract, and the bridge's half is entirely structural: it
- * cannot read a wrap, so it enforces that the client refreshed exactly the nodes a removal obliges it to
- * refresh, that an addition did not quietly rotate the epoch, and that no rung points upwards. The
- * cryptographic half — that each wrap really contains the key it claims — is the endpoint's, and is tested there.
+ * Service-level tests for tree-backed group membership — the bridge's half of the contract, which is entirely
+ * structural: exactly the path refreshed, no epoch rotated by an addition, no rung pointing upwards. That each
+ * wrap really contains the key it claims is the endpoint's half, tested there.
  *
  * Tests marked SECURITY guard confidentiality and fail silently at runtime if the guard regresses.
  */
@@ -179,11 +177,15 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         archiveWindow = {from, to};
         return options.rungs ?? [];
     }) as never);
-    const applied = options.casMiss
-        ? (async () => null)
-        : (async (params: {tree?: types.cloud.GroupTreeState}) => ({...group, ...(params.tree ? {tree: params.tree} : {})}) as db.group.Group);
-    mock(groupRepository, "addMemberWithTree", applied as never);
-    mock(groupRepository, "removeMemberWithTree", applied as never);
+    const applied = options.casMiss ? (async () => null) : (async () => group as db.group.Group);
+    mock(groupRepository, "addMemberWithTransition", applied as never);
+    mock(groupRepository, "removeMemberWithTransition", applied as never);
+    // The service reads only the path and copath of the affected seat; the fixture serves them out of the tree.
+    const nodesAt = (indices: number[]) => group.tree.nodes.filter(n => indices.includes(n.nodeIndex));
+    mock(groupRepository, "getPathNodes", (async (g: db.group.Group, position: number) =>
+        nodesAt(TreeTransitionValidator.nodesNeededFor(position, g.numLeaves))) as never);
+    mock(groupRepository, "getSeatNodes", (async (g: db.group.Group, position: number) =>
+        nodesAt(TreeTransitionValidator.nodesNeededForSeat(position, g.numLeaves))) as never);
     mock(groupRepository, "cutEra", (options.casMiss ? async () => null : async (g: db.group.Group, floor: number) => ({...g, eraFloor: floor})) as never);
     mock(groupRepository, "pruneArchive", (options.casMiss ? async () => null : async (g: db.group.Group, below: number) => ({...g, archivePrunedBelow: below})) as never);
     
@@ -211,35 +213,23 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
 }
 
 /** The payload an honest client submits to seat `dave` in a blank at position 1. */
-function additionModel(group: TreeGroup, position = 1) {
-    const tree = cloneTree(group.tree!);
-    tree.leafAssignment[position] = dave;
-    const parentIndex = TreeMath.parent(TreeMath.leafNode(position), tree.numLeaves);
-    const parentGeneration = tree.nodes.find(n => n.nodeIndex === parentIndex)?.generation ?? 0;
-    tree.edges.push({
-        parentIndex,
-        parentGeneration,
-        childKind: "user",
-        childUserId: dave,
-        data: "wrap:new-member" as types.core.UserKeyData,
-    });
+function additionModel(group: TreeGroup, position = 1, newMember: types.cloud.UserId = dave) {
     return {
         id: groupId,
-        userId: dave,
+        userId: newMember,
         role: "user" as types.cloud.ContainerRole,
         position,
         // An addition does not rotate anything, so it reuses the group's current metadata keyId.
         keyId: keyId,
         data: data,
-        tree,
-        expectedKeyVersion: group.keyVersion!,
+        transition: additionTransition(group.tree, newMember, position, group.keyVersion),
+        expectedKeyVersion: group.keyVersion,
     };
 }
 
 /** The payload an honest client submits to remove the member at `position`, rungs included. */
 function removalModel(group: TreeGroup, position: number) {
-    const {after} = treeAfterRemoval(SEATING, position, group.keyVersion!);
-    const newEpoch = group.keyVersion! + 1;
+    const newEpoch = group.keyVersion + 1;
     const rungs: types.cloud.GroupArchiveRung[] = LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
         atKeyVersion: span.at,
         targetKeyVersion: span.target,
@@ -249,13 +239,13 @@ function removalModel(group: TreeGroup, position: number) {
     }));
     return {
         id: groupId,
-        userId: SEATING[position] as types.cloud.UserId,
+        userId: group.leafAssignment[position],
         groupPubKey: nextGroupPubKey,
         keyId: newKeyId,
         data: data,
-        tree: after,
+        transition: removalTransition(group.tree, position, group.keyVersion),
         rungs,
-        expectedKeyVersion: group.keyVersion!,
+        expectedKeyVersion: group.keyVersion,
     };
 }
 
@@ -275,7 +265,7 @@ async function expectFailure(kind: Parameters<typeof AppException.is>[1], run: (
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("createGroup accepts a tree-backed group with no per-member key entries", async () => {
-    // The point of the tree: members reach the grant key by climbing, so the creator does not have to produce
+    // Members reach the grant key by climbing, so the creator does not have to produce
     // one ciphertext per member just to hand out the current key.
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
@@ -323,7 +313,7 @@ it("addMember refuses to cross the limit", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group, {maxGroupMembers: 3});
     await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.addMember(janekCloudUser, additionModel(group)));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("createGroup rejects a tree that does not seat every member", async () => {
@@ -351,7 +341,7 @@ it("addMember seats a newcomer in a blank without advancing the epoch", async ()
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository, groupNotificationService} = createGroupService(group);
     await groupService.addMember(janekCloudUser, additionModel(group));
-    hasOneCall(groupRepository.addMemberWithTree);
+    hasOneCall(groupRepository.addMemberWithTransition);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
 
@@ -359,16 +349,8 @@ it("addMember appends a seat when every position is taken", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     // Growth to five leaves: node 7 becomes the root, and the grant edge re-links to it at the same epoch.
-    const tree = buildTree([...SEATING, "dave"], EPOCH);
-    for (const node of tree.nodes) {
-        const carried = group.tree!.nodes.find(n => n.nodeIndex === node.nodeIndex);
-        if (carried) {
-            node.publicKey = carried.publicKey;
-            node.generation = carried.generation;
-        }
-    }
-    await groupService.addMember(janekCloudUser, {...additionModel(group), position: 4, tree});
-    hasOneCall(groupRepository.addMemberWithTree);
+    await groupService.addMember(janekCloudUser, additionModel(group, 4));
+    hasOneCall(groupRepository.addMemberWithTransition);
 });
 
 it("SECURITY: addMember refuses a payload that advances the epoch", async () => {
@@ -377,9 +359,9 @@ it("SECURITY: addMember refuses a payload that advances the epoch", async () => 
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
     const model = additionModel(group);
-    model.tree.edges.find(e => e.isGrantEdge)!.parentGeneration = EPOCH + 1;
+    model.transition.edges.find((e: types.cloud.GroupTreeEdge) => e.isGrantEdge)!.parentGeneration = EPOCH + 1;
     await expectFailure("GROUP_TREE_INVALID", () => groupService.addMember(janekCloudUser, model));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("SECURITY: addMember refuses a payload that refreshes a node off the new leaf's path", async () => {
@@ -389,10 +371,12 @@ it("SECURITY: addMember refuses a payload that refreshes a node off the new leaf
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
     const model = additionModel(group);
-    model.tree = refreshNodes(model.tree, [5]);
     assert.ok(!TreeMath.directPath(1, 4).includes(5));
+    model.transition.seatedNodes.push({
+        nodeIndex: 5, fromGeneration: 0, generation: 1, publicKey: "pk:5g1" as types.core.EccPubKey,
+    });
     await expectFailure("GROUP_TREE_INVALID", () => groupService.addMember(janekCloudUser, model));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("addMember seats a newcomer under a node the caller cannot reach, by refreshing the path", async () => {
@@ -402,13 +386,8 @@ it("addMember seats a newcomer under a node the caller cannot reach, by refreshi
     const roster = [alice, bob, carol, dave, "erin" as types.cloud.UserId, "frank" as types.cloud.UserId];
     const group = treeBackedGroup({users: roster, tree: buildTree(seating, EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
-    const tree = applyAdditionWithPathRefresh(group.tree!, "grace" as types.cloud.UserId, 5, EPOCH);
-    await groupService.addMember(janekCloudUser, {
-        ...additionModel(group, 5),
-        userId: "grace" as types.cloud.UserId,
-        tree,
-    });
-    const call = groupRepository.addMemberWithTree.mock.calls[0];
+    await groupService.addMember(janekCloudUser, additionModel(group, 5, "grace" as types.cloud.UserId));
+    const call = groupRepository.addMemberWithTransition.mock.calls[0];
     assert.ok(call, "expected the addition to be written");
     assert.strictEqual(group.keyVersion, EPOCH, "an addition must not move the epoch");
 });
@@ -417,21 +396,21 @@ it("addMember refuses to seat somebody who is already a member", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await expectFailure("INVALID_PARAMS", () => groupService.addMember(janekCloudUser, {...additionModel(group), userId: bob}));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("addMember refuses a caller working from a superseded epoch", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await expectFailure("ROTATED_ALREADY", () => groupService.addMember(janekCloudUser, {...additionModel(group), expectedKeyVersion: EPOCH - 1}));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("addMember requires a manager, not merely a member", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
     await expectFailure("ACCESS_DENIED", () => groupService.addMember(aliceCloudUser, additionModel(group)));
-    hasNoCalls(groupRepository.addMemberWithTree);
+    hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
 it("addMember reports a lost race rather than overwriting the winner", async () => {
@@ -442,9 +421,14 @@ it("addMember reports a lost race rather than overwriting the winner", async () 
 
 it("addMember refuses a group whose tree did not survive whatever wrote it", async () => {
     // Not a flat group — there is no such thing any more — but a group whose node collection came back empty.
-    // Planning against an empty tree would let a client seat somebody under nothing.
-    const {groupService} = createGroupService(treeBackedGroup({tree: {...buildTree(SEATING, EPOCH), nodes: []}}));
-    await expectFailure("GROUP_HAS_NO_TREE", () => groupService.addMember(janekCloudUser, additionModel(treeBackedGroup())));
+    // The transition names a `fromGeneration` for nodes the bridge does not hold, and a node claimed as minted
+    // when one already exists is exactly what `NODE_NOT_NEW` refuses. Nothing gets seated under nothing.
+    const seating = ["janek", "", "bob", "carol"];
+    const healthy = treeBackedGroup({users: [bob, carol], tree: buildTree(seating, EPOCH)});
+    const gutted = treeBackedGroup({users: [bob, carol], tree: {...buildTree(seating, EPOCH), nodes: []}});
+    const {groupService} = createGroupService(gutted);
+    const problem = await expectFailure("GROUP_TREE_INVALID", () => groupService.addMember(janekCloudUser, additionModel(healthy)));
+    assert.ok(JSON.stringify(problem.data).includes("NODE_NOT_NEW"));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -455,7 +439,7 @@ it("removeMember accepts an honest removal and charges the rotation budget", asy
     const group = treeBackedGroup();
     const {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter} = createGroupService(group);
     await groupService.removeMember(janekCloudUser, removalModel(group, 2));
-    hasOneCall(groupRepository.removeMemberWithTree);
+    hasOneCall(groupRepository.removeMemberWithTransition);
     hasOneCall(groupRotationRateLimiter.record);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
@@ -465,7 +449,7 @@ it("removeMember works at every seat", async () => {
         const group = treeBackedGroup();
         const {groupService, groupRepository} = createGroupService(group);
         await groupService.removeMember(janekCloudUser, removalModel(group, position));
-        hasOneCall(groupRepository.removeMemberWithTree);
+        hasOneCall(groupRepository.removeMemberWithTransition);
     }
 });
 
@@ -474,24 +458,21 @@ it("SECURITY: removeMember refuses a refresh that skips a node on the path", asy
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     const model = removalModel(group, 2);
-    const rootIndex = TreeMath.root(group.tree!.numLeaves);
-    const root = model.tree.nodes.find(n => n.nodeIndex === rootIndex)!;
-    const original = group.tree!.nodes.find(n => n.nodeIndex === rootIndex)!;
-    root.generation = original.generation;
-    root.publicKey = original.publicKey;
+    const rootIndex = TreeMath.root(group.tree.numLeaves);
+    model.transition.refreshedNodes = model.transition.refreshedNodes.filter((n: types.cloud.GroupTreeRefreshedNode) => n.nodeIndex !== rootIndex);
     await expectFailure("GROUP_TREE_INVALID", () => groupService.removeMember(janekCloudUser, model));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("SECURITY: removeMember refuses a bumped generation carrying the old public key", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     const model = removalModel(group, 2);
-    const rootIndex = TreeMath.root(group.tree!.numLeaves);
-    model.tree.nodes.find(n => n.nodeIndex === rootIndex)!.publicKey =
-        group.tree!.nodes.find(n => n.nodeIndex === rootIndex)!.publicKey;
+    const rootIndex = TreeMath.root(group.tree.numLeaves);
+    model.transition.refreshedNodes.find((n: types.cloud.GroupTreeRefreshedNode) => n.nodeIndex === rootIndex)!.publicKey =
+        group.tree.nodes.find(n => n.nodeIndex === rootIndex)!.publicKey;
     await expectFailure("GROUP_TREE_INVALID", () => groupService.removeMember(janekCloudUser, model));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("SECURITY: removeMember refuses a rung pointing upwards", async () => {
@@ -506,7 +487,7 @@ it("SECURITY: removeMember refuses a rung pointing upwards", async () => {
         data: "rung:upwards" as types.core.UserKeyData,
     });
     await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMember(janekCloudUser, model));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("SECURITY: removeMember refuses a rung addressed to an epoch other than the one being created", async () => {
@@ -570,11 +551,10 @@ it("removeMember refuses to empty the group", async () => {
     const soloSeating = ["janek"];
     const group = treeBackedGroup({users: [], managers: [janek], tree: buildTree(soloSeating, EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);
-    const {after} = treeAfterRemoval(soloSeating, 0, EPOCH);
     await expectFailure("ACCESS_DENIED", () => groupService.removeMember(janekCloudUser, {
-        ...removalModel(group, 0), userId: janek, tree: after,
+        ...removalModel(group, 0), userId: janek,
     }));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("removeMember respects the per-group rotation rate limit", async () => {
@@ -583,14 +563,14 @@ it("removeMember respects the per-group rotation rate limit", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group, {rateLimited: true});
     await expectFailure("GROUP_ROTATION_RATE_LIMIT", () => groupService.removeMember(janekCloudUser, removalModel(group, 2)));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("removeMember requires a manager", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await expectFailure("ACCESS_DENIED", () => groupService.removeMember(aliceCloudUser, removalModel(group, 2)));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("removeMember does not charge the rotation budget for a rejected removal", async () => {
@@ -612,11 +592,11 @@ function selfKey(epoch: number, keyId_: types.core.KeyId = newKeyId): types.clou
 }
 
 it("removeMember stores the metadata key wrapped once to the group itself", async () => {
-    // The whole point: rotating the metadata key on a removal costs one wrap, not one per remaining member.
+    // Rotating the metadata key on a removal costs one wrap, not one per remaining member.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await groupService.removeMember(janekCloudUser, {...removalModel(group, 2), groupKeys: selfKey(EPOCH + 1)});
-    hasOneCall(groupRepository.removeMemberWithTree);
+    hasOneCall(groupRepository.removeMemberWithTransition);
 });
 
 it("removeMember keeps earlier epochs' metadata keys alongside the new one", async () => {
@@ -628,7 +608,7 @@ it("removeMember keeps earlier epochs' metadata keys alongside the new one", asy
     const group = treeBackedGroup({groupKeys: existing});
     const {groupService, groupRepository} = createGroupService(group);
     let stored: types.cloud.GroupKeysEntry[]|undefined;
-    mock(groupRepository, "removeMemberWithTree", (async (params: {groupKeys?: types.cloud.GroupKeysEntry[]}) => {
+    mock(groupRepository, "removeMemberWithTransition", (async (params: {groupKeys?: types.cloud.GroupKeysEntry[]}) => {
         stored = params.groupKeys;
         return group;
     }) as never);
@@ -647,7 +627,7 @@ it("SECURITY: removeMember refuses a metadata key addressed to a different group
         ...removalModel(group, 2),
         groupKeys: {...selfKey(EPOCH + 1), group: "other-group" as types.group.GroupId},
     }));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("SECURITY: removeMember refuses a metadata key wrapped to an earlier epoch", async () => {
@@ -658,7 +638,7 @@ it("SECURITY: removeMember refuses a metadata key wrapped to an earlier epoch", 
     await expectFailure("INVALID_PARAMS", () => groupService.removeMember(janekCloudUser, {
         ...removalModel(group, 2), groupKeys: selfKey(EPOCH),
     }));
-    hasNoCalls(groupRepository.removeMemberWithTree);
+    hasNoCalls(groupRepository.removeMemberWithTransition);
 });
 
 it("removeMember refuses a metadata key naming a keyId other than the one being introduced", async () => {
@@ -675,7 +655,7 @@ it("removeMember still accepts a removal with no metadata rotation at all", asyn
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await groupService.removeMember(janekCloudUser, removalModel(group, 2));
-    hasOneCall(groupRepository.removeMemberWithTree);
+    hasOneCall(groupRepository.removeMemberWithTransition);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

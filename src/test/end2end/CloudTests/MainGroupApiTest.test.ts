@@ -112,9 +112,9 @@ export class GroupApiTests extends BaseTestSet {
      * `groupList` filtered by id — the call a client makes after reading `staleGroups` off a container, to learn
      * those groups' `groupPubKey` and `keyVersion` without one `groupGet` per grant.
      *
-     * The two ids that must *not* come back are the point of the test: one belongs to another context, one does
-     * not exist. Both are skipped rather than raising, because the id list a client filters by comes from a
-     * container payload that may already be out of date.
+     * Under test are the two ids that must *not* come back: one belongs to another context, one does not exist.
+     * Both are skipped rather than raising, because the id list a client filters by comes from a container
+     * payload that may already be out of date.
      */
     private async listGroupsByIdAndVerify() {
         const mine = this.requireGroupId();

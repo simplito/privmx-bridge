@@ -107,7 +107,7 @@ function createService() {
 
 it("a group event carries what changed and nothing that grows with the group", async () => {
     const {service, sent, settle} = createService();
-    service.sendUpdatedGroup(group(), "solution" as types.cloud.SolutionId, [], "memberRemoved");
+    service.sendUpdatedGroup(group(), [], "memberRemoved");
     await settle();
     
     assert.strictEqual(sent.length, 1);
@@ -122,7 +122,7 @@ it("the payload is sent once for every recipient, not built per recipient", asyn
     // One send for a group of three and one for a group of three hundred: the cost of an event must not follow
     // the size of the group.
     const {service, sent, settle} = createService();
-    service.sendUpdatedGroup(group(300), "solution" as types.cloud.SolutionId, [], "updated");
+    service.sendUpdatedGroup(group(300), [], "updated");
     await settle();
     
     assert.strictEqual(sent.length, 1);
@@ -132,15 +132,15 @@ it("the payload is sent once for every recipient, not built per recipient", asyn
 it("the notification path reads no group state", async () => {
     // Serving the tree and the history here is what BR-03 removed; fetching them to serve is the same cost.
     const {service, groupRepository, settle} = createService();
-    service.sendCreatedGroup(group(), "solution" as types.cloud.SolutionId);
-    service.sendUpdatedGroup(group(), "solution" as types.cloud.SolutionId, [], "keyRotated");
+    service.sendCreatedGroup(group());
+    service.sendUpdatedGroup(group(), [], "keyRotated");
     await settle();
     hasNoCalls(groupRepository.getFullState);
 });
 
 it("a created group announces itself the same way", async () => {
     const {service, sent, settle} = createService();
-    service.sendCreatedGroup(group(), "solution" as types.cloud.SolutionId);
+    service.sendCreatedGroup(group());
     await settle();
     assert.strictEqual(sent[0].event.type, "groupCreated");
     assert.strictEqual(sent[0].event.data.changeKind, "created");
@@ -150,7 +150,7 @@ it("a member who was just removed is told, and an inactive one has it stored", a
     // The removed member's client needs to learn it can stop trying to climb; it is no longer in the roster, so
     // it is not in the recipient list the roster produced.
     const {service, sent, stored, settle} = createService();
-    service.sendUpdatedGroup(group(), "solution" as types.cloud.SolutionId, [
+    service.sendUpdatedGroup(group(), [
         {id: removed, pub: "pub-removed" as types.cloud.UserPubKey, status: "active"},
         {id: "gone" as types.cloud.UserId, pub: "pub-gone" as types.cloud.UserPubKey, status: "inactive"},
     ], "memberRemoved");

@@ -16,9 +16,8 @@ import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 /**
  * Unit tests for the hidden key tree arithmetic.
  *
- * Reference tables are taken from documents/nested_groups/09-hidden-key-tree.md §2 so that a reader can check
- * them by hand. The truncated cases (N not a power of two) are the ones that actually break naive
- * implementations, so they get the most coverage.
+ * The truncated cases (N not a power of two) are the ones that break naive implementations, so they get the
+ * most coverage.
  */
 
 describe("TreeMath.level", () => {

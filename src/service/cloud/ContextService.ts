@@ -99,7 +99,7 @@ export class ContextService {
         await this.storeService.deleteStoresByContext(contextId, context.solution);
         await this.inboxService.deleteInboxesByContext(contextId, context.solution);
         await this.streamService.deleteStreamRoomsByContext(contextId, context.solution);
-        await this.groupService.deleteGroupsByContext(contextId, context.solution);
+        await this.groupService.deleteGroupsByContext(contextId);
     }
     
     async addSolutionToContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {

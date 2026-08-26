@@ -16,8 +16,8 @@ import { LadderMath, RungSpan } from "../../../../service/cloud/keytree/LadderMa
 /**
  * Unit tests for the Epoch Ladder rules.
  *
- * The tests marked SECURITY guard confidentiality and fail silently at runtime if the guard regresses —
- * they must not be deleted or relaxed. See documents/epoch_key_archive/05-security-analysis.md §1.
+ * Tests marked SECURITY guard confidentiality and fail silently at runtime if the guard regresses — they must
+ * not be deleted or relaxed.
  */
 
 describe("LadderMath.skipRungTargets", () => {

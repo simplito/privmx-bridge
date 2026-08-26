@@ -137,14 +137,8 @@ export interface GroupAddMemberModel {
     position: number;
     keyId: types.core.KeyId;
     data: types.group.GroupData;
-    /**
-     * Exactly one of the two; a call with neither is refused.
-     *
-     * `transition` is the delta: the new leaf's path re-keyed, `O(log n)` to build, send and check. `tree` is the
-     * whole new state, which a client that wants to validate the structure for itself may still submit.
-     */
-    transition?: types.cloud.GroupTreeAdditionTransition;
-    tree?: types.cloud.GroupTreeState;
+    /** The delta: the new leaf's path re-keyed, `O(log n)` to build, send and check. */
+    transition: types.cloud.GroupTreeAdditionTransition;
     /** Guards against computing the tree against a state a concurrent removal has already replaced. */
     expectedKeyVersion: number;
 }
@@ -163,13 +157,8 @@ export interface GroupRemoveMemberModel {
     /**
      * The removal as a delta: the refreshed path and the edges around it, with the generations it was planned
      * against. `O(log n)` instead of the whole tree, which at 16 384 members is ~13 MB in each direction.
-     *
-     * Exactly one of `transition` and `tree` is required. `tree` remains accepted for clients that hold the whole
-     * state anyway.
      */
-    transition?: types.cloud.GroupTreeTransition;
-    /** The complete new state. Superseded by `transition`; kept for clients that already send it. */
-    tree?: types.cloud.GroupTreeState;
+    transition: types.cloud.GroupTreeTransition;
     rungs: types.cloud.GroupArchiveRung[];
     /**
      * The new metadata key wrapped once to the group's own grant public key at the epoch being created.

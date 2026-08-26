@@ -72,11 +72,8 @@ export class GroupRepository {
     /**
      * A page of groups with only the fields a listing serves, optionally filtered by `listParams.query`.
      *
-     * Projected, not filtered afterwards: the fields left out are the ones that grow with the group, so reading
-     * whole documents would cost a page of them regardless of how small the response is.
-     *
-     * The `contextId` match runs first so no query can reach another context, and the query runs before the
-     * projection so a field left out of the summary stays filterable — same stage order as a container listing.
+     * Stage order matters: `contextId` matches first so no query can reach another context, and the query runs
+     * before the projection so a field left out of the summary stays filterable.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
@@ -93,14 +90,11 @@ export class GroupRepository {
     }
     
     /**
-     * Everything a fan-out over a container's group grantees needs, out of the one lookup it already does:
+     * Everything a fan-out over a container's group grantees needs, out of one lookup:
      *
-     * - `groupsByUser` — which of the given groups each of their members (users+managers) belongs to. The keys
-     *   are the distinct member userIds, so they double as the recipient list; each value narrows that
-     *   recipient's `groupKeys`. It is the same information `getGroupsOfUser` returns for a single caller,
-     *   already intersected with the container's grants.
-     * - `groupEpochs` — each group's current epoch, so a per-recipient payload can carry the same `staleGroups`
-     *   a `*Get` would serve. It is a field of the documents this reads anyway.
+     * - `groupsByUser` — which of the given groups each member belongs to. Keys are the distinct member
+     *   userIds, so they double as the recipient list; each value narrows that recipient's `groupKeys`.
+     * - `groupEpochs` — each group's current epoch, for the `staleGroups` a `*Get` would serve.
      *
      * Wider than `getKeyVersions`, but still projected: expanding grantees needs the membership lists, and those
      * are all it needs. `leafAssignment` is an entry per seat, `groupKeys` and `keyHistory` an entry per
@@ -157,11 +151,6 @@ export class GroupRepository {
     }
     
     // ── out-of-document state (see GroupStateRepository) ──────────────────────────────────────────────────────
-    
-    /** Whether the group is tree-backed. Tree geometry on the document is what says so. */
-    isTreeBacked(group: db.group.Group): boolean {
-        return group.numLeaves !== undefined;
-    }
     
     /** The hidden key tree, assembled in the shape the validator and the API have always seen. */
     async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
@@ -242,72 +231,8 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        await this.state.writeTree(group.id, null, tree);
+        await this.state.writeTree(group.id, tree);
         return group;
-    }
-    
-    /**
-     * Removes a member: the tree state is replaced, the epoch advances, and the submitted rungs are appended so
-     * the new epoch can still reach the old ones. All under one compare-and-swap on `keyVersion`, so two managers
-     * removing concurrently cannot interleave — the loser retries against the winner's tree.
-     *
-     * @returns the updated group, or `null` on a lost CAS race
-     */
-    async removeMemberWithTree(params: {
-        oldGroup: db.group.Group,
-        /** The state being replaced, already loaded for validation — the tree is written as a diff against it. */
-        oldTree: types.cloud.GroupTreeState,
-        modifier: types.cloud.UserId,
-        removedUser: types.cloud.UserId,
-        newGroupPubKey: types.cloud.GroupPubKey,
-        keyId: types.core.KeyId,
-        data: types.group.GroupData,
-        tree: types.cloud.GroupTreeState,
-        rungs: types.cloud.GroupArchiveRung[],
-        /** The metadata key wrapped once to the group's new grant key. */
-        groupKeys?: types.cloud.GroupKeysEntry[],
-        confirmationTag?: types.core.Base64,
-    }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, removedUser} = params;
-        const now = DateUtils.now();
-        const users = oldGroup.users.filter(u => u !== removedUser);
-        const managers = oldGroup.managers.filter(u => u !== removedUser);
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const version = this.nextVersion(oldGroup);
-        const changes: Partial<db.group.Group> = {
-            groupPubKey: params.newGroupPubKey,
-            lastModifier: modifier,
-            lastModificationDate: now,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            version: version,
-            keyVersion: expectedKeyVersion + 1,
-            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
-            numLeaves: params.tree.numLeaves,
-            leafAssignment: params.tree.leafAssignment,
-            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
-        };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.insertHistoryEntry({
-            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
-            groupId: oldGroup.id,
-            version: version,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            groupPubKey: params.newGroupPubKey,
-            created: now,
-            author: modifier,
-            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
-        });
-        await this.state.writeTree(oldGroup.id, params.oldTree, params.tree);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
-        return {...oldGroup, ...changes};
     }
     
     /** The nodes needed to check a removal at `position`: its path and copath, `O(log n)` reads. */
@@ -321,11 +246,8 @@ export class GroupRepository {
     }
     
     /**
-     * Removes a member from a transition rather than from a whole submitted tree.
-     *
-     * Identical to `removeMemberWithTree` in what it leaves behind — the difference is that neither side ever
-     * handles the whole tree: the client sends `O(log n)`, the bridge reads `O(log n)` to check it, and writes
-     * `O(log n)`.
+     * Removes a member: blank the leaf, refresh its path, advance the epoch, append the rungs. All under one
+     * compare-and-swap on `keyVersion`, so two managers removing concurrently cannot interleave.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
@@ -390,10 +312,10 @@ export class GroupRepository {
     }
     
     /**
-     * Seats a member from a transition rather than from a whole submitted tree.
+     * Seats a member **without advancing the epoch**, so every container the group can read stays valid.
      *
-     * Same outcome as `addMemberWithTree`, without either side handling the whole tree — and, as there, still a
-     * CAS on the unchanged epoch, so an addition racing a removal loses.
+     * Still a CAS on the unchanged epoch, so an addition racing a removal loses: it was computed against a tree
+     * the removal has already replaced.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
@@ -451,68 +373,12 @@ export class GroupRepository {
     }
     
     /**
-     * Adds a member without advancing the epoch — that is what keeps every container the group can read valid,
-     * so nobody else re-keys anything.
-     */
-    async addMemberWithTree(params: {
-        oldGroup: db.group.Group,
-        oldTree: types.cloud.GroupTreeState,
-        modifier: types.cloud.UserId,
-        addedUser: types.cloud.UserId,
-        role: types.cloud.ContainerRole,
-        keyId: types.core.KeyId,
-        data: types.group.GroupData,
-        tree: types.cloud.GroupTreeState,
-    }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, addedUser} = params;
-        const now = DateUtils.now();
-        const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
-        const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const version = this.nextVersion(oldGroup);
-        const changes: Partial<db.group.Group> = {
-            lastModifier: modifier,
-            lastModificationDate: now,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            version: version,
-            numLeaves: params.tree.numLeaves,
-            leafAssignment: params.tree.leafAssignment,
-        };
-        // Still a CAS on the unchanged epoch: an addition racing a removal must lose, because it was computed
-        // against a tree the removal has already replaced.
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.insertHistoryEntry({
-            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
-            groupId: oldGroup.id,
-            version: version,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            groupPubKey: oldGroup.groupPubKey,
-            created: now,
-            author: modifier,
-        });
-        await this.state.writeTree(oldGroup.id, params.oldTree, params.tree);
-        return {...oldGroup, ...changes};
-    }
-    
-    /**
-     * Closes the current era at `newFloor`: nothing below it can be reached by descending any more, so the rungs
-     * pointing there go, and so does the key material that described those epochs.
+     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do `keyHistory` and
+     * `groupKeys` entries below it — nothing can verify or open them once nobody can climb there, and keeping
+     * them leaves two fields growing with every rotation for the life of the group.
      *
-     * `keyHistory` and `groupKeys` are dropped below the floor because there is nothing left to do with them: the
-     * registry entry has no rung to verify against, and the ciphertext is addressed to a grant key nobody can
-     * climb to. Keeping them would leave two fields growing with every rotation for the life of the group.
-     *
-     * `pruneArchive` deliberately does **not** do this. It is housekeeping on the archive, and a member still
-     * holding an old epoch key locally has to keep being able to verify it and open what it wraps. Cutting an era
-     * is the operation that says those epochs are gone for good.
+     * `pruneArchive` deliberately does **not** drop those: a member still holding an old epoch key locally has
+     * to keep being able to verify it. Cutting an era is what says those epochs are gone for good.
      */
     async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = oldGroup.keyVersion;
@@ -532,13 +398,8 @@ export class GroupRepository {
         return {...oldGroup, ...changes};
     }
     
-    /**
-     * Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
-     * archive was pruned rather than left suspecting tampering.
-     *
-     * Pruning is housekeeping, so a member still holding an old epoch key locally keeps being able to verify it
-     * and open what it wraps.
-     */
+    /** Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
+     *  archive was pruned rather than left suspecting tampering. */
     async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = oldGroup.keyVersion;
         const changes: Partial<db.group.Group> = {
@@ -594,10 +455,8 @@ export class GroupRepository {
     /**
      * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
      *
-     * Projected down to `GroupEpochFields`, not read whole and filtered afterwards. This is asked on every
-     * container read and on every item write into a group-granted container, and one int per group is all it
-     * yields — reading the documents would drag `groupKeys` (one entry per rotation) and `leafAssignment` along
-     * for nothing, which on a page of containers is megabytes of BSON to answer a comparison.
+     * Projected, because this runs on every container read and every item write into a group-granted container.
+     * Reading whole documents would drag `groupKeys` and `leafAssignment` along to answer one comparison.
      */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
@@ -616,12 +475,11 @@ export class GroupRepository {
     /**
      * Applies a transition to the group document only if `keyVersion` still matches.
      *
-     * State spans several documents now, so the CAS alone no longer makes a transition atomic — the session does
-     * (`GroupService` runs every transition in one). What the CAS still does is refuse a caller working from a
-     * superseded epoch; and because two transitions racing on the same epoch both write this document, one of
-     * them conflicts and retries against the winner instead of half-landing beside it.
+     * Atomicity comes from the session (`GroupService` runs every transition in one), not from this. What the
+     * CAS does is refuse a caller working from a superseded epoch, and serialise two transitions racing on the
+     * same epoch so the loser retries against the winner instead of half-landing beside it.
      *
-     * A `$set` of what changed, not a whole-document replace: a removal must not rewrite the whole group.
+     * A `$set` of what changed, not a whole-document replace.
      *
      * @returns false on a CAS miss, in which case nothing has been written
      */
@@ -631,12 +489,8 @@ export class GroupRepository {
         return result.matchedCount > 0;
     }
     
-    /**
-     * Rotates the grant keypair, leaving the roster and every node key where they are.
-     *
-     * One edge written, whatever the group's size: the tree is what distributes the new grant key, and the tree
-     * did not move. The rungs are what keep the epochs below reachable.
-     */
+    /** Rotates the grant keypair, leaving the roster and every node key where they are. One edge written,
+     *  whatever the group's size; the rungs keep the epochs below reachable. */
     async generateNewGroupKey(params: {
         oldGroup: db.group.Group,
         modifier: types.cloud.UserId,

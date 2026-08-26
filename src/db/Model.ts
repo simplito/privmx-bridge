@@ -234,9 +234,8 @@ export namespace group {
          */
         leafAssignment: types.cloud.UserId[];
         /**
-         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch. The group is
-         * a grantee of itself, using the same mechanism a thread or store uses to grant access to a group, and
-         * members open it by climbing — see documents/nested_groups/09-hidden-key-tree.md §9.1.
+         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch: the group is
+         * a grantee of itself, and members open it by climbing.
          *
          * One entry per epoch that rotated the key, so it grows with rotations, never with members. `cutEra`
          * drops the entries below its floor.

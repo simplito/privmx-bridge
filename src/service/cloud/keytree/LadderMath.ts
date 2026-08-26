@@ -10,14 +10,10 @@ limitations under the License.
 */
 
 /**
- * Rules governing the Epoch Ladder: which rungs an epoch must publish, and how a descent traverses them.
+ * Epoch Ladder rules: which rungs an epoch must publish, and how a descent traverses them.
  *
  * A **rung** is a ciphertext carrying an older epoch's grant private key, wrapped to a newer epoch's grant
- * public key. See documents/epoch_key_archive/01-construction.md and
- * documents/group-key-system-whitepaper.pl.md §5.
- *
- * Everything here is pure arithmetic over epoch numbers. The bridge needs it to enforce the two invariants
- * that make the ladder safe; the client needs it to know which rungs to build and in what order to descend.
+ * public key. Pure arithmetic over epoch numbers; mirrored in the endpoint (see conformanceDump.ts).
  */
 
 /** A rung, reduced to what the rules operate on. `target < at` always. */
@@ -31,14 +27,8 @@ export interface RungSpan {
 export class LadderMath {
     
     /**
-     * Skip-rung targets for a newly created epoch: `a - 2^j` for every `j >= 1` with `2^j | a`, clamped to
-     * the era floor.
-     *
-     * Aligning skips on powers of two gives **two rungs per epoch amortised** — the count of rungs written at
-     * epoch `a` is `1 + |{ j >= 1 : 2^j | a }|`, and summing over `a = 1..V` yields `2V`. Descent then costs
-     * `O(log delta)` instead of `O(delta)`.
-     *
-     * Returned descending, largest span first, which is the order a builder wants.
+     * Skip-rung targets for a newly created epoch: `a - 2^j` for every `j >= 1` with `2^j | a`, clamped to the
+     * era floor. Power-of-two alignment gives two rungs per epoch amortised and `O(log delta)` descent.
      */
     static skipRungTargets(newEpoch: number, eraFloor: number): number[] {
         LadderMath.assertEpoch(newEpoch, "newEpoch");
@@ -59,13 +49,11 @@ export class LadderMath {
     }
     
     /**
-     * The full set of rung spans an epoch should publish: the mandatory unit rung plus aligned skips.
+     * The full set of rung spans an epoch should publish: the mandatory unit rung plus aligned skips. Empty at
+     * the era floor, where there is nothing below to link to.
      *
-     * The unit rung is mandatory above the era floor and its absence must be rejected **at write time**: an
-     * epoch committed without it leaves a permanent, unrepairable gap, because afterwards no party will ever
-     * again hold both the previous epoch's private key and the new epoch's public key.
-     *
-     * At the era floor (genesis of an era) there is nothing below to link to, so the set is empty.
+     * The unit rung must be rejected at **write time** if absent: an epoch committed without one leaves a
+     * permanent gap, because afterwards nobody holds both the previous private key and the new public key.
      */
     static rungSpansFor(newEpoch: number, eraFloor: number, includeSkips = true): RungSpan[] {
         LadderMath.assertEpoch(newEpoch, "newEpoch");
@@ -91,11 +79,8 @@ export class LadderMath {
         return newEpoch > eraFloor;
     }
     
-    /**
-     * Total number of rungs written across epochs `1..upToEpoch`, following the aligned rule.
-     *
-     * Exists so the amortised-two-per-epoch claim is assertable rather than merely asserted.
-     */
+    /** Total rungs written across epochs `1..upToEpoch`. Exists so the amortised-two-per-epoch claim is
+     *  assertable rather than merely asserted. */
     static totalRungsThrough(upToEpoch: number): number {
         LadderMath.assertEpoch(upToEpoch, "upToEpoch");
         let total = 0;
@@ -106,13 +91,11 @@ export class LadderMath {
     }
     
     /**
-     * Plans a descent from `from` down to `to` over the available rungs, greedily.
+     * Plans a descent from `from` down to `to`, greedily taking the largest jump that does not overshoot. For
+     * an aligned rung set this is optimal and needs no shortest-path search.
      *
-     * At each step it takes the rung with the **smallest target not below `to`** — the largest jump that does
-     * not overshoot. For an aligned rung set this is optimal and needs no shortest-path search.
-     *
-     * @returns the ordered rungs to unwrap, or `null` when the target is unreachable with the rungs given
-     *          (a gap, a pruned range, or an era floor in the way)
+     * @returns the ordered rungs to unwrap, or `null` when the target is unreachable (a gap, a pruned range,
+     *          or an era floor in the way)
      */
     static planDescent(from: number, to: number, available: RungSpan[]): RungSpan[] | null {
         LadderMath.assertEpoch(from, "from");
@@ -160,12 +143,8 @@ export class LadderMath {
         return plan;
     }
     
-    /**
-     * Upper bound on descent length with aligned skip rungs: `2*log2(delta) + 2`.
-     *
-     * From any epoch at most two unit steps reach a power-of-two-aligned epoch, and each jump at least halves
-     * the remaining distance. Used by tests to assert the logarithmic claim, and by clients as a sanity bound.
-     */
+    /** Upper bound on descent length with aligned skip rungs: `2*log2(delta) + 2`. At most two unit steps reach
+     *  an aligned epoch, and each jump at least halves the remaining distance. */
     static descentBound(from: number, to: number): number {
         LadderMath.assertEpoch(from, "from");
         LadderMath.assertEpoch(to, "to");
@@ -176,12 +155,8 @@ export class LadderMath {
         return 2 * Math.ceil(Math.log2(delta + 1)) + 2;
     }
     
-    /**
-     * The floor a descent cannot pass: the higher of the era floor and the prune watermark.
-     *
-     * Distinguishing which one applied is what lets a client say "history before X is not available to you"
-     * versus "history before X was deleted" instead of surfacing a decryption failure.
-     */
+    /** The floor a descent cannot pass: the higher of the era floor and the prune watermark. `reason` lets a
+     *  client tell "not available to you" from "deleted" instead of surfacing a decryption failure. */
     static descentFloor(eraFloor: number, prunedBelow?: number): {floor: number, reason: "ERA_BOUNDARY"|"PRUNED"|"NONE"} {
         LadderMath.assertEpoch(eraFloor, "eraFloor");
         if (prunedBelow === undefined) {
@@ -197,12 +172,9 @@ export class LadderMath {
     /**
      * Validates a submitted rung set for an epoch being created. Pure; the caller reports the errors.
      *
-     * These are the checks the bridge performs, and each is a comparison of integers:
-     * - every rung points downwards (`target < at`) — the entire security guarantee of this layer
-     * - every rung is addressed to the epoch being created
-     * - no rung targets below the era floor, or below the prune watermark
-     * - the mandatory unit rung is present
-     * - no duplicate spans
+     * `target < at` on every rung is the entire security guarantee of this layer. Also checked: the rung is
+     * addressed to the epoch being created, targets nothing below the era floor or prune watermark, the unit
+     * rung is present, and no span is duplicated.
      */
     static validateRungSet(
         submitted: RungSpan[],
@@ -250,7 +222,7 @@ export class LadderMath {
     }
 }
 
-/** Why a rung set was rejected. Mirrors the protocol errors the bridge returns. */
+/** Why a rung set was rejected. */
 export type LadderProblem =
     | {kind: "NON_INTEGER", rung: RungSpan}
     | {kind: "DIRECTION", rung: RungSpan}

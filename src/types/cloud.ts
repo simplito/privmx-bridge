@@ -97,10 +97,9 @@ export interface GroupKeyEntrySet {
     data: types.core.UserKeyData;
 }
 
-// ── Hidden key tree (documents/nested_groups/09-hidden-key-tree.md) ─────────────────────────────────────────
-// The bridge stores and serves this state but cannot read a single key in it: every `data` below is a
-// ciphertext addressed to a key only clients hold. What the bridge *can* do — and must — is check the shape,
-// which is pure integer arithmetic over node indices (see keytree/TreeMath.ts).
+// ── Hidden key tree ─────────────────────────────────────────────────────────────────────────────────────────
+// Every `data` below is a ciphertext addressed to a key only clients hold. The bridge checks the shape only —
+// integer arithmetic over node indices, see keytree/TreeMath.ts.
 
 /** Public half of one tree node. Nodes are never deleted, only refreshed into a higher generation. */
 export interface GroupTreeNode {
@@ -115,7 +114,7 @@ export type GroupTreeChildKind = "user"|"node";
  * One edge: `wrap(sk_parent -> pk_child)`, letting a client that reached the child reach the parent.
  *
  * `isGrantEdge` marks the single edge joining the grant keypair to the tree root. That indirection is what
- * keeps tree growth from advancing the epoch, and so from staling every container the group can read.
+ * keeps tree growth from advancing the epoch.
  */
 export interface GroupTreeEdge {
     isGrantEdge?: boolean;
@@ -131,11 +130,7 @@ export interface GroupTreeEdge {
 }
 
 /**
- * A removal expressed as what it changes, not as the whole tree it leaves behind.
- *
- * Submitting the complete state means uploading `O(n)` — ~13 MB of edges at 16 384 members — to change `O(log n)`
- * of it, and the client must download the same amount first to build it. A transition carries only the refreshed
- * path and the edges around it.
+ * A removal expressed as what it changes: the refreshed path and the edges around it, `O(log n)`.
  *
  * Every refreshed node states the generation it was read at. That precondition is what makes the delta safe: a
  * transition computed against a state that has since moved is refused rather than applied to a base it never
@@ -162,12 +157,7 @@ export interface GroupTreeRefreshedNode {
     publicKey: types.core.EccPubKey;
 }
 
-/**
- * An addition expressed as a delta: the new leaf's path re-keyed, at the same epoch.
- *
- * The whole-tree shape is still accepted, but it makes the client download and echo back `O(n)` state to change
- * `O(log n)` of it. This carries only what moves.
- */
+/** An addition expressed as a delta: the new leaf's path re-keyed, at the same epoch. */
 export interface GroupTreeAdditionTransition {
     /** The epoch the client planned against; must still be the group's current one, and does not advance. */
     baseKeyVersion: number;
@@ -197,14 +187,13 @@ export interface GroupTreeState {
     edges: GroupTreeEdge[];
 }
 
-// ── Epoch Ladder (documents/epoch_key_archive/) ─────────────────────────────────────────────────────────────
+// ── Epoch Ladder ────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
  * One rung: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
  *
- * `targetKeyVersion < atKeyVersion` always. That single comparison is the whole security guarantee of this
- * layer — an upward rung would hand a removed member a key from after their removal — and the bridge is the
- * only party positioned to enforce it globally, which is why it does so on every write.
+ * `targetKeyVersion < atKeyVersion` always — an upward rung would hand a removed member a key from after their
+ * removal. Enforced on every write.
  */
 export interface GroupArchiveRung {
     atKeyVersion: number;
@@ -215,7 +204,7 @@ export interface GroupArchiveRung {
     author?: UserId;
 }
 
-/** Role a group grantee holds in a container. Role-tagged so it generalizes to RBAC (widen this union). */
+/** Role a group grantee holds in a container. */
 export type ContainerRole = "user"|"manager";
 
 /** A group granted access to a container, with the role it holds there. */
@@ -264,9 +253,8 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     canOverwriteContextPolicy?: PolicyBooleanEntry;
     /** Determines who can send custom notifications */
     sendCustomNotification?: PolicyEntry;
-    /** When "yes", the container opts into forward secrecy: clients lazily re-key it (rotateKey) after a
-     *  grantee group's epoch advances, so removed members can't read content written afterwards. Bridge stores
-     *  this advisory flag (best-effort — it does not force re-key); the endpoint acts on it. */
+    /** When "yes", item writes are refused while a grantee group's epoch is ahead of the container's key, so
+     *  clients must re-key before writing. Advisory: the bridge does not re-key anything itself. */
     forwardSecrecy?: PolicyBooleanEntry;
 }
 

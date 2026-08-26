@@ -20,7 +20,7 @@ import { GroupStateRepository } from "../../../service/cloud/GroupStateRepositor
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { AppException } from "../../../api/AppException";
 import { createFake, createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { buildTree, rotationGrantEdge, rungsFor, treeAfterRemoval } from "../../testUtils/TreeFixtures";
+import { additionTransition, buildTree, removalTransition, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { DateUtils } from "../../../utils/DateUtils";
@@ -84,7 +84,7 @@ function createRepository(options: {casMiss?: boolean} = {}) {
             updates.push({filter, set: update.$set});
             return {matchedCount: options.casMiss ? 0 : 1};
         }) as never,
-        // Nothing here may call it — a whole-document replace is the thing this task removed.
+        // Nothing here may call it: a removal is a `$set`, never a whole-document replace.
         replaceOne: (async (...args: unknown[]) => {
             replacements.push(args);
             return {matchedCount: 1};
@@ -102,6 +102,8 @@ function createRepository(options: {casMiss?: boolean} = {}) {
     const state = createMock<GroupStateRepository>({});
     mock(state, "insertHistoryEntry", async () => {});
     mock(state, "writeTree", async () => {});
+    mock(state, "applyRemovalTransition", async () => {});
+    mock(state, "applyAdditionTransition", async () => {});
     mock(state, "insertRungs", async () => {});
     mock(state, "deleteRungsTargetingBelow", async () => {});
     mock(state, "deleteState", async () => {});
@@ -111,16 +113,14 @@ function createRepository(options: {casMiss?: boolean} = {}) {
 }
 
 function removal(oldGroup: db.group.Group) {
-    const {after} = treeAfterRemoval(SEATING, 2, EPOCH);
     return {
         oldGroup: oldGroup,
-        oldTree: buildTree(SEATING, EPOCH),
         modifier: janek,
         removedUser: bob,
         newGroupPubKey: nextGroupPubKey,
         keyId: newKeyId,
         data: data,
-        tree: after,
+        transition: removalTransition(buildTree(SEATING, EPOCH), 2, EPOCH),
         rungs: [{atKeyVersion: EPOCH + 1, targetKeyVersion: EPOCH, data: "rung" as types.core.UserKeyData}],
     };
 }
@@ -137,19 +137,19 @@ it("a removal updates the fields that changed instead of replacing the document"
     // A whole-document replace meant rewriting the entire tree to add one edge.
     const {repository, updates, replacements} = createRepository();
     const oldGroup = group();
-    await repository.removeMemberWithTree(removal(oldGroup));
+    await repository.removeMemberWithTransition(removal(oldGroup));
     assert.strictEqual(updates.length, 1);
     assert.strictEqual(replacements.length, 0);
     const written = Object.keys(updates[0].set).sort();
     assert.deepStrictEqual(written, [
         "data", "groupPubKey", "keyHistory", "keyId", "keyVersion",
-        "lastModificationDate", "lastModifier", "leafAssignment", "managers", "numLeaves", "users", "version",
+        "lastModificationDate", "lastModifier", "leafAssignment", "managers", "users", "version",
     ]);
 });
 
 it("a removal keeps the compare-and-swap on the epoch it was computed against", async () => {
     const {repository, updates} = createRepository();
-    await repository.removeMemberWithTree(removal(group()));
+    await repository.removeMemberWithTransition(removal(group()));
     assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH});
     assert.strictEqual(updates[0].set.keyVersion, EPOCH + 1);
 });
@@ -157,22 +157,23 @@ it("a removal keeps the compare-and-swap on the epoch it was computed against", 
 it("a lost race writes nothing at all, in the document or beside it", async () => {
     // Half a transition is worse than none: edges of a tree the document never adopted would be read as real.
     const {repository, state} = createRepository({casMiss: true});
-    const result = await repository.removeMemberWithTree(removal(group()));
+    const result = await repository.removeMemberWithTransition(removal(group()));
     assert.strictEqual(result, null);
     hasNoCalls(state.insertHistoryEntry);
-    hasNoCalls(state.writeTree);
+    hasNoCalls(state.applyRemovalTransition);
     hasNoCalls(state.insertRungs);
 });
 
-it("the tree is written as a diff against the state it replaces", async () => {
+it("only the transition is written, never a whole tree", async () => {
     const {repository, state} = createRepository();
     const params = removal(group());
-    await repository.removeMemberWithTree(params);
-    hasOneCall(state.writeTree);
-    const call = (state.writeTree as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
+    await repository.removeMemberWithTransition(params);
+    hasOneCall(state.applyRemovalTransition);
+    hasNoCalls(state.writeTree);
+    const call = (state.applyRemovalTransition as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
     assert.strictEqual(call[0], groupId);
-    assert.strictEqual(call[1], params.oldTree);
-    assert.strictEqual(call[2], params.tree);
+    assert.strictEqual(call[1], params.transition);
+    assert.strictEqual(call[2], bob);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ it("the tree is written as a diff against the state it replaces", async () => {
 it("appending a version is one insert, and the number comes from the counter", async () => {
     // Not from an array length: counting the entries would mean reading the whole history to append to it.
     const {repository, state} = createRepository();
-    const result = await repository.removeMemberWithTree(removal(group({version: 41 as types.group.GroupVersion})));
+    const result = await repository.removeMemberWithTransition(removal(group({version: 41 as types.group.GroupVersion})));
     hasOneCall(state.insertHistoryEntry);
     assert.strictEqual(result?.version, 42);
     const entry = historyEntry(state);
@@ -197,15 +198,14 @@ it("an addition advances the version without advancing the epoch", async () => {
     // The epoch staying put is what keeps every container the group can read valid.
     const {repository, state, updates} = createRepository();
     const oldGroup = group();
-    const result = await repository.addMemberWithTree({
+    const result = await repository.addMemberWithTransition({
         oldGroup: oldGroup,
-        oldTree: buildTree(SEATING, EPOCH),
+        transition: additionTransition(buildTree(SEATING, EPOCH), "dave" as types.cloud.UserId, 4, EPOCH),
         modifier: janek,
         addedUser: "dave" as types.cloud.UserId,
         role: "user",
         keyId: keyId,
         data: data,
-        tree: buildTree([...SEATING, "dave"], EPOCH),
     });
     assert.strictEqual(result?.version, 8);
     assert.strictEqual(result?.keyVersion, EPOCH);
@@ -468,7 +468,7 @@ it("getGranteeView on a container with no group grants asks nothing", async () =
  * `getKeyVersions` is on the hot path twice over — every container read serves `staleGroups` from it, and every
  * item write into a group-granted container is checked against it — and one integer per group is all it yields.
  * So it must not read documents: `keys` alone is ~1.29 KB per member, and a list page can ask about a hundred
- * groups at once. The projection is the whole point of the method, which is why it is asserted here.
+ * groups at once, so the projection itself is what these assert.
  */
 function createEpochRepository(groups: db.group.Group[]) {
     const projections: {[field: string]: 1}[] = [];

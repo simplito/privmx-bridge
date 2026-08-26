@@ -14,7 +14,7 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { additionTransition, applyAddition, applyAdditionWithPathRefresh, applyRemoval, buildTree, refreshNodes, removalTransition, withAdditionTransitionNodeKeys, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
+import { additionTransition, buildTree, removalTransition, withAdditionTransitionNodeKeys, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
@@ -313,14 +313,14 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const current = await this.currentTree();
         const newEpoch = this.keyVersion + 1;
-        const tree = withNodeKeys(applyRemoval(current, position, newEpoch), nodeKey);
+        const transition = withTransitionNodeKeys(removalTransition(current, position, this.keyVersion), nodeKey);
         const res = await this.apis.contextApi.groupRemoveMember({
             id: groupId,
             userId: userId,
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
-            tree: tree,
+            transition: transition,
             rungs: this.rungsFor(newEpoch),
             // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
             groupKeys: {
@@ -346,7 +346,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             position: position,
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
-            tree: applyAddition(current, userId, position),
+            transition: withAdditionTransitionNodeKeys(additionTransition(current, userId, position, this.keyVersion), nodeKey),
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupAddMember did not return OK");
@@ -356,7 +356,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async addMemberByRekeyingThePath(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
         const current = await this.currentTree();
-        const tree = withNodeKeys(applyAdditionWithPathRefresh(current, userId, position, this.keyVersion), nodeKey);
+        const transition = withAdditionTransitionNodeKeys(
+            additionTransition(current, userId, position, this.keyVersion), nodeKey,
+        );
         const res = await this.apis.contextApi.groupAddMember({
             id: groupId,
             userId: userId,
@@ -364,7 +366,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             position: position,
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
-            tree: tree,
+            transition: transition,
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupAddMember did not return OK");
@@ -436,7 +438,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(history[0]._id === `${groupId}|1`, "a history entry is identified by (groupId, version), so appending one is an insert");
         assert(history[0].version === 1, "genesis is version 1");
         assert(history[0].author === testData.userId, "genesis author mismatch");
-        // Identity derived from the seat, which is what makes a refresh an update in place.
+        // Identity is derived from the seat, so a refresh is an update in place.
         assert(nodes.every(node => node._id === `${groupId}|${node.nodeIndex}`), "node ids are derived from (groupId, nodeIndex)");
         assert(edges.filter(edge => edge._id.includes("grant")).length === 1, "exactly one grant edge");
     }
@@ -514,7 +516,20 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(edgesAfter.length === edgesBefore.length + 1, "one new edge, and only one");
         const before = new Map(edgesBefore.map(edge => [edge._id, JSON.stringify(edge)]));
         const changed = edgesAfter.filter(edge => before.get(edge._id) !== JSON.stringify(edge));
-        assert(changed.length === 1 && changed[0]._id.includes("user:dave"), "no existing edge is rewritten by an addition");
+        // An addition re-keys the new leaf's path — that is what lets a caller seat somebody under a node they
+        // cannot themselves reach, and it is the only shape the protocol accepts since the whole-tree submission
+        // went away. So the edges it touches are dave's own, the ones out of the refreshed path, and the grant
+        // edge re-issued to the root. What must NOT move is anything off that path: an addition does not advance
+        // the epoch, so a node outside it that changed would be a re-key nobody asked for and nobody accounts for.
+        assert(changed.some(edge => edge._id.includes("user:dave")), "dave's own edge was written");
+        const path = TreeMath.directPath(BOB_POSITION, document.numLeaves as number);
+        for (const edge of changed) {
+            const parent = edge.parentIndex;
+            assert(
+                edge.isGrantEdge === true || (parent !== undefined && path.includes(parent)),
+                `edge ${edge._id} is off the new leaf's path — an addition must not touch it`,
+            );
+        }
     }
     
     private async verifyOnlyThePathMoved(nodesBefore: NodeDocument[], epochBefore: number) {
@@ -547,10 +562,13 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert.ok(!TreeMath.directPath(BOB_POSITION, 4).includes(offPath), "pick a node genuinely off the path");
         await shouldThrowErrorWithCode2(async () => {
             const current = await this.currentTree();
-            const tree = withNodeKeys(
-                refreshNodes(applyAdditionWithPathRefresh(current, dave, BOB_POSITION, this.keyVersion), [offPath]),
-                nodeKey,
+            const transition = withAdditionTransitionNodeKeys(
+                additionTransition(current, dave, BOB_POSITION, this.keyVersion), nodeKey,
             );
+            transition.seatedNodes.push({
+                nodeIndex: offPath, fromGeneration: 0, generation: 1,
+                publicKey: nodeKey(offPath, 1),
+            });
             await this.apis.contextApi.groupAddMember({
                 id: this.requireGroupId(),
                 userId: dave,
@@ -558,7 +576,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 position: BOB_POSITION,
                 keyId: keyIdAt(this.keyVersion),
                 data: "group-data" as types.group.GroupData,
-                tree: tree,
+                transition: transition,
                 expectedKeyVersion: this.keyVersion,
             });
         }, "GROUP_TREE_INVALID");
@@ -674,9 +692,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async verifyAStaleEpochIsRefused() {
         // Computed against a tree that no longer exists.
         await shouldThrowErrorWithCode2(async () => {
-            const tree = withNodeKeys(applyRemoval(await this.currentTree(), BOB_POSITION, this.keyVersion + 1), nodeKey);
+            const transition = withTransitionNodeKeys(
+                removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
+            );
             await this.apis.contextApi.groupRemoveMember({
-                ...this.removalPayload(bob, tree),
+                ...this.removalPayload(bob, transition),
                 expectedKeyVersion: this.keyVersion - 1,
             });
         }, "ROTATED_ALREADY");
@@ -686,22 +706,24 @@ export class GroupKeyTreeTests extends BaseTestSet {
         // SECURITY: one unrefreshed node on the path leaves the departing member holding a live key.
         await shouldThrowErrorWithCode2(async () => {
             const current = await this.currentTree();
-            const tree = withNodeKeys(applyRemoval(current, BOB_POSITION, this.keyVersion + 1), nodeKey);
-            const root = tree.nodes.find(node => node.nodeIndex === 3);
-            const stale = current.nodes.find(node => node.nodeIndex === 3);
-            assert(!!root && !!stale, "the tree of four has a root at index 3");
-            root.generation = stale.generation;
-            root.publicKey = stale.publicKey;
-            await this.apis.contextApi.groupRemoveMember(this.removalPayload(bob, tree));
+            const transition = withTransitionNodeKeys(
+                removalTransition(current, BOB_POSITION, this.keyVersion), nodeKey,
+            );
+            // Drop the root from the refresh set: the tree of four has its root at index 3.
+            assert(transition.refreshedNodes.some(node => node.nodeIndex === 3), "the root is on the path");
+            transition.refreshedNodes = transition.refreshedNodes.filter(node => node.nodeIndex !== 3);
+            await this.apis.contextApi.groupRemoveMember(this.removalPayload(bob, transition));
         }, "GROUP_TREE_INVALID");
     }
     
     private async verifyAnUpwardRungIsRefused() {
         // SECURITY: an upward rung hands the departing member everything written after their removal.
         await shouldThrowErrorWithCode2(async () => {
-            const tree = withNodeKeys(applyRemoval(await this.currentTree(), BOB_POSITION, this.keyVersion + 1), nodeKey);
+            const transition = withTransitionNodeKeys(
+                removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
+            );
             await this.apis.contextApi.groupRemoveMember({
-                ...this.removalPayload(bob, tree),
+                ...this.removalPayload(bob, transition),
                 rungs: [
                     ...this.rungsFor(this.keyVersion + 1),
                     {
@@ -734,7 +756,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             "no edge was re-wrapped to a generation or an epoch that never came to exist");
     }
     
-    private removalPayload(userId: types.cloud.UserId, tree: types.cloud.GroupTreeState) {
+    private removalPayload(userId: types.cloud.UserId, transition: types.cloud.GroupTreeTransition) {
         const newEpoch = this.keyVersion + 1;
         return {
             id: this.requireGroupId(),
@@ -742,7 +764,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
-            tree: tree,
+            transition: transition,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
         };

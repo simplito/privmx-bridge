@@ -10,17 +10,10 @@ limitations under the License.
 */
 
 /**
- * Array-indexed left-balanced binary tree arithmetic for the hidden key tree.
+ * Array-indexed left-balanced binary tree arithmetic, following RFC 9420 §4.1.
  *
- * Layout follows RFC 9420 §4.1 — this arithmetic is the only thing borrowed from MLS. For `N` leaves the
- * tree occupies node indices `0 .. 2N-2`; leaf `i` sits at index `2i`; internal nodes are at odd indices.
- *
- * The topology is a pure function of `numLeaves`, so nothing about the tree structure is stored anywhere.
- * See documents/nested_groups/09-hidden-key-tree.md §2.
- *
- * The bridge needs this identically to the client: without it the server cannot know which nodes a removal
- * is obliged to refresh, and therefore cannot enforce path completeness — the check that stops a removed
- * member from keeping a current node key. See §6 of that document.
+ * For `N` leaves the tree occupies node indices `0 .. 2N-2`; leaf `i` sits at index `2i`; internal nodes are
+ * at odd indices. Topology is a pure function of `numLeaves`, so no tree structure is stored anywhere.
  *
  * **Left-balanced means the right edge may be incomplete.** With `N = 3` the root is at index 3, but index 5
  * does not exist, so node 3's right child is node 4 (found by walking down) and node 4's parent is node 3
@@ -212,11 +205,8 @@ export class TreeMath {
     /**
      * Nodes from the leaf's parent up to and including the root, bottom-up.
      *
-     * This is **exactly** the set of nodes a removal must refresh. The bridge compares it against what the
-     * client submitted — no less (a hole in post-removal confidentiality) and no more (an unrequested epoch
-     * change). See documents/nested_groups/09-hidden-key-tree.md §6.
-     *
-     * Empty for a single-leaf tree, where the leaf is itself the root.
+     * Exactly the set of nodes a removal must refresh — no less (a hole in post-removal confidentiality) and
+     * no more (an unrequested epoch change). Empty for a single-leaf tree, where the leaf is itself the root.
      */
     static directPath(position: number, numLeaves: number): number[] {
         const leaf = TreeMath.leafNode(position);
@@ -233,9 +223,6 @@ export class TreeMath {
     
     /**
      * Siblings alongside the leaf's direct path — the nodes a refresh wraps to.
-     *
-     * A member never reaches a copath node. That is where collusion resistance comes from: pooling stale
-     * keys from several removed members yields no current key.
      *
      * `copath[i]` is the sibling encountered when stepping to `directPath[i]`, so the two are index-aligned.
      */
@@ -263,12 +250,8 @@ export class TreeMath {
         ];
     }
     
-    /**
-     * Number of leaves the tree must have to seat `position`, growing to the next power of two when needed.
-     *
-     * Adding a member never moves anyone: positions are filled lowest-blank-first and only ever appended at
-     * the end, so growth is the only structural change and it is purely additive.
-     */
+    /** Number of leaves needed to seat `position`. Seats are filled lowest-blank-first and only ever appended,
+     *  so growth is the only structural change and it never moves an existing member. */
     static numLeavesToSeat(position: number, currentNumLeaves: number): number {
         if (position < currentNumLeaves) {
             return currentNumLeaves;
