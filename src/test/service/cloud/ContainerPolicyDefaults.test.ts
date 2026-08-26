@@ -14,14 +14,15 @@ import { BasePolicy } from "../../../service/cloud/BasePolicy";
 import { PolicyService } from "../../../service/cloud/PolicyService";
 import * as db from "../../../db/Model";
 import * as types from "../../../types";
+import { AppException } from "../../../api/AppException";
 
 /**
  * What a deployment that configures nothing actually gets.
  *
- * Every one of these is a default with a security consequence and no other test that would notice it changing:
- * a `forwardSecrecy` that resolves to "off" makes revocation stop biting, a `rotateKeys` that resolves to "user"
- * lets one member replace the key everybody else reads through, and a `group.listAll` of "all" hands the
- * context's membership graph to every user in it.
+ * Each of these defaults has a security consequence and no other test that would notice it changing. Two of them
+ * are deliberate trade-offs rather than the safe choice, and are pinned here so they stay deliberate:
+ * `forwardSecrecy` is off, so removal from a grantee group does not by itself stop the departed member reading
+ * new writes; `rotateKeys` is wider than `update`, so any member can replace the container key.
  */
 
 type ContainerKind = "thread"|"store"|"inbox"|"stream"|"kvdb"|"group";
@@ -57,23 +58,50 @@ function asUser(userId: types.cloud.UserId) {
 const containerKinds: ContainerKind[] = ["thread", "store", "inbox", "stream", "kvdb"];
 
 for (const kind of containerKinds) {
-    it(`${kind}: forward secrecy is enforced without being asked for`, async () => {
+    it(`${kind}: forward secrecy stays off until a deployment asks for it`, async () => {
+        // Backwards compatibility: turning this on refuses writes to containers whose grantee group has rotated,
+        // and an existing deployment's clients do not re-key on `staleGroups` yet. So a removal revokes the
+        // group and not the containers granted to it — the departed member reads on until somebody rotates.
         const policy = new KindPolicy(new PolicyService(), kind);
-        expect(policy.isForwardSecrecyEnforced(emptyContext, container)).toBe(true);
+        expect(policy.isForwardSecrecyEnforced(emptyContext, container)).toBe(false);
     });
     
-    it(`${kind}: rotating the container key is a manager's call by default`, async () => {
+    it(`${kind}: a context or container can turn forward secrecy on`, async () => {
+        const policy = new KindPolicy(new PolicyService(), kind);
+        expect(policy.isForwardSecrecyEnforced(emptyContext, {...container, policy: {forwardSecrecy: "yes"}})).toBe(true);
+        const enforcingContext = {id: "ctx", policy: {[kind]: {forwardSecrecy: "yes"}}} as unknown as db.context.Context;
+        expect(policy.isForwardSecrecyEnforced(enforcingContext, container)).toBe(true);
+    });
+    
+    it(`${kind}: any member can re-key, which is what clears a stale grant`, async () => {
+        // Deliberately wider than `update`. Where forward secrecy *is* enabled, a grantee group that rotates
+        // makes every write fail until the container is re-keyed — so if this were manager-only, a plain member
+        // hitting CONTAINER_GROUP_EPOCH_OUTDATED could do nothing but wait for a manager. What it trades away
+        // is that one member can install a key the others cannot open; that is visible immediately and any
+        // manager can rotate past it, where the deadlock would be routine.
         const policy = new KindPolicy(new PolicyService(), kind);
         expect(policy.canRotateContainerKeys(asUser(alice), emptyContext, container)).toBe(true);
-        // A rotation installs the key every later read runs through, and nothing verifies the blobs are honest.
-        expect(policy.canRotateContainerKeys(asUser(bob), emptyContext, container)).toBe(false);
+        expect(policy.canRotateContainerKeys(asUser(bob), emptyContext, container)).toBe(true);
+        // Still not an outsider's call.
+        expect(policy.canRotateContainerKeys(asUser("carol" as types.cloud.UserId), emptyContext, container)).toBe(false);
     });
     
-    it(`${kind}: an explicit "no" still turns forward secrecy off`, async () => {
-        // Enforcement costs a re-key on every group rotation; a deployment is allowed to decline it, it just
-        // has to say so.
+    it(`${kind}: an unrecognised rotateKeys value is refused instead of resolving to nobody`, async () => {
+        // The entry the escape hatch runs through, so a typo in it must not silently wedge the container.
+        try {
+            new PolicyService().validateContainerPolicyForContainer(`policy.${kind}`, {rotateKeys: "membre" as types.cloud.PolicyEntry});
+        }
+        catch (e) {
+            expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
+            return;
+        }
+        expect(true).toBeFalsy();
+    });
+    
+    it(`${kind}: one container can decline what its context enforces`, async () => {
         const policy = new KindPolicy(new PolicyService(), kind);
-        expect(policy.isForwardSecrecyEnforced(emptyContext, {...container, policy: {forwardSecrecy: "no"}})).toBe(false);
+        const enforcingContext = {id: "ctx", policy: {[kind]: {forwardSecrecy: "yes"}}} as unknown as db.context.Context;
+        expect(policy.isForwardSecrecyEnforced(enforcingContext, {...container, policy: {forwardSecrecy: "no"}})).toBe(false);
     });
 }
 

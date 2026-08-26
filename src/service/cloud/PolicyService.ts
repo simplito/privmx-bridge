@@ -32,14 +32,13 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
-        forwardSecrecy: "yes",
         sendCustomNotification: "all",
         item: {
             get: "user",
@@ -56,14 +55,13 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
-        forwardSecrecy: "yes",
         sendCustomNotification: "all",
         item: {
             get: "user",
@@ -80,14 +78,13 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
-        forwardSecrecy: "yes",
         sendCustomNotification: "all",
     },
     stream: {
@@ -96,14 +93,13 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
-        forwardSecrecy: "yes",
         sendCustomNotification: "all",
     },
     kvdb: {
@@ -112,14 +108,13 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
         updaterCanBeRemovedFromManagers: "no",
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
-        forwardSecrecy: "yes",
         sendCustomNotification: "all",
         item: {
             get: "user",
@@ -197,6 +192,11 @@ export class PolicyService {
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
+        // A container whose grantee group has rotated refuses writes until somebody re-keys it, so an
+        // unrecognised value here reads as "nobody may" and wedges the container with no error at set time.
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["default", "none", "all"], ["user", "manager", "owner"]);
+        }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -238,6 +238,9 @@ export class PolicyService {
         }
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
+        }
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
