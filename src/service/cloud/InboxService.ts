@@ -336,6 +336,11 @@ export class InboxService extends BaseContainerService {
         if (model.version > inbox.history.length) {
             throw new AppException("INVALID_VERSION");
         }
+        // A submission is encrypted to the inbox's own key, so a grantee group that has rotated past the epoch
+        // that key was wrapped to still opens it. The submitter is anonymous and cannot re-key anything, so all
+        // this can do is refuse — which is the point: dropping the submission is recoverable, letting a departed
+        // member read it is not. Only when the policy asks for it.
+        await this.checkGroupEpochs(inbox, this.policy.isForwardSecrecyEnforced(context, inbox));
         const last = inbox.history[inbox.history.length - 1];
         const store = await this.repositoryFactory.createStoreRepository().get(last.data.storeId);
         if (!store) {

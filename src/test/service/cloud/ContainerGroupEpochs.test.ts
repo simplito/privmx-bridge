@@ -38,10 +38,11 @@ class ContainerService extends BaseContainerService {
     }
 }
 
-function createService(currentGroupEpoch: number) {
+function createService(currentGroupEpoch: number|"unresolvable") {
     const repositoryFactory = createMock<RepositoryFactory>({});
     const groupRepository = createMock<GroupRepository>({});
-    mock(groupRepository, "getKeyVersions", async () => new Map([[groupId, currentGroupEpoch]]));
+    mock(groupRepository, "getKeyVersions", async () =>
+        currentGroupEpoch === "unresolvable" ? new Map<types.group.GroupId, number>() : new Map([[groupId, currentGroupEpoch]]));
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     return new ContainerService(repositoryFactory, createMock<ActiveUsersMap>({}), "localhost" as types.core.Host);
 }
@@ -123,6 +124,13 @@ it("does not enforce anything when the container has not asked for forward secre
     // Enforcement costs a re-key on every group rotation, so it is opt-in per container.
     const service = createService(2);
     await service.check(grantedContainer(oldKeyId, [{keyId: oldKeyId, groupEpoch: 1}]), false);
+});
+
+it("refuses a write when a current grant's epoch cannot be resolved at all", async () => {
+    // The group was deleted, or moved out of the context. Nothing here can say what the container's key is
+    // wrapped to, and assuming it is current is the one guess that lets the write through.
+    const service = createService("unresolvable");
+    await expectRefused(() => service.check(grantedContainer(newKeyId, [{keyId: newKeyId, groupEpoch: 7}])));
 });
 
 it("refuses exactly what the read paths report as stale", async () => {

@@ -532,7 +532,10 @@ export class StreamService extends BaseContainerService {
     }
     
     async publishStream(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, offer: { type: "offer", sdp: string }, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
-        const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamPublish");
+        const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamPublish");
+        // Media is encrypted with the room's key, so publishing into a room still wrapped to a grantee group's
+        // superseded epoch is a write a departed member can read — the same case as sending a message.
+        await this.checkGroupEpochs(streamRoom, this.policy.isForwardSecrecyEnforced(context, streamRoom));
         return ctx.runExclusive(roomLockKey(streamRoom.id), () => this.publishStreamLocked(streamRoom, ctx, user.userId, offer));
     }
     
@@ -620,7 +623,8 @@ export class StreamService extends BaseContainerService {
     }
     
     async updateStream(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, offer: { type: "offer", sdp: string }, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
-        const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUpdate");
+        const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUpdate");
+        await this.checkGroupEpochs(streamRoom, this.policy.isForwardSecrecyEnforced(context, streamRoom));
         return ctx.runExclusive(roomLockKey(streamRoom.id), () => this.updateStreamLocked(streamRoom, ctx, user.userId, offer));
     }
     

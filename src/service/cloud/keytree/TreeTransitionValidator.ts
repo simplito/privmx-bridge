@@ -353,6 +353,13 @@ export class TreeTransitionValidator {
             }
             else if (submitted.publicKey === current.publicKey) {
                 // A bumped generation carrying the same key is a removal that looks done and is not.
+                //
+                // Only reuse of the key being *replaced* is detectable here: the bridge keeps one generation per
+                // node, so a manager republishing some older generation's key looks like a fresh one to it, and
+                // the endpoint's climb — which checks a recovered key against this same published value — cannot
+                // tell either. A removal is only as good as the manager performing it minting new randomness
+                // (see `planRemoval` in the endpoint); detecting otherwise would mean storing every key a node
+                // has ever had, which is the unbounded history this design exists to avoid.
                 problems.push({kind: "NODE_KEY_REUSED", nodeIndex});
             }
         }

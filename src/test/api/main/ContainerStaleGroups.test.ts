@@ -161,12 +161,14 @@ it("says nothing about a container with no group grants", async () => {
     assert.deepStrictEqual(staleGroupsOf({keyId: keyId, groupKeys: []}, EPOCHS), []);
 });
 
-it("assumes epoch 1 for a granted group that no longer exists", async () => {
-    // Deleted since the grant was made, so it is absent from the epoch map. Epoch 1 is what the write-side check
-    // has always assumed: an epoch-1 wrap is left alone, an untagged Phase-1 one is not.
+it("says nothing about a group it cannot resolve, whatever the entry claims", async () => {
+    // Absent from the epoch map. That happens for a revoked grant whose `groupKeys` entry is kept on purpose, so
+    // it cannot be read as "behind" — there is no epoch to be behind of. A grant that is still *current* and
+    // still unresolvable is a different case, and `checkGroupEpochs` refuses the write outright rather than
+    // guessing an epoch here.
     const gone = "sales" as types.group.GroupId;
     assert.deepStrictEqual(staleGroupsOf({keyId: keyId, groupKeys: [wrap(gone, [{keyId: keyId, groupEpoch: 1}])]}, EPOCHS), []);
-    assert.deepStrictEqual(staleGroupsOf({keyId: keyId, groupKeys: [wrap(gone, [{keyId: keyId}])]}, EPOCHS), [gone]);
+    assert.deepStrictEqual(staleGroupsOf({keyId: keyId, groupKeys: [wrap(gone, [{keyId: keyId}])]}, EPOCHS), []);
 });
 
 it("lists every stale grant, not just the first", async () => {

@@ -75,10 +75,16 @@ export class GroupRepository {
      * Stage order matters: `contextId` matches first so no query can reach another context, and the query runs
      * before the projection so a field left out of the summary stays filterable.
      */
-    async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
+    async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
+        // `onlyForUser` narrows to the caller's own groups, served off the `{contextId, users}` /
+        // `{contextId, managers}` indexes from Migration072. In the same `$match` as `contextId`, so no query
+        // from `listParams` can widen it back.
+        const match = onlyForUser === undefined
+            ? {contextId: contextId}
+            : {contextId: contextId, $or: [{users: onlyForUser}, {managers: onlyForUser}]};
         return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
-            [{$match: {contextId: contextId}}, ...mongoQueries, {$project: GroupRepository.SUMMARY_PROJECTION}],
+            [{$match: match}, ...mongoQueries, {$project: GroupRepository.SUMMARY_PROJECTION}],
             listParams,
             sortBy,
         );

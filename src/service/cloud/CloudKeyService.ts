@@ -140,7 +140,12 @@ export class CloudKeyService {
         const groupRepo = this.repositoryFactory.createGroupRepository();
         const currentVersions = await groupRepo.getKeyVersions(contextId, groupIds);
         for (const groupId of groupIds) {
-            const currentVersion = currentVersions.get(groupId) ?? 1;
+            const currentVersion = currentVersions.get(groupId);
+            if (currentVersion === undefined) {
+                // `checkGroupsExistence` ran first, so this cannot normally happen — and assuming an epoch here
+                // would accept an entry wrapped to epoch 1 of a group nobody could resolve.
+                throw new AppException("GROUP_DOES_NOT_EXIST", `group '${groupId}' does not exist in context`);
+            }
             const insert = inserts.find(i => i.group === groupId && i.keyId === keyId);
             if (!insert) {
                 // No NEW key entry for this group at this keyId (the keyId is being reused, the group's existing
