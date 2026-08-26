@@ -20,7 +20,7 @@ import { TreeMath } from "./keytree/TreeMath";
  * entries and Epoch Ladder rungs.
  *
  * Ids are derived, not generated — a node is `(groupId, nodeIndex)`, an edge is `(groupId, parent, child)`.
- * Generations are deliberately not part of an edge's identity, so refreshing a path updates edges in place
+ * Generations are deliberately **not** part of an edge's identity, so refreshing a path updates edges in place
  * instead of deleting and reinserting them.
  *
  * Every mutating method runs in the session the repositories were built with; atomicity is the caller's.
@@ -96,11 +96,7 @@ export class GroupStateRepository {
         };
     }
     
-    /**
-     * History entries of one group, optionally only those from `fromVersion` on. The window goes into the query
-     * rather than filtering afterwards: each entry carries the roster it was written with, and a client that has
-     * already verified the older ones has no use for them.
-     */
+    /** History entries of one group, optionally only those from `fromVersion` on. */
     async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
         const entries = await this.history.query(q => fromVersion === undefined
             ? q.eq("groupId", groupId)
@@ -142,10 +138,8 @@ export class GroupStateRepository {
     /**
      * Replaces the grant edge, which is all a rotation writes to the tree.
      *
-     * A rotation moves no node, so the root index does not change and the new edge lands on the same derived id
-     * as the one it supersedes — an upsert, not an insert-and-delete. The edge is written as submitted: the
-     * service has already refused anything that is not the grant edge addressed to the current root, and
-     * re-deriving it here would silently correct a caller that is wrong instead of failing.
+     * A rotation moves no node, so the new edge lands on the same derived id as the one it supersedes — an
+     * upsert. Written as submitted: re-deriving it here would silently correct a wrong caller instead of failing.
      */
     async replaceGrantEdge(groupId: types.group.GroupId, edge: types.cloud.GroupTreeEdge): Promise<void> {
         await this.edges.collection.updateOne(
@@ -199,12 +193,10 @@ export class GroupStateRepository {
     }
     
     /**
-     * Applies a removal expressed as a delta: refresh the path, install the edges it owes, drop the departing
-     * member's edge.
+     * Applies a removal delta: refresh the path, install the edges it owes, drop the departing member's edge.
      *
-     * Every write is keyed by derived identity, so an edge out of a refreshed node replaces the one it supersedes
-     * rather than duplicating it — the same property that lets `writeTree` be a diff. The only deletion is the
-     * departing member's own edge, which is the point of the operation.
+     * Every write is keyed by derived identity, so an edge out of a refreshed node replaces the one it
+     * supersedes rather than duplicating it. The only deletion is the departing member's own edge.
      */
     async applyRemovalTransition(
         groupId: types.group.GroupId,
@@ -251,13 +243,11 @@ export class GroupStateRepository {
     }
     
     /**
-     * Applies an addition delta: the seated path written in place, the edges it owes installed, and the ones the
-     * new geometry supersedes deleted.
+     * Applies an addition delta: the seated path written in place, the edges it owes installed, the ones the new
+     * geometry supersedes deleted.
      *
-     * Growth is the only reason anything gets deleted. It re-parents nodes along the truncated right edge, so an
-     * edge that was correct a moment ago can name a parent that is no longer the child's parent; and when the root
-     * index changes, the grant edge addressed to the old root would sit alongside the new one. Both are found by
-     * arithmetic rather than by scanning, so this stays `O(log n)` writes.
+     * Growth is the only reason anything gets deleted: it re-parents nodes along the truncated right edge, and a
+     * root change leaves the old grant edge beside the new one. Both are found by arithmetic, not by scanning.
      */
     async applyAdditionTransition(
         groupId: types.group.GroupId,

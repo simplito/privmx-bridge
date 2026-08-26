@@ -12,10 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import { TreeMath } from "./TreeMath";
 
-/**
- * Why a submitted tree state was rejected. Every one of these is decidable from integers and string equality —
- * the bridge holds no key material and needs none to catch a malformed or dishonest submission.
- */
+/** Why a submitted tree state was rejected. */
 export type TreeProblem =
     | {kind: "BAD_NUM_LEAVES", numLeaves: number}
     | {kind: "LEAF_COUNT_MISMATCH", expected: number, got: number}
@@ -50,19 +47,12 @@ interface Roster {
 }
 
 /**
- * Structural validation of the hidden key tree.
+ * Structural validation of the hidden key tree. Decidable from node indices, generations and roster membership
+ * alone — no crypto, no database.
  *
- * The bridge cannot decrypt an edge, so it cannot check that a wrap contains what it claims. What it *can*
- * check is that the submitted state is the right shape, and that a transition touched exactly the nodes it was
- * obliged to touch — no fewer (which would leave a removed member reading new content) and no more (which
- * would be unrequested work charged to everyone else). Both reduce to comparing node indices and generations,
- * which is why this file is pure arithmetic and has no dependency on crypto or the database.
- *
- * The rule that does most of the work is deceptively small: **every edge must name the current generation of
- * both endpoints.** Coverage of a refresh then follows for free. If a node is refreshed, each edge into it and
- * out of it names a generation that no longer matches, so the client is forced to resubmit exactly the edges
- * the refresh invalidated — no separate coverage rule is needed. See
- * documents/nested_groups/09-hidden-key-tree.md §6.
+ * The load-bearing rule: **every edge must name the current generation of both endpoints.** Refresh coverage
+ * then follows for free — a refreshed node invalidates the generation named by every edge into and out of it,
+ * forcing the client to resubmit exactly those edges. No separate coverage rule is needed.
  */
 export class TreeValidator {
     

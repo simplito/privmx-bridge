@@ -25,15 +25,13 @@ import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
 import * as util from "util";
 
 /**
- * Checks every tree-backed group against the rules a write has to satisfy.
+ * Checks every group's stored tree against the rules a write has to satisfy.
  *
- * A removal submitted as a transition is checked against the stored state rather than replacing it, so the bridge
- * no longer re-validates the whole tree on every write. That is sound while every write goes through a validator —
- * and it stops being sound the moment something writes tree state without one: a migration, a repair script, a
- * bug. This is what catches that, and it is why it exists rather than being a nice-to-have.
+ * Transitions are validated against stored state rather than replacing it, so the bridge never re-validates the
+ * whole tree on a write. That is sound only while every write goes through a validator — a migration or repair
+ * script that skips one breaks the invariant silently. This is what catches that.
  *
- * Read-only. Run it after any direct write to the group collections, and on a schedule if you want the guarantee
- * continuously.
+ * Read-only. Run after any direct write to the group collections.
  */
 
 const loggerFactory = new LoggerFactory("MAIN");

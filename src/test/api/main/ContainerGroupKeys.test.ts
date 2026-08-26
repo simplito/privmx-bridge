@@ -10,20 +10,16 @@ limitations under the License.
 */
 
 /**
- * `groupKeys`: the container keys wrapped to group grantees, narrowed to the groups the caller belongs to (BR-32).
+ * `groupKeys`: the container keys wrapped to group grantees, narrowed to the caller's own groups (BR-32). Three
+ * things must hold, none of them visible at runtime if it regresses:
  *
- * A client uses it twice over: to open the container through one of its own groups, and to learn which grants are
- * worth trying at all — a group it does not belong to costs a `groupGet` plus a full key-tree climb and then
- * fails. Three things must hold and none of them is visible at runtime if it regresses:
+ * 1. the narrowing is identical across the five container types;
+ * 2. a surviving entry keeps its whole `keys` array, or the caller loses its own group's history;
+ * 3. `undefined` caller groups throw rather than narrow to `[]` — `[]` reads as "you hold no grant" and would
+ *    silently strip key material the caller needs.
  *
- * 1. the narrowing has to be identical across the five container types, or one client gets two cost models;
- * 2. a surviving entry has to keep its whole `keys` array, or the caller loses its own group's history;
- * 3. `undefined` caller groups must throw rather than narrow to `[]` — `[]` reads as "you hold no grant" and
- *    would silently strip key material the caller needs.
- *
- * The fixtures are the fields each converter reads, cast to the document type. A full document fixture per module
- * would need updating on every unrelated schema change while testing nothing more: what is under test is the
- * narrowing of `groups`/`groupKeys`, and every converter reads those and nothing else for it.
+ * Fixtures are only the fields each converter reads, cast to the document type, so an unrelated schema change
+ * does not churn them.
  */
 
 import "q2-test";

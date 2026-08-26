@@ -84,7 +84,7 @@ function createRepository(options: {casMiss?: boolean} = {}) {
             updates.push({filter, set: update.$set});
             return {matchedCount: options.casMiss ? 0 : 1};
         }) as never,
-        // Nothing here may call it — a whole-document replace is the thing this task removed.
+        // Nothing here may call it: a removal is a `$set`, never a whole-document replace.
         replaceOne: (async (...args: unknown[]) => {
             replacements.push(args);
             return {matchedCount: 1};
@@ -449,7 +449,7 @@ it("getGranteeView on a container with no group grants asks nothing", async () =
  * `getKeyVersions` is on the hot path twice over — every container read serves `staleGroups` from it, and every
  * item write into a group-granted container is checked against it — and one integer per group is all it yields.
  * So it must not read documents: `keys` alone is ~1.29 KB per member, and a list page can ask about a hundred
- * groups at once. The projection is the whole point of the method, which is why it is asserted here.
+ * groups at once, so the projection itself is what these assert.
  */
 function createEpochRepository(groups: db.group.Group[]) {
     const projections: {[field: string]: 1}[] = [];

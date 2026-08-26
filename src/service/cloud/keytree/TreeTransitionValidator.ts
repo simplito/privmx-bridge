@@ -53,13 +53,11 @@ export interface StoredPathState {
 }
 
 /**
- * Checks a removal expressed as a delta.
+ * Checks a transition against stored state rather than re-validating the whole tree: the stored state was
+ * validated when written, this delta is checked against it, and the two give the same guarantee by induction.
  *
- * The whole-tree check that `TreeValidator.validateState` performs is not repeated here, and does not need to be:
- * the stored state was validated when it was written, this transition is checked against it, and the two together
- * give the same guarantee by induction. What that argument depends on is that **nothing writes tree state without
- * passing through a validator** — so a repair script or a migration that skips it breaks the invariant silently.
- * `scripts/verifyGroupTrees.ts` exists to catch exactly that, and should be run after any such write.
+ * That argument holds only while **nothing writes tree state without passing through a validator**. A migration
+ * or repair script that skips one breaks the invariant silently — run `verifyGroupTrees.ts` after any such write.
  */
 export class TreeTransitionValidator {
     
@@ -96,12 +94,9 @@ export class TreeTransitionValidator {
     }
     
     /**
-     * Checks an addition expressed as a delta.
-     *
-     * Two things differ from a removal. The epoch **does not move**: the grant keypair is untouched, so every
-     * container the group can read stays valid, and that is the whole economy of a cheap addition. And the path is
+     * Checks an addition delta. Two things differ from a removal: the epoch **does not move**, and the path is
      * evaluated in the geometry seating the newcomer produces — appending past the last leaf mints nodes that do
-     * not exist yet, which is why a seated node may legitimately have no previous generation.
+     * not exist yet, so a seated node may legitimately have no previous generation.
      */
     static validateAddition(
         stored: StoredPathState,

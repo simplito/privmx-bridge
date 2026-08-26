@@ -55,10 +55,7 @@ export class GroupConverter {
         return res;
     }
     
-    /**
-     * What a listing serves: identity, roster, epoch. A page of a hundred groups through `convertGroup` would
-     * carry a hundred trees and histories; a client that wants state asks for one group.
-     */
+    /** What a listing serves: identity, roster, epoch. A client that wants state asks for one group. */
     convertGroupSummary(group: db.group.GroupSummaryFields): contextApi.GroupSummary {
         const res: contextApi.GroupSummary = {
             id: group.id,
@@ -81,12 +78,8 @@ export class GroupConverter {
         return res;
     }
     
-    /**
-     * The tree state, flattened, plus the caller's own leaf.
-     *
-     * The archive is deliberately *not* included: it grows with the group's entire history, while a client needs
-     * it only when reaching for an older epoch. `groupGetKeyArchive` serves it on demand instead.
-     */
+    /** The tree state, flattened, plus the caller's own leaf. The archive is not included — it grows with the
+     *  group's whole history; `groupGetKeyArchive` serves it on demand. */
     private treeState(
         group: db.group.Group,
         tree: types.cloud.GroupTreeState,
@@ -115,16 +108,10 @@ export class GroupConverter {
     }
     
     /**
-     * The part of the tree the caller actually uses.
+     * The part of the tree the caller actually uses: one edge per level of their climb plus the grant edge, and
+     * the public keys of their path and copath. `O(log n)` against 32 767 edges (~10.5 MB) at 16 384 members.
      *
-     * Climbing needs one edge per level — the one whose child is the caller, then the one whose child is each
-     * node above them — plus the grant edge at the top. Planning a removal needs the *public* keys of the copath
-     * as well, to re-wrap the refreshed path to the subtrees that keep their keys; the leaf siblings' keys come
-     * from the roster, not from here. That is `O(log n)` of both, against 32 767 edges (~10.5 MB) for a group of
-     * 16 384 if the whole tree is served.
-     *
-     * Independent validation of the whole structure is the one thing this view cannot do — and the server does
-     * it on every write anyway. A client that wants to check for itself asks for `scope: "full"`.
+     * A client that wants to validate the whole structure itself asks for `scope: "full"`.
      */
     private static pathView(
         tree: types.cloud.GroupTreeState,

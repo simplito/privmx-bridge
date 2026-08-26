@@ -16,11 +16,8 @@ import { TreeProblem, TreeValidator } from "../../../../service/cloud/keytree/Tr
 import { buildTree as buildTreeAt, userId } from "../../../testUtils/TreeFixtures";
 
 /**
- * Unit tests for the bridge's structural validation of the hidden key tree.
- *
- * The bridge never sees a key here — the fixtures use recognisable placeholder ciphertexts, because every rule
- * under test is decidable from node indices, generations and roster membership alone. That is the point: the
- * server enforces the shape of a removal without being able to read anything it enforces.
+ * Unit tests for the bridge's structural validation of the hidden key tree. Fixtures use placeholder
+ * ciphertexts — every rule under test is decidable from node indices, generations and roster membership alone.
  *
  * Tests marked SECURITY guard confidentiality and fail silently at runtime if the guard regresses.
  */

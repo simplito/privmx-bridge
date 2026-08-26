@@ -37,9 +37,8 @@ import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
 import { buildTree, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
 
-// The bridge no longer signs or verifies group data: signing/verification is the endpoint's responsibility
-// (committed inside the opaque `data`). These tests exercise the bridge's storage, ACL, coverage, version-CAS
-// and referential-integrity logic only. See documents/plan/10-endpoint-security-model-and-alignment.md.
+// Signing and verification are the endpoint's, committed inside the opaque `data`. These tests exercise the
+// bridge's storage, ACL, coverage, version-CAS and referential-integrity logic only.
 
 const solutionId = "MySolutionId" as types.cloud.SolutionId;
 const contextId = "MyContextId" as types.context.ContextId;

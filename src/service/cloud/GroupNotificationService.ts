@@ -18,12 +18,9 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { DateUtils } from "../../utils/DateUtils";
 
 /**
- * Group events, which say *what* changed and never *how the group now looks*.
- *
- * The payload is built once and sent to every recipient, so its size and the work of building it do not depend on
- * how many members the group has. It used to be converted per recipient and carry the whole state: a group of a
- * thousand meant a thousand copies of the tree and the history over the socket for a single membership change.
- * Whoever needs the state calls `groupGet`.
+ * Group events say *what* changed, never *how the group now looks*. The payload is built once and sent to every
+ * recipient, so neither its size nor the work of building it depends on the group's size. Whoever needs the
+ * state calls `groupGet`.
  */
 export class GroupNotificationService {
     
@@ -61,10 +58,8 @@ export class GroupNotificationService {
         });
     }
     
-    /**
-     * @param additionalUsers recipients who are no longer members — a removed member is told so their client can
-     *        stop trying to climb. Inactive ones get the event stored instead of sent.
-     */
+    /** @param additionalUsers recipients who are no longer members — a removed member is told so their client
+     *         can stop trying to climb. Inactive ones get the event stored instead of sent. */
     sendUpdatedGroup(
         group: db.group.Group,
         additionalUsers: types.cloud.UserIdentityWithStatus[],

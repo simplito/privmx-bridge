@@ -41,12 +41,9 @@ import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
 
 /**
- * Service-level tests for tree-backed group membership.
- *
- * What is under test is the bridge's half of the contract, and the bridge's half is entirely structural: it
- * cannot read a wrap, so it enforces that the client refreshed exactly the nodes a removal obliges it to
- * refresh, that an addition did not quietly rotate the epoch, and that no rung points upwards. The
- * cryptographic half — that each wrap really contains the key it claims — is the endpoint's, and is tested there.
+ * Service-level tests for tree-backed group membership — the bridge's half of the contract, which is entirely
+ * structural: exactly the path refreshed, no epoch rotated by an addition, no rung pointing upwards. That each
+ * wrap really contains the key it claims is the endpoint's half, tested there.
  *
  * Tests marked SECURITY guard confidentiality and fail silently at runtime if the guard regresses.
  */
@@ -268,7 +265,7 @@ async function expectFailure(kind: Parameters<typeof AppException.is>[1], run: (
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("createGroup accepts a tree-backed group with no per-member key entries", async () => {
-    // The point of the tree: members reach the grant key by climbing, so the creator does not have to produce
+    // Members reach the grant key by climbing, so the creator does not have to produce
     // one ciphertext per member just to hand out the current key.
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
@@ -595,7 +592,7 @@ function selfKey(epoch: number, keyId_: types.core.KeyId = newKeyId): types.clou
 }
 
 it("removeMember stores the metadata key wrapped once to the group itself", async () => {
-    // The whole point: rotating the metadata key on a removal costs one wrap, not one per remaining member.
+    // Rotating the metadata key on a removal costs one wrap, not one per remaining member.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     await groupService.removeMember(janekCloudUser, {...removalModel(group, 2), groupKeys: selfKey(EPOCH + 1)});

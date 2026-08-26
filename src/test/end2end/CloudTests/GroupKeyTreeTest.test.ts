@@ -438,7 +438,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(history[0]._id === `${groupId}|1`, "a history entry is identified by (groupId, version), so appending one is an insert");
         assert(history[0].version === 1, "genesis is version 1");
         assert(history[0].author === testData.userId, "genesis author mismatch");
-        // Identity derived from the seat, which is what makes a refresh an update in place.
+        // Identity is derived from the seat, so a refresh is an update in place.
         assert(nodes.every(node => node._id === `${groupId}|${node.nodeIndex}`), "node ids are derived from (groupId, nodeIndex)");
         assert(edges.filter(edge => edge._id.includes("grant")).length === 1, "exactly one grant edge");
     }

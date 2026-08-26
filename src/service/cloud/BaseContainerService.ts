@@ -36,11 +36,8 @@ export class BaseContainerService {
         return groups.map(g => g.id);
     }
     
-    /**
-     * Returns a shallow copy of the container with the caller added to its users/managers lists when the
-     * caller belongs to a granted group. This lets the existing BasePolicy role checks (which read
-     * users/managers) account for group membership without changing the policy engine.
-     */
+    /** A shallow copy of the container with the caller added to users/managers when they belong to a granted
+     *  group, so the existing BasePolicy role checks account for group membership unchanged. */
     protected withGroupMembership<T extends GranteeContainer>(container: T, userId: types.cloud.UserId, userGroupIds: types.group.GroupId[]): T {
         const grants = container.groups || [];
         const inAnyGroup = grants.some(g => userGroupIds.includes(g.groupId));
@@ -56,13 +53,10 @@ export class BaseContainerService {
     }
     
     /**
-     * Current epoch of every group granted on the given containers, in one query.
+     * Current epoch of every group granted on the given containers, in one query. Takes a list so a page of
+     * containers costs the same as one; a page granting no groups costs no query at all.
      *
-     * Takes a list so a page of containers costs the same as one: the ids are unioned and looked up together.
-     * A page whose containers grant no groups — every container until Phase 2 is adopted — costs no query at all.
-     *
-     * All containers must belong to `contextId`: a group grant cannot cross contexts (`checkGroupsExistence`
-     * enforces that on write), and `getKeyVersions` drops anything that does.
+     * All containers must belong to `contextId` — `getKeyVersions` drops anything that does not.
      */
     protected async getGroupEpochs(
         contextId: types.context.ContextId,
@@ -77,10 +71,7 @@ export class BaseContainerService {
     
     /**
      * Throws CONTAINER_GROUP_EPOCH_OUTDATED if the container's current key is wrapped to a grantee group at an
-     * epoch that group has left behind. Call it on every item-write path before accepting new content.
-     *
-     * The rule itself is `staleGroupsOf`, shared with the `staleGroups` field the read paths serve, so what a
-     * client is told before it writes is what it is held to when it does.
+     * epoch that group has left behind. Call on every item-write path before accepting new content.
      */
     protected async checkGroupEpochs(container: {
         contextId: types.context.ContextId;

@@ -10,21 +10,13 @@ limitations under the License.
 */
 
 /**
- * `staleGroups`: which of a container's grantee groups have rotated past the epoch its current key was wrapped to,
- * served with the container itself.
+ * `staleGroups`: which of a container's grantee groups have rotated past the epoch its current key was wrapped
+ * to. What must hold, none of it visible at runtime if it regresses:
  *
- * It exists to spare the client the only other way of finding out — a `groupGet` per grant, each a full group
- * payload plus an integrity-chain verification, to read one integer. The server has the integers for free.
- *
- * What must hold, none of it visible at runtime if it regresses:
- *
- * 1. the field says exactly what the write-side check says (`ContainerGroupEpochs.test.ts` owns the other half of
- *    that pairing), or a client is told a container is fine and then refused when it writes;
- * 2. it is identical across the five container types, like every other group field;
+ * 1. the field says exactly what the write-side check says (`ContainerGroupEpochs.test.ts` owns the other half),
+ *    or a client is told a container is fine and then refused when it writes;
+ * 2. it is identical across the five container types;
  * 3. it is **not** narrowed to the caller's own groups — the manager who has to re-key is often in none of them.
- *
- * The fixtures are the fields each converter reads, cast to the document type, for the reason given in
- * `ContainerGroupKeys.test.ts`.
  */
 
 import "q2-test";

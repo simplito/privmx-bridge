@@ -67,12 +67,8 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    /**
-     * The group plus its out-of-document state, for the one call that serves a whole group.
-     *
-     * Separate from `getGroup` so that the callers which need only the document — every membership operation,
-     * the rate limiter, the epoch check — do not drag a tree and a full history along with it.
-     */
+    /** The group plus its out-of-document state. Separate from `getGroup` so callers that need only the
+     *  document do not drag a tree and a full history along with it. */
     async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromVersion?: number) {
         const group = await this.getGroup(executor, groupId, type);
         const state = await this.repositoryFactory.createGroupRepository().getFullState(group, fromVersion);
@@ -106,11 +102,9 @@ export class GroupService extends BaseContainerService {
         const newGroupKeys = this.buildSelfAddressedKeysForNewGroup(groupKeys, keyId);
         // Epoch 1: a new group's first grant keypair.
         this.assertTreeIsValid(tree, {users, managers}, 1);
-        // Membership integrity (signature/chain) is committed inside the opaque `data` (endpoint DIO) and verified
-        // client-side; the bridge only stores it. See documents/plan/10-endpoint-security-model-and-alignment.md.
         try {
-            // In a transaction because a group is now more than one document: the genesis history entry and the
-            // initial tree must not survive a failure that leaves the group itself uncreated, or the other way round.
+            // One transaction: the genesis history entry and the initial tree must not survive a failure that
+            // leaves the group itself uncreated, or the other way round.
             const group = await this.repositoryFactory.withTransaction(session =>
                 this.repositoryFactory.createGroupRepository(session)
                     .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, policy, tree, newGroupKeys),
@@ -127,11 +121,10 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Updates the group's metadata: `data`, its `keyId`, the policy and the resource id.
+     * Updates the group's metadata: `data`, `keyId`, policy, resource id.
      *
-     * Membership is deliberately not here. Seating a member and re-keying their path is one operation on the
-     * tree, and splitting it across a roster edit and a tree edit is how the two drift apart —
-     * `addMember`/`removeMember` are the only ways in.
+     * Membership is deliberately not here — seating a member and re-keying their path is one operation on the
+     * tree. `addMember`/`removeMember` are the only ways in.
      */
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, data: types.group.GroupData, keyId: types.core.KeyId,
         version: types.group.GroupVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined,
@@ -170,13 +163,8 @@ export class GroupService extends BaseContainerService {
         return rGroup;
     }
     
-    /**
-     * Rotates the grant keypair without removing anybody.
-     *
-     * Everything a removal does to the epoch, minus the removal: the epoch advances, the new grant key is wrapped
-     * to the unchanged root, and the rungs keep the old epochs reachable. No node key changes, so it costs one
-     * edge whatever the group's size.
-     */
+    /** Rotates the grant keypair without removing anybody: the epoch advances, the new grant key is wrapped to
+     *  the unchanged root, the rungs keep the old epochs reachable. One edge, whatever the group's size. */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const rGroup = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
@@ -214,14 +202,13 @@ export class GroupService extends BaseContainerService {
         return rGroup;
     }
     
-    // ── Tree-backed membership (documents/nested_groups/09-hidden-key-tree.md) ───────────────────────────────
+    // ── Tree-backed membership ──────────────────────────────────────────────────────────────────────────────
     
     /**
-     * Adds a member to a tree-backed group **without advancing the epoch**.
+     * Adds a member **without advancing the epoch**, so no container the group can read goes stale.
      *
-     * That is the operation the whole design exists to make cheap: no container the group can read goes stale,
-     * so nobody else has to re-key. The bridge's job is to confirm the client did not smuggle anything else
-     * into the same call — a moved member, a refreshed node, a bumped epoch.
+     * The bridge's job is to confirm the client did not smuggle anything else into the same call — a moved
+     * member, a node refreshed off the path, a bumped epoch.
      */
     async addMember(cloudUser: CloudUser, model: GroupAddMemberModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
@@ -258,12 +245,11 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Removes a member from a tree-backed group: blank the leaf, refresh its direct path, rotate the grant
-     * keypair, and record the rungs that keep the older epochs reachable.
+     * Removes a member: blank the leaf, refresh its direct path, rotate the grant keypair, record the rungs.
      *
-     * All four in one call, because any one of them alone is either useless or unsafe. A refresh without a new
-     * epoch leaves every container readable with the old grant key; a new epoch without rungs orphans the
-     * group's own history; rungs pointing the wrong way would hand the departing member a later key.
+     * All four in one call, because any one alone is useless or unsafe. A refresh without a new epoch leaves
+     * every container readable with the old grant key; a new epoch without rungs orphans the group's own
+     * history; rungs pointing the wrong way would hand the departing member a later key.
      */
     async removeMember(cloudUser: CloudUser, model: GroupRemoveMemberModel) {
         const {group, context, removed} = await this.repositoryFactory.withTransaction(async session => {
@@ -311,10 +297,7 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    /**
-     * Closes the current era. Everything below the new floor becomes unreachable by descending — deliberately,
-     * as a policy decision that content older than the floor is no longer to be handed to newcomers.
-     */
+    /** Closes the current era: everything below the new floor becomes unreachable by descending. */
     async cutEra(cloudUser: CloudUser, model: GroupCutEraModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
@@ -344,10 +327,8 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    /**
-     * Deletes rungs below a watermark. Unlike a cut era this is storage housekeeping, and it is recorded
-     * separately so a client that cannot descend learns *why* — pruned, not tampered with.
-     */
+    /** Deletes rungs below a watermark. Recorded separately from a cut era so a client that cannot descend
+     *  learns why — pruned, not tampered with. */
     async pruneArchive(cloudUser: CloudUser, model: GroupPruneArchiveModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
@@ -375,8 +356,7 @@ export class GroupService extends BaseContainerService {
     /**
      * Serves the Epoch Ladder, optionally windowed.
      *
-     * Read access is enough: every rung is a ciphertext only a holder of the epoch key above it can open, so
-     * handing the archive to any member reveals nothing they could not already reach by descending.
+     * Read access is enough: every rung is a ciphertext only a holder of the epoch key above it can open.
      */
     async getKeyArchive(executor: Executor, groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number) {
         const group = await this.getGroup(executor, groupId, undefined);
@@ -409,12 +389,11 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Checks the one edge a rotation is allowed to write.
+     * Checks the one edge a rotation is allowed to write: the grant edge, at the epoch being created, addressed
+     * to the current root.
      *
-     * A rotation re-wraps the *new* grant key to the root node, which it does not touch. So: exactly the grant
-     * edge, at the epoch being created, addressed to the current root at the generation the tree actually holds.
-     * `childGeneration` is the load-bearing one — an edge planned against a superseded root would wrap the new
-     * grant key to a node key that is no longer reachable, locking every member out of the epoch.
+     * `childGeneration` is the load-bearing check — an edge planned against a superseded root would wrap the new
+     * grant key to a node key nobody can reach, locking every member out of the epoch.
      */
     private async assertRotationGrantEdgeIsValid(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
@@ -450,12 +429,8 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /**
-     * The one self-addressed entry a new tree-backed group may carry: its own metadata key at epoch 1.
-     *
-     * There is no `group` to check against the way an update checks it — the id does not exist yet, and the
-     * repository files the entry against the group it generates.
-     */
+    /** The one self-addressed entry a new group may carry: its own metadata key at epoch 1. No `group` to check
+     *  against — the id does not exist yet, and the repository files the entry against the group it generates. */
     private buildSelfAddressedKeysForNewGroup(
         insert: Omit<types.cloud.GroupKeyEntrySet, "group">|undefined,
         keyId: types.core.KeyId,
@@ -467,11 +442,8 @@ export class GroupService extends BaseContainerService {
         return [{keys: [{keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch}]}];
     }
     
-    /**
-     * What the bridge can check about a metadata key wrapped to the group itself: that it names the keyId being
-     * introduced, the epoch being created, and carries something. It cannot check what is inside — and does not
-     * need to, since a member who cannot open it simply cannot read the metadata.
-     */
+    /** All the bridge can check about a self-addressed metadata key: that it names the keyId being introduced,
+     *  the epoch being created, and carries something. */
     private static assertSelfAddressedEntry(insert: Omit<types.cloud.GroupKeyEntrySet, "group">, keyId: types.core.KeyId, epoch: number) {
         if (insert.keyId !== keyId) {
             throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
@@ -486,10 +458,8 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /**
-     * One ceiling, stated once, checked before anything else about the group is validated — so exceeding it
-     * reads as "too many members" rather than as whichever field happens to overflow first.
-     */
+    /** Checked before anything else, so exceeding it reads as "too many members" rather than as whichever
+     *  field happens to overflow first. */
     private assertWithinMemberLimit(requested: number) {
         const limit = this.config.maxGroupMembers;
         if (requested > limit) {
@@ -519,12 +489,10 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Checks a removal expressed as a delta against what the bridge holds.
+     * Checks a removal delta against the stored path and copath — `O(log n)` documents.
      *
-     * Reads the affected path and copath — `O(log n)` documents — and applies the same rules the whole-tree
-     * validator would: exactly the path refreshed, genuinely new keys, exactly the edges the refresh owes, the
-     * grant edge at the new epoch. The preconditions in the transition are what make that sound: a delta computed
-     * against a state that has since moved is refused rather than applied to a base it never saw.
+     * The preconditions in the transition are what make that sound: a delta computed against a state that has
+     * since moved is refused rather than applied to a base it never saw.
      */
     private async assertTransitionIsAcceptable(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
@@ -570,11 +538,8 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Validates the rungs submitted with a new epoch.
-     *
-     * `target < at` on every rung is the load-bearing check: a rung pointing upwards would encrypt a *later*
-     * epoch's key under an earlier one, handing anyone with an old key everything that came after. The bridge
-     * is the only party positioned to enforce that for all clients, so it does, on every write.
+     * Validates the rungs submitted with a new epoch. `target < at` is the load-bearing check: an upward rung
+     * would encrypt a later epoch's key under an earlier one, handing anyone with an old key everything after.
      */
     private assertRungsAreValid(rungs: types.cloud.GroupArchiveRung[], newKeyVersion: number, group: db.group.Group) {
         const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
@@ -606,13 +571,8 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /**
-     * What a caller who lost the race needs to recompute against the winner.
-     *
-     * `winnerKeyEntry` is the group's own self-addressed metadata entry at the winning epoch — the same one every
-     * member opens by climbing. There is no per-caller entry to hand back any more, and there does not need to
-     * be: whoever can climb to the new grant key can open this.
-     */
+    /** What a caller who lost the race needs to recompute against the winner. `winnerKeyEntry` is the group's
+     *  own self-addressed entry at the winning epoch — whoever can climb to the new grant key can open it. */
     private buildRotatedAlreadyData(winner: db.group.Group): RotatedAlreadyData {
         const winnerKeyEntry = (winner.groupKeys ?? [])
             .flatMap(entry => entry.keys)

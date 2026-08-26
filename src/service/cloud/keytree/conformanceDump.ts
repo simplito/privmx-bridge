@@ -13,16 +13,12 @@ import { LadderMath, RungSpan } from "./LadderMath";
 import { TreeMath } from "./TreeMath";
 
 /**
- * Emits the key-tree conformance vectors.
+ * Emits the key-tree conformance vectors. The endpoint has an identical dumper
+ * (`test/tools/keytree_conformance_dump.cpp`); diffing the two outputs proves both sides compute the same tree
+ * topology and ladder arithmetic. They must agree, or the server rejects valid removals — or accepts ones that
+ * leave a removed member holding a current node key.
  *
- * The endpoint has an identical dumper (`test/tools/keytree_conformance_dump.cpp`). Diffing the two outputs is
- * what proves the client and the server agree on the tree topology — and they must, because the server performs
- * the same computation to decide which nodes a removal is obliged to refresh. If they disagree, the server
- * either rejects valid removals or, worse, accepts ones that leave a removed member holding a current node key.
- *
- * Run:
- *     npm run build && node out/service/cloud/keytree/conformanceDump.js > /tmp/bridge.txt
- * then diff against the endpoint's dumper output.
+ * Run: npm run build && node out/service/cloud/keytree/conformanceDump.js > /tmp/bridge.txt
  */
 
 const MAX_LEAVES = 64;

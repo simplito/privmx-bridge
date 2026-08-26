@@ -65,11 +65,8 @@ export class GroupRepository {
     /**
      * A page of groups with only the fields a listing serves, optionally filtered by `listParams.query`.
      *
-     * Projected, not filtered afterwards: the fields left out are the ones that grow with the group, so reading
-     * whole documents would cost a page of them regardless of how small the response is.
-     *
-     * The `contextId` match runs first so no query can reach another context, and the query runs before the
-     * projection so a field left out of the summary stays filterable — same stage order as a container listing.
+     * Stage order matters: `contextId` matches first so no query can reach another context, and the query runs
+     * before the projection so a field left out of the summary stays filterable.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
@@ -86,14 +83,11 @@ export class GroupRepository {
     }
     
     /**
-     * Everything a fan-out over a container's group grantees needs, out of the one lookup it already does:
+     * Everything a fan-out over a container's group grantees needs, out of one lookup:
      *
-     * - `groupsByUser` — which of the given groups each of their members (users+managers) belongs to. The keys
-     *   are the distinct member userIds, so they double as the recipient list; each value narrows that
-     *   recipient's `groupKeys`. It is the same information `getGroupsOfUser` returns for a single caller,
-     *   already intersected with the container's grants.
-     * - `groupEpochs` — each group's current epoch, so a per-recipient payload can carry the same `staleGroups`
-     *   a `*Get` would serve. It is a field of the documents this reads anyway.
+     * - `groupsByUser` — which of the given groups each member belongs to. Keys are the distinct member
+     *   userIds, so they double as the recipient list; each value narrows that recipient's `groupKeys`.
+     * - `groupEpochs` — each group's current epoch, for the `staleGroups` a `*Get` would serve.
      *
      * Whole documents, unlike `getKeyVersions`: expanding grantees needs the membership lists.
      */
@@ -238,11 +232,7 @@ export class GroupRepository {
     
     /**
      * Removes a member: blank the leaf, refresh its path, advance the epoch, append the rungs. All under one
-     * compare-and-swap on `keyVersion`, so two managers removing concurrently cannot interleave — the loser
-     * retries against the winner's tree.
-     *
-     * Neither side ever handles the whole tree: the client sends `O(log n)`, the bridge reads `O(log n)` to check
-     * it, and writes `O(log n)`.
+     * compare-and-swap on `keyVersion`, so two managers removing concurrently cannot interleave.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
@@ -307,8 +297,7 @@ export class GroupRepository {
     }
     
     /**
-     * Seats a member **without advancing the epoch** — that is what keeps every container the group can read
-     * valid, so nobody else re-keys anything.
+     * Seats a member **without advancing the epoch**, so every container the group can read stays valid.
      *
      * Still a CAS on the unchanged epoch, so an addition racing a removal loses: it was computed against a tree
      * the removal has already replaced.
@@ -369,16 +358,12 @@ export class GroupRepository {
     }
     
     /**
-     * Closes the current era at `newFloor`: nothing below it can be reached by descending any more, so the rungs
-     * pointing there go, and so does the key material that described those epochs.
+     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do `keyHistory` and
+     * `groupKeys` entries below it — nothing can verify or open them once nobody can climb there, and keeping
+     * them leaves two fields growing with every rotation for the life of the group.
      *
-     * `keyHistory` and `groupKeys` are dropped below the floor because there is nothing left to do with them: the
-     * registry entry has no rung to verify against, and the ciphertext is addressed to a grant key nobody can
-     * climb to. Keeping them would leave two fields growing with every rotation for the life of the group.
-     *
-     * `pruneArchive` deliberately does **not** do this. It is housekeeping on the archive, and a member still
-     * holding an old epoch key locally has to keep being able to verify it and open what it wraps. Cutting an era
-     * is the operation that says those epochs are gone for good.
+     * `pruneArchive` deliberately does **not** drop those: a member still holding an old epoch key locally has
+     * to keep being able to verify it. Cutting an era is what says those epochs are gone for good.
      */
     async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = oldGroup.keyVersion;
@@ -398,13 +383,8 @@ export class GroupRepository {
         return {...oldGroup, ...changes};
     }
     
-    /**
-     * Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
-     * archive was pruned rather than left suspecting tampering.
-     *
-     * Pruning is housekeeping, so a member still holding an old epoch key locally keeps being able to verify it
-     * and open what it wraps.
-     */
+    /** Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
+     *  archive was pruned rather than left suspecting tampering. */
     async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = oldGroup.keyVersion;
         const changes: Partial<db.group.Group> = {
@@ -460,10 +440,8 @@ export class GroupRepository {
     /**
      * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
      *
-     * Projected down to `GroupEpochFields`, not read whole and filtered afterwards. This is asked on every
-     * container read and on every item write into a group-granted container, and one int per group is all it
-     * yields — reading the documents would drag `groupKeys` (one entry per rotation) and `leafAssignment` along
-     * for nothing, which on a page of containers is megabytes of BSON to answer a comparison.
+     * Projected, because this runs on every container read and every item write into a group-granted container.
+     * Reading whole documents would drag `groupKeys` and `leafAssignment` along to answer one comparison.
      */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
@@ -482,12 +460,11 @@ export class GroupRepository {
     /**
      * Applies a transition to the group document only if `keyVersion` still matches.
      *
-     * State spans several documents now, so the CAS alone no longer makes a transition atomic — the session does
-     * (`GroupService` runs every transition in one). What the CAS still does is refuse a caller working from a
-     * superseded epoch; and because two transitions racing on the same epoch both write this document, one of
-     * them conflicts and retries against the winner instead of half-landing beside it.
+     * Atomicity comes from the session (`GroupService` runs every transition in one), not from this. What the
+     * CAS does is refuse a caller working from a superseded epoch, and serialise two transitions racing on the
+     * same epoch so the loser retries against the winner instead of half-landing beside it.
      *
-     * A `$set` of what changed, not a whole-document replace: a removal must not rewrite the whole group.
+     * A `$set` of what changed, not a whole-document replace.
      *
      * @returns false on a CAS miss, in which case nothing has been written
      */
@@ -497,12 +474,8 @@ export class GroupRepository {
         return result.matchedCount > 0;
     }
     
-    /**
-     * Rotates the grant keypair, leaving the roster and every node key where they are.
-     *
-     * One edge written, whatever the group's size: the tree is what distributes the new grant key, and the tree
-     * did not move. The rungs are what keep the epochs below reachable.
-     */
+    /** Rotates the grant keypair, leaving the roster and every node key where they are. One edge written,
+     *  whatever the group's size; the rungs keep the epochs below reachable. */
     async generateNewGroupKey(params: {
         oldGroup: db.group.Group,
         modifier: types.cloud.UserId,
