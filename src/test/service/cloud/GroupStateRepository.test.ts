@@ -41,6 +41,10 @@ interface Captured {
 function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
     const collection = createFake<mongodb.Collection>({
         bulkWrite: (async (operations: mongodb.AnyBulkWriteOperation[]) => {
+            if (operations.length === 0) {
+                // Exactly what the driver does, and the reason a one-member group used to 500 on create.
+                throw new Error("Invalid BulkOperation, Batch cannot be empty");
+            }
             captured.operations.push(...operations);
             return {} as never;
         }) as never,
@@ -132,6 +136,17 @@ it("a group being created writes its whole tree", async () => {
     const {repository, captured} = createStateRepository();
     await repository.writeTree(groupId, tree);
     assert.strictEqual(captured.nodes.operations.length, tree.nodes.length);
+    assert.strictEqual(captured.edges.operations.length, tree.edges.length);
+});
+
+it("a one-member group is created even though it has no internal node", async () => {
+    // numLeaves 1 means the member's own leaf is the root: no node keypairs at all, one grant edge wrapped
+    // straight to them. The node batch is legitimately empty, and mongo refuses an empty bulkWrite.
+    const tree = buildTree(["janek"], 1);
+    assert.strictEqual(tree.nodes.length, 0, "a one-leaf tree has no internal node");
+    const {repository, captured} = createStateRepository();
+    await repository.writeTree(groupId, tree);
+    assert.strictEqual(captured.nodes.operations.length, 0);
     assert.strictEqual(captured.edges.operations.length, tree.edges.length);
 });
 

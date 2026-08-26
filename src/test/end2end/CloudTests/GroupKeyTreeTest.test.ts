@@ -516,7 +516,20 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(edgesAfter.length === edgesBefore.length + 1, "one new edge, and only one");
         const before = new Map(edgesBefore.map(edge => [edge._id, JSON.stringify(edge)]));
         const changed = edgesAfter.filter(edge => before.get(edge._id) !== JSON.stringify(edge));
-        assert(changed.length === 1 && changed[0]._id.includes("user:dave"), "no existing edge is rewritten by an addition");
+        // An addition re-keys the new leaf's path — that is what lets a caller seat somebody under a node they
+        // cannot themselves reach, and it is the only shape the protocol accepts since the whole-tree submission
+        // went away. So the edges it touches are dave's own, the ones out of the refreshed path, and the grant
+        // edge re-issued to the root. What must NOT move is anything off that path: an addition does not advance
+        // the epoch, so a node outside it that changed would be a re-key nobody asked for and nobody accounts for.
+        assert(changed.some(edge => edge._id.includes("user:dave")), "dave's own edge was written");
+        const path = TreeMath.directPath(BOB_POSITION, document.numLeaves as number);
+        for (const edge of changed) {
+            const parent = edge.parentIndex;
+            assert(
+                edge.isGrantEdge === true || (parent !== undefined && path.includes(parent)),
+                `edge ${edge._id} is off the new leaf's path — an addition must not touch it`,
+            );
+        }
     }
     
     private async verifyOnlyThePathMoved(nodesBefore: NodeDocument[], epochBefore: number) {

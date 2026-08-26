@@ -63,6 +63,17 @@ export class GroupStateRepository {
         return `${groupId}|${rung.atKeyVersion}|${rung.targetKeyVersion}|${rung.recipientKind ?? ""}|${rung.recipient ?? ""}` as db.group.GroupArchiveRungId;
     }
     
+    /** `bulkWrite`, minus mongo's refusal to accept an empty batch. */
+    private static async bulkWrite<K extends string, V>(
+        repository: MongoObjectRepository<K, V>,
+        operations: mongodb.AnyBulkWriteOperation[],
+    ): Promise<void> {
+        if (operations.length === 0) {
+            return;
+        }
+        await repository.collection.bulkWrite(operations, repository.getOptions());
+    }
+    
     // ── read ─────────────────────────────────────────────────────────────────────────────────────────────────
     
     /** The tree in the shape the validator and the API expect: geometry from the document, the rest from the
@@ -166,9 +177,11 @@ export class GroupStateRepository {
                 upsert: true,
             },
         }));
+        // A one-member group has no internal node at all — the member's own leaf is the root — so `nodes` is
+        // legitimately empty here, and mongo rejects an empty bulkWrite.
         await Promise.all([
-            this.nodes.collection.bulkWrite(nodeOperations, this.nodes.getOptions()),
-            this.edges.collection.bulkWrite(edgeOperations, this.edges.getOptions()),
+            GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
+            GroupStateRepository.bulkWrite(this.edges, edgeOperations),
         ]);
     }
     
@@ -232,8 +245,8 @@ export class GroupStateRepository {
             },
         });
         await Promise.all([
-            this.nodes.collection.bulkWrite(nodeOperations, this.nodes.getOptions()),
-            this.edges.collection.bulkWrite(edgeOperations, this.edges.getOptions()),
+            GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
+            GroupStateRepository.bulkWrite(this.edges, edgeOperations),
         ]);
     }
     
@@ -279,8 +292,8 @@ export class GroupStateRepository {
             edgeOperations.push({deleteOne: {filter: {_id: staleId}}});
         }
         await Promise.all([
-            this.nodes.collection.bulkWrite(nodeOperations, this.nodes.getOptions()),
-            this.edges.collection.bulkWrite(edgeOperations, this.edges.getOptions()),
+            GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
+            GroupStateRepository.bulkWrite(this.edges, edgeOperations),
         ]);
     }
     
