@@ -158,12 +158,13 @@ export class ThreadRepository {
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
         // History entry keeps OLD keyId/data so the DIO (signed by oldThread.lastModifier
         // at oldThread.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldThread.history, `thread '${oldThread.id}' history`);
         const groups = grantees?.groups || oldThread.groups || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: oldThread.keyId,
-            data: oldThread.data,
+            data: previous.data,
             users: oldThread.users,
             managers: oldThread.managers,
             groups: groups,
@@ -174,7 +175,7 @@ export class ThreadRepository {
             keeper: modifier,
             keys: newKeys,
             groups: groups,
-            groupKeys: grantees?.groupKeys || [],
+            groupKeys: grantees?.groupKeys ?? oldThread.groupKeys ?? [],
             history: [...oldThread.history, entry],
             // lastModifier / lastModificationDate intentionally NOT updated
         };

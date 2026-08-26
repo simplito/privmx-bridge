@@ -166,12 +166,13 @@ export class StreamRoomRepository {
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
         // History entry keeps OLD keyId/data so the DIO (signed by oldStreamRoom.lastModifier
         // at oldStreamRoom.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldStreamRoom.history, `stream room '${oldStreamRoom.id}' history`);
         const groups = grantees?.groups || oldStreamRoom.groups || [];
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: oldStreamRoom.keyId,
-            data: oldStreamRoom.data,
+            data: previous.data,
             users: oldStreamRoom.users,
             managers: oldStreamRoom.managers,
             groups: groups,
@@ -181,7 +182,7 @@ export class StreamRoomRepository {
             keyId: newKeyId,
             keys: newKeys,
             groups: groups,
-            groupKeys: grantees?.groupKeys || [],
+            groupKeys: grantees?.groupKeys ?? oldStreamRoom.groupKeys ?? [],
             history: [...oldStreamRoom.history, entry],
             // lastModifier / lastModificationDate intentionally NOT updated
         };

@@ -151,12 +151,13 @@ export class KvdbRepository {
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
         // History entry keeps OLD keyId/data so the DIO (signed by oldKvdb.lastModifier
         // at oldKvdb.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldKvdb.history, `kvdb '${oldKvdb.id}' history`);
         const groups = grantees?.groups || oldKvdb.groups || [];
         const entry: db.kvdb.KvdbHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: oldKvdb.keyId,
-            data: oldKvdb.data,
+            data: previous.data,
             users: oldKvdb.users,
             managers: oldKvdb.managers,
             groups: groups,
@@ -166,7 +167,7 @@ export class KvdbRepository {
             keyId: newKeyId,
             keys: newKeys,
             groups: groups,
-            groupKeys: grantees?.groupKeys || [],
+            groupKeys: grantees?.groupKeys ?? oldKvdb.groupKeys ?? [],
             history: [...oldKvdb.history, entry],
             // lastModifier / lastModificationDate intentionally NOT updated
         };

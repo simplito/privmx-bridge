@@ -157,12 +157,13 @@ export class StoreRepository {
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
         // History entry keeps OLD keyId/data so the DIO (signed by oldStore.lastModifier
         // at oldStore.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldStore.history, `store '${oldStore.id}' history`);
         const groups = grantees?.groups || oldStore.groups || [];
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: oldStore.keyId,
-            data: oldStore.data,
+            data: previous.data,
             users: oldStore.users,
             managers: oldStore.managers,
             groups: groups,
@@ -172,7 +173,7 @@ export class StoreRepository {
             keyId: newKeyId,
             keys: newKeys,
             groups: groups,
-            groupKeys: grantees?.groupKeys || [],
+            groupKeys: grantees?.groupKeys ?? oldStore.groupKeys ?? [],
             history: [...oldStore.history, entry],
             // lastModifier / lastModificationDate intentionally NOT updated
         };

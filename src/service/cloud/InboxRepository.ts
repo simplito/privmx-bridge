@@ -152,12 +152,13 @@ export class InboxRepository {
         // History entry keeps OLD keyId/data so the DIO (signed by oldInbox.lastModifier
         // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData
         // lives only in the history — `oldInbox.data` is just its `meta`.
+        const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: oldInbox.keyId,
-            data: oldInbox.history[oldInbox.history.length - 1].data,
+            data: previous.data,
             users: oldInbox.users,
             managers: oldInbox.managers,
             groups: groups,
@@ -167,7 +168,7 @@ export class InboxRepository {
             keyId: newKeyId,
             keys: newKeys,
             groups: groups,
-            groupKeys: grantees?.groupKeys || [],
+            groupKeys: grantees?.groupKeys ?? oldInbox.groupKeys ?? [],
             history: [...oldInbox.history, entry],
             // lastModifier / lastModificationDate intentionally NOT updated
         };
