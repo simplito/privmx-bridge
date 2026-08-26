@@ -316,6 +316,25 @@ it("addMember refuses to cross the limit", async () => {
     hasNoCalls(groupRepository.addMemberWithTransition);
 });
 
+it("addMember refuses to grow the tree past the limit, blanks and all", async () => {
+    // Two members in a four-seat tree, so the roster is well inside a limit of 3 — but appending at seat 4 grows
+    // the tree to 5. Remove/add cycles leave blanks behind, so seats outrun members and the roster count alone
+    // never bounds `leafAssignment`.
+    const group = treeBackedGroup({users: [bob], tree: buildTree(["janek", "", "bob", ""], EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group, {maxGroupMembers: 3});
+    const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.addMember(janekCloudUser, additionModel(group, 4)));
+    assert.deepStrictEqual(error.getData(), {limit: 3, requested: 5, seats: true}, "the error says it is about seats");
+    hasNoCalls(groupRepository.addMemberWithTransition);
+});
+
+it("addMember refuses a seat the transition and the model disagree about", async () => {
+    const group = treeBackedGroup({users: [bob], tree: buildTree(["janek", "", "bob", ""], EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group);
+    const model = {...additionModel(group, 1), position: 3};
+    await expectFailure("INVALID_PARAMS", () => groupService.addMember(janekCloudUser, model));
+    hasNoCalls(groupRepository.addMemberWithTransition);
+});
+
 it("createGroup rejects a tree that does not seat every member", async () => {
     const {groupService, groupRepository} = createGroupService();
     await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
@@ -536,6 +555,21 @@ it("removeMember refuses a rung carrying no ciphertext", async () => {
     const model = removalModel(group, 2);
     model.rungs[0] = {...model.rungs[0], data: "" as types.core.UserKeyData};
     await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMember(janekCloudUser, model));
+});
+
+it("removeMember refuses a rung whose recipient does not match its kind", async () => {
+    // `recipientKind`/`recipient` are part of a rung's derived id. An `epoch` rung names nobody — that is what
+    // makes it one ciphertext for the whole group — and the era-crossing kinds have to name who they are for;
+    // either one filled in wrong is a coordinate the next submission of the same span would not land on.
+    const group = treeBackedGroup();
+    const {groupService} = createGroupService(group);
+    const namedEpochRung = removalModel(group, 2);
+    namedEpochRung.rungs[0] = {...namedEpochRung.rungs[0], recipientKind: "epoch", recipient: "dave"};
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMember(janekCloudUser, namedEpochRung));
+    
+    const anonymousUserRung = removalModel(group, 2);
+    anonymousUserRung.rungs[0] = {...anonymousUserRung.rungs[0], recipientKind: "user", recipient: undefined};
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMember(janekCloudUser, anonymousUserRung));
 });
 
 it("removeMember refuses to remove somebody who is not a member", async () => {

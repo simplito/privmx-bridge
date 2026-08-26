@@ -100,11 +100,21 @@ it("limit 3: `numLeaves` is bounded from above, not only from below", async () =
 });
 
 it("the tree's node and edge caps follow from the same number", async () => {
-    // A tree of N leaves has N-1 internal nodes and 2(N-1) edges. The caps sit just above that, so they cannot
-    // be the limit that bites first, and cannot silently allow a tree far larger than the roster does.
-    refusal(createModel({tree: tree(MAX, {nodes: 2 * MAX + 1, seats: 3})}));
-    refusal(createModel({tree: tree(MAX, {edges: 4 * MAX + 1, seats: 3})}));
-    validate(createModel({tree: tree(MAX, {nodes: 2 * MAX, edges: 4 * MAX, seats: MAX})}));
+    // A tree of N leaves has N-1 internal nodes and 2(N-1)+1 edges — exactly what a full tree may carry.
+    validate(createModel({tree: tree(MAX, {nodes: MAX - 1, edges: 2 * MAX - 1, seats: MAX})}));
+    refusal(createModel({tree: tree(MAX, {nodes: MAX, seats: MAX})}));
+    refusal(createModel({tree: tree(MAX, {edges: 2 * MAX, seats: MAX})}));
+});
+
+it("the caps are this tree's, not the largest legal tree's", async () => {
+    // The point of deriving them from `numLeaves`: a four-leaf tree cannot carry the node and edge lists of a
+    // 16 384-leaf one. Each node holds an EC public key to parse and each edge up to 4 KB to buffer, all of it
+    // before the structural validator gets to say the set is nonsense — so the count has to be refused first.
+    const message = refusal(createModel({tree: tree(4, {nodes: MAX - 1, seats: 4})}));
+    assert.ok(message.includes("nodes"), `the refusal should name nodes, got: ${message}`);
+    refusal(createModel({tree: tree(4, {edges: 2 * MAX - 1, seats: 4})}));
+    // The honest four-leaf tree still passes.
+    validate(createModel({tree: tree(4, {nodes: 3, edges: 7, seats: 4})}));
 });
 
 it("the seating list cannot outrun the roster limit", async () => {

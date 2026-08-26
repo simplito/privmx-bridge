@@ -23,10 +23,12 @@ import { DateUtils } from "../../../utils/DateUtils";
 @IpcService
 export class GroupRotationRateLimiter {
     
-    private static readonly MAX_ROTATIONS = 10;
+    /** Used when the caller passes nothing, which only the tests do. */
+    private static readonly DEFAULT_MAX_ROTATIONS = 10;
     
     constructor(
         private cache: CacheWithTTL<number[]>,
+        private maxRotationsPerHour: number = GroupRotationRateLimiter.DEFAULT_MAX_ROTATIONS,
     ) {
     }
     
@@ -34,12 +36,17 @@ export class GroupRotationRateLimiter {
      * Peek: returns whether a rotation for `key` is currently allowed within the window.
      * Does NOT consume quota — quota is consumed by `record` only after a rotation actually commits,
      * so lost CAS races / version mismatches do not burn the caller's budget.
+     *
+     * Peeking means concurrent requests can all pass before any of them records, so the window can overshoot.
+     * What bounds it is the CAS on `keyVersion`: of the requests racing on one epoch exactly one commits, and
+     * only that one records. The alternative — consume here, refund on failure — would trade this for a budget
+     * that a client can drain with requests that were never going to commit.
      */
     @ApiMethod({})
     async check(model: {key: string}): Promise<{allowed: boolean}> {
         const cutoff = DateUtils.now() - DateUtils.hours(1);
         const timestamps = (this.cache.get(model.key) ?? []).filter(t => t > cutoff);
-        return {allowed: timestamps.length < GroupRotationRateLimiter.MAX_ROTATIONS};
+        return {allowed: timestamps.length < this.maxRotationsPerHour};
     }
     
     /** Commit: records one successful rotation for `key`. Call only after the rotation has committed. */

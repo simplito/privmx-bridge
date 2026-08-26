@@ -268,6 +268,7 @@ export class MasterRegistry {
         if (this.groupRotationRateLimiter == null) {
             this.groupRotationRateLimiter = new GroupRotationRateLimiter(
                 new CacheWithTTL(),
+                this.getConfig().maxGroupRotationsPerHour,
             );
         }
         return this.groupRotationRateLimiter;

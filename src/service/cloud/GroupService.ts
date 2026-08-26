@@ -75,13 +75,21 @@ export class GroupService extends BaseContainerService {
         return {group, state};
     }
     
+    /**
+     * A page of the context's groups.
+     *
+     * A group's roster is the membership graph of the context, and a summary carries it — so unless the policy
+     * says the caller may see every group here, the page is narrowed to the groups they belong to. `listMy` is
+     * what allows that narrowed view, `listAll` the unnarrowed one, the same split threads and stores use.
+     */
     async getGroupsByContext(cloudUser: CloudUser, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group) {
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupList", []);
-        if (!this.policy.canListAllContainers(user, context)) {
+        const all = this.policy.canListAllContainers(user, context);
+        if (!all && !this.policy.canListMyContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
-        const groups = await this.repositoryFactory.createGroupRepository().getPage(contextId, listParams, sortBy);
+        const groups = await this.repositoryFactory.createGroupRepository().getPage(contextId, listParams, sortBy, all ? undefined : user.userId);
         return {user, groups};
     }
     
@@ -221,7 +229,13 @@ export class GroupService extends BaseContainerService {
             if (oldGroup.users.includes(model.userId) || oldGroup.managers.includes(model.userId)) {
                 throw new AppException("INVALID_PARAMS", `user '${model.userId}' is already a member`);
             }
+            if (model.position !== model.transition.position) {
+                // Two fields naming one seat. They are checked against each other rather than one being ignored,
+                // so a client that computed them apart is told so instead of having one of them silently win.
+                throw new AppException("INVALID_PARAMS", `position ${model.position} does not match the transition's ${model.transition.position}`);
+            }
             this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, [model.userId]).length);
+            this.assertWithinSeatLimit(TreeMath.numLeavesToSeat(model.transition.position, oldGroup.numLeaves));
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, [model.userId]);
             await this.assertAdditionTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
             // The newcomer gets no key entry of their own: they climb to the grant key and open the group's
@@ -467,6 +481,21 @@ export class GroupService extends BaseContainerService {
         }
     }
     
+    /**
+     * The same limit applied to *seats* rather than members.
+     *
+     * Members alone do not bound the tree: a removal leaves a blank, and an addition may append past it, so
+     * remove/add cycles grow `numLeaves` and `leafAssignment` without ever growing the roster. Unchecked, that
+     * is an array on the group document with no ceiling — and eventually seats `groupGet.forPosition` can no
+     * longer name.
+     */
+    private assertWithinSeatLimit(requestedNumLeaves: number) {
+        const limit = this.config.maxGroupMembers;
+        if (requestedNumLeaves > limit) {
+            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", {limit, requested: requestedNumLeaves, seats: true});
+        }
+    }
+    
     private buildSelfAddressedKeys(
         group: db.group.Group,
         insert: types.cloud.GroupKeyEntrySet|undefined,
@@ -550,6 +579,19 @@ export class GroupService extends BaseContainerService {
         for (const rung of rungs) {
             if (!rung.data) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: rung.atKeyVersion, target: rung.targetKeyVersion});
+            }
+            // `recipientKind`/`recipient` go into the rung's derived id, so a pairing that does not match the
+            // kind is a coordinate the next submission of the same span would not land on. An `epoch` rung is
+            // addressed to the grant key at `atKeyVersion` and names nobody — that is what makes it one
+            // ciphertext for the whole group; the two era-crossing kinds must name who they are for.
+            const namesRecipient = rung.recipientKind === "user" || rung.recipientKind === "group";
+            if (namesRecipient !== (rung.recipient !== undefined)) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {
+                    kind: "RECIPIENT_MISMATCH",
+                    at: rung.atKeyVersion,
+                    target: rung.targetKeyVersion,
+                    recipientKind: rung.recipientKind ?? null,
+                });
             }
         }
     }

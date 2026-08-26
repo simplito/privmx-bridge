@@ -406,7 +406,10 @@ export function rungsFor(newKeyVersion: number, eraFloor: number): types.cloud.G
     return LadderMath.rungSpansFor(newKeyVersion, eraFloor).map(span => ({
         atKeyVersion: span.at,
         targetKeyVersion: span.target,
-        recipientKind: "group" as const,
+        // `epoch`: addressed to the grant key at `at` and naming nobody, which is the ordinary rung and the one
+        // ciphertext that serves the whole group. `user`/`group` are the era-crossing kinds, and those have to
+        // name their recipient.
+        recipientKind: "epoch" as const,
         data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
     }));
 }

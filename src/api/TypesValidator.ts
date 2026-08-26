@@ -279,17 +279,31 @@ export class TypesValidator {
             childUserId: this.builder.optional(this.cloudUserId),
             data: this.userKeyData,
         });
-        this.groupTreeState = this.builder.createObject({
+        const groupTreeStateShape = this.builder.createObject({
             // Bounded on both sides. Without an upper bound this was held down only indirectly, by the length of
             // `leafAssignment` — and a client could name a geometry the server would then compute paths in.
             numLeaves: this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_MEMBERS),
             // An empty string marks a blank left by a removal, so this is not cloudUserId (which requires a
             // non-empty id). The structural validator checks the entries against the roster.
             leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), TypesValidator.MAX_GROUP_MEMBERS),
-            // A tree of N leaves has N-1 internal nodes and 2(N-1) edges; both follow from the one number above
-            // rather than being their own dials that could drift out of agreement with it.
-            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, 2 * TypesValidator.MAX_GROUP_MEMBERS),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4 * TypesValidator.MAX_GROUP_MEMBERS),
+            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, TypesValidator.MAX_GROUP_MEMBERS),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 2 * TypesValidator.MAX_GROUP_MEMBERS),
+        });
+        // The list caps above are the ceiling for the largest legal tree; these are the ceiling for *this* tree.
+        // A tree of N leaves has N-1 internal nodes and 2(N-1)+1 edges, so both follow from `numLeaves` — and
+        // counting them first is what stops a one-leaf tree from carrying 32 768 public keys to parse and
+        // 65 536 blobs to buffer before `TreeValidator` ever gets to reject it.
+        this.groupTreeState = this.builder.createCustom((value, _validator, checker) => {
+            const tree = value as {numLeaves?: unknown, leafAssignment?: unknown, nodes?: unknown, edges?: unknown};
+            const numLeaves = tree.numLeaves;
+            if (typeof numLeaves !== "number" || !Number.isInteger(numLeaves)
+                || numLeaves < 1 || numLeaves > TypesValidator.MAX_GROUP_MEMBERS) {
+                throw new Error(`numLeaves has to be an integer between 1 and ${TypesValidator.MAX_GROUP_MEMBERS}`);
+            }
+            TypesValidator.assertTreeListLength("leafAssignment", tree.leafAssignment, numLeaves);
+            TypesValidator.assertTreeListLength("nodes", tree.nodes, numLeaves - 1);
+            TypesValidator.assertTreeListLength("edges", tree.edges, 2 * numLeaves - 1);
+            checker.validateValue(value, groupTreeStateShape);
         });
         this.groupTreeRefreshedNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
@@ -459,6 +473,7 @@ export class TypesValidator {
             kvdb: this.builder.optional(this.containerPolicy),
             inbox: this.builder.optional(this.containerWithoutItemPolicy),
             stream: this.builder.optional(this.containerWithoutItemPolicy),
+            group: this.builder.optional(this.containerPolicy),
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
@@ -504,6 +519,17 @@ export class TypesValidator {
         this.containerAccessScope = this.builder.createEnum(["ALL", "MANAGER", "USER", "MEMBER", "OWNER"]);
         this.optionalContainerAccessScope = this.builder.optional(this.containerAccessScope);
         this.streamId = this.builder.min(this.builder.int, 1);
+    }
+    
+    /** Rejects an over-long tree list before its elements are parsed. A shorter list is fine — the structural
+     *  validator is what decides whether the set is complete. */
+    private static assertTreeListLength(field: string, value: unknown, max: number) {
+        if (!Array.isArray(value)) {
+            return; // shape validation reports it
+        }
+        if (value.length > max) {
+            throw new Error(`${field} has ${value.length} entries, at most ${max} for this numLeaves`);
+        }
     }
     
     createAcl(entryType: Validator, aclType: Validator, propertyType: Validator, maxEntryLength: number, maxAclLength: number, maxAclListLength: number) {

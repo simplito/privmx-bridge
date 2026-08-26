@@ -127,8 +127,11 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
     },
     group: {
         get: "user",
+        // A group's roster is the membership graph of the context. `groupList` narrows to the caller's own
+        // groups under `listMy`; `listAll` is the "see every group here" case, off unless an operator asks
+        // for it — the same split threads and stores use.
         listMy: "all",
-        listAll: "all",
+        listAll: "none",
         create: "all",
         update: "manager",
         delete: "manager",
@@ -189,6 +192,11 @@ export class PolicyService {
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
+        // A container whose grantee group has rotated refuses writes until somebody re-keys it, so an
+        // unrecognised value here reads as "nobody may" and wedges the container with no error at set time.
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["default", "none", "all"], ["user", "manager", "owner"]);
+        }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -230,6 +238,9 @@ export class PolicyService {
         }
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
+        }
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);

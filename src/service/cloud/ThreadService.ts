@@ -420,6 +420,8 @@ export class ThreadService extends BaseContainerService {
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
         }
+        // An update writes new content under the thread's current key, exactly like sending does.
+        await this.checkGroupEpochs(thread, this.policy.isForwardSecrecyEnforced(context, thread));
         const currentVersion = ((message.updates || []).length + 1) as types.thread.ThreadMessageVersion;
         if (typeof(version) === "number" && currentVersion !== version && force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${version}, expected: ${currentVersion}`);

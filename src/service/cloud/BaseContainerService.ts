@@ -84,6 +84,13 @@ export class BaseContainerService {
         }
         // A container with no grants costs no query: getGroupEpochs finds no ids and returns an empty map.
         const groupEpochs = await this.getGroupEpochs(container.contextId, [container]);
+        // A current grant whose epoch cannot be resolved is refused rather than assumed current: the group was
+        // deleted or moved out of the context, and nothing here can say what the container's key is wrapped to.
+        for (const grant of container.groups || []) {
+            if (!groupEpochs.has(grant.groupId)) {
+                throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");
+            }
+        }
         if (staleGroupsOf(container, groupEpochs).length > 0) {
             throw new AppException("CONTAINER_GROUP_EPOCH_OUTDATED");
         }

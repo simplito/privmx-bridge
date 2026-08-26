@@ -43,7 +43,10 @@ export function ownGroupKeysOf(
  * Only the entry at `container.keyId` counts. Older entries accumulate one per rotation, so checking all of
  * them would mark a correctly re-keyed container stale forever. No entry at the current key means unwrapped.
  *
- * @param groupEpochs current epochs of the granted groups. A group missing from it counts as epoch 1.
+ * @param groupEpochs current epochs of the granted groups. A group absent from it is not reported: `groupKeys`
+ *                    outlives a revoked grant on purpose, and the map only covers groups still granted, so
+ *                    absence means "no longer granted", not "stale". `checkGroupEpochs` is where an unresolvable
+ *                    *current* grant is refused.
  */
 export function staleGroupsOf(
     container: {keyId: types.core.KeyId, groupKeys?: types.cloud.GroupKeysEntry[]},
@@ -52,7 +55,11 @@ export function staleGroupsOf(
     return (container.groupKeys || [])
         .filter(entry => {
             const atCurrentKey = entry.keys.find(k => k.keyId === container.keyId);
-            return atCurrentKey !== undefined && (atCurrentKey.groupEpoch ?? 0) < (groupEpochs.get(entry.group) ?? 1);
+            if (atCurrentKey === undefined) {
+                return false;
+            }
+            const currentEpoch = groupEpochs.get(entry.group);
+            return currentEpoch !== undefined && (atCurrentKey.groupEpoch ?? 0) < currentEpoch;
         })
         .map(entry => entry.group);
 }

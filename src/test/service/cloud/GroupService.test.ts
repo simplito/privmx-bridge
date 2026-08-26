@@ -117,7 +117,10 @@ const group: db.group.Group = {
     leafAssignment: tree.leafAssignment,
 };
 
-function createGroupService(groupReferenced = false) {
+const listParams: types.core.ListModel = {skip: 0, limit: 10, sortOrder: "asc"};
+
+function createGroupService(groupReferenced = false, contextPolicy: types.context.ContextPolicy = {}) {
+    const usedContext = {...myContext, policy: contextPolicy};
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const groupNotificationService = createMock<GroupNotificationService>({});
@@ -171,7 +174,7 @@ function createGroupService(groupReferenced = false) {
     mock(cloudAccessValidator, "getUserFromContext", async (cloudUser, ctx) => {
         const usersByPub: Record<string, db.context.ContextUser> = {[janekPub]: janekUser, [alicePub]: aliceUser};
         const user = ctx === contextId ? usersByPub[cloudUser.pub] ?? null : null;
-        const context = ctx === contextId ? myContext : null;
+        const context = ctx === contextId ? usedContext : null;
         if (!user || !context) {
             throw new AppException("ACCESS_DENIED");
         }
@@ -206,6 +209,35 @@ it("Should fail to create group as an unknown user", async () => {
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
         hasNoCalls(groupRepository.createGroup);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("groupList narrows to the caller's own groups unless the policy says otherwise", async () => {
+    // A summary carries the roster, so listing every group in a context hands out its membership graph. The
+    // default policy allows the narrowed view (`listMy`) and not the unnarrowed one (`listAll`), and the
+    // narrowing has to reach the query — filtering after the page is drawn would silently shorten it.
+    const {groupService, groupRepository} = createGroupService();
+    await groupService.getGroupsByContext(janekCloudUser, contextId, listParams, "createDate");
+    hasOneCall(groupRepository.getPage);
+    expect(groupRepository.getPage.mock.calls[0][3]).toBe(janek);
+});
+
+it("groupList serves every group when the policy allows the unnarrowed view", async () => {
+    const {groupService, groupRepository} = createGroupService(false, {group: {listAll: "all"}});
+    await groupService.getGroupsByContext(janekCloudUser, contextId, listParams, "createDate");
+    expect(groupRepository.getPage.mock.calls[0][3]).toBe(undefined);
+});
+
+it("groupList is refused outright when neither list policy is met", async () => {
+    const {groupService, groupRepository} = createGroupService(false, {group: {listAll: "none", listMy: "none"}});
+    try {
+        await groupService.getGroupsByContext(janekCloudUser, contextId, listParams, "createDate");
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupRepository.getPage);
         return;
     }
     expect(true).toBeFalsy();
