@@ -147,6 +147,33 @@ export class KvdbRepository {
         return updatedKvdb;
     }
     
+    async rotateKeys(oldKvdb: db.kvdb.Kvdb, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldKvdb.lastModifier
+        // at oldKvdb.lastModificationDate) remains verifiable by the endpoint.
+        const groups = grantees?.groups || oldKvdb.groups || [];
+        const entry: db.kvdb.KvdbHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldKvdb.keyId,
+            data: oldKvdb.data,
+            users: oldKvdb.users,
+            managers: oldKvdb.managers,
+            groups: groups,
+        };
+        const updatedKvdb: db.kvdb.Kvdb = {
+            ...oldKvdb,
+            keyId: newKeyId,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
+            history: [...oldKvdb.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedKvdb);
+        return updatedKvdb;
+    }
+    
     async deleteKvdb(id: types.kvdb.KvdbId) {
         return this.repository.delete(id);
     }

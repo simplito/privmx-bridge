@@ -147,6 +147,34 @@ export class InboxRepository {
         return updatedInbox;
     }
     
+    async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldInbox.lastModifier
+        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData
+        // lives only in the history — `oldInbox.data` is just its `meta`.
+        const groups = grantees?.groups || oldInbox.groups || [];
+        const entry: db.inbox.InboxHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldInbox.keyId,
+            data: oldInbox.history[oldInbox.history.length - 1].data,
+            users: oldInbox.users,
+            managers: oldInbox.managers,
+            groups: groups,
+        };
+        const updatedInbox: db.inbox.Inbox = {
+            ...oldInbox,
+            keyId: newKeyId,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
+            history: [...oldInbox.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedInbox);
+        return updatedInbox;
+    }
+    
     /** True if any inbox still grants access to the given group (Phase 2 referential integrity). */
     async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
         const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();

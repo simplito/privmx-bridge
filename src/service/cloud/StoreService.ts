@@ -157,7 +157,7 @@ export class StoreService extends BaseContainerService {
             const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, oldStore.users, oldStore.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, (oldStore.groups || []).map(g => g.groupId));
-            const store = await storeRepository.updateStore(oldStore, user.userId, oldStore.managers, oldStore.users, oldStore.data, keyId, newKeys, undefined, null, {groups: oldStore.groups || [], groupKeys: newGroupKeys});
+            const store = await storeRepository.rotateKeys(oldStore, user.userId, keyId, newKeys, {groups: oldStore.groups || [], groupKeys: newGroupKeys});
             return {store, context};
         });
         this.storeNotificationService.sendStoreUpdated(rStore, usedContext.solution, []);
