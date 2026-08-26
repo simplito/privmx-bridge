@@ -144,12 +144,31 @@ export class GroupStateRepository {
         );
     }
     
-    /** Writes a transition as the difference against the state it replaces — a removal costs `O(log n)`
-     *  documents. `oldTree` of `null` writes the whole tree, which is what creating a group does. */
-    async writeTree(groupId: types.group.GroupId, oldTree: types.cloud.GroupTreeState|null, newTree: types.cloud.GroupTreeState): Promise<void> {
+    /** Writes a group's whole tree. Only creating a group does this — every later change is a transition, which
+     *  costs `O(log n)` documents instead. */
+    async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState): Promise<void> {
+        const nodeOperations: mongodb.AnyBulkWriteOperation[] = tree.nodes.map(node => ({
+            replaceOne: {
+                filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
+                replacement: {
+                    groupId: groupId,
+                    nodeIndex: node.nodeIndex,
+                    generation: node.generation,
+                    publicKey: node.publicKey,
+                },
+                upsert: true,
+            },
+        }));
+        const edgeOperations: mongodb.AnyBulkWriteOperation[] = tree.edges.map(edge => ({
+            replaceOne: {
+                filter: {_id: GroupStateRepository.edgeId(groupId, edge)},
+                replacement: this.toEdgeDoc(groupId, edge),
+                upsert: true,
+            },
+        }));
         await Promise.all([
-            this.writeNodes(groupId, oldTree, newTree),
-            this.writeEdges(groupId, oldTree, newTree),
+            this.nodes.collection.bulkWrite(nodeOperations, this.nodes.getOptions()),
+            this.edges.collection.bulkWrite(edgeOperations, this.edges.getOptions()),
         ]);
     }
     
@@ -362,70 +381,6 @@ export class GroupStateRepository {
     }
     
     // ── mapping ──────────────────────────────────────────────────────────────────────────────────────────────
-    
-    private async writeNodes(groupId: types.group.GroupId, oldTree: types.cloud.GroupTreeState|null, newTree: types.cloud.GroupTreeState) {
-        const previous = new Map((oldTree?.nodes ?? []).map(node => [node.nodeIndex, node]));
-        const operations: mongodb.AnyBulkWriteOperation[] = [];
-        for (const node of newTree.nodes) {
-            const before = previous.get(node.nodeIndex);
-            previous.delete(node.nodeIndex);
-            if (before && before.generation === node.generation && before.publicKey === node.publicKey) {
-                continue;
-            }
-            operations.push({
-                replaceOne: {
-                    filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
-                    replacement: {
-                        groupId: groupId,
-                        nodeIndex: node.nodeIndex,
-                        generation: node.generation,
-                        publicKey: node.publicKey,
-                    },
-                    upsert: true,
-                },
-            });
-        }
-        // A tree does not lose nodes in practice, but a symmetric diff cannot leave an orphan behind.
-        for (const nodeIndex of previous.keys()) {
-            operations.push({deleteOne: {filter: {_id: GroupStateRepository.nodeId(groupId, nodeIndex)}}});
-        }
-        if (operations.length > 0) {
-            await this.nodes.collection.bulkWrite(operations, this.nodes.getOptions());
-        }
-    }
-    
-    private async writeEdges(groupId: types.group.GroupId, oldTree: types.cloud.GroupTreeState|null, newTree: types.cloud.GroupTreeState) {
-        const previous = new Map((oldTree?.edges ?? []).map(edge => [GroupStateRepository.edgeId(groupId, edge), edge]));
-        const operations: mongodb.AnyBulkWriteOperation[] = [];
-        for (const edge of newTree.edges) {
-            const id = GroupStateRepository.edgeId(groupId, edge);
-            const before = previous.get(id);
-            previous.delete(id);
-            if (before && this.sameEdge(before, edge)) {
-                continue;
-            }
-            operations.push({
-                replaceOne: {
-                    filter: {_id: id},
-                    replacement: this.toEdgeDoc(groupId, edge),
-                    upsert: true,
-                },
-            });
-        }
-        for (const id of previous.keys()) {
-            operations.push({deleteOne: {filter: {_id: id}}});
-        }
-        if (operations.length > 0) {
-            await this.edges.collection.bulkWrite(operations, this.edges.getOptions());
-        }
-    }
-    
-    private sameEdge(a: types.cloud.GroupTreeEdge, b: types.cloud.GroupTreeEdge) {
-        return a.parentGeneration === b.parentGeneration
-            && a.childGeneration === b.childGeneration
-            && a.data === b.data
-            && !!a.isGrantEdge === !!b.isGrantEdge;
-    }
     
     private toTreeNode(doc: db.group.GroupTreeNode): types.cloud.GroupTreeNode {
         return {

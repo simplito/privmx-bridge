@@ -11,18 +11,17 @@ limitations under the License.
 
 /* eslint-disable no-console */
 
-import { Config, loadConfig } from "../../cluster/common/ConfigUtils";
+import { loadConfig } from "../../cluster/common/ConfigUtils";
 import { MongoDbManager } from "../../db/mongo/MongoDbManager";
 import { LoggerFactory } from "../../service/log/LoggerFactory";
 import * as mongodb from "mongodb";
 import { MetricService } from "../../service/misc/MetricService";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ConfigService } from "../../service/config/ConfigService";
-import { ConfigLoader, InitConfigValues } from "../../service/config/ConfigLoader";
+import { ConfigLoader } from "../../service/config/ConfigLoader";
 import { Callbacks } from "../../service/event/Callbacks";
 import { JobService } from "../../service/job/JobService";
 import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
-import * as fs from "fs";
 import * as util from "util";
 
 /**
@@ -45,7 +44,7 @@ async function go() {
     if (config.server.mode.type !== "single") {
         throw new Error("Only single mode is supported");
     }
-    const {fullConfig} = loadConfigFromFile(config.server.mode.configPath, config);
+    const fullConfig = new ConfigLoader(new Callbacks(new JobService(logger)), config).getFileLoader(config.server.mode.configPath)();
     const mongoClient = await mongodb.MongoClient.connect(config.db.mongo.url, {minPoolSize: 1, maxPoolSize: 5});
     const mongoDbManager = new MongoDbManager(
         mongoClient,
@@ -58,7 +57,6 @@ async function go() {
     const groupRepository = repositoryFactory.createGroupRepository();
     
     let checked = 0;
-    let flat = 0;
     let broken = 0;
     const groups = mongoDbManager.getCollectionByName("group");
     for await (const doc of groups.find({}, {projection: {_id: 1}})) {
@@ -66,17 +64,8 @@ async function go() {
         if (!group) {
             continue;
         }
-        if (group.numLeaves === undefined) {
-            flat++;
-            continue;
-        }
         checked++;
         const tree = await groupRepository.getTree(group);
-        if (!tree) {
-            broken++;
-            console.log(`${group.id}: tree geometry on the document but no nodes or edges stored`);
-            continue;
-        }
         const problems = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
         if (problems.length > 0) {
             broken++;
@@ -89,17 +78,11 @@ async function go() {
             }
         }
     }
-    console.log(`checked ${checked} tree-backed group(s), skipped ${flat} flat one(s), ${broken} broken`);
+    console.log(`checked ${checked} group(s), ${broken} broken`);
     await mongoDbManager.close();
     if (broken > 0) {
         process.exit(2);
     }
-}
-
-function loadConfigFromFile(filePath: string, baseConfig: Config) {
-    const config = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, "utf8")) as InitConfigValues : {};
-    const fullConfig = new ConfigLoader(new Callbacks(new JobService(logger)), baseConfig).getFileLoader(filePath)();
-    return {config, fullConfig};
 }
 
 go().catch(e => {

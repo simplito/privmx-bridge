@@ -103,9 +103,7 @@ export class ContextApiValidator extends BaseValidator {
             position: this.tv.intNonNegative,
             keyId: this.tv.keyId,
             data: this.tv.groupData,
-            // Exactly one of the two; the service refuses a call that brings neither.
-            transition: this.builder.optional(this.tv.groupTreeAdditionTransition),
-            tree: this.builder.optional(this.tv.groupTreeState),
+            transition: this.tv.groupTreeAdditionTransition,
             expectedKeyVersion: this.builder.int,
         }));
         this.registerMethod("groupRemoveMember", this.builder.createObject({
@@ -114,10 +112,7 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             keyId: this.tv.keyId,
             data: this.tv.groupData,
-            // Exactly one of the two; the service refuses a call that brings neither. `transition` is the delta,
-            // `tree` the whole new state a client may still send.
-            transition: this.builder.optional(this.tv.groupTreeTransition),
-            tree: this.builder.optional(this.tv.groupTreeState),
+            transition: this.tv.groupTreeTransition,
             // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             // One: the group is a grantee of itself, and it has exactly one grant key per epoch.

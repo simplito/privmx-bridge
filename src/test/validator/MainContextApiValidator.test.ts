@@ -153,6 +153,32 @@ function validTree(): types.cloud.GroupTreeState {
     };
 }
 
+/** The delta shapes the membership calls take: one refreshed/seated node, the edges around it. */
+function validRemovalTransition(): types.cloud.GroupTreeTransition {
+    return {
+        baseKeyVersion: 1,
+        blankedPosition: 1,
+        refreshedNodes: [{nodeIndex: 1, fromGeneration: 0, generation: 1, publicKey: nodePubKey}],
+        edges: [
+            {parentIndex: 1, parentGeneration: 1, childKind: "user", childUserId: "janek" as types.cloud.UserId, data: "w1" as types.core.UserKeyData},
+            {isGrantEdge: true, parentGeneration: 2, childKind: "node", childIndex: 1, childGeneration: 1, data: "w3" as types.core.UserKeyData},
+        ],
+    };
+}
+
+function validAdditionTransition(): types.cloud.GroupTreeAdditionTransition {
+    return {
+        baseKeyVersion: 1,
+        position: 2,
+        seatedNodes: [{nodeIndex: 3, generation: 0, publicKey: nodePubKey}],
+        edges: [
+            {parentIndex: 3, parentGeneration: 0, childKind: "node", childIndex: 1, childGeneration: 0, data: "w1" as types.core.UserKeyData},
+            {parentIndex: 3, parentGeneration: 0, childKind: "user", childUserId: "nowy" as types.cloud.UserId, data: "w2" as types.core.UserKeyData},
+            {isGrantEdge: true, parentGeneration: 1, childKind: "node", childIndex: 3, childGeneration: 0, data: "w3" as types.core.UserKeyData},
+        ],
+    };
+}
+
 it("ContextApiValidator.groupCreate accepts a tree", () => {
     const model: contextApi.GroupCreateModel = {...validGroupCreate(), tree: validTree()};
     const result = Utils.try(() => validator().validate("groupCreate", model));
@@ -187,7 +213,7 @@ it("ContextApiValidator.groupAddMember valid", () => {
         position: 2,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
-        tree: validTree(),
+        transition: validAdditionTransition(),
         expectedKeyVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupAddMember", model));
@@ -202,7 +228,7 @@ it("ContextApiValidator.groupAddMember rejects an unknown role", () => {
         position: 2,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
-        tree: validTree(),
+        transition: validAdditionTransition(),
         expectedKeyVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupAddMember", model));
@@ -216,7 +242,7 @@ it("ContextApiValidator.groupRemoveMember valid", () => {
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
-        tree: validTree(),
+        transition: validRemovalTransition(),
         rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
     };
@@ -231,7 +257,7 @@ it("ContextApiValidator.groupRemoveMember rejects a rung with epoch zero", () =>
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
-        tree: validTree(),
+        transition: validRemovalTransition(),
         rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
     };
@@ -247,7 +273,7 @@ it("ContextApiValidator.groupRemoveMember rejects a missing rung list", () => {
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
-        tree: validTree(),
+        transition: validRemovalTransition(),
         expectedKeyVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMember", model));

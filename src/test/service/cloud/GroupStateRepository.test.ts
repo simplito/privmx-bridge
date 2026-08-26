@@ -19,7 +19,7 @@ import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { MongoQuery } from "../../../db/mongo/MongoQuery";
 import { QueryResult } from "../../../db/ObjectRepository";
 import { createFake } from "../../testUtils/TestUtils";
-import { buildTree, cloneTree, treeAfterRemoval } from "../../testUtils/TreeFixtures";
+import { buildTree } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 
@@ -124,55 +124,13 @@ function edgeDocs(tree: types.cloud.GroupTreeState, id = groupId): db.group.Grou
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// writing a transition
+// writing a tree
 // ─────────────────────────────────────────────────────────────────────────────
-
-it("a removal in a group of eight writes the path, not the tree", async () => {
-    // Eight members: a removal refreshes the three nodes above the departing leaf.
-    const before = buildTree(SEATING, EPOCH);
-    const {after} = treeAfterRemoval(SEATING, 2, EPOCH);
-    const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, before, after);
-    assert.strictEqual(captured.nodes.operations.length, 3, "one refreshed node per level of the direct path");
-    // Edges into and out of the refreshed nodes, and the departing member's own edge deleted.
-    assert.strictEqual(captured.edges.operations.length, 7);
-    assert.ok(captured.edges.operations.length < before.edges.length, "a removal must not rewrite every edge");
-});
-
-it("the departing member's edge is deleted, and nothing else is", async () => {
-    const before = buildTree(SEATING, EPOCH);
-    const {after} = treeAfterRemoval(SEATING, 2, EPOCH);
-    const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, before, after);
-    const deletions = captured.edges.operations.filter(op => "deleteOne" in op) as unknown as {deleteOne: {filter: {_id: string}}}[];
-    assert.strictEqual(deletions.length, 1);
-    assert.strictEqual(deletions[0].deleteOne.filter._id, `${groupId}|5>user:bob`);
-});
-
-it("a refreshed edge is replaced in place, because generations are not part of its identity", async () => {
-    // Were generations part of the identity, every refresh would be a delete plus an insert.
-    const before = buildTree(SEATING, EPOCH);
-    const {after} = treeAfterRemoval(SEATING, 2, EPOCH);
-    const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, before, after);
-    const replacements = captured.edges.operations.filter(op => "replaceOne" in op) as unknown as {replaceOne: {filter: {_id: string}, upsert: boolean}}[];
-    const grant = replacements.find(op => op.replaceOne.filter._id.includes("grant"));
-    assert.ok(grant, "the grant edge is re-wrapped to the new epoch's key");
-    assert.strictEqual(grant?.replaceOne.upsert, true);
-});
-
-it("an unchanged tree writes nothing", async () => {
-    const tree = buildTree(SEATING, EPOCH);
-    const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, tree, cloneTree(tree));
-    assert.strictEqual(captured.nodes.operations.length, 0);
-    assert.strictEqual(captured.edges.operations.length, 0);
-});
 
 it("a group being created writes its whole tree", async () => {
     const tree = buildTree(SEATING, 1);
     const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, null, tree);
+    await repository.writeTree(groupId, tree);
     assert.strictEqual(captured.nodes.operations.length, tree.nodes.length);
     assert.strictEqual(captured.edges.operations.length, tree.edges.length);
 });

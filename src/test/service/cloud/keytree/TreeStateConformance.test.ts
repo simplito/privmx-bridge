@@ -128,14 +128,6 @@ describe("tree states produced by the endpoint", () => {
     
     const removals = fixture.cases.filter((c): c is RemoveCase => c.kind === "remove");
     each<[RemoveCase]>(removals.map(c => [c])).it("a removal of %#", ([testCase]) => {
-        const transition = TreeValidator.validateRemoval(
-            asTree(testCase.before), asTree(testCase.after),
-            testCase.removed as types.cloud.UserId, testCase.beforeEpoch, testCase.afterEpoch,
-        );
-        assert.deepStrictEqual(
-            transition, [],
-            `N=${testCase.before.numLeaves} removing ${testCase.removed}: ${JSON.stringify(transition)}`,
-        );
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.remaining), testCase.afterEpoch,
         );
@@ -158,14 +150,6 @@ describe("tree states produced by the endpoint", () => {
     
     const additions = fixture.cases.filter((c): c is AddCase => c.kind === "add");
     each<[AddCase]>(additions.map(c => [c])).it("an addition of %#", ([testCase]) => {
-        const transition = TreeValidator.validateAddition(
-            asTree(testCase.before), asTree(testCase.after), testCase.added as types.cloud.UserId,
-            testCase.position, testCase.epoch, testCase.epoch,
-        );
-        assert.deepStrictEqual(
-            transition, [],
-            `N=${testCase.before.numLeaves} adding at ${testCase.position}: ${JSON.stringify(transition)}`,
-        );
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.after_members), testCase.epoch,
         );

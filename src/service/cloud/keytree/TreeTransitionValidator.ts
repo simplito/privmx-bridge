@@ -11,7 +11,6 @@ limitations under the License.
 
 import * as types from "../../../types";
 import { TreeMath } from "./TreeMath";
-import { TreeValidator } from "./TreeValidator";
 
 /**
  * Why a submitted transition was rejected.
@@ -517,10 +516,5 @@ export class TreeTransitionValidator {
             ...TreeMath.directPath(position, grown),
             ...TreeMath.copath(position, grown).filter(nodeIndex => !TreeMath.isLeaf(nodeIndex)),
         ];
-    }
-    
-    /** The seats a removal's edges may address, so the caller can check the roster without the whole tree. */
-    static internalNodes(numLeaves: number): number[] {
-        return TreeValidator.internalNodes(numLeaves);
     }
 }

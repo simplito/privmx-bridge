@@ -38,7 +38,7 @@ export class GroupNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
-    sendCreatedGroup(group: db.group.Group, _solution: types.cloud.SolutionId) {
+    sendCreatedGroup(group: db.group.Group) {
         this.safe("groupCreated", async () => {
             const now = DateUtils.now();
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
@@ -67,7 +67,6 @@ export class GroupNotificationService {
      */
     sendUpdatedGroup(
         group: db.group.Group,
-        _solution: types.cloud.SolutionId,
         additionalUsers: types.cloud.UserIdentityWithStatus[],
         changeKind: contextApi.GroupChangeKind,
     ) {
@@ -104,7 +103,7 @@ export class GroupNotificationService {
         });
     }
     
-    sendDeletedGroup(group: db.group.Group, _solution: types.cloud.SolutionId) {
+    sendDeletedGroup(group: db.group.Group) {
         this.safe("groupDeleted", async () => {
             const now = DateUtils.now();
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);

@@ -15,7 +15,7 @@ import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
-import { applyRemoval, buildTree, withNodeKeys } from "../../testUtils/TreeFixtures";
+import { buildTree, removalTransition, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
 const groupIdentity = ECUtils.generateKeyPair();
@@ -257,7 +257,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             groupPubKey: rotatedGroupPubKey,
             keyId: rotatedGroupKeyId,
             data: "AAAA" as types.group.GroupData,
-            tree: withNodeKeys(applyRemoval(current, alicePosition, newEpoch), nodeKey),
+            transition: withTransitionNodeKeys(removalTransition(current, alicePosition, group.keyVersion), nodeKey),
             rungs: LadderMath.rungSpansFor(newEpoch, 1).map(span => ({
                 atKeyVersion: span.at,
                 targetKeyVersion: span.target,

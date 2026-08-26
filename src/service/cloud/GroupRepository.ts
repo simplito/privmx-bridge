@@ -143,11 +143,6 @@ export class GroupRepository {
     
     // ── out-of-document state (see GroupStateRepository) ──────────────────────────────────────────────────────
     
-    /** Whether the group is tree-backed. Tree geometry on the document is what says so. */
-    isTreeBacked(group: db.group.Group): boolean {
-        return group.numLeaves !== undefined;
-    }
-    
     /** The hidden key tree, assembled in the shape the validator and the API have always seen. */
     async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
         return this.state.getTree(group);
@@ -227,72 +222,8 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        await this.state.writeTree(group.id, null, tree);
+        await this.state.writeTree(group.id, tree);
         return group;
-    }
-    
-    /**
-     * Removes a member: the tree state is replaced, the epoch advances, and the submitted rungs are appended so
-     * the new epoch can still reach the old ones. All under one compare-and-swap on `keyVersion`, so two managers
-     * removing concurrently cannot interleave — the loser retries against the winner's tree.
-     *
-     * @returns the updated group, or `null` on a lost CAS race
-     */
-    async removeMemberWithTree(params: {
-        oldGroup: db.group.Group,
-        /** The state being replaced, already loaded for validation — the tree is written as a diff against it. */
-        oldTree: types.cloud.GroupTreeState,
-        modifier: types.cloud.UserId,
-        removedUser: types.cloud.UserId,
-        newGroupPubKey: types.cloud.GroupPubKey,
-        keyId: types.core.KeyId,
-        data: types.group.GroupData,
-        tree: types.cloud.GroupTreeState,
-        rungs: types.cloud.GroupArchiveRung[],
-        /** The metadata key wrapped once to the group's new grant key. */
-        groupKeys?: types.cloud.GroupKeysEntry[],
-        confirmationTag?: types.core.Base64,
-    }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, removedUser} = params;
-        const now = DateUtils.now();
-        const users = oldGroup.users.filter(u => u !== removedUser);
-        const managers = oldGroup.managers.filter(u => u !== removedUser);
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const version = this.nextVersion(oldGroup);
-        const changes: Partial<db.group.Group> = {
-            groupPubKey: params.newGroupPubKey,
-            lastModifier: modifier,
-            lastModificationDate: now,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            version: version,
-            keyVersion: expectedKeyVersion + 1,
-            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
-            numLeaves: params.tree.numLeaves,
-            leafAssignment: params.tree.leafAssignment,
-            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
-        };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.insertHistoryEntry({
-            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
-            groupId: oldGroup.id,
-            version: version,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            groupPubKey: params.newGroupPubKey,
-            created: now,
-            author: modifier,
-            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
-        });
-        await this.state.writeTree(oldGroup.id, params.oldTree, params.tree);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
-        return {...oldGroup, ...changes};
     }
     
     /** The nodes needed to check a removal at `position`: its path and copath, `O(log n)` reads. */
@@ -306,11 +237,12 @@ export class GroupRepository {
     }
     
     /**
-     * Removes a member from a transition rather than from a whole submitted tree.
+     * Removes a member: blank the leaf, refresh its path, advance the epoch, append the rungs. All under one
+     * compare-and-swap on `keyVersion`, so two managers removing concurrently cannot interleave — the loser
+     * retries against the winner's tree.
      *
-     * Identical to `removeMemberWithTree` in what it leaves behind — the difference is that neither side ever
-     * handles the whole tree: the client sends `O(log n)`, the bridge reads `O(log n)` to check it, and writes
-     * `O(log n)`.
+     * Neither side ever handles the whole tree: the client sends `O(log n)`, the bridge reads `O(log n)` to check
+     * it, and writes `O(log n)`.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
@@ -375,10 +307,11 @@ export class GroupRepository {
     }
     
     /**
-     * Seats a member from a transition rather than from a whole submitted tree.
+     * Seats a member **without advancing the epoch** — that is what keeps every container the group can read
+     * valid, so nobody else re-keys anything.
      *
-     * Same outcome as `addMemberWithTree`, without either side handling the whole tree — and, as there, still a
-     * CAS on the unchanged epoch, so an addition racing a removal loses.
+     * Still a CAS on the unchanged epoch, so an addition racing a removal loses: it was computed against a tree
+     * the removal has already replaced.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
@@ -432,58 +365,6 @@ export class GroupRepository {
             author: modifier,
         });
         await this.state.applyAdditionTransition(oldGroup.id, transition, addedUser, oldNumLeaves, oldLeafAssignment);
-        return {...oldGroup, ...changes};
-    }
-    
-    /**
-     * Adds a member without advancing the epoch — that is what keeps every container the group can read valid,
-     * so nobody else re-keys anything.
-     */
-    async addMemberWithTree(params: {
-        oldGroup: db.group.Group,
-        oldTree: types.cloud.GroupTreeState,
-        modifier: types.cloud.UserId,
-        addedUser: types.cloud.UserId,
-        role: types.cloud.ContainerRole,
-        keyId: types.core.KeyId,
-        data: types.group.GroupData,
-        tree: types.cloud.GroupTreeState,
-    }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, addedUser} = params;
-        const now = DateUtils.now();
-        const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
-        const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const version = this.nextVersion(oldGroup);
-        const changes: Partial<db.group.Group> = {
-            lastModifier: modifier,
-            lastModificationDate: now,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            version: version,
-            numLeaves: params.tree.numLeaves,
-            leafAssignment: params.tree.leafAssignment,
-        };
-        // Still a CAS on the unchanged epoch: an addition racing a removal must lose, because it was computed
-        // against a tree the removal has already replaced.
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.insertHistoryEntry({
-            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
-            groupId: oldGroup.id,
-            version: version,
-            keyId: params.keyId,
-            data: params.data,
-            users: users,
-            managers: managers,
-            groupPubKey: oldGroup.groupPubKey,
-            created: now,
-            author: modifier,
-        });
-        await this.state.writeTree(oldGroup.id, params.oldTree, params.tree);
         return {...oldGroup, ...changes};
     }
     

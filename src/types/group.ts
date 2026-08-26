@@ -13,8 +13,3 @@ export type GroupId = string&{__groupId: never};
 export type GroupData = unknown;
 export type GroupVersion = number&{__groupVersion: never};
 export type GroupType = string&{__groupType: never};
-
-export interface GroupDeleteStatus {
-    id: GroupId;
-    status: "OK"|"GROUP_DOES_NOT_EXIST"|"ACCESS_DENIED"|"GROUP_IN_USE";
-}
