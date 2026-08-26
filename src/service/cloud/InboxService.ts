@@ -153,7 +153,7 @@ export class InboxService extends BaseContainerService {
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);
             const groups = (oldInbox.groups || []);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
-            const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, oldInbox.managers, oldInbox.users, oldInbox.data as types.inbox.InboxData, model.keyId, newKeys, undefined, null, {groups, groupKeys: newGroupKeys});
+            const inbox = await inboxRepository.rotateKeys(oldInbox, user.userId, model.keyId, newKeys, {groups, groupKeys: newGroupKeys});
             return {inbox, context};
         });
         this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution, []);

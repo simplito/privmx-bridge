@@ -225,7 +225,7 @@ export class StreamService extends BaseContainerService {
             const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, oldStreamRoom.users, oldStreamRoom.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, (oldStreamRoom.groups || []).map(g => g.groupId));
-            const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, oldStreamRoom.managers, oldStreamRoom.users, oldStreamRoom.data, keyId, newKeys, undefined, null, {groups: oldStreamRoom.groups || [], groupKeys: newGroupKeys});
+            const streamRoom = await streamRoomRepository.rotateKeys(oldStreamRoom, user.userId, keyId, newKeys, {groups: oldStreamRoom.groups || [], groupKeys: newGroupKeys});
             return {streamRoom, context};
         });
         this.streamNotificationService.sendStreamRoomUpdated(rStreamRoom, usedContext.solution, []);

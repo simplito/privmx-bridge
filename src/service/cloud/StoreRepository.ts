@@ -153,6 +153,34 @@ export class StoreRepository {
         return updatedStore;
     }
     
+    async rotateKeys(oldStore: db.store.Store, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldStore.lastModifier
+        // at oldStore.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldStore.history, `store '${oldStore.id}' history`);
+        const groups = grantees?.groups || oldStore.groups || [];
+        const entry: db.store.StoreHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldStore.keyId,
+            data: previous.data,
+            users: oldStore.users,
+            managers: oldStore.managers,
+            groups: groups,
+        };
+        const updatedStore: db.store.Store = {
+            ...oldStore,
+            keyId: newKeyId,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys ?? oldStore.groupKeys ?? [],
+            history: [...oldStore.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedStore);
+        return updatedStore;
+    }
+    
     async deleteStore(id: types.store.StoreId) {
         await this.repository.delete(id);
     }

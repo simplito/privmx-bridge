@@ -167,7 +167,7 @@ export class KvdbService extends BaseContainerService {
             const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, oldKvdb.users, oldKvdb.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, (oldKvdb.groups || []).map(g => g.groupId));
-            const kvdb = await kvdbRepository.updateKvdb(oldKvdb, user.userId, oldKvdb.managers, oldKvdb.users, oldKvdb.data, keyId, newKeys, undefined, {groups: oldKvdb.groups || [], groupKeys: newGroupKeys});
+            const kvdb = await kvdbRepository.rotateKeys(oldKvdb, user.userId, keyId, newKeys, {groups: oldKvdb.groups || [], groupKeys: newGroupKeys});
             return {kvdb, context};
         });
         this.kvdbNotificationService.sendKvdbUpdated(rKvdb, usedContext.solution, []);

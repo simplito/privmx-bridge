@@ -595,7 +595,7 @@ export namespace kvdb {
     
     export interface KvdbHistoryEntry {
         keyId: types.core.KeyId;
-        data: types.stream.StreamRoomData;
+        data: types.kvdb.KvdbData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         groups?: types.cloud.GroupGrant[];

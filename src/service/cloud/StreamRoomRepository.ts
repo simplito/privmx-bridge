@@ -162,6 +162,34 @@ export class StreamRoomRepository {
         return updatedStreamRoom;
     }
     
+    async rotateKeys(oldStreamRoom: db.stream.StreamRoom, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldStreamRoom.lastModifier
+        // at oldStreamRoom.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldStreamRoom.history, `stream room '${oldStreamRoom.id}' history`);
+        const groups = grantees?.groups || oldStreamRoom.groups || [];
+        const entry: db.stream.StreamRoomHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldStreamRoom.keyId,
+            data: previous.data,
+            users: oldStreamRoom.users,
+            managers: oldStreamRoom.managers,
+            groups: groups,
+        };
+        const updatedStreamRoom: db.stream.StreamRoom = {
+            ...oldStreamRoom,
+            keyId: newKeyId,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys ?? oldStreamRoom.groupKeys ?? [],
+            history: [...oldStreamRoom.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedStreamRoom);
+        return updatedStreamRoom;
+    }
+    
     /** True if any stream room still grants access to the given group (Phase 2 referential integrity). */
     async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
         const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
