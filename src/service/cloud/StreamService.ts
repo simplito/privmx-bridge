@@ -220,7 +220,9 @@ export class StreamService extends BaseContainerService {
             }
             const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
             if (currentVersion !== version && !force) {
-                throw new AppException("ACCESS_DENIED", "version does not match");
+                // See ThreadService.rotateThreadKeys: on a re-key a version mismatch means the container moved,
+                // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
+                throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldStreamRoom.keyId});
             }
             const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, oldStreamRoom.users, oldStreamRoom.managers);

@@ -152,7 +152,9 @@ export class StoreService extends BaseContainerService {
             }
             const currentVersion = <types.store.StoreVersion>oldStore.history.length;
             if (currentVersion !== version && !force) {
-                throw new AppException("ACCESS_DENIED", "version does not match");
+                // See ThreadService.rotateThreadKeys: on a re-key a version mismatch means the container moved,
+                // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
+                throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldStore.keyId});
             }
             const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, oldStore.users, oldStore.managers);

@@ -58,13 +58,15 @@ export class ThreadRotateKeysTests extends BaseTestSet {
     async shouldRejectRotateKeysWithStaleVersionAndNoForce() {
         await this.createOwnerOnlyThread();
         const threadId = this.requireThreadId();
+        // The caller may rotate — it lost the version check, which on this method means the thread moved under
+        // it. CONTAINER_ROTATED_ALREADY, not ACCESS_DENIED, so a client can retry instead of giving up.
         await shouldThrowErrorWithCode2(() => this.apis.threadApi.threadRotateKeys({
             id: threadId,
             keyId: rotatedThreadKeyId,
             keys: [{user: testData.userId, keyId: rotatedThreadKeyId, data: "DDDD" as types.core.UserKeyData}],
             version: 999 as types.thread.ThreadVersion,
             force: false,
-        }), "ACCESS_DENIED");
+        }), "CONTAINER_ROTATED_ALREADY");
     }
     
     @Test()

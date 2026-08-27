@@ -261,7 +261,11 @@ export class ThreadService extends BaseContainerService {
             }
             const currentVersion = <types.thread.ThreadVersion>oldThread.history.length;
             if (currentVersion !== version && !force) {
-                throw new AppException("ACCESS_DENIED", "version does not match");
+                // A re-key changes nothing but the key, so a version mismatch here means somebody else already
+                // moved the thread — most likely a concurrent re-key of the same stale key. Its own code (rather
+                // than a bare ACCESS_DENIED) is what lets a client tell "already fixed, retry the write" apart
+                // from "you may not rotate this".
+                throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldThread.keyId});
             }
             const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, oldThread.users, oldThread.managers);
