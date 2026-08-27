@@ -89,7 +89,9 @@ function startJobs(registry: MasterRegistry) {
     const jobService = registry.getJobService();
     const ipRateLimiter = registry.getIpRateLimiter();
     const nonceMap = registry.getNonceMap();
+    const groupRotationRateLimiter = registry.getGroupRotationRateLimiter();
     const config = registry.getConfig();
     jobService.addPeriodicJob(() => ipRateLimiter.addCreditsAndRemoveInactive(), config.apiRateLimit.addonInterval, "creditRefresh");
     jobService.addPeriodicJob(async () => nonceMap.deleteExpired(), DateUtils.minutes(5), "nonceCacheRemoval");
+    jobService.addPeriodicJob(async () => groupRotationRateLimiter.deleteExpired(), DateUtils.minutes(5), "groupRotationRateLimitCleanup");
 }

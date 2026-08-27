@@ -536,6 +536,14 @@ export class Utils {
         return "WORKER01";
     }
     
+    /** The last element, throwing with the array named rather than handing back `undefined`. */
+    static lastOf<T>(array: T[], what: string): T {
+        if (array.length === 0) {
+            throw new Error(`${what} is empty`);
+        }
+        return array[array.length - 1];
+    }
+    
     static convertWebSocketDataToString(data: WebSocket.Data) {
         if (typeof(data) === "string") {
             return data;

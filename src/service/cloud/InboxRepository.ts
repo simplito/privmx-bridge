@@ -57,12 +57,12 @@ export class InboxRepository {
         return await this.repository.getMatchingPage<db.inbox.Inbox>([{$match: match}], listParams, sortBy);
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope, userGroupIds: types.group.GroupId[] = []) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
         return this.repository.getMatchingPage([
-            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope, userGroupIds),
         ], listParams, sortBy);
     }
     
@@ -70,7 +70,8 @@ export class InboxRepository {
         return this.repository.matchX2({contextId: contextId}, listParams);
     }
     
-    async createInbox(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy) {
+    async createInbox(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.inbox.InboxType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -78,6 +79,7 @@ export class InboxRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
         };
         const inbox: db.inbox.Inbox = {
             id: this.repository.generateId(),
@@ -92,6 +94,8 @@ export class InboxRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             policy: policy,
@@ -103,7 +107,8 @@ export class InboxRepository {
         return inbox;
     }
     
-    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    async updateInbox(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[], data: types.inbox.InboxData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerWithoutItemPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -111,6 +116,7 @@ export class InboxRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
         };
         const updatedInbox: db.inbox.Inbox = {
             id: oldInbox.id,
@@ -125,6 +131,8 @@ export class InboxRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
             history: [...oldInbox.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldInbox.allTimeUsers, entry.users, entry.managers),
             policy: policy === undefined ? oldInbox.policy : policy,
@@ -137,6 +145,41 @@ export class InboxRepository {
         }
         await this.repository.update(updatedInbox);
         return updatedInbox;
+    }
+    
+    async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldInbox.lastModifier
+        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData
+        // lives only in the history — `oldInbox.data` is just its `meta`.
+        const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
+        const groups = grantees?.groups || oldInbox.groups || [];
+        const entry: db.inbox.InboxHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldInbox.keyId,
+            data: previous.data,
+            users: oldInbox.users,
+            managers: oldInbox.managers,
+            groups: groups,
+        };
+        const updatedInbox: db.inbox.Inbox = {
+            ...oldInbox,
+            keyId: newKeyId,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys ?? oldInbox.groupKeys ?? [],
+            history: [...oldInbox.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedInbox);
+        return updatedInbox;
+    }
+    
+    /** True if any inbox still grants access to the given group (Phase 2 referential integrity). */
+    async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
+        const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
+        return found.length > 0;
     }
     
     async deleteInbox(id: types.inbox.InboxId) {

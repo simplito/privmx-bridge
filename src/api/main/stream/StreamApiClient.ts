@@ -31,6 +31,10 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.request("stream.streamRoomUpdate", model);
     }
     
+    streamRoomRotateKeys(model: streamApi.StreamRoomRotateKeysModel): Promise<types.core.OK> {
+        return this.request("stream.streamRoomRotateKeys", model);
+    }
+    
     streamRoomDelete(model: streamApi.StreamRoomDeleteModel): Promise<types.core.OK> {
         return this.request("stream.streamRoomDelete", model);
     }

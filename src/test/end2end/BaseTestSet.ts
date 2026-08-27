@@ -258,6 +258,12 @@ export class BaseTestSet {
         generateResourceId: () => {
             return Crypto.uuidv4() as types.core.ClientResourceId;
         },
+        
+        /** Raw documents straight out of Mongo, for assertions about how something is stored rather than about
+         *  what the API answers. */
+        readCollection: async (collectionName: string, filter: mongodb.Filter<mongodb.Document> = {}) => {
+            return this.dbManager.getCollectionByName(collectionName).find(filter).toArray();
+        },
     };
     
     async run(test: TestMethod, workerId?: number) {

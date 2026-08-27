@@ -49,13 +49,16 @@ export class ThreadService extends BaseContainerService {
         if (!thread || (type && thread.type !== type)) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadGet", ["threadId=" + threadId]);
-            if (!this.policy.canReadContainer(user, context, thread)) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(thread, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return thread;
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, ownGroupIds, groupEpochs};
     }
     
     async getMyThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope) {
@@ -71,8 +74,10 @@ export class ThreadService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
-        return {user, threads};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const threads = await this.repositoryFactory.createThreadRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        const groupEpochs = await this.getGroupEpochs(contextId, threads.list);
+        return {user, threads, ownGroupIds, groupEpochs};
     }
     
     async getAllThreads(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread) {
@@ -81,8 +86,10 @@ export class ThreadService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const threads = await this.repositoryFactory.createThreadRepository().getAllThreads(contextId, type, listParams, sortBy);
-        return {user, threads};
+        const groupEpochs = await this.getGroupEpochs(contextId, threads.list);
+        return {user, threads, ownGroupIds, groupEpochs};
     }
     
     async getThreadsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.thread.ThreadId>) {
@@ -109,8 +116,9 @@ export class ThreadService extends BaseContainerService {
         if (!thread) {
             throw new DbInconsistencyError(`thread=${message.threadId} does not exist, from message=${messageId}`);
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
-            if (!this.policy.canReadItem(user, context, thread, message)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadItem(user, context, this.withGroupMembership(thread, user.userId, userGroupIds), message)) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageGet", ["threadId=" + thread.id, "messageId=" + messageId]);
@@ -123,14 +131,17 @@ export class ThreadService extends BaseContainerService {
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, thread)) {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(thread, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
         });
         const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThread(threadId, listParams, sortBy || "createDate");
-        return {thread, messages};
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, messages, ownGroupIds, groupEpochs};
     }
     
     async getThreadMyMessages(executor: CloudUser, threadId: types.thread.ThreadId, listParams: types.core.ListModel, sortBy?: keyof db.thread.ThreadMessage) {
@@ -138,14 +149,17 @@ export class ThreadService extends BaseContainerService {
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
-            if (!this.policy.canListMyItems(user, context, thread)) {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListMyItems(user, context, this.withGroupMembership(thread, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGetMy", ["threadId=" + thread.id]);
         });
         const messages = await this.repositoryFactory.createThreadMessageRepository().getPageByThreadAndUser(executor.getUser(thread.contextId), threadId, listParams, sortBy || "createDate");
-        return {thread, messages};
+        const groupEpochs = await this.getGroupEpochs(thread.contextId, [thread]);
+        return {thread, messages, ownGroupIds, groupEpochs};
     }
     
     async getThreadMessages2(executor: Executor, threadId: types.thread.ThreadId,  listParams: types.core.ListModel2<types.thread.ThreadMessageId>) {
@@ -153,8 +167,9 @@ export class ThreadService extends BaseContainerService {
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, thread)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(thread, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessagesGet", ["threadId=" + thread.id]);
@@ -163,14 +178,15 @@ export class ThreadService extends BaseContainerService {
         return {thread, messages};
     }
     
-    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createThread(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
-            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            const thread = await this.repositoryFactory.createThreadRepository().createThread(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.threadNotificationService.sendCreatedThread(thread, context.solution);
             return thread;
         }
@@ -182,7 +198,7 @@ export class ThreadService extends BaseContainerService {
         }
     }
     
-    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+    async updateThread(cloudUser: CloudUser, id: types.thread.ThreadId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.thread.ThreadVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -194,17 +210,20 @@ export class ThreadService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldThread.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadUpdate", ["threadId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldThread, managers, policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldThread, user.userId, userGroupIds), managers, policy);
             const currentVersion = <types.thread.ThreadVersion>oldThread.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, [...oldThread.history.map(x => x.keyId), keyId], oldThread.keys, keys, keyId, users, managers);
+            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, users, managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                const thread = await threadRepository.updateThread(oldThread, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupKeys: newGroupKeys});
                 return {thread, context, oldThread};
             }
             catch (err) {
@@ -221,6 +240,39 @@ export class ThreadService extends BaseContainerService {
         return rThread;
     }
     
+    /**
+     * Rotate the thread's content key ONLY — no membership change (Phase 2 lazy re-key). The members/managers/
+     * grantee groups, `data` and policy are kept as-is; only a new `keyId` (re-wrapped to the current users and
+     * grantee groups) is installed. Per-epoch coverage (BR-5) is enforced via checkGroupKeysAndGrantees.
+     * This is the narrow counterpart of threadUpdate — it cannot add/remove users or groups.
+     */
+    async rotateThreadKeys(cloudUser: CloudUser, id: types.thread.ThreadId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.thread.ThreadVersion, force: boolean) {
+        const {thread: rThread, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const threadRepository = this.repositoryFactory.createThreadRepository(session);
+            const oldThread = await threadRepository.get(id);
+            if (!oldThread) {
+                throw new AppException("THREAD_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldThread.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "thread/threadRotateKeys", ["threadId=" + id]);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldThread, user.userId, userGroupIds))) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.thread.ThreadVersion>oldThread.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, oldThread.users, oldThread.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, (oldThread.groups || []).map(g => g.groupId));
+            const thread = await threadRepository.rotateKeys(oldThread, user.userId, keyId, newKeys, {groups: oldThread.groups || [], groupKeys: newGroupKeys});
+            return {thread, context};
+        });
+        this.threadNotificationService.sendUpdatedThread(rThread, usedContext.solution, []);
+        return rThread;
+    }
+    
     async deleteThread(executor: Executor, id: types.thread.ThreadId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const threadRepository = this.repositoryFactory.createThreadRepository(session);
@@ -229,9 +281,10 @@ export class ThreadService extends BaseContainerService {
             if (!oldThread) {
                 throw new AppException("THREAD_DOES_NOT_EXIST");
             }
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldThread.contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldThread.contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "thread/threadDelete", ["threadId=" + id]);
-                if (!this.policy.canDeleteContainer(user, context, oldThread)) {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(oldThread, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED");
                 }
             });
@@ -263,9 +316,10 @@ export class ThreadService extends BaseContainerService {
             }
             const contextId = threads[0].contextId;
             let additionalAccessCheck: ((thread: db.thread.Thread) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "thread/threadDeleteMany", []);
-                additionalAccessCheck = thread => this.policy.canDeleteContainer(user, context, thread);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = thread => this.policy.canDeleteContainer(user, context, this.withGroupMembership(thread, user.userId, userGroupIds));
             });
             const toDelete: types.thread.ThreadId[] = [];
             const toNotify: db.thread.Thread[] = [];
@@ -322,12 +376,14 @@ export class ThreadService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageSend", ["threadId=" + threadId]);
-        if (!this.policy.canCreateItem(user, context, thread)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canCreateItem(user, context, this.withGroupMembership(thread, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
         }
+        await this.checkGroupEpochs(thread, this.policy.isForwardSecrecyEnforced(context, thread));
         try {
             const message = await this.repositoryFactory.createThreadMessageRepository().tryCreateMessage(null, user.userId, threadId, data, keyId, resourceId);
             await this.repositoryFactory.createThreadRepository().increaseMessageCounter(thread.id, message.createDate);
@@ -357,12 +413,15 @@ export class ThreadService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageUpdate", ["messageId=" + messageId, "threadId=" + thread.id]);
-        if (!this.policy.canUpdateItem(user, context, thread, message)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(thread, user.userId, userGroupIds), message)) {
             throw new AppException("ACCESS_DENIED");
         }
         if (thread.keyId !== keyId) {
             throw new AppException("INVALID_THREAD_KEY");
         }
+        // An update writes new content under the thread's current key, exactly like sending does.
+        await this.checkGroupEpochs(thread, this.policy.isForwardSecrecyEnforced(context, thread));
         const currentVersion = ((message.updates || []).length + 1) as types.thread.ThreadMessageVersion;
         if (typeof(version) === "number" && currentVersion !== version && force !== true) {
             throw new AppException("INVALID_VERSION", `version does not match, get: ${version}, expected: ${currentVersion}`);
@@ -392,9 +451,10 @@ export class ThreadService extends BaseContainerService {
         if (!thread) {
             throw new AppException("THREAD_DOES_NOT_EXIST");
         }
-        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, (user, context) => {
+        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, thread.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageDelete", ["messageId=" + messageId, "threadId=" + thread.id]);
-            if (!this.policy.canDeleteItem(user, context, thread, message)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canDeleteItem(user, context, this.withGroupMembership(thread, user.userId, userGroupIds), message)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -429,11 +489,13 @@ export class ThreadService extends BaseContainerService {
             }
             const contextId = thread.contextId;
             let additionalAccessCheck: ((message: db.thread.ThreadMessage) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 if (checkAccess) {
                     this.cloudAclChecker.verifyAccess(user.acl, "thread/threadMessageDeleteMany", ["threadId=" + threadId]);
                 }
-                additionalAccessCheck = message => this.policy.canDeleteItem(user, context, thread, message);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                const groupAwareThread = this.withGroupMembership(thread, user.userId, userGroupIds);
+                additionalAccessCheck = message => this.policy.canDeleteItem(user, context, groupAwareThread, message);
             });
             const toDelete: types.thread.ThreadMessageId[] = [];
             const toNotify: db.thread.ThreadMessage[] = [];
@@ -491,7 +553,8 @@ export class ThreadService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, thread.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadSendCustomNotification", ["threadId=" + threadId]);
-        if (!this.policy.canSendCustomNotification(user, context, thread)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canSendCustomNotification(user, context, this.withGroupMembership(thread, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (users && users.some(element => !thread.users.includes(element))) {

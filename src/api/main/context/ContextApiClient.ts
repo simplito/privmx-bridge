@@ -34,4 +34,48 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     contextSendCustomEvent(model: contextApi.ContextSendCustomEventModel): Promise<types.core.OK> {
         return this.request("context.contextSendCustomEvent", model);
     }
+    
+    groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
+        return this.request("context.groupCreate", model);
+    }
+    
+    groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
+        return this.request("context.groupUpdate", model);
+    }
+    
+    groupGenerateNewKey(model: contextApi.GroupGenerateNewKeyModel): Promise<types.core.OK> {
+        return this.request("context.groupGenerateNewKey", model);
+    }
+    
+    groupDelete(model: contextApi.GroupDeleteModel): Promise<types.core.OK> {
+        return this.request("context.groupDelete", model);
+    }
+    
+    groupGet(model: contextApi.GroupGetModel): Promise<contextApi.GroupGetResult> {
+        return this.request("context.groupGet", model);
+    }
+    
+    groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
+        return this.request("context.groupList", model);
+    }
+    
+    groupAddMember(model: contextApi.GroupAddMemberModel): Promise<types.core.OK> {
+        return this.request("context.groupAddMember", model);
+    }
+    
+    groupRemoveMember(model: contextApi.GroupRemoveMemberModel): Promise<types.core.OK> {
+        return this.request("context.groupRemoveMember", model);
+    }
+    
+    groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
+        return this.request("context.groupCutEra", model);
+    }
+    
+    groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
+        return this.request("context.groupPruneArchive", model);
+    }
+    
+    groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
+        return this.request("context.groupGetKeyArchive", model);
+    }
 }

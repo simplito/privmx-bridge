@@ -34,7 +34,7 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeCreate(model: storeApi.StoreCreateModel): Promise<storeApi.StoreCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const store = await this.storeService.createStore(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const store = await this.storeService.createStore(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.groups || [], model.groupKeys || []);
         this.requestLogger.setContextId(store.contextId);
         return {storeId: store.id};
     }
@@ -42,7 +42,15 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeUpdate(model: storeApi.StoreUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const store = await this.storeService.updateStore(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
+        const store = await this.storeService.updateStore(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.groups || [], model.groupKeys || []);
+        this.requestLogger.setContextId(store.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async storeRotateKeys(model: storeApi.StoreRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const store = await this.storeService.rotateStoreKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
         this.requestLogger.setContextId(store.contextId);
         return "OK";
     }
@@ -68,50 +76,50 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeGet(model: storeApi.StoreGetModel): Promise<storeApi.StoreGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const store = await this.storeService.getStore(cloudUser, model.storeId, model.type);
+        const {store, ownGroupIds, groupEpochs} = await this.storeService.getStore(cloudUser, model.storeId, model.type);
         this.requestLogger.setContextId(store.contextId);
-        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store)};
+        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store, ownGroupIds, groupEpochs)};
     }
     
     @ApiMethod({})
     async storeList(model: storeApi.StoreListModel): Promise<storeApi.StoreListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, stores} = await this.storeService.getMyStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
+        const {user, stores, ownGroupIds, groupEpochs} = await this.storeService.getMyStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
-        return {stores: stores.list.map(x => this.storeConverter.convertStore(user.userId, x)), count: stores.count};
+        return {stores: stores.list.map(x => this.storeConverter.convertStore(user.userId, x, ownGroupIds, groupEpochs)), count: stores.count};
     }
     
     @ApiMethod({})
     async storeListAll(model: storeApi.StoreListAllModel): Promise<storeApi.StoreListAllResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, stores} = await this.storeService.getAllStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, stores, ownGroupIds, groupEpochs} = await this.storeService.getAllStores(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {stores: stores.list.map(x => this.storeConverter.convertStore(user.userId, x)), count: stores.count};
+        return {stores: stores.list.map(x => this.storeConverter.convertStore(user.userId, x, ownGroupIds, groupEpochs)), count: stores.count};
     }
     
     @ApiMethod({})
     async storeFileGet(model: storeApi.StoreFileGetModel): Promise<storeApi.StoreFileGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, file} = await this.storeService.getStoreFile(cloudUser, model.fileId);
+        const {store, file, ownGroupIds, groupEpochs} = await this.storeService.getStoreFile(cloudUser, model.fileId);
         this.requestLogger.setContextId(store.contextId);
-        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store), file: this.storeConverter.convertFile(store, file)};
+        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store, ownGroupIds, groupEpochs), file: this.storeConverter.convertFile(store, file)};
     }
     
     @ApiMethod({})
     async storeFileGetMany(model: storeApi.StoreFileGetManyModel): Promise<storeApi.StoreFileGetManyResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, files} = await this.storeService.getStoreFileMany(cloudUser, model.storeId, model.fileIds, model.failOnError);
+        const {store, files, ownGroupIds, groupEpochs} = await this.storeService.getStoreFileMany(cloudUser, model.storeId, model.fileIds, model.failOnError);
         this.requestLogger.setContextId(store.contextId);
-        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store), files: files.map(x => "error" in x ? x : this.storeConverter.convertFile(store, x))};
+        return {store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store, ownGroupIds, groupEpochs), files: files.map(x => "error" in x ? x : this.storeConverter.convertFile(store, x))};
     }
     
     @ApiMethod({})
     async storeFileList(model: storeApi.StoreFileListModel): Promise<storeApi.StoreFileListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, files} = await this.storeService.getStoreFiles(cloudUser, model.storeId, model, model.sortBy);
+        const {store, files, ownGroupIds, groupEpochs} = await this.storeService.getStoreFiles(cloudUser, model.storeId, model, model.sortBy);
         this.requestLogger.setContextId(store.contextId);
         return {
-            store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store),
+            store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store, ownGroupIds, groupEpochs),
             files: files.list.map(x => this.storeConverter.convertFile(store, x)),
             count: files.count,
         };
@@ -120,10 +128,10 @@ export class StoreApi extends BaseApi implements storeApi.IStoreApi {
     @ApiMethod({})
     async storeFileListMy(model: storeApi.StoreFileListMyModel): Promise<storeApi.StoreFileListMyResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {store, files} = await this.storeService.getMyStoreFiles(cloudUser, model.storeId, model);
+        const {store, files, ownGroupIds, groupEpochs} = await this.storeService.getMyStoreFiles(cloudUser, model.storeId, model);
         this.requestLogger.setContextId(store.contextId);
         return {
-            store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store),
+            store: this.storeConverter.convertStore(cloudUser.getUser(store.contextId), store, ownGroupIds, groupEpochs),
             files: files.list.map(x => this.storeConverter.convertFile(store, x)),
             count: files.count,
         };

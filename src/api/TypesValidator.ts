@@ -23,6 +23,9 @@ export interface CustomValidatorWithLength extends AdvValidator.Types.CustomVali
 
 export class TypesValidator {
     
+    /** The largest group the protocol accepts. Every group-shaped limit derives from this one number. */
+    static readonly MAX_GROUP_MEMBERS = 16384;
+    
     builder: AdvValidator.ValidatorBuilder;
     checker: AdvValidator.ValidatorChecker;
     
@@ -60,6 +63,20 @@ export class TypesValidator {
     threadData: Validator;
     threadMessageData: Validator;
     cloudKeyEntrySet: Validator;
+    groupId: Validator;
+    groupData: Validator;
+    groupPubKey: Validator;
+    groupTreeNode: Validator;
+    groupTreeEdge: Validator;
+    groupTreeState: Validator;
+    groupTreeRefreshedNode: Validator;
+    groupTreeTransition: Validator;
+    groupTreeSeatedNode: Validator;
+    groupTreeAdditionTransition: Validator;
+    groupArchiveRung: Validator;
+    groupGrant: Validator;
+    cloudGroupKeyEntrySet: Validator;
+    cloudGroupKeyEntrySetForNewGroup: Validator;
     storeId: Validator;
     storeData: Validator;
     storeFileId: Validator;
@@ -72,6 +89,7 @@ export class TypesValidator {
     streamRoomData: Validator;
     unknown4Kb: Validator;
     unknown16Kb: Validator;
+    unknown1Mb: Validator;
     resourceType: Validator;
     optResourceType: Validator;
     contextAcl: Validator;
@@ -187,6 +205,13 @@ export class TypesValidator {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
         });
+        this.unknown1Mb = this.builder.createCustom(value => {
+            const size = this.getValueSize(value, "<root>");
+            const maxSize = 1024 * 1024;
+            if (size > maxSize) {
+                throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
+            }
+        });
         this.loginProperty = this.builder.optional(this.builder.maxLength(this.builder.string, 150));
         this.loginProperties = this.builder.createObject({
             appVersion: this.loginProperty,
@@ -230,6 +255,105 @@ export class TypesValidator {
         this.threadMessageData = this.unknown16Kb;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
+            keyId: this.keyId,
+            data: this.userKeyData,
+        });
+        this.groupId = id;
+        // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
+        // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
+        this.groupData = this.unknown1Mb;
+        this.groupPubKey = this.eccPub;
+        this.groupTreeNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        this.groupTreeEdge = this.builder.createObject({
+            isGrantEdge: this.builder.optional(this.builder.bool),
+            // Absent on the grant edge, whose parent is the grant keypair rather than a node.
+            parentIndex: this.builder.optional(this.intNonNegative),
+            parentGeneration: this.intNonNegative,
+            childKind: this.builder.createEnum(["user", "node"]),
+            childIndex: this.builder.optional(this.intNonNegative),
+            childGeneration: this.builder.optional(this.intNonNegative),
+            childUserId: this.builder.optional(this.cloudUserId),
+            data: this.userKeyData,
+        });
+        const groupTreeStateShape = this.builder.createObject({
+            // Bounded on both sides. Without an upper bound this was held down only indirectly, by the length of
+            // `leafAssignment` — and a client could name a geometry the server would then compute paths in.
+            numLeaves: this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_MEMBERS),
+            // An empty string marks a blank left by a removal, so this is not cloudUserId (which requires a
+            // non-empty id). The structural validator checks the entries against the roster.
+            leafAssignment: this.builder.createListWithMaxLength(this.builder.maxLength(this.builder.string, 128), TypesValidator.MAX_GROUP_MEMBERS),
+            nodes: this.builder.createListWithMaxLength(this.groupTreeNode, TypesValidator.MAX_GROUP_MEMBERS),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 2 * TypesValidator.MAX_GROUP_MEMBERS),
+        });
+        // The list caps above are the ceiling for the largest legal tree; these are the ceiling for *this* tree.
+        // A tree of N leaves has N-1 internal nodes and 2(N-1)+1 edges, so both follow from `numLeaves` — and
+        // counting them first is what stops a one-leaf tree from carrying 32 768 public keys to parse and
+        // 65 536 blobs to buffer before `TreeValidator` ever gets to reject it.
+        this.groupTreeState = this.builder.createCustom((value, _validator, checker) => {
+            const tree = value as {numLeaves?: unknown, leafAssignment?: unknown, nodes?: unknown, edges?: unknown};
+            const numLeaves = tree.numLeaves;
+            if (typeof numLeaves !== "number" || !Number.isInteger(numLeaves)
+                || numLeaves < 1 || numLeaves > TypesValidator.MAX_GROUP_MEMBERS) {
+                throw new Error(`numLeaves has to be an integer between 1 and ${TypesValidator.MAX_GROUP_MEMBERS}`);
+            }
+            TypesValidator.assertTreeListLength("leafAssignment", tree.leafAssignment, numLeaves);
+            TypesValidator.assertTreeListLength("nodes", tree.nodes, numLeaves - 1);
+            TypesValidator.assertTreeListLength("edges", tree.edges, 2 * numLeaves - 1);
+            checker.validateValue(value, groupTreeStateShape);
+        });
+        this.groupTreeRefreshedNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            fromGeneration: this.intNonNegative,
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        // A transition touches one path: `log2(16384) = 14` nodes, and the edges around them. The caps are an
+        // order of magnitude above that, not the 32 768 a whole tree needs.
+        this.groupTreeTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            blankedPosition: this.intNonNegative,
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 128),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
+        });
+        this.groupTreeSeatedNode = this.builder.createObject({
+            nodeIndex: this.intNonNegative,
+            // Absent when growth mints the node: there is no generation it was read at.
+            fromGeneration: this.builder.optional(this.intNonNegative),
+            generation: this.intNonNegative,
+            publicKey: this.eccPub,
+        });
+        this.groupTreeAdditionTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            position: this.intNonNegative,
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 128),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
+        });
+        this.groupArchiveRung = this.builder.createObject({
+            atKeyVersion: this.builder.min(this.builder.int, 1),
+            targetKeyVersion: this.builder.min(this.builder.int, 1),
+            recipientKind: this.builder.optional(this.builder.createEnum(["epoch", "user", "group"])),
+            recipient: this.builder.optional(this.builder.maxLength(this.builder.string, 128)),
+            data: this.userKeyData,
+            author: this.builder.optional(this.cloudUserId),
+        });
+        this.groupGrant = this.builder.createObject({
+            groupId: this.groupId,
+            role: this.builder.createEnum(["user", "manager"]),
+        });
+        this.cloudGroupKeyEntrySet = this.builder.createObject({
+            group: this.groupId,
+            groupEpoch: this.builder.int,
+            keyId: this.keyId,
+            data: this.userKeyData,
+        });
+        // The same entry at creation time, minus `group`: the id does not exist until the server generates it,
+        // and the repository files the entry against the group it is creating.
+        this.cloudGroupKeyEntrySetForNewGroup = this.builder.createObject({
+            groupEpoch: this.builder.int,
             keyId: this.keyId,
             data: this.userKeyData,
         });
@@ -333,10 +457,12 @@ export class TypesValidator {
         });
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
+            rotateKeys: policyEntry,
             creatorHasToBeManager: policyEntry,
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
             canOverwriteContextPolicy: policyEntry,
+            forwardSecrecy: policyEntry,
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
@@ -347,6 +473,7 @@ export class TypesValidator {
             kvdb: this.builder.optional(this.containerPolicy),
             inbox: this.builder.optional(this.containerWithoutItemPolicy),
             stream: this.builder.optional(this.containerWithoutItemPolicy),
+            group: this.builder.optional(this.containerPolicy),
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
@@ -392,6 +519,17 @@ export class TypesValidator {
         this.containerAccessScope = this.builder.createEnum(["ALL", "MANAGER", "USER", "MEMBER", "OWNER"]);
         this.optionalContainerAccessScope = this.builder.optional(this.containerAccessScope);
         this.streamId = this.builder.min(this.builder.int, 1);
+    }
+    
+    /** Rejects an over-long tree list before its elements are parsed. A shorter list is fine — the structural
+     *  validator is what decides whether the set is complete. */
+    private static assertTreeListLength(field: string, value: unknown, max: number) {
+        if (!Array.isArray(value)) {
+            return; // shape validation reports it
+        }
+        if (value.length > max) {
+            throw new Error(`${field} has ${value.length} entries, at most ${max} for this numLeaves`);
+        }
     }
     
     createAcl(entryType: Validator, aclType: Validator, propertyType: Validator, maxEntryLength: number, maxAclLength: number, maxAclListLength: number) {

@@ -87,9 +87,9 @@ export class ContextRepository {
         }, model, "created");
     }
     
-    static getPaginationFilterForContainer(contextId: types.context.ContextId, userId: types.cloud.UserId, query: types.core.Query|undefined, type: string|undefined, scope: types.core.ContainerAccessScope) {
+    static getPaginationFilterForContainer(contextId: types.context.ContextId, userId: types.cloud.UserId, query: types.core.Query|undefined, type: string|undefined, scope: types.core.ContainerAccessScope, userGroupIds: types.group.GroupId[] = []) {
         const mongoQueries = query ? [MongoQueryConverter.convertQuery(query)] : [];
-        const match = this.getScopeFilter(scope, contextId, userId);
+        const match = this.getScopeFilter(scope, contextId, userId, userGroupIds);
         if (type) {
             match.type = type;
         }
@@ -101,7 +101,7 @@ export class ContextRepository {
         ];
     }
     
-    private static getScopeFilter(scope: types.core.ContainerAccessScope, contextId: types.context.ContextId, userId: types.cloud.UserId): Record<string, unknown> {
+    private static getScopeFilter(scope: types.core.ContainerAccessScope, contextId: types.context.ContextId, userId: types.cloud.UserId, userGroupIds: types.group.GroupId[] = []): Record<string, unknown> {
         if (scope === "ALL") {
             return {
                 contextId: contextId,
@@ -109,14 +109,18 @@ export class ContextRepository {
         }
         else if (scope === "MANAGER") {
             return {
-                contextId: contextId,
-                managers: userId,
+                $and: [
+                    {contextId: contextId},
+                    {$or: [{managers: userId}, {groups: {$elemMatch: {groupId: {$in: userGroupIds}, role: "manager"}}}]},
+                ],
             };
         }
         else if (scope === "USER") {
             return {
-                contextId: contextId,
-                users: userId,
+                $and: [
+                    {contextId: contextId},
+                    {$or: [{users: userId}, {groups: {$elemMatch: {groupId: {$in: userGroupIds}}}}]},
+                ],
             };
         }
         else if (scope === "OWNER") {
@@ -135,6 +139,7 @@ export class ContextRepository {
                         $or: [
                             {users: userId},
                             {managers: userId},
+                            {groups: {$elemMatch: {groupId: {$in: userGroupIds}}}},
                         ],
                     },
                 ],

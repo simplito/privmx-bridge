@@ -29,4 +29,6 @@ export interface ContextPolicy {
     stream?: types.cloud.ContainerWithoutItemPolicy;
     /** Policy for KVDBs in this context */
     kvdb?: types.cloud.ContainerPolicy;
+    /** Policy for groups in this context */
+    group?: types.cloud.ContainerPolicy;
 }

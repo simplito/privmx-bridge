@@ -21,6 +21,8 @@ export interface KvdbCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface KvdbUpdateModel {
@@ -34,6 +36,17 @@ export interface KvdbUpdateModel {
     version: types.kvdb.KvdbVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+}
+
+export interface KvdbRotateKeysModel {
+    id: types.kvdb.KvdbId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.kvdb.KvdbVersion;
+    force: boolean;
 }
 
 export interface KvdbDeleteModel {
@@ -65,6 +78,9 @@ export interface KvdbInfo {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
+    groups: types.cloud.GroupGrant[];
+    groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.kvdb.KvdbVersion;
     type?: types.kvdb.KvdbType;
     policy: types.cloud.ContainerPolicy;
@@ -238,6 +254,7 @@ export interface KvdbEntryDeleteManyResult {
 export interface IKvdbApi {
     kvdbCreate(model: KvdbCreateModel): Promise<KvdbCreateResult>;
     kvdbUpdate(model: KvdbUpdateModel): Promise<types.core.OK>;
+    kvdbRotateKeys(model: KvdbRotateKeysModel): Promise<types.core.OK>;
     kvdbDelete(model: KvdbDeleteModel): Promise<types.core.OK>;
     kvdbDeleteMany(model: KvdbDeleteManyModel): Promise<KvdbDeleteManyResult>;
     kvdbGet(model: KvdbGetModel): Promise<KvdbGetResult>;

@@ -22,7 +22,12 @@ import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { DateUtils } from "../../utils/DateUtils";
 import { TargetChannel } from "../ws/WebSocketConnectionManager";
 import { UserIdentityWithStatus } from "../../types/cloud";
+import { Utils } from "../../utils/Utils";
 
+/**
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `inboxGet` would serve — see `getInboxRecipients`.
+ */
 export class InboxNotificationService {
     
     constructor(
@@ -39,10 +44,22 @@ export class InboxNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
+    private async getInboxRecipients(inbox: db.inbox.Inbox): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
+        const groupIds = (inbox.groups || []).map(g => g.groupId);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
+        return {
+            userIds: Utils.unique([...inbox.users, ...inbox.managers, ...groupsByUser.keys()]),
+            groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
+        };
+    }
+    
     sendInboxCustomEvent(inbox: db.inbox.Inbox, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
         this.safe("inboxCustomEvent", async () => {
             const now = DateUtils.now();
-            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, [...inbox.users, ...inbox.managers]);
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, (await this.getInboxRecipients(inbox)).userIds);
             this.webSocketSender.sendCloudEventAtChannel<inboxApi.InboxCustomEvent>(
                 contextUsers.map(u => u.userPubKey),
                 {
@@ -68,7 +85,8 @@ export class InboxNotificationService {
     sendInboxCreated(inbox: db.inbox.Inbox, solution: types.cloud.SolutionId) {
         this.safe("inboxCreated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, [...inbox.users, ...inbox.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getInboxRecipients(inbox);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, userIds);
             const notification: managementInboxApi.InboxCreatedEvent = {
                 channel: "inbox",
                 type: "inboxCreated",
@@ -87,7 +105,7 @@ export class InboxNotificationService {
                     {
                         channel: "inbox",
                         type: "inboxCreated",
-                        data: this.inboxConverter.convertInbox(user.userId, inbox),
+                        data: this.inboxConverter.convertInbox(user.userId, inbox, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -98,7 +116,8 @@ export class InboxNotificationService {
     sendInboxUpdated(inbox: db.inbox.Inbox, solution: types.cloud.SolutionId, additionalUsers: UserIdentityWithStatus[]) {
         this.safe("inboxUpdated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, [...inbox.users, ...inbox.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getInboxRecipients(inbox);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, userIds);
             const notification: managementInboxApi.InboxUpdatedEvent = {
                 channel: "inbox",
                 type: "inboxUpdated",
@@ -118,7 +137,7 @@ export class InboxNotificationService {
                     {
                         channel: "inbox",
                         type: "inboxUpdated",
-                        data: this.inboxConverter.convertInbox(user.userId, inbox),
+                        data: this.inboxConverter.convertInbox(user.userId, inbox, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -127,7 +146,10 @@ export class InboxNotificationService {
                 const userNotification: inboxApi.InboxUpdatedEvent = {
                     channel: "inbox",
                     type: "inboxUpdated",
-                    data: this.inboxConverter.convertInbox(user.id, inbox),
+                    // These are the users this update removed, so they hold no grant on the inbox any
+                    // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
+                    // is the answer.
+                    data: this.inboxConverter.convertInbox(user.id, inbox, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {
@@ -147,7 +169,7 @@ export class InboxNotificationService {
     sendInboxDeleted(inbox: db.inbox.Inbox, solution: types.cloud.SolutionId) {
         this.safe("inboxDeleted", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, [...inbox.users, ...inbox.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(inbox.contextId, (await this.getInboxRecipients(inbox)).userIds);
             const notification: managementInboxApi.InboxDeletedEvent = {
                 channel: "inbox",
                 type: "inboxDeleted",

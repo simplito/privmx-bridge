@@ -66,9 +66,11 @@ export class InboxService extends BaseContainerService {
         this.policy.makeCreateContainerCheck(user, context, model.managers, policy);
         await this.validateAccessToThread(model.data.threadId, user);
         await this.validateAccessToStore(model.data.storeId, user);
+        const groups = model.groups || [];
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(model.contextId, model.keys, model.keyId, model.users, model.managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(model.contextId, [model.keyId], [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
         try {
-            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy);
+            const inbox = await this.repositoryFactory.createInboxRepository().createInbox(model.contextId, model.resourceId || null, model.type, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.inboxNotificationService.sendInboxCreated(inbox, context.solution);
             return inbox;
         }
@@ -92,7 +94,8 @@ export class InboxService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxUpdate", ["inboxId=" + model.id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldInbox, model.managers, model.policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds), model.managers, model.policy);
             const last = oldInbox.history[oldInbox.history.length - 1];
             if (last.data.threadId != model.data.threadId) {
                 await this.validateAccessToThread(model.data.threadId, user);
@@ -104,12 +107,15 @@ export class InboxService extends BaseContainerService {
             if (currentVersion !== model.version && !model.force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, [...oldInbox.history.map(x => x.keyId), model.keyId], oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
+            const groups = model.groups || [];
+            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
             if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null);
+                const inbox = await inboxRepository.updateInbox(oldInbox, user.userId, model.managers, model.users, model.data, model.keyId, newKeys, model.policy, model.resourceId || null, {groups, groupKeys: newGroupKeys});
                 return {inbox, context, oldInbox};
             }
             catch (err) {
@@ -126,6 +132,34 @@ export class InboxService extends BaseContainerService {
         return rInbox;
     }
     
+    async rotateInboxKeys(cloudUser: CloudUser, model: inboxApi.InboxRotateKeysModel) {
+        const {inbox: rInbox, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const inboxRepository = this.repositoryFactory.createInboxRepository(session);
+            const oldInbox = await inboxRepository.get(model.id);
+            if (!oldInbox) {
+                throw new AppException("INBOX_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxRotateKeys", ["inboxId=" + model.id]);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds))) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.inbox.InboxVersion>oldInbox.history.length;
+            if (currentVersion !== model.version && !model.force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);
+            const groups = (oldInbox.groups || []);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
+            const inbox = await inboxRepository.rotateKeys(oldInbox, user.userId, model.keyId, newKeys, {groups, groupKeys: newGroupKeys});
+            return {inbox, context};
+        });
+        this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution, []);
+        return rInbox;
+    }
+    
     async deleteInbox(executor: Executor, id: types.inbox.InboxId) {
         const {inbox: rInbox, userContext: usedContext} = await this.repositoryFactory.withTransaction(async session => {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);
@@ -133,8 +167,9 @@ export class InboxService extends BaseContainerService {
             if (!inbox) {
                 throw new AppException("INBOX_DOES_NOT_EXIST");
             }
-            const userContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
-                if (!this.policy.canDeleteContainer(user, context, inbox)) {
+            const userContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, async (user, context) => {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED");
                 }
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDelete", ["inboxId=" + id]);
@@ -160,9 +195,10 @@ export class InboxService extends BaseContainerService {
             }
             const contextId = inboxes[0].contextId;
             let additionalAccessCheck: ((inbox: db.inbox.Inbox) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxDeleteMany", []);
-                additionalAccessCheck = inbox => this.policy.canDeleteContainer(user, context, inbox);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = inbox => this.policy.canDeleteContainer(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds));
             });
             const toDelete: types.inbox.InboxId[] = [];
             const toNotify: db.inbox.Inbox[] = [];
@@ -209,8 +245,10 @@ export class InboxService extends BaseContainerService {
         if (!inbox) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, (user, context) => {
-            if (!this.policy.canReadContainer(user, context, inbox)) {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, inbox.contextId, async (user, context) => {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(inbox, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxGet", ["inboxId=" + inboxId]);
@@ -218,7 +256,8 @@ export class InboxService extends BaseContainerService {
         if (type && inbox.type !== type) {
             throw new AppException("INBOX_DOES_NOT_EXIST");
         }
-        return inbox;
+        const groupEpochs = await this.getGroupEpochs(inbox.contextId, [inbox]);
+        return {inbox, ownGroupIds, groupEpochs};
     }
     
     async getInboxWithoutCheckingAccess(inboxId: types.inbox.InboxId, solutionId: types.cloud.SolutionId) {
@@ -242,8 +281,10 @@ export class InboxService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const inboxes = await this.repositoryFactory.createInboxRepository().getAllInboxes(contextId, type, listParams, sortBy);
-        return {user, inboxes};
+        const groupEpochs = await this.getGroupEpochs(contextId, inboxes.list);
+        return {user, inboxes, ownGroupIds, groupEpochs};
     }
     
     async getMyInboxes(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.inbox.InboxType|undefined, listParams: types.core.ListModel, sortBy: keyof db.inbox.Inbox, scope: types.core.ContainerAccessScope) {
@@ -259,8 +300,10 @@ export class InboxService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
-        return {user, inboxes};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const inboxes = await this.repositoryFactory.createInboxRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        const groupEpochs = await this.getGroupEpochs(contextId, inboxes.list);
+        return {user, inboxes, ownGroupIds, groupEpochs};
     }
     
     async getInboxesByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.inbox.InboxId>) {
@@ -293,6 +336,11 @@ export class InboxService extends BaseContainerService {
         if (model.version > inbox.history.length) {
             throw new AppException("INVALID_VERSION");
         }
+        // A submission is encrypted to the inbox's own key, so a grantee group that has rotated past the epoch
+        // that key was wrapped to still opens it. The submitter is anonymous and cannot re-key anything, so all
+        // this can do is refuse — which is the point: dropping the submission is recoverable, letting a departed
+        // member read it is not. Only when the policy asks for it.
+        await this.checkGroupEpochs(inbox, this.policy.isForwardSecrecyEnforced(context, inbox));
         const last = inbox.history[inbox.history.length - 1];
         const store = await this.repositoryFactory.createStoreRepository().get(last.data.storeId);
         if (!store) {
@@ -355,7 +403,8 @@ export class InboxService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, inbox.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxSendCustomNotification", ["inboxId=" + inboxId]);
-        if (!this.policy.canSendCustomNotification(user, context, inbox)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canSendCustomNotification(user, context, this.withGroupMembership(inbox, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (users && users.some(element => !inbox.users.includes(element))) {

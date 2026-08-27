@@ -12,10 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as kvdbApi from "./KvdbApiTypes";
 import * as db from "../../../db/Model";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class KvdbConverter {
     
-    convertKvdb(user: types.cloud.UserId, kvdb: db.kvdb.Kvdb) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertKvdb(user: types.cloud.UserId, kvdb: db.kvdb.Kvdb, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: kvdbApi.KvdbInfo = {
             id: kvdb.id,
             resourceId: kvdb.clientResourceId,
@@ -29,6 +31,9 @@ export class KvdbConverter {
             keyId: kvdb.keyId,
             data: kvdb.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (kvdb.keys.find(x => x.user === user)?.keys) || [],
+            groups: kvdb.groups || [],
+            groupKeys: ownGroupKeysOf(kvdb.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(kvdb, groupEpochs),
             version: <types.kvdb.KvdbVersion>kvdb.history.length,
             type: kvdb.type,
             policy: kvdb.policy || {},

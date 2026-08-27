@@ -17,7 +17,8 @@
     "gen-json-docs": "node ./out/docs/scripts/gen_json_docs.js",
     "gen-slate-from-json": "node ./out/docs/scripts/gen_slate_from_json.js",
     "create-api-key": "node ./out/init/scripts/createApiKey.js",
-    "get-public-key": "node ./out/init/scripts/getPublicKey.js"
+    "get-public-key": "node ./out/init/scripts/getPublicKey.js",
+    "verify-group-trees": "node ./out/init/scripts/verifyGroupTrees.js"
   },
   "jest": {
     "roots": [

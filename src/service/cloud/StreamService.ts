@@ -88,7 +88,7 @@ export class StreamService extends BaseContainerService {
         this.policy = new StreamRoomPolicy(this.policyService);
     }
     
-    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, resourceId: types.core.ClientResourceId | null, type: types.stream.StreamRoomType | undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy, emptyRoomTtl: types.core.Timespan) {
+    async createStreamRoom(cloudUser: CloudUser, contextId: types.context.ContextId, resourceId: types.core.ClientResourceId | null, type: types.stream.StreamRoomType | undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerWithoutItemPolicy, emptyRoomTtl: types.core.Timespan, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         
@@ -96,6 +96,7 @@ export class StreamService extends BaseContainerService {
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         
         const janusRoomId = await (async () => {
             if (this.config.streams.mediaServer.fake) {
@@ -125,7 +126,7 @@ export class StreamService extends BaseContainerService {
         })();
         
         try {
-            const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, janusRoomId, emptyRoomTtl);
+            const streamRoom = await this.repositoryFactory.createStreamRoomRepository().createStreamRoom(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, janusRoomId, emptyRoomTtl, {groups, groupKeys: newGroupKeys});
             this.streamNotificationService.sendStreamRoomCreated(streamRoom, context.solution);
             return streamRoom;
         }
@@ -155,7 +156,7 @@ export class StreamService extends BaseContainerService {
         catch { /* best-effort cleanup of an orphaned Janus room */ }
     }
     
-    async updateStreamRoom(cloudUser: CloudUser, id: types.stream.StreamRoomId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean, policy: types.cloud.ContainerWithoutItemPolicy | undefined, resourceId: types.core.ClientResourceId | null) {
+    async updateStreamRoom(cloudUser: CloudUser, id: types.stream.StreamRoomId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.stream.StreamRoomData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean, policy: types.cloud.ContainerWithoutItemPolicy | undefined, resourceId: types.core.ClientResourceId | null, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -170,19 +171,22 @@ export class StreamService extends BaseContainerService {
             const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStreamRoom.contextId);
             
             this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomUpdate", ["streamRoomId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldStreamRoom, managers, policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStreamRoom, user.userId, userGroupIds), managers, policy);
             
             const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, [...oldStreamRoom.history.map(x => x.keyId), keyId], oldStreamRoom.keys, keys, keyId, users, managers);
+            const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, users, managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldStreamRoom.clientResourceId && resourceId && oldStreamRoom.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             try {
-                const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, managers, users, data, keyId, newKeys, policy, resourceId);
+                const streamRoom = await streamRoomRepository.updateStreamRoom(oldStreamRoom, user.userId, managers, users, data, keyId, newKeys, policy, resourceId, {groups, groupKeys: newGroupKeys});
                 return { streamRoom, context, oldStreamRoom };
             }
             catch (err) {
@@ -201,6 +205,33 @@ export class StreamService extends BaseContainerService {
         return rStreamRoom;
     }
     
+    async rotateStreamRoomKeys(cloudUser: CloudUser, id: types.stream.StreamRoomId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.stream.StreamRoomVersion, force: boolean) {
+        const {streamRoom: rStreamRoom, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const streamRoomRepository = this.repositoryFactory.createStreamRoomRepository(session);
+            const oldStreamRoom = await streamRoomRepository.get(id);
+            if (!oldStreamRoom) {
+                throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStreamRoom.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomRotateKeys", ["streamRoomId=" + id]);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldStreamRoom, user.userId, userGroupIds))) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, oldStreamRoom.users, oldStreamRoom.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, (oldStreamRoom.groups || []).map(g => g.groupId));
+            const streamRoom = await streamRoomRepository.rotateKeys(oldStreamRoom, user.userId, keyId, newKeys, {groups: oldStreamRoom.groups || [], groupKeys: newGroupKeys});
+            return {streamRoom, context};
+        });
+        this.streamNotificationService.sendStreamRoomUpdated(rStreamRoom, usedContext.solution, []);
+        return rStreamRoom;
+    }
+    
     async deleteStreamRoom(executor: Executor, id: types.stream.StreamRoomId) {
         const result = await this.repositoryFactory.withTransaction(async session => {
             const streamRoomRepository = this.repositoryFactory.createStreamRoomRepository(session);
@@ -209,9 +240,10 @@ export class StreamService extends BaseContainerService {
                 throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
             }
             
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomDelete", ["streamRoomId=" + id]);
-                if (!this.policy.canDeleteContainer(user, context, streamRoom)) {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED");
                 }
             });
@@ -238,9 +270,10 @@ export class StreamService extends BaseContainerService {
             const contextId = streamRooms[0].contextId;
             let additionalAccessCheck: ((streamRoom: db.stream.StreamRoom) => boolean) = () => true;
             
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomDeleteMany", []);
-                additionalAccessCheck = streamRoom => this.policy.canDeleteContainer(user, context, streamRoom);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = streamRoom => this.policy.canDeleteContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds));
             });
             
             const toDelete: types.stream.StreamRoomId[] = [];
@@ -285,11 +318,12 @@ export class StreamService extends BaseContainerService {
     
     async getStreamRoom(executor: Executor, streamRoomId: types.stream.StreamRoomId, type: types.stream.StreamRoomType | undefined) {
         const streamRoom = await this.getDbStreamRoom(streamRoomId);
-        await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomGet");
+        const ownGroupIds = await this.verifyRoomAccess(executor, streamRoom, "stream/streamRoomGet");
         if (type && streamRoom.type !== type) {
             throw new AppException("STREAM_ROOM_DOES_NOT_EXIST");
         }
-        return streamRoom;
+        const groupEpochs = await this.getGroupEpochs(streamRoom.contextId, [streamRoom]);
+        return {streamRoom, ownGroupIds, groupEpochs};
     }
     
     // =================================================================================================
@@ -498,7 +532,10 @@ export class StreamService extends BaseContainerService {
     }
     
     async publishStream(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, offer: { type: "offer", sdp: string }, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
-        const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamPublish");
+        const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamPublish");
+        // Media is encrypted with the room's key, so publishing into a room still wrapped to a grantee group's
+        // superseded epoch is a write a departed member can read — the same case as sending a message.
+        await this.checkGroupEpochs(streamRoom, this.policy.isForwardSecrecyEnforced(context, streamRoom));
         return ctx.runExclusive(roomLockKey(streamRoom.id), () => this.publishStreamLocked(streamRoom, ctx, user.userId, offer));
     }
     
@@ -586,7 +623,8 @@ export class StreamService extends BaseContainerService {
     }
     
     async updateStream(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, offer: { type: "offer", sdp: string }, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
-        const { streamRoom, ctx, user } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUpdate");
+        const { streamRoom, ctx, user, context } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUpdate");
+        await this.checkGroupEpochs(streamRoom, this.policy.isForwardSecrecyEnforced(context, streamRoom));
         return ctx.runExclusive(roomLockKey(streamRoom.id), () => this.updateStreamLocked(streamRoom, ctx, user.userId, offer));
     }
     
@@ -668,7 +706,8 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamUnpublish", ["streamRoomId=" + streamRoom.id]);
-        if (!this.policy.canReadContainer(user, context, streamRoom)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canReadContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         
@@ -838,8 +877,10 @@ export class StreamService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getAllStreams(contextId, type, listParams, sortBy);
-        return { user, streamRooms };
+        const groupEpochs = await this.getGroupEpochs(contextId, streamRooms.list);
+        return { user, streamRooms, ownGroupIds, groupEpochs };
     }
     
     async getMyStreamRooms(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.stream.StreamRoomType | undefined, listParams: types.core.ListModel, sortBy: keyof db.stream.StreamRoom, scope: types.core.ContainerAccessScope) {
@@ -854,8 +895,10 @@ export class StreamService extends BaseContainerService {
             throw new AppException("ACCESS_DENIED");
         }
         
-        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
-        return { user, streamRooms };
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const streamRooms = await this.repositoryFactory.createStreamRoomRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        const groupEpochs = await this.getGroupEpochs(contextId, streamRooms.list);
+        return { user, streamRooms, ownGroupIds, groupEpochs };
     }
     
     async getStreamRoomsByContext(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel2<types.stream.StreamRoomId>, state: "all" | types.stream.StreamRoomState) {
@@ -886,7 +929,8 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamSendCustomNotification", ["streamRoomId=" + streamRoomId]);
-        if (!this.policy.canSendCustomNotification(user, context, streamRoom)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canSendCustomNotification(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         if (users && users.some(element => !streamRoom.users.includes(element))) {
@@ -902,7 +946,8 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomClose", ["streamRoomId=" + id]);
-        if (!this.policy.canUpdateContainer(user, context, streamRoom)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canUpdateContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         
@@ -955,13 +1000,24 @@ export class StreamService extends BaseContainerService {
         return streamRoom;
     }
     
+    /**
+     * @returns the caller's group ids, computed here for the policy check and reused to narrow
+     *          `StreamRoom.groupKeys`. `undefined` for a plain executor: `checkIfCanExecuteInContext` runs the
+     *          callback only for a cloud one, and a plain caller has no group membership to narrow by. Not `[]` —
+     *          that would read as "belongs to no group" and would strip the key blobs from a user-facing payload.
+     *          Plain callers serve `ManagementStreamConverter`, which carries no key blobs at all, so they
+     *          discard this.
+     */
     private async verifyRoomAccess(executor: Executor, streamRoom: db.stream.StreamRoom, requiredAcl: AclFunctionNameX) {
-        return await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, (user, context) => {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, streamRoom.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, requiredAcl, ["streamRoomId=" + streamRoom.id]);
-            if (!this.policy.canReadContainer(user, context, streamRoom)) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(streamRoom, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
+        return ownGroupIds;
     }
     
     private async ensureActiveStreamRoomWithAcl(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId, requiredAcl: AclFunctionNameX) {
@@ -972,12 +1028,13 @@ export class StreamService extends BaseContainerService {
         
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, streamRoom.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, requiredAcl, ["streamRoomId=" + streamRoom.id]);
-        if (!this.policy.canReadContainer(user, context, streamRoom)) {
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        if (!this.policy.canReadContainer(user, context, this.withGroupMembership(streamRoom, user.userId, userGroupIds))) {
             throw new AppException("ACCESS_DENIED");
         }
         
         const ctx = await this.janusContextFactory.prepareJanusContext(websocket, wsId);
-        return { streamRoom, ctx, user, context };
+        return { streamRoom, ctx, user, context, userGroupIds };
     }
     
     private findJanusSession(ctx: JanusContext, type: JanusSessionType, janusRoomId: number) {

@@ -21,7 +21,7 @@ import { StoreRepository } from "../../../service/cloud/StoreRepository";
 import { StoreService } from "../../../service/cloud/StoreService";
 import { IStorageService } from "../../../service/misc/StorageService";
 import { RequestRepository } from "../../../service/request/RequestRepository";
-import { createMock, hasCalls, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { createFake, createMock, hasCalls, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { ContextUserRepository } from "../../../service/cloud/ContextUserRepository";
@@ -32,6 +32,7 @@ import { Logger } from "../../../service/log/Logger";
 import { CloudAclChecker } from "../../../service/cloud/CloudAclChecker";
 import { PolicyService } from "../../../service/cloud/PolicyService";
 import { ContextRepository } from "../../../service/cloud/ContextRepository";
+import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { StorageServiceProvider } from "../../../service/cloud/StorageServiceProvider";
@@ -136,6 +137,20 @@ const storeFileWithoutThumb: db.store.StoreFile = {
     keyId: keyId,
     supportsRandomWrite: false,
 };
+// alice has no direct users/managers entry on this store — her only access is via groupId below.
+const groupId = "MyGroupId" as types.group.GroupId;
+const groupGrantStoreId = "MyGroupGrantStoreId" as types.store.StoreId;
+const groupGrantStoreFileId = "MyGroupGrantStoreFileId" as types.store.StoreFileId;
+const storeWithGroupGrant: db.store.Store = {
+    ...store,
+    id: groupGrantStoreId,
+    groups: [{groupId, role: "user"}],
+};
+const groupGrantStoreFile: db.store.StoreFile = {
+    ...storeFileWithoutThumb,
+    id: groupGrantStoreFileId,
+    storeId: groupGrantStoreId,
+};
 const randomWriteStoreFileId = "MyRandomWriteStoreFileId" as types.store.StoreFileId;
 const randomWriteStoreFile: db.store.StoreFile = {
     id: randomWriteStoreFileId,
@@ -229,8 +244,7 @@ it("Should get store", async () => {
     const res = await storeService.getStore(janekUserPubKey, storeId, undefined);
     
     // Asserts
-    expect(res).not.toBeNull();
-    expect(store.id).toBe(storeId);
+    expect(res.store.id).toBe(storeId);
 });
 
 it("Should fails on getting not existing store", async () => {
@@ -285,6 +299,18 @@ it("Should get store file", async () => {
     // Asserts
     expect(res).not.toBeNull();
     expect(res.file.id).toBe(storeFileId);
+});
+
+it("Should get store file for user with access only through a group", async () => {
+    // Setup
+    const {storeService} = createStoreService();
+    
+    // Act
+    const res = await storeService.getStoreFile(aliceUserPubKey, groupGrantStoreFileId);
+    
+    // Asserts
+    expect(res).not.toBeNull();
+    expect(res.file.id).toBe(groupGrantStoreFileId);
 });
 
 it("Should fails on getting not exisitng file", async () => {
@@ -468,6 +494,25 @@ testFail("Should fails on creating file with the same index for file and thumb",
         thumbIndex: 0,
     }),
 );
+
+it("Should create store file for user with access only through a group", async () => {
+    // Setup: alice is not in storeWithGroupGrant's users/managers, only in groupId, which is granted access.
+    const {storeService, storeFileRepository} = createStoreService();
+    
+    // Act
+    const res = await storeService.createStoreFile(aliceUserPubKey, {
+        storeId: groupGrantStoreId,
+        resourceId: resourceId,
+        fileIndex: 0,
+        meta: "" as types.store.StoreFileMeta,
+        keyId: keyId,
+        requestId: requestId,
+    });
+    
+    // Asserts
+    expect(res).not.toBeNull();
+    hasOneCall(storeFileRepository.create);
+});
 
 it("Should update store file", async () => {
     // Setup
@@ -693,6 +738,7 @@ function createStoreService() {
     const requestRepository = createMock<RequestRepository>({});
     const contextUserRepository = createMock<ContextUserRepository>({});
     const contextRepository = createMock<ContextRepository>({});
+    const groupRepository = createMock<GroupRepository>({});
     const jobService = createMock<JobService>({});
     const logger = createMock<Logger>({});
     const cloudAclChecker = new CloudAclChecker();
@@ -712,6 +758,10 @@ function createStoreService() {
     mock(storageService, "read", async () => Buffer.alloc(1024));
     
     mock(repositoryFactory, "createStoreRepository", () => storeRepository);
+    mock(repositoryFactory, "createGroupRepository", () => groupRepository);
+    mock(groupRepository, "getGroupsOfUser", async (_ctxId, userId) => userId === alice ? [createFake<db.group.Group>({id: groupId})] : []);
+    // The granted group has never rotated, so no read path here reports a stale grant and no write path refuses one.
+    mock(groupRepository, "getKeyVersions", async () => new Map([[groupId, 1]]));
     mock(repositoryFactory, "createStoreFileRepository", () => storeFileRepository);
     mock(repositoryFactory, "createRequestRepository", () => requestRepository);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
@@ -720,13 +770,14 @@ function createStoreService() {
     mock(jobService, "addJob", () => {});
     mock(cloudKeyService, "checkKeysAndClients", async () => []);
     mock(cloudKeyService, "checkKeysAndUsersDuringCreation", async () => []);
+    mock(cloudKeyService, "checkGroupKeysAndGrantees", async () => []);
     
     mock(contextUserRepository, "getUserFromContext", async (pub, ctx) =>
         pub === janekUserPubKey.pub && ctx == contextId ? janekUser : (pub === aliceUserPubKey.pub && ctx == contextId ? aliceUser : null));
     mock(contextRepository, "get", async (id) => id === contextId ? myContext : null);
     
     mock(storeRepository, "createStore", async () => store);
-    mock(storeRepository, "get", async (id) => id === storeId ? store : null);
+    mock(storeRepository, "get", async (id) => id === storeId ? store : (id === groupGrantStoreId ? storeWithGroupGrant : null));
     mock(storeRepository, "getPageByContextAndUser", async () => ({list: [store], count: 1}));
     mock(storeRepository, "increaseFilesCounter", async () => {});
     mock(storeRepository, "decreaseFilesCounter", async () => {});
@@ -735,7 +786,7 @@ function createStoreService() {
     mock(requestRepository, "getReadyForUser", async () => request);
     mock(requestRepository, "delete", async () => {});
     
-    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === randomWriteStoreFileId ? randomWriteStoreFile : null)));
+    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : (id === randomWriteStoreFileId ? randomWriteStoreFile : null))));
     mock(storeFileRepository, "getPageByStore", async () => ({list: [storeFile], count: 1}));
     mock(storeFileRepository, "create", async () => storeFile);
     mock(storeFileRepository, "update", async () => storeFile);

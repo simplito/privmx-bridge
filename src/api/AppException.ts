@@ -48,6 +48,7 @@ export const API_ERROR_CODES = {
     
     "THREAD_DOES_NOT_EXIST"                : {code: 0x6001, message: "Thread does not exist"},
     "INVALID_THREAD_KEY"                   : {code: 0x6002, message: "Invalid thread key"},
+    "CONTAINER_GROUP_EPOCH_OUTDATED"       : {code: 0x600E, message: "Container group key epoch is outdated; call rotate*Keys first"},
     "REQUEST_DOES_NOT_EXIST"               : {code: 0x6003, message: "Request does not exist"},
     "REQUEST_FILE_DOES_NOT_EXIST"          : {code: 0x6004, message: "Request file does not exist"},
     "REQUEST_FILE_ALREADY_CLOSED"          : {code: 0x6005, message: "Request file aready closed"},
@@ -128,6 +129,15 @@ export const API_ERROR_CODES = {
     "MEDIA_INVALID_SDP_TYPE"                : {code: 0x6216, message: "The provided SDP type is invalid or unsupported"},
     "MEDIA_NOT_PUBLISHING"                  : {code: 0x6217, message: "User is not currently publishing a stream"},
     "MEDIA_PARTICIPANT_ID_EXISTS"           : {code: 0x6218, message: "The provided participant ID is already in use"},
+    "GROUP_DOES_NOT_EXIST"                  : {code: 0x6219, message: "Group does not exist"},
+    "GROUP_IN_USE"                          : {code: 0x621A, message: "Group is still a member of a container"},
+    "GROUP_VERSION_MISMATCH"                : {code: 0x621B, message: "Group version mismatch or broken signature chain"},
+    "ROTATED_ALREADY"                       : {code: 0x621C, message: "Group key was already rotated by a concurrent request"},
+    "GROUP_ROTATION_RATE_LIMIT"             : {code: 0x621D, message: "Group key rotation rate limit exceeded"},
+    "GROUP_TREE_INVALID"                    : {code: 0x621E, message: "Submitted group key tree is malformed or incomplete"},
+    "GROUP_ARCHIVE_INVALID"                 : {code: 0x621F, message: "Submitted group key archive rungs are invalid"},
+    "GROUP_HAS_NO_TREE"                     : {code: 0x6220, message: "Group is not backed by a key tree"},
+    "GROUP_MEMBER_LIMIT_EXCEEDED"           : {code: 0x6221, message: "Group would exceed the configured member limit"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

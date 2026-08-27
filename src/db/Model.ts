@@ -162,11 +162,14 @@ export namespace thread {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
+        keeper?: types.cloud.UserId;
         data: types.thread.ThreadData;
         allTimeUsers: types.cloud.UserId[];
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.cloud.GroupGrant[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: ThreadHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
         // state
@@ -179,6 +182,7 @@ export namespace thread {
         data: types.thread.ThreadData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -192,6 +196,141 @@ export namespace thread {
         data: types.thread.ThreadMessageData;
         keyId: types.core.KeyId;
         updates?: types.thread.ThreadMessageUpdate[];
+    }
+}
+
+export namespace group {
+    
+    /**
+     * The group document. Everything that grows with the group's lifetime lives in its own collection instead —
+     * see `GroupTreeNode`, `GroupTreeEdge`, `GroupHistoryEntry`, `GroupArchiveRung` below.
+     */
+    export interface Group {
+        id: types.group.GroupId;
+        clientResourceId?: types.core.ClientResourceId;
+        contextId: types.context.ContextId;
+        type?: types.group.GroupType;
+        groupPubKey: types.cloud.GroupPubKey;
+        createDate: types.core.Timestamp;
+        creator: types.cloud.UserId;
+        lastModificationDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        keyId: types.core.KeyId;
+        data: types.group.GroupData;
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        policy?: types.cloud.ContainerPolicy;
+        /** Number of history entries. A counter, because the entries live in `groupHistoryEntry` and appending
+         *  one has to stay a single insert. */
+        version: types.group.GroupVersion;
+        /** Current epoch. Every group starts at 1 and only a rotation advances it. */
+        keyVersion: number;
+        keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
+        /** Size of the hidden key tree. Every group is tree-backed, so this is always present. */
+        numLeaves: number;
+        /**
+         * Seat → member, `""` for a blank left by a removal. Stays on the document although it is `O(members)`:
+         * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
+         */
+        leafAssignment: types.cloud.UserId[];
+        /**
+         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch: the group is
+         * a grantee of itself, and members open it by climbing.
+         *
+         * One entry per epoch that rotated the key, so it grows with rotations, never with members. `cutEra`
+         * drops the entries below its floor.
+         */
+        groupKeys?: types.cloud.GroupKeysEntry[];
+        /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
+        eraFloor: number;
+        /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
+        archivePrunedBelow?: number;
+    }
+    
+    /**
+     * The fields a listing needs. Named so the projection in `GroupRepository.getPage` and what
+     * `convertGroupSummary` serves cannot drift apart: widening one without the other stops compiling.
+     */
+    export type GroupSummaryFields = Pick<Group,
+        "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
+        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"keyVersion"|"policy">;
+    
+    /**
+     * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is
+     * asked on every container read and on every item write, and everything it leaves out (`keys`, `groupKeys`,
+     * `leafAssignment`) is what grows with the group's membership and history.
+     */
+    export type GroupEpochFields = Pick<Group, "id"|"contextId"|"keyVersion">;
+    
+    /**
+     * All `GroupRepository.getGranteeView` reads. The rosters it does need, and nothing else: it runs on every
+     * item write into a group-granted container, and `leafAssignment` alone is another entry per seat on top of
+     * the rosters it would be read beside.
+     */
+    export type GroupGranteeFields = Pick<Group, "id"|"users"|"managers"|"keyVersion">;
+    
+    export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
+    export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
+    export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};
+    export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
+    
+    /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
+    export interface GroupTreeNode {
+        id: GroupTreeNodeId;
+        groupId: types.group.GroupId;
+        nodeIndex: number;
+        generation: number;
+        publicKey: types.core.EccPubKey;
+    }
+    
+    /**
+     * One edge of the hidden key tree. `id` is derived from `(groupId, parent, child)`; generations are not part
+     * of it, because a refresh replaces the wrap on the same edge rather than making a new one.
+     */
+    export interface GroupTreeEdge {
+        id: GroupTreeEdgeId;
+        groupId: types.group.GroupId;
+        isGrantEdge?: boolean;
+        parentIndex?: number;
+        parentGeneration: number;
+        childKind: types.cloud.GroupTreeChildKind;
+        childIndex?: number;
+        childGeneration?: number;
+        childUserId?: types.cloud.UserId;
+        data: types.core.UserKeyData;
+    }
+    
+    /** One group version. `id` is derived from `(groupId, version)`, so appending is an insert. */
+    export interface GroupHistoryEntry {
+        id: GroupHistoryEntryId;
+        groupId: types.group.GroupId;
+        version: types.group.GroupVersion;
+        keyId: types.core.KeyId;
+        data: types.group.GroupData;        // opaque; carries the endpoint's DIO (members + chain-link committed inside)
+        users: types.cloud.UserId[];
+        managers: types.cloud.UserId[];
+        groupPubKey: types.cloud.GroupPubKey;
+        created: types.core.Timestamp;
+        author: types.cloud.UserId;
+        confirmationTag?: types.core.Base64;
+    }
+    
+    /** One Epoch Ladder rung. Append-only apart from pruning, a range delete over `targetKeyVersion`. */
+    export interface GroupArchiveRung {
+        id: GroupArchiveRungId;
+        groupId: types.group.GroupId;
+        atKeyVersion: number;
+        targetKeyVersion: number;
+        recipientKind?: "epoch"|"user"|"group";
+        recipient?: string;
+        data: types.core.UserKeyData;
+        author?: types.cloud.UserId;
+    }
+    
+    /** A group's out-of-document state, assembled for the read path. */
+    export interface GroupState {
+        tree: types.cloud.GroupTreeState;
+        history: GroupHistoryEntry[];
     }
 }
 
@@ -212,6 +351,8 @@ export namespace store {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.cloud.GroupGrant[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: StoreHistoryEntry[];
         policy?: types.cloud.ContainerPolicy;
         // state
@@ -224,6 +365,7 @@ export namespace store {
         data: types.store.StoreData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -282,6 +424,8 @@ export namespace inbox {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.cloud.GroupGrant[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: InboxHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
     }
@@ -291,6 +435,7 @@ export namespace inbox {
         data: types.inbox.InboxData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -313,6 +458,8 @@ export namespace stream {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.cloud.GroupGrant[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: StreamRoomHistoryEntry[];
         policy?: types.cloud.ContainerWithoutItemPolicy;
         janusRoomId: number;
@@ -325,6 +472,7 @@ export namespace stream {
         data: types.stream.StreamRoomData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }
@@ -437,6 +585,8 @@ export namespace kvdb {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         keys: types.cloud.UserKeysEntry[];
+        groups?: types.cloud.GroupGrant[];
+        groupKeys?: types.cloud.GroupKeysEntry[];
         history: KvdbHistoryEntry[];
         entries: number;
         lastEntryDate: types.core.Timestamp;
@@ -445,9 +595,10 @@ export namespace kvdb {
     
     export interface KvdbHistoryEntry {
         keyId: types.core.KeyId;
-        data: types.stream.StreamRoomData;
+        data: types.kvdb.KvdbData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        groups?: types.cloud.GroupGrant[];
         created: types.core.Timestamp;
         author: types.cloud.UserId;
     }

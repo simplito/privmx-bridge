@@ -34,7 +34,7 @@ export class ManagementStreamApi extends ManagementBaseApi implements management
     @ApiMethod({errorCodes: ["STREAM_ROOM_DOES_NOT_EXIST"] })
     async getStreamRoom(model: managementStreamApi.GetStreamRoomModel): Promise<managementStreamApi.GetStreamRoomResult> {
         this.validateScope("stream");
-        const streamRoom = await this.streamService.getStreamRoom(this.getPlainUser(), model.streamRoomId, undefined);
+        const {streamRoom} = await this.streamService.getStreamRoom(this.getPlainUser(), model.streamRoomId, undefined);
         return {streamRoom: this.managementStreamConverter.convertStreamRoom(streamRoom)};
     }
     

@@ -47,12 +47,12 @@ export class ThreadRepository {
         }
     }
     
-    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope) {
+    async getPageByContextAndUser(contextId: types.context.ContextId, type: types.thread.ThreadType|undefined, userId: types.cloud.UserId, solutionId: types.cloud.SolutionId|undefined, listParams: types.core.ListModel, sortBy: keyof db.thread.Thread, scope: types.core.ContainerAccessScope, userGroupIds: types.group.GroupId[] = []) {
         if (!solutionId) {
             return this.repository.matchX({contextId: contextId, users: userId}, listParams, sortBy);
         }
         return this.repository.getMatchingPage([
-            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope),
+            ...ContextRepository.getPaginationFilterForContainer(contextId, userId, listParams.query, type, scope, userGroupIds),
         ], listParams, sortBy);
     }
     
@@ -71,7 +71,8 @@ export class ThreadRepository {
     }
     
     async createThread(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.thread.ThreadType|undefined, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy) {
+        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: creator,
@@ -79,6 +80,7 @@ export class ThreadRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
         };
         const thread: db.thread.Thread = {
             id: this.repository.generateId(),
@@ -93,6 +95,8 @@ export class ThreadRepository {
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
             history: [entry],
             allTimeUsers: Utils.uniqueFromArrays(entry.users, entry.managers),
             lastMsgDate: entry.created,
@@ -107,7 +111,8 @@ export class ThreadRepository {
     }
     
     async updateThread(oldThread: db.thread.Thread, modifier: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null) {
+        data: types.thread.ThreadData, keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null, grantees?: types.cloud.ContainerGrantees) {
+        const groups = grantees?.groups || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
@@ -115,6 +120,7 @@ export class ThreadRepository {
             data: data,
             users: users,
             managers: managers,
+            groups: groups,
         };
         const updatedThread: db.thread.Thread = {
             id: oldThread.id,
@@ -125,10 +131,13 @@ export class ThreadRepository {
             lastModifier: entry.author,
             lastModificationDate: entry.created,
             keyId: entry.keyId,
+            keeper: entry.author,
             data: entry.data,
             users: entry.users,
             managers: entry.managers,
             keys: keys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys || [],
             history: [...oldThread.history, entry],
             allTimeUsers: Utils.uniqueFromArrays(oldThread.allTimeUsers, entry.users, entry.managers),
             lastMsgDate: oldThread.lastMsgDate,
@@ -145,8 +154,43 @@ export class ThreadRepository {
         return updatedThread;
     }
     
+    async rotateKeys(oldThread: db.thread.Thread, modifier: types.cloud.UserId,
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps OLD keyId/data so the DIO (signed by oldThread.lastModifier
+        // at oldThread.lastModificationDate) remains verifiable by the endpoint.
+        const previous = Utils.lastOf(oldThread.history, `thread '${oldThread.id}' history`);
+        const groups = grantees?.groups || oldThread.groups || [];
+        const entry: db.thread.ThreadHistoryEntry = {
+            created: DateUtils.now(),
+            author: modifier,
+            keyId: oldThread.keyId,
+            data: previous.data,
+            users: oldThread.users,
+            managers: oldThread.managers,
+            groups: groups,
+        };
+        const updatedThread: db.thread.Thread = {
+            ...oldThread,
+            keyId: newKeyId,
+            keeper: modifier,
+            keys: newKeys,
+            groups: groups,
+            groupKeys: grantees?.groupKeys ?? oldThread.groupKeys ?? [],
+            history: [...oldThread.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
+        };
+        await this.repository.update(updatedThread);
+        return updatedThread;
+    }
+    
     async deleteThread(id: types.thread.ThreadId) {
         return this.repository.delete(id);
+    }
+    
+    /** True if any thread still grants access to the given group (Phase 2 referential integrity). */
+    async isGroupReferenced(groupId: types.group.GroupId): Promise<boolean> {
+        const found = await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array();
+        return found.length > 0;
     }
     
     async deleteManyThreads(ids: types.thread.ThreadId[]) {

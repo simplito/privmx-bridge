@@ -56,6 +56,10 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
         return this.isContainerPolicMet(user, context, container, p => p?.update);
     }
     
+    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, container: T) {
+        return this.isContainerPolicMet(user, context, container, p => p?.rotateKeys);
+    }
+    
     canUpdateContainerPolicy(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.updatePolicy);
     }
@@ -118,6 +122,29 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
     
     ownerCanBeRemovedFromManagers(context: db.context.Context, container: T) {
         return this.getPolicyBooleanValue2x(context, container, p => p?.ownerCanBeRemovedFromManagers);
+    }
+    
+    /**
+     * Whether item writes are refused while a grantee group's epoch is ahead of the container's key.
+     *
+     * **Off unless a context or container says "yes"** — `DefaultContextPolicy` deliberately leaves it unset, so
+     * a deployment upgrading into this does not start refusing writes on containers that were working. The
+     * consequence is worth stating plainly: with it off, a member removed from a grantee group still holds the
+     * epoch the container's key is wrapped to, so they can read everything written to that container until
+     * somebody calls `rotate*Keys`. Removal revokes the group, not the containers granted to it.
+     *
+     * A deployment that wants removal to bite on its own has to set `forwardSecrecy: "yes"`, and its clients
+     * have to handle `CONTAINER_GROUP_EPOCH_OUTDATED` by re-keying — which the `staleGroups` field served on
+     * every container read is there to let them do before they are refused.
+     */
+    isForwardSecrecyEnforced(context: db.context.Context, container: T): boolean {
+        const value = this.policyService.getPolicy2x(
+            context,
+            container.policy || {},
+            p => this.extractPolicyFromContext(p),
+            p => p?.forwardSecrecy,
+        );
+        return value === "yes";
     }
     
     creatorIsNotManagerAndItIsForbidden(context: db.context.Context, creator: db.context.ContextUser, managers: types.cloud.UserId[]) {

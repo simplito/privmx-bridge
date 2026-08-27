@@ -50,13 +50,16 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb || (type && kvdb.type !== type)) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbGet", ["kvdbId=" + kvdbId]);
-            if (!this.policy.canReadContainer(user, context, kvdb)) {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadContainer(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
-        return kvdb;
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, ownGroupIds, groupEpochs};
     }
     
     async getMyKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb, scope: types.core.ContainerAccessScope) {
@@ -72,8 +75,10 @@ export class KvdbService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
         }
-        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope);
-        return {user, kvdbs};
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const kvdbs = await this.repositoryFactory.createKvdbRepository().getPageByContextAndUser(contextId, type, user.userId, cloudUser.solutionId, listParams, sortBy, scope, ownGroupIds);
+        const groupEpochs = await this.getGroupEpochs(contextId, kvdbs.list);
+        return {user, kvdbs, ownGroupIds, groupEpochs};
     }
     
     async getAllKvdbs(cloudUser: CloudUser, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, listParams: types.core.ListModel, sortBy: keyof db.kvdb.Kvdb) {
@@ -82,18 +87,21 @@ export class KvdbService extends BaseContainerService {
         if (!this.policy.canListAllContainers(user, context)) {
             throw new AppException("ACCESS_DENIED");
         }
+        const ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
         const kvdbs = await this.repositoryFactory.createKvdbRepository().getAllKvdbs(contextId, type, listParams, sortBy);
-        return {user, kvdbs};
+        const groupEpochs = await this.getGroupEpochs(contextId, kvdbs.list);
+        return {user, kvdbs, ownGroupIds, groupEpochs};
     }
     
-    async createKvdb(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy) {
+    async createKvdb(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.kvdb.KvdbType|undefined, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], policy: types.cloud.ContainerPolicy, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
+        const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
-            const kvdb = await this.repositoryFactory.createKvdbRepository().createKvdb(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy);
+            const kvdb = await this.repositoryFactory.createKvdbRepository().createKvdb(contextId, resourceId, type, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             this.kvdbNotificationService.sendKvdbCreated(kvdb, context.solution);
             return kvdb;
         }
@@ -105,7 +113,7 @@ export class KvdbService extends BaseContainerService {
         }
     }
     
-    async updateKvdb(cloudUser: CloudUser, id: types.kvdb.KvdbId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.kvdb.KvdbVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId) {
+    async updateKvdb(cloudUser: CloudUser, id: types.kvdb.KvdbId, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.kvdb.KvdbData, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], version: types.kvdb.KvdbVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId, groups: types.cloud.GroupGrant[] = [], groupKeys: types.cloud.GroupKeyEntrySet[] = []) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
         }
@@ -117,22 +125,52 @@ export class KvdbService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldKvdb.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbUpdate", ["kvdbId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldKvdb, managers, policy);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldKvdb, user.userId, userGroupIds), managers, policy);
             const currentVersion = <types.kvdb.KvdbVersion>oldKvdb.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, [...oldKvdb.history.map(x => x.keyId), keyId], oldKvdb.keys, keys, keyId, users, managers);
+            const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, users, managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldKvdb.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
-            const kvdb = await kvdbRepository.updateKvdb(oldKvdb, user.userId, managers, users, data, keyId, newKeys, policy);
+            const kvdb = await kvdbRepository.updateKvdb(oldKvdb, user.userId, managers, users, data, keyId, newKeys, policy, {groups, groupKeys: newGroupKeys});
             return {kvdb, context, oldKvdb};
         });
         const updatedStoreUsers = rKvdb.managers.concat(rKvdb.users);
         const deletedUsers = old.managers.concat(old.users).filter(u => !updatedStoreUsers.includes(u));
         const additionalUsersToNotify = await this.getUsersWithStatus(deletedUsers, usedContext.id, usedContext.solution);
         this.kvdbNotificationService.sendKvdbUpdated(rKvdb, usedContext.solution, additionalUsersToNotify);
+        return rKvdb;
+    }
+    
+    async rotateKvdbKeys(cloudUser: CloudUser, id: types.kvdb.KvdbId, keyId: types.core.KeyId, keys: types.cloud.KeyEntrySet[], groupKeys: types.cloud.GroupKeyEntrySet[], version: types.kvdb.KvdbVersion, force: boolean) {
+        const {kvdb: rKvdb, context: usedContext} = await this.repositoryFactory.withTransaction(async session => {
+            const kvdbRepository = this.repositoryFactory.createKvdbRepository(session);
+            const oldKvdb = await kvdbRepository.get(id);
+            if (!oldKvdb) {
+                throw new AppException("KVDB_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldKvdb.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbRotateKeys", ["kvdbId=" + id]);
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canRotateContainerKeys(user, context, this.withGroupMembership(oldKvdb, user.userId, userGroupIds))) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            const currentVersion = <types.kvdb.KvdbVersion>oldKvdb.history.length;
+            if (currentVersion !== version && !force) {
+                throw new AppException("ACCESS_DENIED", "version does not match");
+            }
+            const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
+            const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, oldKvdb.users, oldKvdb.managers);
+            const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, (oldKvdb.groups || []).map(g => g.groupId));
+            const kvdb = await kvdbRepository.rotateKeys(oldKvdb, user.userId, keyId, newKeys, {groups: oldKvdb.groups || [], groupKeys: newGroupKeys});
+            return {kvdb, context};
+        });
+        this.kvdbNotificationService.sendKvdbUpdated(rKvdb, usedContext.solution, []);
         return rKvdb;
     }
     
@@ -144,9 +182,10 @@ export class KvdbService extends BaseContainerService {
             if (!oldKvdb) {
                 throw new AppException("KVDB_DOES_NOT_EXIST");
             }
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldKvdb.contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldKvdb.contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbDelete", ["kvdbId=" + id]);
-                if (!this.policy.canDeleteContainer(user, context, oldKvdb)) {
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                if (!this.policy.canDeleteContainer(user, context, this.withGroupMembership(oldKvdb, user.userId, userGroupIds))) {
                     throw new AppException("ACCESS_DENIED");
                 }
             });
@@ -173,9 +212,10 @@ export class KvdbService extends BaseContainerService {
             }
             const contextId = kvdbs[0].contextId;
             let additionalAccessCheck: ((kvdb: db.kvdb.Kvdb) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbDeleteMany", []);
-                additionalAccessCheck = kvdb => this.policy.canDeleteContainer(user, context, kvdb);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                additionalAccessCheck = kvdb => this.policy.canDeleteContainer(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds));
             });
             const toDelete: types.kvdb.KvdbId[] = [];
             const toNotify: db.kvdb.Kvdb[] = [];
@@ -235,12 +275,15 @@ export class KvdbService extends BaseContainerService {
         if (kvdb.keyId !== keyId) {
             throw new AppException("INVALID_KEY_ID");
         }
+        await this.checkGroupEpochs(kvdb, this.policy.isForwardSecrecyEnforced(context, kvdb));
+        const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+        const groupAwareKvdb = this.withGroupMembership(kvdb, user.userId, userGroupIds);
         const item = await (async () => {
             const entryRepository = this.repositoryFactory.createKvdbEntryRepository();
             const entry = await entryRepository.get(kvdbId, kvdbEntryKey);
             
             if (!entry && (version === 0 || force)) {
-                if (!this.policy.canCreateItem(user, context, kvdb)) {
+                if (!this.policy.canCreateItem(user, context, groupAwareKvdb)) {
                     throw new AppException("ACCESS_DENIED");
                 }
                 return await entryRepository.createEntry(kvdbEntryKey, user.userId, kvdbId, kvdbEntryValue, keyId);
@@ -251,7 +294,7 @@ export class KvdbService extends BaseContainerService {
             if (!force && entry.version !== version) {
                 throw new AppException("INVALID_VERSION", "Version missmatch");
             }
-            if (!this.policy.canUpdateItem(user, context, kvdb, entry)) {
+            if (!this.policy.canUpdateItem(user, context, groupAwareKvdb, entry)) {
                 throw new AppException("ACCESS_DENIED");
             }
             return await entryRepository.updateEntry(entry, user.userId, kvdbEntryValue, keyId);
@@ -292,8 +335,9 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new DbInconsistencyError(`kvdb=${item.kvdbId} does not exist, from item=${entryKey}`);
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
-            if (!this.policy.canReadItem(user, context, kvdb, item)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canReadItem(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds), item)) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, aclFunction, ["kvdbId=" + kvdb.id, "entryKey=" + entryKey]);
@@ -310,9 +354,10 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
+        const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryDelete", ["itemId=" + entryKey, "kvdbId=" + kvdb.id]);
-            if (!this.policy.canDeleteItem(user, context, kvdb, item)) {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canDeleteItem(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds), item)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -332,15 +377,18 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, kvdb)) {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdb(kvdbId, listParams);
-        return {kvdb, items};
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, items, ownGroupIds, groupEpochs};
     }
     
     async getKvdbEntriesKeysWithListModel2(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>) {
@@ -348,8 +396,9 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, kvdb)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbListKeys", ["kvdbId=" + kvdbId]);
@@ -368,15 +417,18 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, kvdb)) {
+        let ownGroupIds: types.group.GroupId[]|undefined;
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
+            ownGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, ownGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
         });
         listParams.lastId = listParams.lastId ? `${kvdbId}:${listParams.lastId}` : undefined;
         const items = await this.repositoryFactory.createKvdbEntryRepository().getPageByKvdbWithPrefix(kvdbId, listParams, sortBy);
-        return {kvdb, items};
+        const groupEpochs = await this.getGroupEpochs(kvdb.contextId, [kvdb]);
+        return {kvdb, items, ownGroupIds, groupEpochs};
     }
     
     async getKvdbEntriesWithPlainUser(executor: Executor, kvdbId: types.kvdb.KvdbId, listParams: types.core.ListModel2<types.kvdb.KvdbEntryKey>, prefix: string|undefined) {
@@ -384,8 +436,9 @@ export class KvdbService extends BaseContainerService {
         if (!kvdb) {
             throw new AppException("KVDB_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, (user, context) => {
-            if (!this.policy.canListAllItems(user, context, kvdb)) {
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, kvdb.contextId, async (user, context) => {
+            const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+            if (!this.policy.canListAllItems(user, context, this.withGroupMembership(kvdb, user.userId, userGroupIds))) {
                 throw new AppException("ACCESS_DENIED");
             }
             this.cloudAclChecker.verifyAccess(user.acl, "kvdb/getKvdbEntries", ["kvdbId=" + kvdbId]);
@@ -417,11 +470,13 @@ export class KvdbService extends BaseContainerService {
             }
             const contextId = kvdb.contextId;
             let additionalAccessCheck: ((item: db.kvdb.KvdbEntry) => boolean) = () => true;
-            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, (user, context) => {
+            const usedContext = await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async (user, context) => {
                 if (checkAccess) {
                     this.cloudAclChecker.verifyAccess(user.acl, "kvdb/kvdbEntryDeleteMany", ["kvdbId=" + kvdbId]);
                 }
-                additionalAccessCheck = item => this.policy.canDeleteItem(user, context, kvdb, item);
+                const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
+                const groupAwareKvdb = this.withGroupMembership(kvdb, user.userId, userGroupIds);
+                additionalAccessCheck = item => this.policy.canDeleteItem(user, context, groupAwareKvdb, item);
             });
             const toDelete: types.kvdb.KvdbEntryId[] = [];
             const toNotify: db.kvdb.KvdbEntry[] = [];

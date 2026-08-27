@@ -25,6 +25,8 @@ import { ContextRepository } from "../service/cloud/ContextRepository";
 import { ContextUserRepository } from "../service/cloud/ContextUserRepository";
 import { ThreadRepository } from "../service/cloud/ThreadRepository";
 import { ThreadMessageRepository } from "../service/cloud/ThreadMessageRepository";
+import { GroupRepository } from "../service/cloud/GroupRepository";
+import { GroupStateRepository } from "../service/cloud/GroupStateRepository";
 import { StoreRepository } from "../service/cloud/StoreRepository";
 import { StoreFileRepository } from "../service/cloud/StoreFileRepository";
 import { ResourceRepository } from "../service/cloud/ResourceRepository";
@@ -117,6 +119,21 @@ export class RepositoryFactory {
     
     createThreadMessageRepository(session?: mongodb.ClientSession) {
         return new ThreadMessageRepository(this.createObjectRepositoryFor(ThreadMessageRepository, session));
+    }
+    
+    createGroupRepository(session?: mongodb.ClientSession) {
+        return new GroupRepository(this.createObjectRepositoryFor(GroupRepository, session), this.createGroupStateRepository(session));
+    }
+    
+    /** The four collections a group's state lives in outside its document — always in the caller's session. */
+    createGroupStateRepository(session?: mongodb.ClientSession) {
+        const idProp = GroupStateRepository.COLLECTION_ID_PROP;
+        return new GroupStateRepository(
+            this.mongoDbManager.getRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>(GroupStateRepository.TREE_NODE_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupTreeEdgeId, db.group.GroupTreeEdge>(GroupStateRepository.TREE_EDGE_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupHistoryEntryId, db.group.GroupHistoryEntry>(GroupStateRepository.HISTORY_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>(GroupStateRepository.ARCHIVE_RUNG_COLLECTION_NAME, idProp, session),
+        );
     }
     
     createStoreRepository(session?: mongodb.ClientSession) {

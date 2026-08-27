@@ -12,10 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as streamApi from "./StreamApiTypes";
 import * as db from "../../../db/Model";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class StreamConverter {
     
-    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertStreamRoom(user: types.cloud.UserId, stream: db.stream.StreamRoom, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: streamApi.StreamRoom = {
             id: stream.id,
             contextId: stream.contextId,
@@ -28,6 +30,9 @@ export class StreamConverter {
             keyId: stream.keyId,
             data: stream.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (stream.keys.find(x => x.user === user)?.keys) || [],
+            groups: stream.groups || [],
+            groupKeys: ownGroupKeysOf(stream.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(stream, groupEpochs),
             version: <types.stream.StreamRoomVersion>stream.history.length,
             type: stream.type,
             policy: stream.policy || {},

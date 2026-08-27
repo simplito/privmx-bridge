@@ -34,7 +34,7 @@ export class ManagementStoreApi extends ManagementBaseApi implements managementS
     @ApiMethod({errorCodes: ["STORE_DOES_NOT_EXIST"] })
     async getStore(model: managementStoreApi.GetStoreModel): Promise<managementStoreApi.GetStoreResult> {
         this.validateScope("store");
-        const store = await this.storeService.getStore(this.getPlainUser(), model.storeId, undefined);
+        const {store} = await this.storeService.getStore(this.getPlainUser(), model.storeId, undefined);
         return {store: this.managementStoreConverter.convertStore(store)};
     }
     

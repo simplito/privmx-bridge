@@ -12,10 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as threadApi from "./ThreadApiTypes";
 import * as db from "../../../db/Model";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class ThreadConverter {
     
-    convertThread(user: types.cloud.UserId, thread: db.thread.Thread) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertThread(user: types.cloud.UserId, thread: db.thread.Thread, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: threadApi.ThreadInfo = {
             id: thread.id,
             contextId: thread.contextId,
@@ -26,8 +28,12 @@ export class ThreadConverter {
             users: thread.users,
             managers: thread.managers,
             keyId: thread.keyId,
+            keeper: thread.keeper,
             data: thread.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (thread.keys.find(x => x.user === user)?.keys) || [],
+            groups: thread.groups || [],
+            groupKeys: ownGroupKeysOf(thread.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(thread, groupEpochs),
             version: <types.thread.ThreadVersion>thread.history.length,
             lastMsgDate: thread.lastMsgDate,
             messages: thread.messages,

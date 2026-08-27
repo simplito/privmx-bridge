@@ -36,6 +36,7 @@ import { MetricsCollector } from "../../service/misc/MetricsCollector";
 import { AggregatedNotificationsService } from "../../service/cloud/AggregatedNotificationsService";
 import { ZeroMQBroker } from "./ZeroMQBroker";
 import { JanusRoomsWatcherCache } from "./ipcServices/JanusRoomsWatcherCache";
+import { GroupRotationRateLimiter } from "./ipcServices/GroupRotationRateLimiter";
 
 export class MasterRegistry {
     
@@ -52,6 +53,7 @@ export class MasterRegistry {
     private jobService?: JobService;
     private nonceMap?: NonceMap;
     private activeUsersMap?: ActiveUsersMap;
+    private groupRotationRateLimiter?: GroupRotationRateLimiter;
     private metricsContainer?: MetricsContainer;
     private ipcRegistryService?: IpcRegistryService;
     private callbacks?: Callbacks;
@@ -146,6 +148,7 @@ export class MasterRegistry {
         methodExecutor.register(this.getMetricContainer());
         methodExecutor.register(this.getIpcRegistryService());
         methodExecutor.register(this.getActiveUsersMap());
+        methodExecutor.register(this.getGroupRotationRateLimiter());
         methodExecutor.register(this.getJanusRoomsWatcherCache());
         methodExecutor.register(this.getLockService());
         methodExecutor.register(this.getCloudLockService());
@@ -259,6 +262,16 @@ export class MasterRegistry {
             this.activeUsersMap = new ActiveUsersMap();
         }
         return this.activeUsersMap;
+    }
+    
+    getGroupRotationRateLimiter() {
+        if (this.groupRotationRateLimiter == null) {
+            this.groupRotationRateLimiter = new GroupRotationRateLimiter(
+                new CacheWithTTL(),
+                this.getConfig().maxGroupRotationsPerHour,
+            );
+        }
+        return this.groupRotationRateLimiter;
     }
     
     getWebsocketCommunicationManager() {

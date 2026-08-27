@@ -32,6 +32,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
@@ -54,6 +55,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
@@ -76,6 +78,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
@@ -90,6 +93,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
@@ -104,6 +108,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
@@ -119,6 +124,21 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             update: "itemOwner&user,manager",
             delete: "itemOwner&user,manager",
         },
+    },
+    group: {
+        get: "user",
+        listMy: "all",
+        listAll: "none",
+        create: "all",
+        update: "manager",
+        rotateKeys: "manager",
+        delete: "manager",
+        updatePolicy: "manager",
+        creatorHasToBeManager: "yes",
+        updaterCanBeRemovedFromManagers: "no",
+        ownerCanBeRemovedFromManagers: "yes",
+        canOverwriteContextPolicy: "yes",
+        sendCustomNotification: "all",
     },
 };
 
@@ -139,6 +159,9 @@ export class PolicyService {
         }
         if (policy.stream) {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
+        }
+        if (policy.group) {
+            this.validateContainerPolicyForContext("policy.group", policy.group);
         }
     }
     
@@ -167,6 +190,11 @@ export class PolicyService {
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
+        // A container whose grantee group has rotated refuses writes until somebody re-keys it, so an
+        // unrecognised value here reads as "nobody may" and wedges the container with no error at set time.
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["default", "none", "all"], ["user", "manager", "owner"]);
+        }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -184,6 +212,9 @@ export class PolicyService {
         }
         if (policy.ownerCanBeRemovedFromManagers !== undefined) {
             this.validatePolicyEntry(path + ".ownerCanBeRemovedFromManagers", policy.ownerCanBeRemovedFromManagers, ["default", "yes", "no"], []);
+        }
+        if (policy.forwardSecrecy !== undefined) {
+            this.validatePolicyEntry(path + ".forwardSecrecy", policy.forwardSecrecy, ["default", "yes", "no"], []);
         }
         if (policy.item !== undefined) {
             this.validateItemPolicy(path + ".item", policy.item, false);
@@ -206,6 +237,9 @@ export class PolicyService {
         if (policy.update !== undefined) {
             this.validatePolicyEntry(path + ".update", policy.update, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
+        if (policy.rotateKeys !== undefined) {
+            this.validatePolicyEntry(path + ".rotateKeys", policy.rotateKeys, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
+        }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -223,6 +257,9 @@ export class PolicyService {
         }
         if (policy.ownerCanBeRemovedFromManagers !== undefined) {
             this.validatePolicyEntry(path + ".ownerCanBeRemovedFromManagers", policy.ownerCanBeRemovedFromManagers, ["inherit", "default", "yes", "no"], []);
+        }
+        if (policy.forwardSecrecy !== undefined) {
+            this.validatePolicyEntry(path + ".forwardSecrecy", policy.forwardSecrecy, ["inherit", "default", "yes", "no"], []);
         }
         if (policy.item !== undefined) {
             this.validateItemPolicy(path + ".item", policy.item, true);
