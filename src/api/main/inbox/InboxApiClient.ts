@@ -23,6 +23,10 @@ export class InboxApiClient extends BaseApiClient implements inboxApi.IInboxApi 
         return this.request("inbox.inboxUpdate", model);
     }
     
+    inboxRotateKeys(model: inboxApi.InboxRotateKeysModel): Promise<types.core.OK> {
+        return this.request("inbox.inboxRotateKeys", model);
+    }
+    
     inboxDelete(model: inboxApi.InboxDeleteModel): Promise<types.core.OK> {
         return this.request("inbox.inboxDelete", model);
     }

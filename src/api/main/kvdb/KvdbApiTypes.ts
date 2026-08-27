@@ -254,6 +254,7 @@ export interface KvdbEntryDeleteManyResult {
 export interface IKvdbApi {
     kvdbCreate(model: KvdbCreateModel): Promise<KvdbCreateResult>;
     kvdbUpdate(model: KvdbUpdateModel): Promise<types.core.OK>;
+    kvdbRotateKeys(model: KvdbRotateKeysModel): Promise<types.core.OK>;
     kvdbDelete(model: KvdbDeleteModel): Promise<types.core.OK>;
     kvdbDeleteMany(model: KvdbDeleteManyModel): Promise<KvdbDeleteManyResult>;
     kvdbGet(model: KvdbGetModel): Promise<KvdbGetResult>;

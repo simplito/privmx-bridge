@@ -379,6 +379,29 @@ it("Should reject generateNewGroupKey from a non-manager (context ACL alone is i
     expect(true).toBeFalsy();
 });
 
+it("gates generateNewGroupKey on the rotateKeys policy, not on update", async () => {
+    // The field used to be accepted, validated and then never read for groups — rotation rode on `update`, so an
+    // operator who widened `update` handed out key rotation with it. alice is a member and not a manager.
+    const {groupService, groupRepository} = createGroupService(false, {group: {update: "all"}});
+    try {
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupRepository.generateNewGroupKey);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("lets a context widen rotateKeys for groups", async () => {
+    // The other direction: the knob has to actually reach the gate, or the test above would also pass with
+    // rotation still hardwired to manager-only.
+    const {groupService, groupRepository} = createGroupService(false, {group: {rotateKeys: "user"}});
+    await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+    hasOneCall(groupRepository.generateNewGroupKey);
+});
+
 it("charges the rotation rate-limit budget only after a successful rotation", async () => {
     const {groupService, groupRotationRateLimiter} = createGroupService();
     await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});

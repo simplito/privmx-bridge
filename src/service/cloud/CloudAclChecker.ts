@@ -19,6 +19,11 @@ export type AclFunctionNameX =
     | "context/groupList"
     | "context/groupCreate"
     | "context/groupUpdate"
+    | "context/groupRotateKeys"
+    | "context/groupAddMember"
+    | "context/groupRemoveMember"
+    | "context/groupCutEra"
+    | "context/groupPruneArchive"
     | "context/groupDelete"
     | "context/READ"
     | "context/WRITE"
@@ -146,6 +151,11 @@ export class CloudAclChecker {
             "context/contextSendCustomNotification": ["contextId"],
             "context/groupCreate": [],
             "context/groupUpdate": ["groupId"],
+            "context/groupRotateKeys": ["groupId"],
+            "context/groupAddMember": ["groupId"],
+            "context/groupRemoveMember": ["groupId"],
+            "context/groupCutEra": ["groupId"],
+            "context/groupPruneArchive": ["groupId"],
             "context/groupDelete": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);

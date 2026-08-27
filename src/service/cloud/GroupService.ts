@@ -178,10 +178,13 @@ export class GroupService extends BaseContainerService {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
-            // Rotation is a container mutation, so it must pass the same manager/policy gate as updateGroup.
-            // Rotation changes neither membership nor policy → reuse the existing managers and pass no policy.
-            this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, undefined);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupRotateKeys", ["groupId=" + model.id]);
+            // Gated by the `rotateKeys` policy, same as every other container's rotate endpoint. It defaults to
+            // "manager" for groups (the siblings default to "user") because rotating a group's grant key stales
+            // every container granted to it, not just this one document.
+            if (!this.policy.canRotateContainerKeys(user, context, oldGroup)) {
+                throw new AppException("ACCESS_DENIED");
+            }
             await this.checkRotationRateLimit(model.id);
             const newKeyVersion = oldGroup.keyVersion + 1;
             await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
@@ -223,7 +226,7 @@ export class GroupService extends BaseContainerService {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMember", ["groupId=" + model.id]);
             const managers = model.role === "manager" ? [...oldGroup.managers, model.userId] : oldGroup.managers;
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
             if (oldGroup.users.includes(model.userId) || oldGroup.managers.includes(model.userId)) {
@@ -270,7 +273,7 @@ export class GroupService extends BaseContainerService {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupRemoveMember", ["groupId=" + model.id]);
             const managers = oldGroup.managers.filter(u => u !== model.userId);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
             if (!oldGroup.users.includes(model.userId) && !oldGroup.managers.includes(model.userId)) {
@@ -317,7 +320,7 @@ export class GroupService extends BaseContainerService {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
             const keyVersion = oldGroup.keyVersion;
             const currentFloor = oldGroup.eraFloor;
@@ -348,7 +351,7 @@ export class GroupService extends BaseContainerService {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + model.id]);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupPruneArchive", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
             const keyVersion = oldGroup.keyVersion;
             if (!Number.isInteger(model.belowEpoch) || model.belowEpoch < 1) {

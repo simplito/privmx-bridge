@@ -339,6 +339,7 @@ export interface StreamRoomCloseModel {
 export interface IStreamApi {
     streamRoomCreate(model: StreamRoomCreateModel): Promise<StreamRoomCreateResult>;
     streamRoomUpdate(model: StreamRoomUpdateModel): Promise<types.core.OK>;
+    streamRoomRotateKeys(model: StreamRoomRotateKeysModel): Promise<types.core.OK>;
     streamRoomDelete(model: StreamRoomDeleteModel): Promise<types.core.OK>;
     streamRoomDeleteMany(model: StreamRoomDeleteManyModel): Promise<SteramRoomDeleteManyResult>;
     streamRoomGet(model: StreamRoomGetModel): Promise<StreamRoomGetResult>;

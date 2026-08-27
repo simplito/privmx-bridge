@@ -173,6 +173,7 @@ export interface InboxSendCustomEventModel {
 export interface IInboxApi {
     inboxCreate(model: InboxCreateModel): Promise<InboxCreateResult>;
     inboxUpdate(model: InboxUpdateModel): Promise<types.core.OK>;
+    inboxRotateKeys(model: InboxRotateKeysModel): Promise<types.core.OK>;
     inboxDelete(model: InboxDeleteModel): Promise<types.core.OK>;
     inboxDeleteMany(model: InboxDeleteManyModel): Promise<InboxDeleteManyResult>;
     inboxGet(model: InboxGetModel): Promise<InboxGetResult>;

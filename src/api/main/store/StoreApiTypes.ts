@@ -337,6 +337,7 @@ export interface StoreSendCustomEventModel {
 export interface IStoreApi {
     storeCreate(model: StoreCreateModel): Promise<StoreCreateResult>;
     storeUpdate(model: StoreUpdateModel): Promise<types.core.OK>;
+    storeRotateKeys(model: StoreRotateKeysModel): Promise<types.core.OK>;
     storeDelete(model: StoreDeleteModel): Promise<types.core.OK>;
     storeDeleteMany(model: StoreDeleteManyModel): Promise<StoreDeleteManyResult>;
     storeGet(model: StoreGetModel): Promise<StoreGetResult>;

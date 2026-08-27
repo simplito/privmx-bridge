@@ -137,7 +137,7 @@ export class InboxService extends BaseContainerService {
             const inboxRepository = this.repositoryFactory.createInboxRepository(session);
             const oldInbox = await inboxRepository.get(model.id);
             if (!oldInbox) {
-                throw new AppException("STORE_DOES_NOT_EXIST");
+                throw new AppException("INBOX_DOES_NOT_EXIST");
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxRotateKeys", ["inboxId=" + model.id]);

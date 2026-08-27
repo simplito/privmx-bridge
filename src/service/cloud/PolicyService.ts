@@ -127,13 +127,11 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
     },
     group: {
         get: "user",
-        // A group's roster is the membership graph of the context. `groupList` narrows to the caller's own
-        // groups under `listMy`; `listAll` is the "see every group here" case, off unless an operator asks
-        // for it — the same split threads and stores use.
         listMy: "all",
         listAll: "none",
         create: "all",
         update: "manager",
+        rotateKeys: "manager",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
