@@ -147,7 +147,9 @@ export class InboxService extends BaseContainerService {
             }
             const currentVersion = <types.inbox.InboxVersion>oldInbox.history.length;
             if (currentVersion !== model.version && !model.force) {
-                throw new AppException("ACCESS_DENIED", "version does not match");
+                // See ThreadService.rotateThreadKeys: on a re-key a version mismatch means the container moved,
+                // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
+                throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldInbox.keyId});
             }
             const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);

@@ -162,7 +162,9 @@ export class KvdbService extends BaseContainerService {
             }
             const currentVersion = <types.kvdb.KvdbVersion>oldKvdb.history.length;
             if (currentVersion !== version && !force) {
-                throw new AppException("ACCESS_DENIED", "version does not match");
+                // See ThreadService.rotateThreadKeys: on a re-key a version mismatch means the container moved,
+                // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
+                throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldKvdb.keyId});
             }
             const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, oldKvdb.users, oldKvdb.managers);
