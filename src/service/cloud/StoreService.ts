@@ -68,9 +68,9 @@ export class StoreService extends BaseContainerService {
         if (!file.supportsRandomWrite) {
             throw new AppException("UNSUPPORTED_OPERATION", "Locking is only supported for files supporting random write");
         }
-        const {user, context, store} = await this.getStoreAndUser(cloudUser, file.storeId);
+        const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, file.storeId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + fileId]);
-        if (!this.policy.canUpdateItem(user, context, store, file)) {
+        if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
             throw new AppException("ACCESS_DENIED");
         }
     }
