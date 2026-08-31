@@ -165,6 +165,13 @@ const randomWriteStoreFile: db.store.StoreFile = {
     keyId: keyId,
     supportsRandomWrite: true,
 };
+const groupGrantRandomWriteStoreFileId = "MyGroupGrantRandomWriteStoreFileId" as types.store.StoreFileId;
+const groupGrantRandomWriteStoreFile: db.store.StoreFile = {
+    ...randomWriteStoreFile,
+    id: groupGrantRandomWriteStoreFileId,
+    storeId: groupGrantStoreId,
+    author: alice,
+};
 const request: db.request.Request = {
     id: requestId,
     author: "janek" as types.core.Username,
@@ -727,6 +734,14 @@ it("Should authorize locking a random-write file for a user with write access", 
     await storeService.assertCanLockRandomWriteFile(janekUserPubKey, randomWriteStoreFileId);
 });
 
+it("Should authorize locking a random-write file for a user with access only through a group", async () => {
+    // Setup
+    const {storeService} = createStoreService();
+    
+    // Act & Assert (resolves without throwing)
+    await storeService.assertCanLockRandomWriteFile(aliceUserPubKey, groupGrantRandomWriteStoreFileId);
+});
+
 function createStoreService() {
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -786,7 +801,7 @@ function createStoreService() {
     mock(requestRepository, "getReadyForUser", async () => request);
     mock(requestRepository, "delete", async () => {});
     
-    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : (id === randomWriteStoreFileId ? randomWriteStoreFile : null))));
+    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : (id === randomWriteStoreFileId ? randomWriteStoreFile : (id === groupGrantRandomWriteStoreFileId ? groupGrantRandomWriteStoreFile : null)))));
     mock(storeFileRepository, "getPageByStore", async () => ({list: [storeFile], count: 1}));
     mock(storeFileRepository, "create", async () => storeFile);
     mock(storeFileRepository, "update", async () => storeFile);
