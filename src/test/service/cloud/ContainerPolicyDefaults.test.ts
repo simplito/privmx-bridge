@@ -21,8 +21,9 @@ import { AppException } from "../../../api/AppException";
  *
  * Each of these defaults has a security consequence and no other test that would notice it changing. Two of them
  * are deliberate trade-offs rather than the safe choice, and are pinned here so they stay deliberate:
- * `forwardSecrecy` is off, so removal from a grantee group does not by itself stop the departed member reading
- * new writes; `rotateKeys` is wider than `update`, so any member can replace the container key.
+ * `forwardSecrecy` is on, so removal from a grantee group refuses writes once the group's epoch is ahead of the
+ * container's key, until somebody re-keys it; `rotateKeys` is wider than `update`, so any member can replace the
+ * container key.
  */
 
 type ContainerKind = "thread"|"store"|"inbox"|"stream"|"kvdb"|"group";
@@ -58,19 +59,16 @@ function asUser(userId: types.cloud.UserId) {
 const containerKinds: ContainerKind[] = ["thread", "store", "inbox", "stream", "kvdb"];
 
 for (const kind of containerKinds) {
-    it(`${kind}: forward secrecy stays off until a deployment asks for it`, async () => {
-        // Backwards compatibility: turning this on refuses writes to containers whose grantee group has rotated,
-        // and an existing deployment's clients do not re-key on `staleGroups` yet. So a removal revokes the
-        // group and not the containers granted to it — the departed member reads on until somebody rotates.
+    it(`${kind}: forward secrecy is on by default`, async () => {
         const policy = new KindPolicy(new PolicyService(), kind);
-        expect(policy.isForwardSecrecyEnforced(emptyContext, container)).toBe(false);
+        expect(policy.isForwardSecrecyEnforced(emptyContext, container)).toBe(true);
     });
     
-    it(`${kind}: a context or container can turn forward secrecy on`, async () => {
+    it(`${kind}: a context or container can turn forward secrecy off`, async () => {
         const policy = new KindPolicy(new PolicyService(), kind);
-        expect(policy.isForwardSecrecyEnforced(emptyContext, {...container, policy: {forwardSecrecy: "yes"}})).toBe(true);
-        const enforcingContext = {id: "ctx", policy: {[kind]: {forwardSecrecy: "yes"}}} as unknown as db.context.Context;
-        expect(policy.isForwardSecrecyEnforced(enforcingContext, container)).toBe(true);
+        expect(policy.isForwardSecrecyEnforced(emptyContext, {...container, policy: {forwardSecrecy: "no"}})).toBe(false);
+        const decliningContext = {id: "ctx", policy: {[kind]: {forwardSecrecy: "no"}}} as unknown as db.context.Context;
+        expect(policy.isForwardSecrecyEnforced(decliningContext, container)).toBe(false);
     });
     
     it(`${kind}: any member can re-key, which is what clears a stale grant`, async () => {
