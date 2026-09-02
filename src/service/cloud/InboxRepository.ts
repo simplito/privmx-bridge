@@ -149,15 +149,16 @@ export class InboxRepository {
     
     async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps OLD keyId/data so the DIO (signed by oldInbox.lastModifier
-        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData
-        // lives only in the history — `oldInbox.data` is just its `meta`.
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldInbox.lastModifier
+        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData lives only
+        // in the history — `oldInbox.data` is just its `meta`. The keyId comes from `previous` for the same
+        // reason the data does: see ThreadRepository.rotateKeys.
         const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: oldInbox.keyId,
+            keyId: previous.keyId,
             data: previous.data,
             users: oldInbox.users,
             managers: oldInbox.managers,

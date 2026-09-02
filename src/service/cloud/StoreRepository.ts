@@ -155,14 +155,15 @@ export class StoreRepository {
     
     async rotateKeys(oldStore: db.store.Store, modifier: types.cloud.UserId,
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps OLD keyId/data so the DIO (signed by oldStore.lastModifier
-        // at oldStore.lastModificationDate) remains verifiable by the endpoint.
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldStore.lastModifier
+        // at oldStore.lastModificationDate) remains verifiable by the endpoint. Both come from `previous`:
+        // see ThreadRepository.rotateKeys for why `oldStore.keyId` is the wrong half of that pair.
         const previous = Utils.lastOf(oldStore.history, `store '${oldStore.id}' history`);
         const groups = grantees?.groups || oldStore.groups || [];
         const entry: db.store.StoreHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: oldStore.keyId,
+            keyId: previous.keyId,
             data: previous.data,
             users: oldStore.users,
             managers: oldStore.managers,

@@ -131,7 +131,7 @@ export class KvdbService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldKvdb, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, users, managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldKvdb.clientResourceId !== resourceId) {
@@ -166,7 +166,7 @@ export class KvdbService extends BaseContainerService {
                 // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldKvdb.keyId});
             }
-            const availableKeyIds = [...oldKvdb.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldKvdb, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldKvdb.contextId, availableKeyIds, oldKvdb.keys, keys, keyId, oldKvdb.users, oldKvdb.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldKvdb.contextId, availableKeyIds, oldKvdb.groupKeys || [], groupKeys, keyId, (oldKvdb.groups || []).map(g => g.groupId));
             const kvdb = await kvdbRepository.rotateKeys(oldKvdb, user.userId, keyId, newKeys, {groups: oldKvdb.groups || [], groupKeys: newGroupKeys});

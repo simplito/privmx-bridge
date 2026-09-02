@@ -113,7 +113,7 @@ export class StoreService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldStore, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, users, managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldStore.clientResourceId && resourceId && oldStore.clientResourceId !== resourceId) {
@@ -156,7 +156,7 @@ export class StoreService extends BaseContainerService {
                 // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldStore.keyId});
             }
-            const availableKeyIds = [...oldStore.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldStore, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStore.contextId, availableKeyIds, oldStore.keys, keys, keyId, oldStore.users, oldStore.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStore.contextId, availableKeyIds, oldStore.groupKeys || [], groupKeys, keyId, (oldStore.groups || []).map(g => g.groupId));
             const store = await storeRepository.rotateKeys(oldStore, user.userId, keyId, newKeys, {groups: oldStore.groups || [], groupKeys: newGroupKeys});

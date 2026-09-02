@@ -156,14 +156,17 @@ export class ThreadRepository {
     
     async rotateKeys(oldThread: db.thread.Thread, modifier: types.cloud.UserId,
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps OLD keyId/data so the DIO (signed by oldThread.lastModifier
-        // at oldThread.lastModificationDate) remains verifiable by the endpoint.
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldThread.lastModifier
+        // at oldThread.lastModificationDate) remains verifiable by the endpoint. Both come from `previous`:
+        // a re-key installs a key without re-encrypting anything, so `oldThread.keyId` is the key nothing in
+        // the history was signed under, and pairing it with `previous.data` hands the endpoint — which asks
+        // for exactly `data.back().keyId` — the one key that cannot decrypt the container.
         const previous = Utils.lastOf(oldThread.history, `thread '${oldThread.id}' history`);
         const groups = grantees?.groups || oldThread.groups || [];
         const entry: db.thread.ThreadHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: oldThread.keyId,
+            keyId: previous.keyId,
             data: previous.data,
             users: oldThread.users,
             managers: oldThread.managers,

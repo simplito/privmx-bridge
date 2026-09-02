@@ -164,14 +164,15 @@ export class StreamRoomRepository {
     
     async rotateKeys(oldStreamRoom: db.stream.StreamRoom, modifier: types.cloud.UserId,
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps OLD keyId/data so the DIO (signed by oldStreamRoom.lastModifier
-        // at oldStreamRoom.lastModificationDate) remains verifiable by the endpoint.
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldStreamRoom.lastModifier
+        // at oldStreamRoom.lastModificationDate) remains verifiable by the endpoint. Both come from `previous`:
+        // see ThreadRepository.rotateKeys for why `oldStreamRoom.keyId` is the wrong half of that pair.
         const previous = Utils.lastOf(oldStreamRoom.history, `stream room '${oldStreamRoom.id}' history`);
         const groups = grantees?.groups || oldStreamRoom.groups || [];
         const entry: db.stream.StreamRoomHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: oldStreamRoom.keyId,
+            keyId: previous.keyId,
             data: previous.data,
             users: oldStreamRoom.users,
             managers: oldStreamRoom.managers,
