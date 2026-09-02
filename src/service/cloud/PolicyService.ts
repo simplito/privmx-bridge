@@ -40,6 +40,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
+        forwardSecrecy: "yes",
         item: {
             get: "user",
             listMy: "user",
@@ -63,6 +64,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
+        forwardSecrecy: "yes",
         item: {
             get: "user",
             listMy: "user",
@@ -86,6 +88,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
+        forwardSecrecy: "yes",
     },
     stream: {
         get: "user",
@@ -101,6 +104,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
+        forwardSecrecy: "yes",
     },
     kvdb: {
         get: "user",
@@ -116,6 +120,7 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
         ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
+        forwardSecrecy: "yes",
         item: {
             get: "user",
             listMy: "user",
