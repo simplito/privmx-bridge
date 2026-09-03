@@ -33,6 +33,8 @@ import { DateUtils } from "../../../utils/DateUtils";
 
 const contextId = "MyContextId" as types.context.ContextId;
 const oldKeyId = "OldKeyId" as types.core.KeyId;
+/** Installed by a first rotation: it sits on the document, but no history entry's data was signed under it. */
+const midKeyId = "MidKeyId" as types.core.KeyId;
 const newKeyId = "NewKeyId" as types.core.KeyId;
 const janek = "janek" as types.cloud.UserId;
 const alice = "alice" as types.cloud.UserId;
@@ -123,7 +125,8 @@ interface Case {
     /** What the document's `data` holds, when it is not simply the history entry's. */
     documentData: unknown;
     historyData: unknown;
-    rotate: (grantees?: types.cloud.ContainerGrantees) => Promise<{written: unknown[], result: Rotated}>;
+    /** `overrides` replaces document fields, so a case can start from a container that was already rotated. */
+    rotate: (grantees?: types.cloud.ContainerGrantees, overrides?: Record<string, unknown>) => Promise<{written: unknown[], result: Rotated}>;
 }
 
 function fakeRepository<T>(): {written: unknown[], repository: MongoObjectRepository<string, T>} {
@@ -141,9 +144,9 @@ const CASES: Case[] = [
         name: "thread",
         documentData: "container-data",
         historyData: "container-data",
-        rotate: async grantees => {
+        rotate: async (grantees, overrides) => {
             const {written, repository} = fakeRepository<db.thread.Thread>();
-            const old = containerFields("container-data", "container-data") as unknown as db.thread.Thread;
+            const old = {...containerFields("container-data", "container-data"), ...overrides} as unknown as db.thread.Thread;
             const result = await new ThreadRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
             return {written, result: result as unknown as Rotated};
         },
@@ -152,9 +155,9 @@ const CASES: Case[] = [
         name: "store",
         documentData: "container-data",
         historyData: "container-data",
-        rotate: async grantees => {
+        rotate: async (grantees, overrides) => {
             const {written, repository} = fakeRepository<db.store.Store>();
-            const old = containerFields("container-data", "container-data") as unknown as db.store.Store;
+            const old = {...containerFields("container-data", "container-data"), ...overrides} as unknown as db.store.Store;
             const result = await new StoreRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
             return {written, result: result as unknown as Rotated};
         },
@@ -163,9 +166,9 @@ const CASES: Case[] = [
         name: "kvdb",
         documentData: "container-data",
         historyData: "container-data",
-        rotate: async grantees => {
+        rotate: async (grantees, overrides) => {
             const {written, repository} = fakeRepository<db.kvdb.Kvdb>();
-            const old = containerFields("container-data", "container-data") as unknown as db.kvdb.Kvdb;
+            const old = {...containerFields("container-data", "container-data"), ...overrides} as unknown as db.kvdb.Kvdb;
             const result = await new KvdbRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
             return {written, result: result as unknown as Rotated};
         },
@@ -174,9 +177,9 @@ const CASES: Case[] = [
         name: "stream room",
         documentData: "container-data",
         historyData: "container-data",
-        rotate: async grantees => {
+        rotate: async (grantees, overrides) => {
             const {written, repository} = fakeRepository<db.stream.StreamRoom>();
-            const old = containerFields("container-data", "container-data") as unknown as db.stream.StreamRoom;
+            const old = {...containerFields("container-data", "container-data"), ...overrides} as unknown as db.stream.StreamRoom;
             const result = await new StreamRoomRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
             return {written, result: result as unknown as Rotated};
         },
@@ -186,9 +189,9 @@ const CASES: Case[] = [
         // The one module where the two differ, which is why the entry's data is read from the history.
         documentData: INBOX_DATA.meta,
         historyData: INBOX_DATA,
-        rotate: async grantees => {
+        rotate: async (grantees, overrides) => {
             const {written, repository} = fakeRepository<db.inbox.Inbox>();
-            const old = containerFields(INBOX_DATA, INBOX_DATA.meta) as unknown as db.inbox.Inbox;
+            const old = {...containerFields(INBOX_DATA, INBOX_DATA.meta), ...overrides} as unknown as db.inbox.Inbox;
             const result = await new InboxRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
             return {written, result: result as unknown as Rotated};
         },
@@ -213,6 +216,29 @@ for (const testCase of CASES) {
         const head = result.history[result.history.length - 1];
         assert.strictEqual(head.keyId, oldKeyId, "the new head still names the key its data was signed under");
         assert.deepStrictEqual(head.data, testCase.historyData, "the new head carries the data that was signed");
+    });
+    
+    it(`${testCase.name}: a second rotation names the key its head data was signed under`, async () => {
+        // The state a first rotation leaves behind: the document moved on to midKeyId while the head kept
+        // oldKeyId, because that is the key its data is encrypted with. Rotating again must copy the head's
+        // own keyId forward — reading `keyId` off the document instead names midKeyId, which never encrypted
+        // this data, and the endpoint (which asks for exactly `data.back().keyId`) then gets the one key that
+        // cannot open the container.
+        const entry = (author: types.cloud.UserId) => ({
+            keyId: oldKeyId, data: testCase.historyData,
+            users: [alice], managers: [janek], groups: GRANTS, created: SIGNED_AT, author,
+        });
+        const {result} = await testCase.rotate(grantees(), {
+            keyId: midKeyId,
+            keys: [{user: alice, keys: [
+                {keyId: oldKeyId, data: "alice-at-old" as types.core.UserKeyData},
+                {keyId: midKeyId, data: "alice-at-mid" as types.core.UserKeyData},
+            ]}],
+            history: [entry(janek), entry(rotator)],
+        });
+        const head = result.history[result.history.length - 1];
+        assert.strictEqual(head.keyId, oldKeyId, "the head must name the key its data was signed under, not the one the previous rotation installed");
+        assert.deepStrictEqual(head.data, testCase.historyData);
     });
     
     it(`${testCase.name}: appends exactly one entry and credits the rotator`, async () => {

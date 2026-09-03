@@ -179,7 +179,7 @@ export class StreamService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             
-            const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldStreamRoom, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, users, managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldStreamRoom.clientResourceId && resourceId && oldStreamRoom.clientResourceId !== resourceId) {
@@ -224,7 +224,7 @@ export class StreamService extends BaseContainerService {
                 // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldStreamRoom.keyId});
             }
-            const availableKeyIds = [...oldStreamRoom.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldStreamRoom, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.keys, keys, keyId, oldStreamRoom.users, oldStreamRoom.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldStreamRoom.contextId, availableKeyIds, oldStreamRoom.groupKeys || [], groupKeys, keyId, (oldStreamRoom.groups || []).map(g => g.groupId));
             const streamRoom = await streamRoomRepository.rotateKeys(oldStreamRoom, user.userId, keyId, newKeys, {groups: oldStreamRoom.groups || [], groupKeys: newGroupKeys});

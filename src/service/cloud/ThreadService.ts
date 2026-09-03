@@ -216,7 +216,7 @@ export class ThreadService extends BaseContainerService {
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
-            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldThread, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, users, managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, groups.map(g => g.groupId));
             if (oldThread.clientResourceId && resourceId && oldThread.clientResourceId !== resourceId) {
@@ -267,7 +267,7 @@ export class ThreadService extends BaseContainerService {
                 // from "you may not rotate this".
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldThread.keyId});
             }
-            const availableKeyIds = [...oldThread.history.map(x => x.keyId), keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldThread, keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldThread.contextId, availableKeyIds, oldThread.keys, keys, keyId, oldThread.users, oldThread.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldThread.contextId, availableKeyIds, oldThread.groupKeys || [], groupKeys, keyId, (oldThread.groups || []).map(g => g.groupId));
             const thread = await threadRepository.rotateKeys(oldThread, user.userId, keyId, newKeys, {groups: oldThread.groups || [], groupKeys: newGroupKeys});

@@ -108,7 +108,7 @@ export class InboxService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED", "version does not match");
             }
             const groups = model.groups || [];
-            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldInbox, model.keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, model.users, model.managers);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
             if (oldInbox.clientResourceId && model.resourceId && oldInbox.clientResourceId !== model.resourceId) {
@@ -151,7 +151,7 @@ export class InboxService extends BaseContainerService {
                 // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldInbox.keyId});
             }
-            const availableKeyIds = [...oldInbox.history.map(x => x.keyId), model.keyId];
+            const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldInbox, model.keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);
             const groups = (oldInbox.groups || []);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));

@@ -149,14 +149,15 @@ export class KvdbRepository {
     
     async rotateKeys(oldKvdb: db.kvdb.Kvdb, modifier: types.cloud.UserId,
         newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps OLD keyId/data so the DIO (signed by oldKvdb.lastModifier
-        // at oldKvdb.lastModificationDate) remains verifiable by the endpoint.
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldKvdb.lastModifier
+        // at oldKvdb.lastModificationDate) remains verifiable by the endpoint. Both come from `previous`:
+        // see ThreadRepository.rotateKeys for why `oldKvdb.keyId` is the wrong half of that pair.
         const previous = Utils.lastOf(oldKvdb.history, `kvdb '${oldKvdb.id}' history`);
         const groups = grantees?.groups || oldKvdb.groups || [];
         const entry: db.kvdb.KvdbHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: oldKvdb.keyId,
+            keyId: previous.keyId,
             data: previous.data,
             users: oldKvdb.users,
             managers: oldKvdb.managers,

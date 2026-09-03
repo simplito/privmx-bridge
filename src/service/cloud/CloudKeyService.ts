@@ -25,6 +25,28 @@ export class CloudKeyService {
         return this.checkKeysAndClients(contextId, [keyId], [], inserts, keyId, users, managers);
     }
     
+    /**
+     * Every keyId a container already owns, plus the one being installed — the whitelist `buildKeys` checks a
+     * client's key entries against.
+     *
+     * Deliberately not `history.map(x => x.keyId)`: a history entry names the key its *data* was signed under,
+     * and a re-key installs a key without re-signing anything, so no history entry ever names the key a re-key
+     * installed. Derived from the history, the whitelist would reject a client re-wrapping the container's own
+     * current key for a user being added (INVALID_KEY_ID) — and a user added after a re-key needs exactly those
+     * keys to read what was written under them. The key blobs are the complete record.
+     */
+    getAvailableKeyIds(
+        container: {keyId: types.core.KeyId, keys: types.cloud.UserKeysEntry[], groupKeys?: types.cloud.GroupKeysEntry[]},
+        newKeyId: types.core.KeyId,
+    ) {
+        return Utils.unique([
+            ...container.keys.flatMap(x => x.keys.map(k => k.keyId)),
+            ...(container.groupKeys || []).flatMap(x => x.keys.map(k => k.keyId)),
+            container.keyId,
+            newKeyId,
+        ]);
+    }
+    
     async checkKeysAndClients(
         contextId: types.context.ContextId,
         availableKeyIds: types.core.KeyId[],
