@@ -677,7 +677,7 @@ it("Should read store file data", async () => {
     const {storeService, storageService} = createStoreService();
     
     // Act
-    const res = await storeService.readStoreFile(janekUserPubKey, storeFileId, false, undefined, {type: "all"});
+    const res = await storeService.readStoreFile(janekUserPubKey, storeFileId, false, undefined, undefined, {type: "all"});
     
     // Asserts
     expect(res).not.toBeNull();
@@ -690,7 +690,7 @@ it("Should read store file thumb data", async () => {
     const {storeService, storageService} = createStoreService();
     
     // Act
-    const res = await storeService.readStoreFile(janekUserPubKey, storeFileId, true, undefined, {type: "all"});
+    const res = await storeService.readStoreFile(janekUserPubKey, storeFileId, true, undefined, undefined, {type: "all"});
     
     // Asserts
     expect(res).not.toBeNull();
@@ -699,19 +699,19 @@ it("Should read store file thumb data", async () => {
 });
 
 testFail("Should fails on reading with invalid user", "ACCESS_DENIED", storeService =>
-    storeService.readStoreFile(bobUserPubKey, storeFileId, false, undefined, {type: "all"}),
+    storeService.readStoreFile(bobUserPubKey, storeFileId, false, undefined, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading with user without access", "ACCESS_DENIED", storeService =>
-    storeService.readStoreFile(aliceUserPubKey, storeFileId, false, undefined, {type: "all"}),
+    storeService.readStoreFile(aliceUserPubKey, storeFileId, false, undefined, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading not exisitng file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
-    storeService.readStoreFile(janekUserPubKey, notExistingStoreFileId, false, undefined, {type: "all"}),
+    storeService.readStoreFile(janekUserPubKey, notExistingStoreFileId, false, undefined, undefined, {type: "all"}),
 );
 
 testFail("Should fails on reading not exisitng thumb", "FILES_CONTAINER_FILE_HAS_NOT_THUMB", storeService =>
-    storeService.readStoreFile(janekUserPubKey, storeFileIdWithoutThumb, true, undefined, {type: "all"}),
+    storeService.readStoreFile(janekUserPubKey, storeFileIdWithoutThumb, true, undefined, undefined, {type: "all"}),
 );
 
 testFail("Should fail locking a not existing file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
