@@ -10,7 +10,6 @@ limitations under the License.
 */
 
 import * as crypto from "crypto";
-import * as elliptic from "elliptic";
 
 export interface KdfParams {
     label?: string;
@@ -313,8 +312,12 @@ export class Crypto {
         if (uncompressedKey.length !== 65 || uncompressedKey[0] !== 0x04) {
             throw new Error("Invalid uncompressed key format");
         }
-        const ed25519 = new elliptic.ec("ed25519");
-        const pub = ed25519.keyFromPublic(Buffer.from(uncompressedKey)).getPublic();
-        return pub.encodeCompressed();
+        // SEC1 point compression: 0x02/0x03 (by parity of Y) || X. This is curve-agnostic and
+        // matches elliptic's generic `point.encodeCompressed()` byte-for-byte (the former
+        // `ec("ed25519")` was just an arbitrary curve object; no curve math is involved).
+        const key = Buffer.from(uncompressedKey);
+        const x = key.subarray(1, 33);
+        const yIsOdd = key[64] % 2 === 1;
+        return Buffer.concat([Buffer.from([yIsOdd ? 0x03 : 0x02]), x]);
     }
 }

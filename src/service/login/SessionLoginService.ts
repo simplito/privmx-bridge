@@ -10,7 +10,7 @@ limitations under the License.
 */
 
 import * as types from "../../types";
-import * as elliptic from "elliptic";
+import { EccKeyPair } from "../../utils/crypto/NobleEc";
 import { Session } from "../../api/session/Session";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { Logger } from "../log/Logger";
@@ -27,14 +27,14 @@ export class SessionLoginService {
     ) {
     }
     
-    async onSession(sessionId: types.core.SessionId, clientKey: elliptic.ec.KeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature): Promise<Session> {
+    async onSession(sessionId: types.core.SessionId, clientKey: EccKeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature): Promise<Session> {
         const session = await this.getSession(sessionId);
         this.checkRestoreKeyInSession(session, clientKey);
         await this.nonceService.nonceCheck2P(Buffer.from("restore_" + sessionId, "utf8"), clientKey, nonce, timestamp, signature);
         return session;
     }
     
-    private checkRestoreKeyInSession(session: Session, clientKey: elliptic.ec.KeyPair) {
+    private checkRestoreKeyInSession(session: Session, clientKey: EccKeyPair) {
         if (session.get("state") != "exchange") {
             throw new AppException("UNKNOWN_SESSION");
         }

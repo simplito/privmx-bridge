@@ -16,6 +16,7 @@ import { DateUtils } from "../../utils/DateUtils";
 import { PkiFactory } from "../pki/PkiFactory";
 import * as pki from "privmx-pki2";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { EccKeyPair } from "../../utils/crypto/NobleEc";
 import { Crypto } from "../../utils/crypto/Crypto";
 
 export class ServerSignatureService {
@@ -35,7 +36,7 @@ export class ServerSignatureService {
             throw new AppException("INVALID_NONCE", "This nonce was already used");
         }
         const key = (await this.getKeyStore()).getPrimaryKey().keyPair as pki.common.keystore.EccKeyPair;
-        const signedChallenge = ECUtils.signToCompactSignature(key.keyPair, Crypto.sha256(Buffer.from(`${challenge};${now}`)));
+        const signedChallenge = ECUtils.signToCompactSignature(EccKeyPair.fromElliptic(key.keyPair), Crypto.sha256(Buffer.from(`${challenge};${now}`)));
         return {
             challenge: signedChallenge.toString("hex"),
             timestamp: now,

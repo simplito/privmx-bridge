@@ -55,6 +55,7 @@
   "dependencies": {
     "@godaddy/terminus": "^4.4.1",
     "@msgpack/msgpack": "^3.1.2",
+    "@noble/curves": "^2.2.0",
     "adv-promise": "^1.0.1",
     "adv-validator": "^1.0.3",
     "bn.js": "^4.12.0",
@@ -63,7 +64,6 @@
     "bs58check": "^2.1.2",
     "bytebuffer": "^3.5.5",
     "compression": "^1.7.4",
-    "elliptic": "^6.6.1",
     "express": "^4.21.2",
     "int64-buffer": "^1.0.0",
     "jsx-to-str": "^1.1.2",
