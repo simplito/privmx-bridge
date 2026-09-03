@@ -96,7 +96,8 @@ export class GroupStateRepository {
         };
     }
     
-    /** History entries of one group, optionally only those from `fromVersion` on. */
+    /** History entries of one group, optionally only those from `fromVersion` on. No parameter means from
+     *  genesis, which is what `firstServedVersion === 1` reports back. */
     async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
         const entries = await this.history.query(q => fromVersion === undefined
             ? q.eq("groupId", groupId)
@@ -201,8 +202,9 @@ export class GroupStateRepository {
     async applyRemovalTransition(
         groupId: types.group.GroupId,
         transition: types.cloud.GroupTreeTransition,
-        removedUser: types.cloud.UserId,
+        removedUsers: types.cloud.UserId[],
         numLeaves: number,
+        leafAssignment: types.cloud.UserId[],
     ): Promise<void> {
         const nodeOperations: mongodb.AnyBulkWriteOperation[] = transition.refreshedNodes.map(node => ({
             replaceOne: {
@@ -223,19 +225,29 @@ export class GroupStateRepository {
                 upsert: true,
             },
         }));
-        // The departing member's edge, addressed by identity: parent seat and child user, which is all the id
+        // Each departing member's edge, addressed by identity: parent seat and child user, which is all the id
         // is made of — the generations and the blob it carried are irrelevant to finding it.
-        edgeOperations.push({
-            deleteOne: {
-                filter: {_id: GroupStateRepository.edgeId(groupId, {
-                    parentIndex: TreeMath.parent(TreeMath.leafNode(transition.blankedPosition), numLeaves),
-                    parentGeneration: 0,
-                    childKind: "user",
-                    childUserId: removedUser,
-                    data: "" as types.core.UserKeyData,
-                })},
-            },
-        });
+        //
+        // The seat comes from the roster, not from `blankedPositions[i]`: the validator only requires the two
+        // lists to agree as sets, so pairing them by index would delete an id nobody holds and leave the real
+        // edge behind — an edge addressed to somebody who no longer has a leaf.
+        for (const removedUser of removedUsers) {
+            const position = leafAssignment.indexOf(removedUser);
+            if (position < 0) {
+                continue; // validated upstream; nothing to delete for somebody who held no seat
+            }
+            edgeOperations.push({
+                deleteOne: {
+                    filter: {_id: GroupStateRepository.edgeId(groupId, {
+                        parentIndex: TreeMath.parent(TreeMath.leafNode(position), numLeaves),
+                        parentGeneration: 0,
+                        childKind: "user",
+                        childUserId: removedUser,
+                        data: "" as types.core.UserKeyData,
+                    })},
+                },
+            });
+        }
         await Promise.all([
             GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
             GroupStateRepository.bulkWrite(this.edges, edgeOperations),
@@ -252,11 +264,11 @@ export class GroupStateRepository {
     async applyAdditionTransition(
         groupId: types.group.GroupId,
         transition: types.cloud.GroupTreeAdditionTransition,
-        addedUser: types.cloud.UserId,
+        addedUsers: types.cloud.UserId[],
         oldNumLeaves: number,
         oldLeafAssignment: types.cloud.UserId[],
     ): Promise<void> {
-        const numLeaves = TreeMath.numLeavesToSeat(transition.position, oldNumLeaves);
+        const numLeaves = TreeMath.numLeavesToSeatAll(transition.positions, oldNumLeaves);
         const nodeOperations: mongodb.AnyBulkWriteOperation[] = transition.seatedNodes.map(node => ({
             replaceOne: {
                 filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
@@ -277,7 +289,7 @@ export class GroupStateRepository {
             },
         }));
         for (const staleId of GroupStateRepository.edgesSupersededBySeating(
-            groupId, transition, addedUser, oldNumLeaves, numLeaves, oldLeafAssignment,
+            groupId, transition, addedUsers, oldNumLeaves, numLeaves, oldLeafAssignment,
         )) {
             edgeOperations.push({deleteOne: {filter: {_id: staleId}}});
         }
@@ -291,13 +303,13 @@ export class GroupStateRepository {
     private static edgesSupersededBySeating(
         groupId: types.group.GroupId,
         transition: types.cloud.GroupTreeAdditionTransition,
-        addedUser: types.cloud.UserId,
+        addedUsers: types.cloud.UserId[],
         oldNumLeaves: number,
         numLeaves: number,
         oldLeafAssignment: types.cloud.UserId[],
     ): db.group.GroupTreeEdgeId[] {
         if (numLeaves === oldNumLeaves) {
-            return []; // filling a blank changes no parent, and the seated path's edges replace themselves by id
+            return []; // filling blanks changes no parent, and the seated paths' edges replace themselves by id
         }
         const stale: db.group.GroupTreeEdgeId[] = [];
         const oldRoot = TreeMath.root(oldNumLeaves);
@@ -311,8 +323,10 @@ export class GroupStateRepository {
                 data: "" as types.core.UserKeyData,
             }));
         }
+        const newcomers = new Set(addedUsers);
         const oldNodeCount = TreeMath.nodeCount(oldNumLeaves);
-        for (const parentIndex of TreeMath.directPath(transition.position, numLeaves)) {
+        // The union, so a node re-parented on two newcomers' paths is retired once rather than twice.
+        for (const parentIndex of TreeMath.frontier(transition.positions, numLeaves)) {
             for (const childIndex of TreeMath.children(parentIndex, numLeaves)) {
                 if (childIndex >= oldNodeCount) {
                     continue; // did not exist before, so nothing can be addressed to it
@@ -326,7 +340,7 @@ export class GroupStateRepository {
                 }
                 if (TreeMath.isLeaf(childIndex)) {
                     const holder = oldLeafAssignment[TreeMath.leafPosition(childIndex)];
-                    if (!holder || holder === addedUser) {
+                    if (!holder || newcomers.has(holder)) {
                         continue;
                     }
                     stale.push(GroupStateRepository.edgeId(groupId, {

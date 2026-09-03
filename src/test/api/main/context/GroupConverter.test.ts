@@ -158,3 +158,68 @@ it("reports the current version when the window turns out empty", async () => {
     assert.deepStrictEqual(converted.history, []);
     assert.strictEqual(converted.firstServedVersion, group.version);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// seats the bridge resolves so the caller does not need `leafAssignment`
+// ─────────────────────────────────────────────────────────────────────────────
+
+const EIGHT = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
+
+function bigGroup(seating: string[] = EIGHT) {
+    const big = buildTree(seating, 3);
+    const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
+    return {big, group8};
+}
+
+it("forUserIds hands back the seats it resolved, not just the nodes around them", async () => {
+    // Planning a removal needs the subject's seat number. The bridge looks it up anyway to decide which nodes to
+    // serve, so returning it is what lets a manager skip downloading the roster to find it.
+    const {big, group8} = bigGroup();
+    const converted = new GroupConverter().convertGroup(
+        alice, group8, {tree: big, history: state().history}, "path", ["frank" as types.cloud.UserId],
+    );
+    assert.deepStrictEqual(converted.subjectLeafPositions, [6]);
+    assert.strictEqual(converted.ownLeafPosition, 1);
+});
+
+it("forUserIds naming somebody with no seat omits them rather than reporting seat -1", async () => {
+    const {big, group8} = bigGroup();
+    const converted = new GroupConverter().convertGroup(
+        alice, group8, {tree: big, history: state().history}, "path", ["outsider" as types.cloud.UserId],
+    );
+    assert.deepStrictEqual(converted.subjectLeafPositions, []);
+});
+
+it("forNewMembers allocates blanks lowest-first before appending", async () => {
+    const {big, group8} = bigGroup(["janek", "alice", "", "carol", "", "erin", "frank", "grace"]);
+    const converted = new GroupConverter().convertGroup(
+        alice, group8, {tree: big, history: state().history}, "path", undefined, 3,
+    );
+    // Two blanks get reused before the tree is allowed to grow — otherwise remove/add cycles inflate `numLeaves`
+    // without ever growing the roster.
+    assert.deepStrictEqual(converted.nextFreeSeats, [2, 4, 8]);
+});
+
+it("forNewMembers serves the nodes an addition to those seats needs", async () => {
+    const {big, group8} = bigGroup(["janek", "alice", "", "carol", "dave", "erin", "frank", ""]);
+    const plain = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    const withSeats = new GroupConverter().convertGroup(
+        alice, group8, {tree: big, history: state().history}, "path", undefined, 2,
+    );
+    assert.deepStrictEqual(withSeats.nextFreeSeats, [2, 7]);
+    // Still a path view, just a wider one: the caller's climb plus what seating those two needs.
+    assert.strictEqual(withSeats.treeScope, "path");
+    assert.ok(
+        (withSeats.treeNodes?.length ?? 0) > (plain.treeNodes?.length ?? 0),
+        "asking for seats must serve the nodes those seats are planned against",
+    );
+    // No assertion that the window beats the whole tree here: at eight seats two paths plus their copaths cover
+    // nearly all of it. The saving is asymptotic, and `treeScope` staying "path" is what this fixture can show.
+});
+
+it("no seats are reported when nobody asked for any", async () => {
+    const {big, group8} = bigGroup();
+    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    assert.strictEqual(converted.nextFreeSeats, undefined);
+    assert.strictEqual(converted.subjectLeafPositions, undefined);
+});

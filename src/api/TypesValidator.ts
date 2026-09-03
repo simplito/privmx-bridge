@@ -26,6 +26,15 @@ export class TypesValidator {
     /** The largest group the protocol accepts. Every group-shaped limit derives from this one number. */
     static readonly MAX_GROUP_MEMBERS = 16384;
     
+    /**
+     * Members one `groupAddMembers`/`groupRemoveMembers` call may name.
+     *
+     * Deliberately far below `MAX_GROUP_MEMBERS`: the delta a batch carries grows with it, and so does the
+     * validator's work, so an unbounded batch is a request-size and CPU lever a member could pull. 128 covers
+     * "onboard a team" and "clear out a department" while keeping the payload in the hundreds of kilobytes.
+     */
+    static readonly MAX_GROUP_BATCH = 128;
+    
     builder: AdvValidator.ValidatorBuilder;
     checker: AdvValidator.ValidatorChecker;
     
@@ -311,13 +320,14 @@ export class TypesValidator {
             generation: this.intNonNegative,
             publicKey: this.eccPub,
         });
-        // A transition touches one path: `log2(16384) = 14` nodes, and the edges around them. The caps are an
-        // order of magnitude above that, not the 32 768 a whole tree needs.
+        // A transition touches the union of the affected leaves' paths: `log2(16384) = 14` nodes each, fewer once
+        // they overlap. `MAX_GROUP_BATCH * 14` bounds the union, and the caps sit above that — still an order of
+        // magnitude below the 32 768 a whole tree needs.
         this.groupTreeTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
-            blankedPosition: this.intNonNegative,
-            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 128),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
+            blankedPositions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 2048),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
         });
         this.groupTreeSeatedNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
@@ -328,9 +338,9 @@ export class TypesValidator {
         });
         this.groupTreeAdditionTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
-            position: this.intNonNegative,
-            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 128),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 512),
+            positions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 2048),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
         });
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),

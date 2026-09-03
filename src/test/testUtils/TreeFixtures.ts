@@ -185,18 +185,23 @@ export function applyAddition(
  */
 export function applyAdditionWithPathRefresh(
     tree: types.cloud.GroupTreeState,
-    newMember: types.cloud.UserId,
-    position: number,
+    newMember: types.cloud.UserId|types.cloud.UserId[],
+    position: number|number[],
     keyVersion: number,
 ): types.cloud.GroupTreeState {
-    const newNumLeaves = TreeMath.numLeavesToSeat(position, tree.numLeaves);
+    const newMembers = Array.isArray(newMember) ? newMember : [newMember];
+    const positions = Array.isArray(position) ? position : [position];
+    const newNumLeaves = TreeMath.numLeavesToSeatAll(positions, tree.numLeaves);
     const assignment: string[] = [...tree.leafAssignment];
     while (assignment.length < newNumLeaves) {
         assignment.push("");
     }
-    assignment[position] = newMember;
+    positions.forEach((seat, i) => {
+        assignment[seat] = newMembers[i];
+    });
     const generations = new Map(tree.nodes.map(node => [node.nodeIndex, node.generation]));
-    for (const nodeIndex of TreeMath.directPath(position, newNumLeaves)) {
+    // The union again: a node on two newcomers' paths advances one generation, not two.
+    for (const nodeIndex of TreeMath.frontier(positions, newNumLeaves)) {
         generations.set(nodeIndex, (generations.get(nodeIndex) ?? -1) + 1);
     }
     return buildTree(assignment, keyVersion, generations);
@@ -208,14 +213,16 @@ export function applyAdditionWithPathRefresh(
  */
 export function additionTransition(
     tree: types.cloud.GroupTreeState,
-    newMember: types.cloud.UserId,
-    position: number,
+    newMember: types.cloud.UserId|types.cloud.UserId[],
+    position: number|number[],
     keyVersion: number,
 ): types.cloud.GroupTreeAdditionTransition {
-    const numLeaves = TreeMath.numLeavesToSeat(position, tree.numLeaves);
-    const path = TreeMath.directPath(position, numLeaves);
+    const newMembers = Array.isArray(newMember) ? newMember : [newMember];
+    const positions = Array.isArray(position) ? position : [position];
+    const numLeaves = TreeMath.numLeavesToSeatAll(positions, tree.numLeaves);
+    const frontier = TreeMath.frontier(positions, numLeaves);
     const stored = new Map(tree.nodes.map(node => [node.nodeIndex, node]));
-    const seatedNodes: types.cloud.GroupTreeSeatedNode[] = path.map(nodeIndex => {
+    const seatedNodes: types.cloud.GroupTreeSeatedNode[] = frontier.map(nodeIndex => {
         const current = stored.get(nodeIndex);
         const generation = current === undefined ? 0 : current.generation + 1;
         return {
@@ -232,10 +239,12 @@ export function additionTransition(
     while (seating.length < numLeaves) {
         seating.push("" as types.cloud.UserId);
     }
-    seating[position] = newMember;
+    positions.forEach((seat, i) => {
+        seating[seat] = newMembers[i];
+    });
     
     const edges: types.cloud.GroupTreeEdge[] = [];
-    for (const parentIndex of path) {
+    for (const parentIndex of frontier) {
         for (const childIndex of TreeMath.children(parentIndex, numLeaves)) {
             if (TreeMath.isLeaf(childIndex)) {
                 const holder = seating[TreeMath.leafPosition(childIndex)];
@@ -271,7 +280,7 @@ export function additionTransition(
         childGeneration: generationOf(rootIndex),
         data: "wrap:grant->root" as types.core.UserKeyData,
     });
-    return {baseKeyVersion: keyVersion, position, seatedNodes, edges};
+    return {baseKeyVersion: keyVersion, positions, seatedNodes, edges};
 }
 
 /** Real ECC keys in an addition delta, for the paths where the API validator insists on them. */
@@ -309,12 +318,15 @@ export function withNodeKeys(
  */
 export function removalTransition(
     tree: types.cloud.GroupTreeState,
-    position: number,
+    position: number|number[],
     baseKeyVersion: number,
 ): types.cloud.GroupTreeTransition {
-    const path = TreeMath.directPath(position, tree.numLeaves);
+    const positions = Array.isArray(position) ? position : [position];
+    // The union, so a shared ancestor of two departing members is refreshed once — which is what the bridge
+    // requires and what makes a batch cheaper than the removals done one at a time.
+    const frontier = TreeMath.frontier(positions, tree.numLeaves);
     const generationOf = (nodeIndex: number) => tree.nodes.find(n => n.nodeIndex === nodeIndex)?.generation ?? 0;
-    const refreshedNodes = path.map(nodeIndex => ({
+    const refreshedNodes = frontier.map(nodeIndex => ({
         nodeIndex,
         fromGeneration: generationOf(nodeIndex),
         generation: generationOf(nodeIndex) + 1,
@@ -322,14 +334,16 @@ export function removalTransition(
     }));
     const newGenerationOf = (nodeIndex: number) =>
         refreshedNodes.find(n => n.nodeIndex === nodeIndex)?.generation ?? generationOf(nodeIndex);
-    const blankedLeaf = TreeMath.leafNode(position);
+    const blankedLeaves = new Set(positions.map(p => TreeMath.leafNode(p)));
     const seating = [...tree.leafAssignment];
-    seating[position] = "" as types.cloud.UserId;
+    for (const p of positions) {
+        seating[p] = "" as types.cloud.UserId;
+    }
     
     const edges: types.cloud.GroupTreeEdge[] = [];
-    for (const parentIndex of path) {
+    for (const parentIndex of frontier) {
         for (const childIndex of TreeMath.children(parentIndex, tree.numLeaves)) {
-            if (childIndex === blankedLeaf) {
+            if (blankedLeaves.has(childIndex)) {
                 continue;
             }
             if (TreeMath.isLeaf(childIndex)) {
@@ -365,7 +379,7 @@ export function removalTransition(
         childGeneration: newGenerationOf(rootIndex),
         data: "wrap:grant->root" as types.core.UserKeyData,
     });
-    return {baseKeyVersion, blankedPosition: position, refreshedNodes, edges};
+    return {baseKeyVersion, blankedPositions: positions, refreshedNodes, edges};
 }
 
 /** Swaps the placeholder keys of a transition's refreshed nodes, as `withNodeKeys` does for a whole tree. */

@@ -125,32 +125,42 @@ export interface GroupCreateModel {
     tree: types.cloud.GroupTreeState;
 }
 
-/**
- * Adds one member to a tree-backed group. Deliberately *not* an update to `users`: the point of the tree is
- * that a member can be added without advancing the epoch, and that is only checkable against a named seat.
- */
-export interface GroupAddMemberModel {
-    id: types.group.GroupId;
+export interface GroupAddMemberEntry {
     userId: types.cloud.UserId;
     role: types.cloud.ContainerRole;
-    /** Leaf position the newcomer takes — a blank left by a removal, or the next free position. */
-    position: number;
+}
+
+/**
+ * Adds members to a tree-backed group. Deliberately *not* an update to `users`: the point of the tree is that a
+ * member can be added without advancing the epoch, and that is only checkable against a named seat.
+ */
+export interface GroupAddMembersModel {
+    id: types.group.GroupId;
+    /** The newcomers, index-aligned with `transition.positions` — that list is the only place a seat is named.
+     *  One or many: seating several at once is not n additions batched, it is one delta over their union. */
+    members: GroupAddMemberEntry[];
     keyId: types.core.KeyId;
     data: types.group.GroupData;
-    /** The delta: the new leaf's path re-keyed, `O(log n)` to build, send and check. */
+    /** The delta: the new leaves' paths re-keyed, `O(k log n)` to build, send and check — and less than that
+     *  when the seats are neighbours, because the shared ancestors are re-keyed once. */
     transition: types.cloud.GroupTreeAdditionTransition;
     /** Guards against computing the tree against a state a concurrent removal has already replaced. */
     expectedKeyVersion: number;
 }
 
 /**
- * Removes one member from a tree-backed group, in a single operation that must do all of it at once: blank the
- * leaf, refresh the leaf's direct path, rotate the grant keypair (advancing the epoch), and supply the rungs
- * that keep the older epochs reachable from the new one.
+ * Removes members from a tree-backed group, in a single operation that must do all of it at once: blank the
+ * leaves, refresh the union of their direct paths, rotate the grant keypair (advancing the epoch **once**), and
+ * supply the rungs that keep the older epochs reachable from the new one.
+ *
+ * Removing several in one call is not a convenience: done one at a time, each removal advances the epoch on its
+ * own, so every container the group can read goes stale `k` times and the group's rotation budget is charged `k`
+ * times. One batch is one epoch.
  */
-export interface GroupRemoveMemberModel {
+export interface GroupRemoveMembersModel {
     id: types.group.GroupId;
-    userId: types.cloud.UserId;
+    /** The members leaving. The bridge derives their seats from the roster; the transition only has to agree. */
+    userIds: types.cloud.UserId[];
     groupPubKey: types.cloud.GroupPubKey;
     keyId: types.core.KeyId;
     data: types.group.GroupData;
@@ -211,7 +221,7 @@ export interface GroupCreateResult {
 
 /**
  * Updates the group's metadata. Membership is **not** here: moving a member moves the tree, so it goes through
- * `groupAddMember`/`groupRemoveMember`, which is the only place a seat and its keys change together.
+ * `groupAddMembers`/`groupRemoveMembers`, which is the only place a seat and its keys change together.
  */
 export interface GroupUpdateModel {
     id: types.group.GroupId;
@@ -271,22 +281,25 @@ export interface GroupGetModel {
     /** Defaults to `path`. */
     scope?: GroupTreeScope;
     /**
-     * Also serve the path and copath of this member's seat.
+     * Also serve the paths and copaths of these members' seats.
      *
-     * Planning a removal needs the *subject's* path, not the caller's — a manager removing somebody sits
+     * Planning a removal needs the *subjects'* paths, not the caller's — a manager removing somebody sits
      * elsewhere in the tree. Without this a manager has no `O(log n)` option and has to ask for `full`, which is
-     * the cost the path view exists to avoid.
+     * the cost the path view exists to avoid. A list, because a batch removal is planned against the union of
+     * every departing member's path.
      */
-    forUserId?: types.cloud.UserId;
+    forUserIds?: types.cloud.UserId[];
     /**
-     * Also serve what seating a newcomer at this position needs.
+     * Ask the bridge to allocate this many seats for newcomers and serve the view an addition to them needs.
      *
-     * An addition re-keys the new leaf's path and wraps each new key to the subtrees beside it, so it needs those
-     * subtrees' *public* keys — and the caller cannot know which seat that is before reading `leafAssignment`,
-     * which every scope carries. Evaluated in the geometry seating it would produce, so appending past the last
-     * leaf serves the nodes that growth re-parents.
+     * Returned in `nextFreeSeats`, lowest-blank-first and then appended, which is the only order the tree
+     * accepts. Without this a client has to download `leafAssignment` — `O(members)` — purely to find out where
+     * a newcomer may sit, then come back for the node window around that seat.
+     *
+     * The seats can be taken by a concurrent addition before the request that uses them lands; that is what
+     * `expectedKeyVersion` is for, and the client retries against the winner's state.
      */
-    forPosition?: number;
+    forNewMembers?: number;
     /**
      * Serve history from this version on. A client verifies the signed chain once and remembers where it got to;
      * everything below that it already holds, and each entry carries the roster it was written with. Absent means
@@ -336,13 +349,18 @@ export interface GroupDataEntry {
     data: types.group.GroupData;
 }
 
-/** A group version record. The membership signature + chain link is committed inside the opaque `data`
- *  (endpoint DIO) and verified client-side; the bridge stores it but does not interpret it. */
+/**
+ * A group version record.
+ *
+ * No roster: the membership change is committed as a signed delta inside the opaque `data` (endpoint DIO) and
+ * replayed client-side. The bridge used to denormalise the whole roster onto every entry so a client could
+ * cross-check it, which made the history `O(members x versions)` for a value the bridge never reads and has no
+ * say in. What it does assert per entry — `keyId`, `groupPubKey` — is still here, and the resulting roster is
+ * checked against the head.
+ */
 export interface GroupHistoryEntryInfo {
     keyId: types.core.KeyId;
     groupPubKey: types.cloud.GroupPubKey;
-    users: types.cloud.UserId[];
-    managers: types.cloud.UserId[];
     created: types.core.Timestamp;
     author: types.cloud.UserId;
     confirmationTag?: types.core.Base64;
@@ -379,6 +397,14 @@ export interface GroupInfo {
      * having to know its own user id to find its seat. Absent for a caller holding no seat.
      */
     ownLeafPosition?: number;
+    /**
+     * Where each `forUserIds` entry sits, in the order asked for. The bridge resolves them anyway to serve their
+     * paths, so handing them back is what lets a manager plan a removal without reading `leafAssignment` to find
+     * the seats itself. Members holding no seat are omitted, so a short list means somebody was not seated.
+     */
+    subjectLeafPositions?: number[];
+    /** Seats the bridge allocated for `forNewMembers`, ascending — what an addition names as its positions. */
+    nextFreeSeats?: number[];
     treeNodes: types.cloud.GroupTreeNode[];
     treeEdges: types.cloud.GroupTreeEdge[];
     /** Which of the two views the tree fields above hold. */
@@ -430,8 +456,8 @@ export interface IContextApi {
     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
     groupGet(model: GroupGetModel): Promise<GroupGetResult>;
     groupList(model: GroupListModel): Promise<GroupListResult>;
-    groupAddMember(model: GroupAddMemberModel): Promise<types.core.OK>;
-    groupRemoveMember(model: GroupRemoveMemberModel): Promise<types.core.OK>;
+    groupAddMembers(model: GroupAddMembersModel): Promise<types.core.OK>;
+    groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;

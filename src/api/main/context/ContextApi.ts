@@ -106,7 +106,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type, model.fromVersion);
         this.requestLogger.setContextId(group.contextId);
         return {group: this.groupConverter.convertGroup(
-            cloudUser.getUser(group.contextId), group, state, model.scope ?? "path", model.forUserId, model.forPosition,
+            cloudUser.getUser(group.contextId), group, state, model.scope ?? "path", model.forUserIds, model.forNewMembers,
         )};
     }
     
@@ -119,17 +119,17 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     @ApiMethod({})
-    async groupAddMember(model: contextApi.GroupAddMemberModel): Promise<types.core.OK> {
+    async groupAddMembers(model: contextApi.GroupAddMembersModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.addMember(cloudUser, model);
+        const group = await this.groupService.addMembers(cloudUser, model);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }
     
     @ApiMethod({})
-    async groupRemoveMember(model: contextApi.GroupRemoveMemberModel): Promise<types.core.OK> {
+    async groupRemoveMembers(model: contextApi.GroupRemoveMembersModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.removeMember(cloudUser, model);
+        const group = await this.groupService.removeMembers(cloudUser, model);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }

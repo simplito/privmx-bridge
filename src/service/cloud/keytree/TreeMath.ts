@@ -265,6 +265,29 @@ export class TreeMath {
         return TreeMath.root(next) !== TreeMath.root(currentNumLeaves);
     }
     
+    /**
+     * Union of several leaves' direct paths, ascending — the node set a batch operation must refresh.
+     *
+     * Nearby leaves share ancestors, so this is strictly smaller than the paths concatenated, and that is the
+     * whole point: a shared ancestor has to be refreshed **once**. Refreshing it once per leaf would mean two
+     * keys claiming the same node and generation, and whichever landed last would orphan the other's edges.
+     */
+    static frontier(positions: number[], numLeaves: number): number[] {
+        const nodes = new Set<number>();
+        for (const position of positions) {
+            for (const nodeIndex of TreeMath.directPath(position, numLeaves)) {
+                nodes.add(nodeIndex);
+            }
+        }
+        return [...nodes].sort((a, b) => a - b);
+    }
+    
+    /** Leaves needed to seat every one of `positions`. Order-independent: seating is only ever an append, so
+     *  this is `max(currentNumLeaves, highest position + 1)` however the batch is ordered. */
+    static numLeavesToSeatAll(positions: number[], currentNumLeaves: number): number {
+        return Math.max(currentNumLeaves, ...positions.map(position => position + 1));
+    }
+    
     // ── Guards ───────────────────────────────────────────────────────────────
     
     private static assertNumLeaves(numLeaves: number): void {

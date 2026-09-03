@@ -54,7 +54,7 @@ export class ContextApiValidator extends BaseValidator {
             policy: this.builder.optional(this.tv.containerPolicy),
             tree: this.tv.groupTreeState,
         }));
-        // Metadata only. Membership moves the tree, so it goes through groupAddMember/groupRemoveMember.
+        // Metadata only. Membership moves the tree, so it goes through groupAddMembers/groupRemoveMembers.
         this.registerMethod("groupUpdate", this.builder.createObject({
             id: this.tv.groupId,
             resourceId: this.builder.optional(this.tv.uuidv4),
@@ -86,9 +86,9 @@ export class ContextApiValidator extends BaseValidator {
             // structure for itself needs it.
             scope: this.builder.optional(this.builder.createEnum(["path", "full"])),
             // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
-            forUserId: this.builder.optional(this.tv.cloudUserId),
-            // The same, for a seat nobody holds yet — what an addition plans against.
-            forPosition: this.builder.optional(this.builder.range(this.builder.int, 0, TypesValidator.MAX_GROUP_MEMBERS - 1)),
+            forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
+            // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
+            forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
             // History from this version on: a warm client asks for what it has not verified yet.
             fromVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
@@ -96,19 +96,21 @@ export class ContextApiValidator extends BaseValidator {
             contextId: this.tv.cloudContextId,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
         }));
-        this.registerMethod("groupAddMember", this.builder.createObject({
+        this.registerMethod("groupAddMembers", this.builder.createObject({
             id: this.tv.groupId,
-            userId: this.tv.cloudUserId,
-            role: this.builder.createEnum(["user", "manager"]),
-            position: this.tv.intNonNegative,
+            // At least one, or the call is a no-op that still appends a history entry and bumps the version.
+            members: this.builder.createListWithRangeLength(this.builder.createObject({
+                userId: this.tv.cloudUserId,
+                role: this.builder.createEnum(["user", "manager"]),
+            }), 1, TypesValidator.MAX_GROUP_BATCH),
             keyId: this.tv.keyId,
             data: this.tv.groupData,
             transition: this.tv.groupTreeAdditionTransition,
             expectedKeyVersion: this.builder.int,
         }));
-        this.registerMethod("groupRemoveMember", this.builder.createObject({
+        this.registerMethod("groupRemoveMembers", this.builder.createObject({
             id: this.tv.groupId,
-            userId: this.tv.cloudUserId,
+            userIds: this.builder.createListWithRangeLength(this.tv.cloudUserId, 1, TypesValidator.MAX_GROUP_BATCH),
             groupPubKey: this.tv.groupPubKey,
             keyId: this.tv.keyId,
             data: this.tv.groupData,

@@ -139,9 +139,10 @@ export interface GroupTreeEdge {
 export interface GroupTreeTransition {
     /** The epoch the client planned against; must still be the group's current one. */
     baseKeyVersion: number;
-    /** Seat being blanked — the removed member must hold it. */
-    blankedPosition: number;
-    /** Nodes on the blanked leaf's direct path, each with the generation it was read at. */
+    /** Seats being blanked — each removed member must hold one. A batch blanks them all in one epoch. */
+    blankedPositions: number[];
+    /** The union of the blanked leaves' direct paths, each node with the generation it was read at. Union, not
+     *  concatenation: a shared ancestor is refreshed once. */
     refreshedNodes: GroupTreeRefreshedNode[];
     /** Edges to install: the ones out of the refreshed nodes, plus the grant edge at the new epoch. */
     edges: GroupTreeEdge[];
@@ -161,9 +162,10 @@ export interface GroupTreeRefreshedNode {
 export interface GroupTreeAdditionTransition {
     /** The epoch the client planned against; must still be the group's current one, and does not advance. */
     baseKeyVersion: number;
-    /** Seat being taken: a blank, or the next position when the tree grows. */
-    position: number;
-    /** Nodes on the new leaf's direct path, in the geometry seating it produces. */
+    /** Seats being taken, one per newcomer and index-aligned with them: a blank, or the next position when the
+     *  tree grows. Appends must be contiguous — a skipped seat is one nothing can reuse. */
+    positions: number[];
+    /** The union of the new leaves' direct paths, in the geometry seating them all produces. */
     seatedNodes: GroupTreeSeatedNode[];
     /** Edges to install: the ones out of the seated nodes, plus the grant edge re-issued to the new root. */
     edges: GroupTreeEdge[];

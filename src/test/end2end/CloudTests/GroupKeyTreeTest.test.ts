@@ -260,7 +260,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
      */
     private async removeMemberByDelta(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId, forUserId: userId});
+        const {group} = await this.apis.contextApi.groupGet({groupId, forUserIds: [userId]});
         assert(group.treeScope === "path", "the delta is meant to be built from a path view");
         const view: types.cloud.GroupTreeState = {
             numLeaves: group.numLeaves!,
@@ -270,9 +270,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         };
         const newEpoch = this.keyVersion + 1;
         const transition = withTransitionNodeKeys(removalTransition(view, position, this.keyVersion), nodeKey);
-        const res = await this.apis.contextApi.groupRemoveMember({
+        const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
@@ -280,7 +280,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupRemoveMember with a transition did not return OK");
+        assert(res === "OK", "groupRemoveMembers with a transition did not return OK");
         this.keyVersion = newEpoch;
         this.version += 1;
         this._removedByDelta = userId;
@@ -314,9 +314,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const current = await this.currentTree();
         const newEpoch = this.keyVersion + 1;
         const transition = withTransitionNodeKeys(removalTransition(current, position, this.keyVersion), nodeKey);
-        const res = await this.apis.contextApi.groupRemoveMember({
+        const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
@@ -331,7 +331,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             },
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupRemoveMember did not return OK");
+        assert(res === "OK", "groupRemoveMembers did not return OK");
         this.keyVersion = newEpoch;
         this.version += 1;
     }
@@ -339,17 +339,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async addMember(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
         const current = await this.currentTree();
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: withAdditionTransitionNodeKeys(additionTransition(current, userId, position, this.keyVersion), nodeKey),
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupAddMember did not return OK");
+        assert(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
@@ -359,23 +357,21 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const transition = withAdditionTransitionNodeKeys(
             additionTransition(current, userId, position, this.keyVersion), nodeKey,
         );
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupAddMember did not return OK");
+        assert(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
     private async addMemberByDelta(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId, forPosition: position});
+        const {group} = await this.apis.contextApi.groupGet({groupId, forNewMembers: 1});
         assert.ok(group.treeScope === "path", "the delta is meant to be built from a path view");
         const view: types.cloud.GroupTreeState = {
             numLeaves: group.numLeaves!,
@@ -386,17 +382,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const transition = withAdditionTransitionNodeKeys(
             additionTransition(view, userId, position, this.keyVersion), nodeKey,
         );
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
         });
-        assert.ok(res === "OK", "groupAddMember did not return OK");
+        assert.ok(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
@@ -569,11 +563,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 nodeIndex: offPath, fromGeneration: 0, generation: 1,
                 publicKey: nodeKey(offPath, 1),
             });
-            await this.apis.contextApi.groupAddMember({
+            await this.apis.contextApi.groupAddMembers({
                 id: this.requireGroupId(),
-                userId: dave,
-                role: "user",
-                position: BOB_POSITION,
+                members: [{userId: dave, role: "user"}],
                 keyId: keyIdAt(this.keyVersion),
                 data: "group-data" as types.group.GroupData,
                 transition: transition,
@@ -695,7 +687,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const transition = withTransitionNodeKeys(
                 removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
             );
-            await this.apis.contextApi.groupRemoveMember({
+            await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 expectedKeyVersion: this.keyVersion - 1,
             });
@@ -712,7 +704,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             // Drop the root from the refresh set: the tree of four has its root at index 3.
             assert(transition.refreshedNodes.some(node => node.nodeIndex === 3), "the root is on the path");
             transition.refreshedNodes = transition.refreshedNodes.filter(node => node.nodeIndex !== 3);
-            await this.apis.contextApi.groupRemoveMember(this.removalPayload(bob, transition));
+            await this.apis.contextApi.groupRemoveMembers(this.removalPayload(bob, transition));
         }, "GROUP_TREE_INVALID");
     }
     
@@ -722,7 +714,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const transition = withTransitionNodeKeys(
                 removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
             );
-            await this.apis.contextApi.groupRemoveMember({
+            await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 rungs: [
                     ...this.rungsFor(this.keyVersion + 1),
@@ -760,7 +752,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const newEpoch = this.keyVersion + 1;
         return {
             id: this.requireGroupId(),
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,

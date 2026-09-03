@@ -24,7 +24,7 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import type { GroupAddMemberModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMemberModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeValidator } from "./keytree/TreeValidator";
 import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
@@ -132,7 +132,7 @@ export class GroupService extends BaseContainerService {
      * Updates the group's metadata: `data`, `keyId`, policy, resource id.
      *
      * Membership is deliberately not here — seating a member and re-keying their path is one operation on the
-     * tree. `addMember`/`removeMember` are the only ways in.
+     * tree. `addMembers`/`removeMembers` are the only ways in.
      */
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, data: types.group.GroupData, keyId: types.core.KeyId,
         version: types.group.GroupVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined,
@@ -216,39 +216,39 @@ export class GroupService extends BaseContainerService {
     // ── Tree-backed membership ──────────────────────────────────────────────────────────────────────────────
     
     /**
-     * Adds a member **without advancing the epoch**, so no container the group can read goes stale.
+     * Adds members **without advancing the epoch**, so no container the group can read goes stale.
      *
      * The bridge's job is to confirm the client did not smuggle anything else into the same call — a moved
-     * member, a node refreshed off the path, a bumped epoch.
+     * member, a node refreshed off the union of the new leaves' paths, a bumped epoch.
+     *
+     * A batch is one delta, not `k` additions applied in turn: the newcomers' paths overlap, so a shared ancestor
+     * is re-keyed once, and the whole thing lands under a single CAS or not at all.
      */
-    async addMember(cloudUser: CloudUser, model: GroupAddMemberModel) {
+    async addMembers(cloudUser: CloudUser, model: GroupAddMembersModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMember", ["groupId=" + model.id]);
-            const managers = model.role === "manager" ? [...oldGroup.managers, model.userId] : oldGroup.managers;
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMembers", ["groupId=" + model.id]);
+            const addedUserIds = model.members.map(member => member.userId);
+            const managers = [...oldGroup.managers, ...model.members.filter(member => member.role === "manager").map(member => member.userId)];
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
-            if (oldGroup.users.includes(model.userId) || oldGroup.managers.includes(model.userId)) {
-                throw new AppException("INVALID_PARAMS", `user '${model.userId}' is already a member`);
+            for (const userId of addedUserIds) {
+                if (oldGroup.users.includes(userId) || oldGroup.managers.includes(userId)) {
+                    throw new AppException("INVALID_PARAMS", `user '${userId}' is already a member`);
+                }
             }
-            if (model.position !== model.transition.position) {
-                // Two fields naming one seat. They are checked against each other rather than one being ignored,
-                // so a client that computed them apart is told so instead of having one of them silently win.
-                throw new AppException("INVALID_PARAMS", `position ${model.position} does not match the transition's ${model.transition.position}`);
-            }
-            this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, [model.userId]).length);
-            this.assertWithinSeatLimit(TreeMath.numLeavesToSeat(model.transition.position, oldGroup.numLeaves));
-            await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, [model.userId]);
-            await this.assertAdditionTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
-            // The newcomer gets no key entry of their own: they climb to the grant key and open the group's
+            this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, addedUserIds).length);
+            this.assertWithinSeatLimit(TreeMath.numLeavesToSeatAll(model.transition.positions, oldGroup.numLeaves));
+            await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, addedUserIds);
+            await this.assertAdditionTransitionIsAcceptable(groupRepository, oldGroup, model.transition, addedUserIds);
+            // The newcomers get no key entries of their own: they climb to the grant key and open the group's
             // single self-addressed metadata entry, the same way every other member does.
-            const result = await groupRepository.addMemberWithTransition({
+            const result = await groupRepository.addMembersWithTransition({
                 oldGroup,
                 transition: model.transition,
                 modifier: user.userId,
-                addedUser: model.userId,
-                role: model.role,
+                addedMembers: model.members.map(member => ({userId: member.userId, role: member.role})),
                 keyId: model.keyId,
                 data: model.data,
             });
@@ -268,33 +268,40 @@ export class GroupService extends BaseContainerService {
      * every container readable with the old grant key; a new epoch without rungs orphans the group's own
      * history; rungs pointing the wrong way would hand the departing member a later key.
      */
-    async removeMember(cloudUser: CloudUser, model: GroupRemoveMemberModel) {
+    async removeMembers(cloudUser: CloudUser, model: GroupRemoveMembersModel) {
         const {group, context, removed} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupRemoveMember", ["groupId=" + model.id]);
-            const managers = oldGroup.managers.filter(u => u !== model.userId);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupRemoveMembers", ["groupId=" + model.id]);
+            const leaving = new Set(model.userIds);
+            const managers = oldGroup.managers.filter(u => !leaving.has(u));
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
-            if (!oldGroup.users.includes(model.userId) && !oldGroup.managers.includes(model.userId)) {
-                throw new AppException("INVALID_PARAMS", `user '${model.userId}' is not a member`);
+            for (const userId of model.userIds) {
+                if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
+                    throw new AppException("INVALID_PARAMS", `user '${userId}' is not a member`);
+                }
             }
-            if (oldGroup.users.length + oldGroup.managers.length <= 1) {
+            // Counted over the distinct roster rather than `users.length + managers.length`: somebody on both
+            // lists would otherwise be counted twice, and a batch can empty the group in one call.
+            const remaining = Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers).filter(u => !leaving.has(u));
+            if (remaining.length < 1) {
                 throw new AppException("INVALID_PARAMS", "cannot remove the last member of a group");
             }
             // A removal advances the epoch, so it is charged against the same per-group budget as an explicit
-            // rotation: the cost falls on every container the group can read, not on the caller.
+            // rotation: the cost falls on every container the group can read, not on the caller. One batch is
+            // one epoch, so it is charged once however many members it removes.
             await this.checkRotationRateLimit(model.id);
             const newKeyVersion = oldGroup.keyVersion + 1;
-            // The transition is checked against the stored path — `O(log n)` read, no whole tree on either side.
-            await this.assertTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userId);
+            // The transition is checked against the stored paths — `O(k log n)` reads, no whole tree either way.
+            await this.assertTransitionIsAcceptable(groupRepository, oldGroup, model.transition, model.userIds);
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
             // The new epoch's metadata key travels as one self-addressed entry, not one wrap per survivor.
-            const result = await groupRepository.removeMemberWithTransition({
+            const result = await groupRepository.removeMembersWithTransition({
                 groupKeys: this.buildSelfAddressedKeys(oldGroup, model.groupKeys, model.keyId, newKeyVersion),
                 oldGroup,
                 modifier: user.userId,
-                removedUser: model.userId,
+                removedUsers: model.userIds,
                 newGroupPubKey: model.groupPubKey,
                 keyId: model.keyId,
                 data: model.data,
@@ -305,11 +312,11 @@ export class GroupService extends BaseContainerService {
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
             }
-            return {group: result, context: usedContext, removed: model.userId};
+            return {group: result, context: usedContext, removed: model.userIds};
         });
         await this.groupRotationRateLimiter.record({key: this.rotationRateLimitKey(model.id)});
-        // The removed member is notified too: their client needs to learn it can stop trying to climb.
-        const additionalUsersToNotify = await this.getUsersWithStatus([removed], context.id, context.solution);
+        // The removed members are notified too: their clients need to learn they can stop trying to climb.
+        const additionalUsersToNotify = await this.getUsersWithStatus(removed, context.id, context.solution);
         this.groupNotificationService.sendUpdatedGroup(group, additionalUsersToNotify, "memberRemoved");
         return group;
     }
@@ -530,15 +537,15 @@ export class GroupService extends BaseContainerService {
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group,
         transition: types.cloud.GroupTreeTransition,
-        removedUser: types.cloud.UserId,
+        removedUsers: types.cloud.UserId[],
     ) {
-        const nodes = await groupRepository.getPathNodes(group, transition.blankedPosition);
+        const nodes = await groupRepository.getPathNodes(group, transition.blankedPositions);
         const problems = TreeTransitionValidator.validateRemoval({
             numLeaves: group.numLeaves,
             leafAssignment: group.leafAssignment,
             keyVersion: group.keyVersion,
             nodes: nodes,
-        }, transition, removedUser);
+        }, transition, removedUsers);
         if (problems.length > 0) {
             throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));
         }
@@ -548,15 +555,15 @@ export class GroupService extends BaseContainerService {
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group,
         transition: types.cloud.GroupTreeAdditionTransition,
-        addedUser: types.cloud.UserId,
+        addedUsers: types.cloud.UserId[],
     ) {
-        const nodes = await groupRepository.getSeatNodes(group, transition.position);
+        const nodes = await groupRepository.getSeatNodes(group, transition.positions);
         const problems = TreeTransitionValidator.validateAddition({
             numLeaves: group.numLeaves,
             leafAssignment: group.leafAssignment,
             keyVersion: group.keyVersion,
             nodes: nodes,
-        }, transition, addedUser);
+        }, transition, addedUsers);
         if (problems.length > 0) {
             throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));
         }

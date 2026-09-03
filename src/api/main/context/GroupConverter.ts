@@ -23,8 +23,8 @@ export class GroupConverter {
         group: db.group.Group,
         state: db.group.GroupState,
         scope: contextApi.GroupTreeScope = "path",
-        forUserId?: types.cloud.UserId,
-        forPosition?: number,
+        forUserIds?: types.cloud.UserId[],
+        forNewMembers?: number,
     ): contextApi.GroupInfo {
         const res: contextApi.GroupInfo = {
             id: group.id,
@@ -47,7 +47,7 @@ export class GroupConverter {
             // actually given instead of trusting its own arithmetic.
             firstServedVersion: state.history[0]?.version ?? group.version,
             groupKeys: group.groupKeys ?? [],
-            ...this.treeState(group, state.tree, user, scope, forUserId, forPosition),
+            ...this.treeState(group, state.tree, user, scope, forUserIds, forNewMembers),
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
@@ -85,16 +85,19 @@ export class GroupConverter {
         tree: types.cloud.GroupTreeState,
         user: types.cloud.UserId,
         scope: contextApi.GroupTreeScope,
-        forUserId?: types.cloud.UserId,
-        forPosition?: number,
+        forUserIds?: types.cloud.UserId[],
+        forNewMembers?: number,
     ) {
         const position = tree.leafAssignment.indexOf(user);
-        const subject = forUserId === undefined ? -1 : tree.leafAssignment.indexOf(forUserId);
+        const subjects = (forUserIds ?? [])
+            .map(userId => tree.leafAssignment.indexOf(userId))
+            .filter(seat => seat >= 0);
+        const seats = forNewMembers === undefined ? [] : GroupConverter.allocateSeats(tree, forNewMembers);
         // A caller with no seat has no path to serve, so they get the whole structure.
         const full = scope === "full" || position < 0;
         const view = full
             ? tree
-            : GroupConverter.pathView(tree, position, subject >= 0 ? subject : undefined, forPosition);
+            : GroupConverter.pathView(tree, position, subjects, seats);
         return {
             numLeaves: tree.numLeaves,
             leafAssignment: tree.leafAssignment,
@@ -103,8 +106,31 @@ export class GroupConverter {
             treeEdges: view.edges,
             treeScope: (full ? "full" : "path") as contextApi.GroupTreeScope,
             ...(position >= 0 ? {ownLeafPosition: position} : {}),
+            // Handed back so the caller does not have to find them in `leafAssignment` itself — the bridge
+            // already resolved them to decide which nodes to serve.
+            ...(forUserIds === undefined ? {} : {subjectLeafPositions: subjects}),
+            ...(forNewMembers === undefined ? {} : {nextFreeSeats: seats}),
             ...(group.archivePrunedBelow !== undefined ? {archivePrunedBelow: group.archivePrunedBelow} : {}),
         };
+    }
+    
+    /**
+     * Seats for `count` newcomers: the blanks a removal left, lowest first, then appended past the last leaf.
+     *
+     * The same order the tree itself enforces — appends have to be contiguous, and reusing a blank keeps
+     * `numLeaves` from creeping up over remove/add cycles.
+     */
+    private static allocateSeats(tree: types.cloud.GroupTreeState, count: number): number[] {
+        const seats: number[] = [];
+        for (let position = 0; position < tree.numLeaves && seats.length < count; position++) {
+            if (!tree.leafAssignment[position]) {
+                seats.push(position);
+            }
+        }
+        for (let position = tree.numLeaves; seats.length < count; position++) {
+            seats.push(position);
+        }
+        return seats;
     }
     
     /**
@@ -116,16 +142,17 @@ export class GroupConverter {
     private static pathView(
         tree: types.cloud.GroupTreeState,
         position: number,
-        subjectPosition?: number,
-        seatPosition?: number,
+        subjectPositions: number[] = [],
+        seatPositions: number[] = [],
     ): types.cloud.GroupTreeState {
         const path = TreeMath.directPath(position, tree.numLeaves);
         const copath = TreeMath.copath(position, tree.numLeaves);
         const onPath = new Set(path);
         const needed = new Set([...path, ...copath]);
-        if (subjectPosition !== undefined) {
-            // A removal is planned against the subject's path: their nodes get new keys, and each new key is
-            // re-wrapped to the subtrees on their copath, whose *public* keys are needed for that.
+        for (const subjectPosition of subjectPositions) {
+            // A removal is planned against the subjects' paths: their nodes get new keys, and each new key is
+            // re-wrapped to the subtrees on their copaths, whose *public* keys are needed for that. A batch needs
+            // every departing member's, because one delta covers the union of them.
             for (const nodeIndex of TreeMath.directPath(subjectPosition, tree.numLeaves)) {
                 needed.add(nodeIndex);
             }
@@ -133,17 +160,20 @@ export class GroupConverter {
                 needed.add(nodeIndex);
             }
         }
-        if (seatPosition !== undefined) {
-            // An addition is planned against a seat nobody holds yet, in the geometry seating it would produce:
+        if (seatPositions.length > 0) {
+            // An addition is planned against seats nobody holds yet, in the geometry seating them would produce:
             // appending past the last leaf re-parents nodes along the truncated right edge, and the new keys are
-            // wrapped to whatever ends up beside them. Indices outside the tree as it stands are simply absent
-            // from `nodes`, so asking for them costs nothing.
-            const grown = TreeMath.numLeavesToSeat(seatPosition, tree.numLeaves);
-            for (const nodeIndex of TreeMath.directPath(seatPosition, grown)) {
-                needed.add(nodeIndex);
-            }
-            for (const nodeIndex of TreeMath.copath(seatPosition, grown)) {
-                needed.add(nodeIndex);
+            // wrapped to whatever ends up beside them. Evaluated once for the whole batch, because seating them
+            // one at a time and seating them together do not give the same geometry. Indices outside the tree as
+            // it stands are simply absent from `nodes`, so asking for them costs nothing.
+            const grown = TreeMath.numLeavesToSeatAll(seatPositions, tree.numLeaves);
+            for (const seatPosition of seatPositions) {
+                for (const nodeIndex of TreeMath.directPath(seatPosition, grown)) {
+                    needed.add(nodeIndex);
+                }
+                for (const nodeIndex of TreeMath.copath(seatPosition, grown)) {
+                    needed.add(nodeIndex);
+                }
             }
         }
         const holder = tree.leafAssignment[position];
@@ -181,8 +211,6 @@ export class GroupConverter {
         const res: contextApi.GroupHistoryEntryInfo = {
             keyId: entry.keyId,
             groupPubKey: entry.groupPubKey,
-            users: entry.users,
-            managers: entry.managers,
             created: entry.created,
             author: entry.author,
         };
