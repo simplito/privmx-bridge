@@ -89,7 +89,8 @@ export class ContextApiValidator extends BaseValidator {
             forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
             // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
             forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
-            // History from this version on: a warm client asks for what it has not verified yet.
+            // History from this version on — the audit trail. Absent serves the head alone, which is all a read
+            // needs; asking for more is a choice, because each entry is a full metadata envelope.
             fromVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
         this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {

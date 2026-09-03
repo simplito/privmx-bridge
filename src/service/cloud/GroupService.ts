@@ -202,7 +202,7 @@ export class GroupService extends BaseContainerService {
             });
             if (!result) {
                 const winner = await groupRepository.get(model.id);
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(winner!));
+                throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, winner!));
             }
             return result;
         });
@@ -253,7 +253,7 @@ export class GroupService extends BaseContainerService {
                 data: model.data,
             });
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
+                throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -310,7 +310,7 @@ export class GroupService extends BaseContainerService {
                 ...(model.confirmationTag ? {confirmationTag: model.confirmationTag} : {}),
             });
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
+                throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext, removed: model.userIds};
         });
@@ -343,7 +343,7 @@ export class GroupService extends BaseContainerService {
             }
             const result = await groupRepository.cutEra(oldGroup, model.newFloor);
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
+                throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -369,7 +369,7 @@ export class GroupService extends BaseContainerService {
             }
             const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData((await groupRepository.get(model.id))!));
+                throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
             }
             return {group: result, context: usedContext};
         });
@@ -407,7 +407,7 @@ export class GroupService extends BaseContainerService {
             // state lets it recompute instead of guessing — but only to somebody who belongs here: this runs
             // before the caller has passed any other gate, and the payload carries the group's key material.
             await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
-            throw new AppException("ROTATED_ALREADY", this.buildRotatedAlreadyData(group));
+            throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, group));
         }
         return group;
     }
@@ -625,14 +625,31 @@ export class GroupService extends BaseContainerService {
     
     /** What a caller who lost the race needs to recompute against the winner. `winnerKeyEntry` is the group's
      *  own self-addressed entry at the winning epoch — whoever can climb to the new grant key can open it. */
-    private buildRotatedAlreadyData(winner: db.group.Group): RotatedAlreadyData {
+    /**
+     * What a loser of a CAS race needs to adopt the winner's epoch instead of retrying blind.
+     *
+     * The confirmation tag comes from the winning *version's* history entry, not from the group document — that
+     * is the only place it is stored. One extra read, on an error path, and without it the loser cannot tell an
+     * honest winner from a bridge steering it onto an epoch of the bridge's choosing: the tag is
+     * `HMAC(winner's metadata key, ...)`, which only a member could have produced.
+     *
+     * Absent when the winner was written by a client that sent none. The loser then refuses to adopt, which is
+     * the right way round — an unverifiable epoch is not a smaller answer, it is one that cannot be checked.
+     */
+    private async buildRotatedAlreadyData(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        winner: db.group.Group,
+    ): Promise<RotatedAlreadyData> {
         const winnerKeyEntry = (winner.groupKeys ?? [])
             .flatMap(entry => entry.keys)
             .find(k => k.keyId === winner.keyId);
+        // `fromVersion` is a lower bound, so asking from the head version returns exactly the head entry.
+        const [headEntry] = await groupRepository.getHistory(winner.id, winner.version);
         return {
             keyVersion: winner.keyVersion,
             groupPubKey: winner.groupPubKey,
             winnerKeyEntry: winnerKeyEntry ?? {keyId: winner.keyId, data: "" as types.core.UserKeyData},
+            ...(headEntry?.confirmationTag ? {confirmationTag: headEntry.confirmationTag} : {}),
         };
     }
     

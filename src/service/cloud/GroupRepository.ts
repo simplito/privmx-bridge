@@ -163,8 +163,8 @@ export class GroupRepository {
         return this.state.getTree(group);
     }
     
-    async getHistory(groupId: types.group.GroupId): Promise<db.group.GroupHistoryEntry[]> {
-        return this.state.getHistory(groupId);
+    async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
+        return this.state.getHistory(groupId, fromVersion);
     }
     
     /** Every keyId the group has ever used — what a submitted key entry is checked against. */

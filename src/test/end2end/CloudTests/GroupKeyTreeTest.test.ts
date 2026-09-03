@@ -184,9 +184,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldServeOnlyTheHistoryTheClientIsMissing() {
-        // A client verifies the signed chain once and remembers where it got to; re-sending what it has already
-        // verified is pure weight, since each entry carries the roster it was written with.
+    async shouldServeOnlyTheHeadUnlessAskedForTheTrail() {
+        // A read verifies the head and nothing else, so the head is what a read gets. The trail is one full
+        // metadata envelope per version — real weight, and only an audit has a reason to carry it.
         await this.addMembersToContext([alice, bob, carol, dave]);
         await this.createTreeBackedGroup();
         await this.removeMember(bob, BOB_POSITION);
@@ -649,23 +649,32 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async verifyHistoryIsWindowed() {
         const groupId = this.requireGroupId();
-        const {group: whole} = await this.apis.contextApi.groupGet({groupId});
-        assert.ok(whole.history.length === 3, `three versions so far, got ${whole.history.length}`);
-        assert.ok(whole.firstServedVersion === 1, "no parameter means from genesis");
+        // No parameter is the head alone. Every entry is a full metadata envelope, so serving the trail by
+        // default would make each read grow with the group's age — and nothing on the read path replays it:
+        // the head attests the roster, and an older epoch's key comes down the ladder, not out of an old entry.
+        const {group: head} = await this.apis.contextApi.groupGet({groupId});
+        assert.ok(head.history.length === 1, `no parameter serves the head alone, got ${head.history.length}`);
+        assert.ok(head.data.length === 1, "the data array carries the head alone too");
+        assert.ok(head.firstServedVersion === head.version,
+            `the head is version ${head.version}, said ${head.firstServedVersion}`);
+        
+        // The audit trail is what `fromVersion` is for, and asking for it costs what it costs.
+        const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromVersion: 1});
+        assert.ok(trail.history.length === 3, `three versions so far, got ${trail.history.length}`);
+        assert.ok(trail.firstServedVersion === 1, "asking from 1 means from genesis");
+        const sizeOf = (g: unknown) => JSON.stringify(g).length;
+        assert.ok(sizeOf(head) < sizeOf(trail), `head ${sizeOf(head)} B is not smaller than the trail ${sizeOf(trail)} B`);
         
         const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromVersion: 3});
         assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
         assert.ok(windowed.firstServedVersion === 3, `window starts at 3, said ${windowed.firstServedVersion}`);
-        assert.ok(windowed.data.length === 1, "the data array is windowed the same way");
-        assert.ok(windowed.version === whole.version, "the head version is unchanged by windowing");
-        const sizeOf = (g: unknown) => JSON.stringify(g).length;
-        assert.ok(sizeOf(windowed) < sizeOf(whole), `windowed ${sizeOf(windowed)} B is not smaller than ${sizeOf(whole)} B`);
+        assert.ok(windowed.version === trail.version, "the head version is unchanged by windowing");
         
         // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
         const {group: past} = await this.apis.contextApi.groupGet({groupId, fromVersion: 99});
         assert.ok(past.history.length === 1 && past.data.length === 1,
             `asking past the head must still serve the head, got ${past.history.length} entries`);
-        assert.ok(past.firstServedVersion === whole.version, `the head is version ${whole.version}, said ${past.firstServedVersion}`);
+        assert.ok(past.firstServedVersion === trail.version, `the head is version ${trail.version}, said ${past.firstServedVersion}`);
     }
     
     private async verifyListingCarriesNoState() {

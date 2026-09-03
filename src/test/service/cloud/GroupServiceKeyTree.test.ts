@@ -53,6 +53,8 @@ const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "SomeKeyId" as types.core.KeyId;
 const newKeyId = "AnotherKeyId" as types.core.KeyId;
+/** What the winner of a CAS race committed, so a loser can tell an honest winner from a bridge inventing one. */
+const WINNER_TAG = "d29ubmVyLXRhZw==" as types.core.Base64;
 const data = "SomeGroupData" as types.group.GroupData;
 
 const janekKeys = ECUtils.generateKeyPair();
@@ -136,7 +138,8 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
     };
 }
 
-function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number} = {}) {
+function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number,
+    headEntry?: Partial<db.group.GroupHistoryEntry>|null} = {}) {
     let archiveWindow: {from?: number, to?: number}|null = null;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -169,6 +172,10 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     // The tree and the keyIds come from their own collections now; the service asks the repository for them.
     mock(groupRepository, "getTree", async () => group.tree);
     mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
+    // The confirmation tag lives on the winning version's history entry, which is where a lost CAS race reads it.
+    mock(groupRepository, "getHistory", (async () => options.headEntry === null ? [] : [
+        options.headEntry ?? {confirmationTag: WINNER_TAG},
+    ]) as never);
     mock(groupRepository, "getRootNode", (async () =>
         group.tree.nodes.find(n => n.nodeIndex === TreeMath.root(group.numLeaves))) as never);
     mock(groupRepository, "getArchiveRungs", (async (_id: types.group.GroupId, from?: number, to?: number) => {
@@ -835,4 +842,28 @@ it("addMembers refuses more members than the transition seats", async () => {
         ...model, members: [model.members[0]],
     }));
     hasNoCalls(groupRepository.addMembersWithTransition);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// what a lost race hands back
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("a lost race hands back the winner's confirmation tag, not just its epoch", async () => {
+    // Without it the loser has to take the bridge's word for which epoch won, and adopting a fabricated one
+    // means re-wrapping against a key the bridge chose. The tag comes off the winning version's history entry.
+    const group = treeBackedGroup();
+    const {groupService} = createGroupService(group, {casMiss: true});
+    const error = await expectFailure("ROTATED_ALREADY", () => groupService.removeMembers(janekCloudUser, removalModel(group, 2)));
+    const payload = error.getData() as {confirmationTag?: string, keyVersion: number};
+    assert.strictEqual(payload.confirmationTag, WINNER_TAG);
+    assert.strictEqual(payload.keyVersion, EPOCH);
+});
+
+it("a winner written without a tag says so rather than inventing one", async () => {
+    // Absent is the honest answer, and the endpoint refuses to adopt an epoch it cannot check — which is the
+    // right way round: an unverifiable epoch is not a smaller answer, it is one nobody can check.
+    const group = treeBackedGroup();
+    const {groupService} = createGroupService(group, {casMiss: true, headEntry: {}});
+    const error = await expectFailure("ROTATED_ALREADY", () => groupService.removeMembers(janekCloudUser, removalModel(group, 2)));
+    assert.strictEqual((error.getData() as {confirmationTag?: string}).confirmationTag, undefined);
 });

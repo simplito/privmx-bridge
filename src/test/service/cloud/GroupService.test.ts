@@ -159,6 +159,8 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
     // Phase 2 (epochs/CAS): default mocks — success path.
     mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
+    // A lost CAS race reads the winning version's history entry for its confirmation tag.
+    mock(groupRepository, "getHistory", (async () => []) as never);
     mock(groupRepository, "getTree", async () => tree);
     mock(groupRepository, "getRootNode", (async () => tree.nodes[tree.nodes.length - 1]) as never);
     mock(groupRepository, "casRotate", (async () => true) as never);

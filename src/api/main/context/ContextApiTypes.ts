@@ -259,6 +259,13 @@ export interface RotatedAlreadyData {
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
     winnerKeyEntry: types.core.KeyEntry;
+    /**
+     * `HMAC(winner's metadata key, ...)` from the winning version's history entry — what lets the loser tell an
+     * honest winner from a bridge steering it onto an epoch of the bridge's choosing. Only a member could have
+     * produced it. Absent when the winner was written without one, and a loser that cannot check it must refuse
+     * to adopt rather than trust the rest of this payload.
+     */
+    confirmationTag?: types.core.Base64;
 }
 
 export interface GroupDeleteModel {
@@ -301,9 +308,14 @@ export interface GroupGetModel {
      */
     forNewMembers?: number;
     /**
-     * Serve history from this version on. A client verifies the signed chain once and remembers where it got to;
-     * everything below that it already holds, and each entry carries the roster it was written with. Absent means
-     * from genesis, which is what a client seeing the group for the first time needs.
+     * Serve history from this version on — the audit trail, and the only way to ask for it.
+     *
+     * Absent means the head entry alone, which is everything a read needs: the head carries the current `data`,
+     * names the current keyId, and attests the roster. Nothing verifies by replaying what came before, and an
+     * older epoch's grant key comes down the Epoch Ladder (`groupGetKeyArchive`), not out of an old entry.
+     *
+     * The default is deliberately the smallest useful answer rather than everything: a group's history holds one
+     * full metadata envelope per version, so serving it all would make every read grow with the group's age.
      */
     fromVersion?: number;
 }
@@ -386,7 +398,8 @@ export interface GroupInfo {
     history: GroupHistoryEntryInfo[];
     /**
      * Version of the first entry in `data` and `history`. Always present, so a client can tell what it was given
-     * rather than assuming: 1 means from genesis, anything higher means the response is a window.
+     * rather than assuming. Equal to `version` when the response carries the head alone, which is the default;
+     * lower when `fromVersion` asked for the audit trail.
      */
     firstServedVersion: types.group.GroupVersion;
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────

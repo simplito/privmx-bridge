@@ -96,18 +96,29 @@ export class GroupStateRepository {
         };
     }
     
-    /** History entries of one group, optionally only those from `fromVersion` on. No parameter means from
-     *  genesis, which is what `firstServedVersion === 1` reports back. */
+    /**
+     * The head entry by default; older ones only when asked for.
+     *
+     * A read needs exactly one entry — the head carries the group's current `data`, names the current keyId, and
+     * carries the tag that attests the roster. Nothing verifies by walking what came before: the chain that used
+     * to require that is gone, and an older epoch's grant key comes down the Epoch Ladder, not out of an old
+     * entry. So `fromVersion` is how a caller asks for the audit trail, and only an audit does.
+     *
+     * Serving everything by default would make each read cost `O(versions)` envelopes — the group's whole
+     * metadata re-sent once per membership change — to answer a question about one of them.
+     */
     async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
-        const entries = await this.history.query(q => fromVersion === undefined
-            ? q.eq("groupId", groupId)
-            : q.and(q.eq("groupId", groupId), q.gte("version", fromVersion as types.group.GroupVersion)),
+        if (fromVersion === undefined) {
+            return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
+        }
+        const entries = await this.history.query(
+            q => q.and(q.eq("groupId", groupId), q.gte("version", fromVersion as types.group.GroupVersion)),
         ).sort("version", true).array();
-        if (entries.length > 0 || fromVersion === undefined) {
+        if (entries.length > 0) {
             return entries;
         }
-        // The head entry is never windowed out: it carries the group's current `data` and names the current
-        // keyId, so a response without it is not a smaller answer, it is an unusable one.
+        // Asking past the head still serves the head: it carries the current `data` and keyId, so a response
+        // without it is not a smaller answer, it is an unusable one.
         return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
