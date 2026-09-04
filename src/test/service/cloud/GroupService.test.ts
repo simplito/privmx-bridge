@@ -265,15 +265,17 @@ it("Should fail to get a not existing group", async () => {
 
 it("Should update group with a valid version", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, false, undefined, null);
+    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, undefined, null);
     hasOneCall(groupRepository.updateGroup);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
 
-it("Should reject update with a stale version and no force", async () => {
+// There is no force to leave out: a group's entry commits a tag over the version it lands at, so a stale update
+// has nothing it could publish that a client would accept. The check is unconditional.
+it("Should reject update with a stale version", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 99 as types.group.GroupVersion, false, undefined, null);
+        await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 99 as types.group.GroupVersion, undefined, null);
     }
     catch (e) {
         expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
@@ -310,7 +312,7 @@ it("updateGroup touches metadata only, never the roster and never the epoch", as
     // Neither is reachable from here any more: membership moves the tree, so it goes through
     // addMember/removeMember, and rotating the grant key goes through generateNewGroupKey.
     const {groupService, groupRepository} = createGroupService();
-    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, false, undefined, null);
+    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, undefined, null);
     hasOneCall(groupRepository.updateGroup);
     hasNoCalls(groupRepository.casRotate);
 });

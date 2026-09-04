@@ -61,7 +61,6 @@ export class ContextApiValidator extends BaseValidator {
             data: this.tv.groupData,
             keyId: this.tv.keyId,
             version: this.builder.int,
-            force: this.builder.bool,
             policy: this.builder.optional(this.tv.containerPolicy),
         }));
         this.registerMethod("groupGenerateNewKey", this.builder.createObject({
