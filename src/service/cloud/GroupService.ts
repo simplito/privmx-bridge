@@ -135,7 +135,7 @@ export class GroupService extends BaseContainerService {
      * tree. `addMembers`/`removeMembers` are the only ways in.
      */
     async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, data: types.group.GroupData, keyId: types.core.KeyId,
-        version: types.group.GroupVersion, force: boolean, policy: types.cloud.ContainerPolicy|undefined,
+        version: types.group.GroupVersion, policy: types.cloud.ContainerPolicy|undefined,
         resourceId: types.core.ClientResourceId|null) {
         if (policy) {
             this.policyService.validateContainerPolicyForContainer("policy", policy);
@@ -149,7 +149,9 @@ export class GroupService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
             this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, policy);
-            if (oldGroup.version !== version && !force) {
+            // Unconditional, unlike the other containers: the entry's roster tag commits the version it lands at,
+            // so letting a stale update through would publish a tag no client can verify.
+            if (oldGroup.version !== version) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
             }
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
