@@ -31,9 +31,10 @@ const BOB = "bob" as types.cloud.UserId;
 const BOB_POSITION = 2;
 
 /** The stored state: the tree the bridge holds, reduced to what a removal at `position` is checked against. */
-function stored(position = BOB_POSITION, overrides: Partial<StoredPathState> = {}): StoredPathState {
+function stored(position: number|number[] = BOB_POSITION, overrides: Partial<StoredPathState> = {}): StoredPathState {
     const tree = buildTree(SEATING, EPOCH);
-    const needed = new Set(TreeTransitionValidator.nodesNeededFor(position, tree.numLeaves));
+    const positions = Array.isArray(position) ? position : [position];
+    const needed = new Set(TreeTransitionValidator.nodesNeededFor(positions, tree.numLeaves));
     return {
         numLeaves: tree.numLeaves,
         leafAssignment: tree.leafAssignment,
@@ -44,8 +45,9 @@ function stored(position = BOB_POSITION, overrides: Partial<StoredPathState> = {
 }
 
 /** What an honest client submits: the path refreshed, the edges that refresh owes, the grant edge re-linked. */
-function honestTransition(state: StoredPathState = stored(), position = BOB_POSITION): types.cloud.GroupTreeTransition {
-    const path = TreeMath.directPath(position, state.numLeaves);
+function honestTransition(state: StoredPathState = stored(), position: number|number[] = BOB_POSITION): types.cloud.GroupTreeTransition {
+    const positions = Array.isArray(position) ? position : [position];
+    const path = TreeMath.frontier(positions, state.numLeaves);
     const generationOf = (nodeIndex: number) => state.nodes.find(n => n.nodeIndex === nodeIndex)?.generation ?? 0;
     const refreshedNodes = path.map(nodeIndex => ({
         nodeIndex,
@@ -55,14 +57,16 @@ function honestTransition(state: StoredPathState = stored(), position = BOB_POSI
     }));
     const newGenerationOf = (nodeIndex: number) =>
         refreshedNodes.find(n => n.nodeIndex === nodeIndex)?.generation ?? generationOf(nodeIndex);
-    const blankedLeaf = TreeMath.leafNode(position);
+    const blankedLeaves = new Set(positions.map(p => TreeMath.leafNode(p)));
     const seating = [...state.leafAssignment];
-    seating[position] = "" as types.cloud.UserId;
+    for (const p of positions) {
+        seating[p] = "" as types.cloud.UserId;
+    }
     
     const edges: types.cloud.GroupTreeEdge[] = [];
     for (const parentIndex of path) {
         for (const childIndex of TreeMath.children(parentIndex, state.numLeaves)) {
-            if (childIndex === blankedLeaf) {
+            if (blankedLeaves.has(childIndex)) {
                 continue;
             }
             if (TreeMath.isLeaf(childIndex)) {
@@ -98,7 +102,7 @@ function honestTransition(state: StoredPathState = stored(), position = BOB_POSI
         childGeneration: newGenerationOf(rootIndex),
         data: "wrap:grant->root" as types.core.UserKeyData,
     });
-    return {baseKeyVersion: state.keyVersion, blankedPosition: position, refreshedNodes, edges};
+    return {baseKeyVersion: state.keyVersion, blankedPositions: positions, refreshedNodes, edges};
 }
 
 function kinds(problems: {kind: string}[]) {
@@ -106,40 +110,40 @@ function kinds(problems: {kind: string}[]) {
 }
 
 it("an honest removal passes", async () => {
-    assert.deepStrictEqual(TreeTransitionValidator.validateRemoval(stored(), honestTransition(), BOB), []);
+    assert.deepStrictEqual(TreeTransitionValidator.validateRemoval(stored(), honestTransition(), [BOB]), []);
 });
 
 it("the delta reads O(log n) nodes, not the tree", async () => {
     // Eight seats: three on the path, three on the copath, of which two are internal nodes.
-    assert.strictEqual(TreeTransitionValidator.nodesNeededFor(BOB_POSITION, 8).length, 5);
+    assert.strictEqual(TreeTransitionValidator.nodesNeededFor([BOB_POSITION], 8).length, 5);
     assert.strictEqual(stored().nodes.length, 5);
 });
 
 it("SECURITY: a delta planned against a superseded epoch is refused", async () => {
     // Every generation in it was read at another epoch, so nothing in it can be trusted to describe this state.
     const transition = {...honestTransition(), baseKeyVersion: EPOCH - 1};
-    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)), ["STALE_BASE_EPOCH"]);
+    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])), ["STALE_BASE_EPOCH"]);
 });
 
 it("SECURITY: a delta naming the wrong base generation is refused", async () => {
     // The node moved since the client read it — someone else's removal already refreshed this path.
     const transition = honestTransition();
     transition.refreshedNodes[0] = {...transition.refreshedNodes[0], fromGeneration: 7};
-    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)), ["STALE_BASE_GENERATION"]);
+    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])), ["STALE_BASE_GENERATION"]);
 });
 
 it("SECURITY: skipping a node on the path is refused", async () => {
     // The skipped node keeps a key the departing member still holds, which makes the removal cosmetic.
     const transition = honestTransition();
     transition.refreshedNodes = transition.refreshedNodes.slice(1);
-    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)), ["REFRESH_NOT_THE_PATH"]);
+    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])), ["REFRESH_NOT_THE_PATH"]);
 });
 
 it("SECURITY: refreshing a node off the path is refused", async () => {
     // Unrequested work charged to everyone in that subtree, and outside what the epoch bump accounts for.
     const transition = honestTransition();
     transition.refreshedNodes.push({nodeIndex: 1, fromGeneration: 0, generation: 1, publicKey: "pk:1g1" as types.core.EccPubKey});
-    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)), ["REFRESH_NOT_THE_PATH"]);
+    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])), ["REFRESH_NOT_THE_PATH"]);
 });
 
 it("SECURITY: a refreshed node reusing its public key is refused", async () => {
@@ -147,7 +151,7 @@ it("SECURITY: a refreshed node reusing its public key is refused", async () => {
     const transition = honestTransition(state);
     const current = state.nodes.find(n => n.nodeIndex === transition.refreshedNodes[0].nodeIndex)!;
     transition.refreshedNodes[0] = {...transition.refreshedNodes[0], publicKey: current.publicKey};
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(state, transition, BOB)).includes("NODE_KEY_REUSED"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(state, transition, [BOB])).includes("NODE_KEY_REUSED"));
 });
 
 it("SECURITY: leaving out an edge the refresh owes is refused", async () => {
@@ -155,7 +159,7 @@ it("SECURITY: leaving out an edge the refresh owes is refused", async () => {
     // who was not being removed.
     const transition = honestTransition();
     transition.edges = transition.edges.filter(edge => edge.childKind !== "user");
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("MISSING_EDGE"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("MISSING_EDGE"));
 });
 
 it("SECURITY: an edge to the seat being blanked is refused", async () => {
@@ -168,21 +172,21 @@ it("SECURITY: an edge to the seat being blanked is refused", async () => {
         childUserId: BOB,
         data: "wrap:back-to-bob" as types.core.UserKeyData,
     });
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("UNEXPECTED_EDGE"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("UNEXPECTED_EDGE"));
 });
 
 it("SECURITY: an edge naming a stale parent generation is refused", async () => {
     const transition = honestTransition();
     const edge = transition.edges.find(e => e.childKind === "user")!;
     edge.parentGeneration = edge.parentGeneration - 1;
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("STALE_PARENT_GENERATION"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("STALE_PARENT_GENERATION"));
 });
 
 it("SECURITY: an edge naming a stale child generation is refused", async () => {
     const transition = honestTransition();
     const edge = transition.edges.find(e => e.childKind === "node" && !e.isGrantEdge)!;
     edge.childGeneration = (edge.childGeneration ?? 0) - 1;
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("STALE_CHILD_GENERATION"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("STALE_CHILD_GENERATION"));
 });
 
 it("SECURITY: a grant edge left at the old epoch is refused", async () => {
@@ -191,35 +195,35 @@ it("SECURITY: a grant edge left at the old epoch is refused", async () => {
     const transition = honestTransition();
     const grant = transition.edges.find(e => e.isGrantEdge)!;
     grant.parentGeneration = EPOCH;
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("GRANT_EDGE_WRONG_EPOCH"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("GRANT_EDGE_WRONG_EPOCH"));
 });
 
 it("a transition with no grant edge is refused", async () => {
     const transition = honestTransition();
     transition.edges = transition.edges.filter(e => !e.isGrantEdge);
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("GRANT_EDGE_COUNT"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("GRANT_EDGE_COUNT"));
 });
 
 it("a transition blanking a seat its subject does not hold is refused", async () => {
-    const transition = {...honestTransition(), blankedPosition: 4};
-    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)), ["WRONG_SEAT"]);
+    const transition = {...honestTransition(), blankedPositions: [4]};
+    assert.deepStrictEqual(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])), ["WRONG_SEATS"]);
 });
 
 it("removing somebody who holds no leaf is refused", async () => {
-    const problems = TreeTransitionValidator.validateRemoval(stored(), honestTransition(), "outsider" as types.cloud.UserId);
+    const problems = TreeTransitionValidator.validateRemoval(stored(), honestTransition(), ["outsider" as types.cloud.UserId]);
     assert.deepStrictEqual(kinds(problems), ["MEMBER_HAS_NO_LEAF"]);
 });
 
 it("an edge carrying no ciphertext is refused", async () => {
     const transition = honestTransition();
     transition.edges[0] = {...transition.edges[0], data: "" as types.core.UserKeyData};
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("EMPTY_EDGE_DATA"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("EMPTY_EDGE_DATA"));
 });
 
 it("a duplicated edge is refused", async () => {
     const transition = honestTransition();
     transition.edges.push({...transition.edges.find(e => e.childKind === "user")!});
-    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, BOB)).includes("DUPLICATE_EDGE"));
+    assert.ok(kinds(TreeTransitionValidator.validateRemoval(stored(), transition, [BOB])).includes("DUPLICATE_EDGE"));
 });
 
 it("a blank seat next to the departing member needs no edge", async () => {
@@ -227,14 +231,14 @@ it("a blank seat next to the departing member needs no edge", async () => {
     const seatingWithBlank = [...SEATING];
     seatingWithBlank[3] = "";
     const tree = buildTree(seatingWithBlank, EPOCH);
-    const needed = new Set(TreeTransitionValidator.nodesNeededFor(BOB_POSITION, tree.numLeaves));
+    const needed = new Set(TreeTransitionValidator.nodesNeededFor([BOB_POSITION], tree.numLeaves));
     const state: StoredPathState = {
         numLeaves: tree.numLeaves,
         leafAssignment: tree.leafAssignment,
         keyVersion: EPOCH,
         nodes: tree.nodes.filter(node => needed.has(node.nodeIndex)),
     };
-    assert.deepStrictEqual(TreeTransitionValidator.validateRemoval(state, honestTransition(state), BOB), []);
+    assert.deepStrictEqual(TreeTransitionValidator.validateRemoval(state, honestTransition(state), [BOB]), []);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,9 +248,10 @@ it("a blank seat next to the departing member needs no edge", async () => {
 const NEWCOMER = "grace" as types.cloud.UserId;
 
 /** The stored state an addition at `position` is checked against, in the geometry seating it produces. */
-function storedForSeat(seating: string[], position: number): StoredPathState {
+function storedForSeat(seating: string[], position: number|number[]): StoredPathState {
     const tree = buildTree(seating, EPOCH);
-    const needed = new Set(TreeTransitionValidator.nodesNeededForSeat(position, tree.numLeaves));
+    const positions = Array.isArray(position) ? position : [position];
+    const needed = new Set(TreeTransitionValidator.nodesNeededForSeat(positions, tree.numLeaves));
     return {
         numLeaves: tree.numLeaves,
         leafAssignment: tree.leafAssignment,
@@ -255,16 +260,16 @@ function storedForSeat(seating: string[], position: number): StoredPathState {
     };
 }
 
-function honestAddition(seating: string[], position: number) {
+function honestAddition(seating: string[], position: number|number[], members: types.cloud.UserId[] = [NEWCOMER]) {
     const tree = buildTree(seating, EPOCH);
-    return additionTransition(tree, NEWCOMER, position, EPOCH);
+    return additionTransition(tree, members, Array.isArray(position) ? position : [position], EPOCH);
 }
 
 const BLANK_SEATING = ["janek", "alice", "", "carol", "dave", "erin", "frank", ""];
 
 it("an honest addition into a blank passes", async () => {
     const problems = TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), [NEWCOMER],
     );
     assert.deepStrictEqual(problems, [], JSON.stringify(problems));
 });
@@ -272,13 +277,13 @@ it("an honest addition into a blank passes", async () => {
 it("an honest addition that grows the tree passes", async () => {
     const full = ["janek", "alice", "bob", "carol", "dave"];
     const problems = TreeTransitionValidator.validateAddition(
-        storedForSeat(full, 5), honestAddition(full, 5), NEWCOMER,
+        storedForSeat(full, 5), honestAddition(full, 5), [NEWCOMER],
     );
     assert.deepStrictEqual(problems, [], JSON.stringify(problems));
 });
 
 it("the delta reads O(log n) nodes for a seat, not the tree", async () => {
-    assert.strictEqual(TreeTransitionValidator.nodesNeededForSeat(2, 8).length, 5);
+    assert.strictEqual(TreeTransitionValidator.nodesNeededForSeat([2], 8).length, 5);
     assert.strictEqual(storedForSeat(BLANK_SEATING, 2).nodes.length, 5);
 });
 
@@ -288,13 +293,13 @@ it("SECURITY: an addition may not advance the epoch", async () => {
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.edges.find(e => e.isGrantEdge)!.parentGeneration = EPOCH + 1;
     assert.ok(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )).includes("GRANT_EDGE_WRONG_EPOCH"));
 });
 
 it("SECURITY: seating over somebody is refused", async () => {
     const problems = TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 1), honestAddition(BLANK_SEATING, 1), NEWCOMER,
+        storedForSeat(BLANK_SEATING, 1), honestAddition(BLANK_SEATING, 1), [NEWCOMER],
     );
     assert.deepStrictEqual(kinds(problems), ["SEAT_NOT_BLANK"]);
 });
@@ -304,7 +309,7 @@ it("SECURITY: leaving out an edge the re-keying owes is refused", async () => {
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.edges = transition.edges.filter(edge => !(edge.childKind === "user" && edge.childUserId !== NEWCOMER));
     assert.ok(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )).includes("MISSING_EDGE"));
 });
 
@@ -312,7 +317,7 @@ it("SECURITY: re-keying a node off the new leaf's path is refused", async () => 
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.seatedNodes.push({nodeIndex: 1, fromGeneration: 0, generation: 1, publicKey: "pk:1g1" as types.core.EccPubKey});
     assert.deepStrictEqual(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )), ["REFRESH_NOT_THE_PATH"]);
 });
 
@@ -322,7 +327,7 @@ it("SECURITY: claiming an existing node is newly minted is refused", async () =>
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.seatedNodes[0] = {...transition.seatedNodes[0], fromGeneration: undefined, generation: 0};
     assert.ok(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )).includes("NODE_NOT_NEW"));
 });
 
@@ -331,35 +336,35 @@ it("SECURITY: a re-keyed node reusing its public key is refused", async () => {
     const transition = honestAddition(BLANK_SEATING, 2);
     const current = state.nodes.find(n => n.nodeIndex === transition.seatedNodes[0].nodeIndex)!;
     transition.seatedNodes[0] = {...transition.seatedNodes[0], publicKey: current.publicKey};
-    assert.ok(kinds(TreeTransitionValidator.validateAddition(state, transition, NEWCOMER)).includes("NODE_KEY_REUSED"));
+    assert.ok(kinds(TreeTransitionValidator.validateAddition(state, transition, [NEWCOMER])).includes("NODE_KEY_REUSED"));
 });
 
 it("a delta naming a base generation the node has moved past is refused", async () => {
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.seatedNodes[0] = {...transition.seatedNodes[0], fromGeneration: 9};
     assert.deepStrictEqual(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )), ["STALE_BASE_GENERATION"]);
 });
 
 it("a delta planned against a superseded epoch is refused", async () => {
     const transition = {...honestAddition(BLANK_SEATING, 2), baseKeyVersion: EPOCH - 1};
     assert.deepStrictEqual(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )), ["STALE_BASE_EPOCH"]);
 });
 
 it("seating somebody who already holds a leaf is refused", async () => {
     const problems = TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), "alice" as types.cloud.UserId,
+        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), ["alice" as types.cloud.UserId],
     );
     assert.deepStrictEqual(kinds(problems), ["ALREADY_SEATED"]);
 });
 
 it("a seat past the end of the tree is refused", async () => {
-    const transition = {...honestAddition(BLANK_SEATING, 2), position: 99};
+    const transition = {...honestAddition(BLANK_SEATING, 2), positions: [99]};
     assert.deepStrictEqual(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )), ["SEAT_OUT_OF_RANGE"]);
 });
 
@@ -367,14 +372,143 @@ it("an addition with no grant edge is refused", async () => {
     const transition = honestAddition(BLANK_SEATING, 2);
     transition.edges = transition.edges.filter(e => !e.isGrantEdge);
     assert.ok(kinds(TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), transition, NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), transition, [NEWCOMER],
     )).includes("GRANT_EDGE_COUNT"));
 });
 
 it("a blank seat beside the newcomer needs no edge", async () => {
     // Position 7 is blank too, and nobody is there to wrap to: the re-keying owes nothing for it.
     const problems = TreeTransitionValidator.validateAddition(
-        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), NEWCOMER,
+        storedForSeat(BLANK_SEATING, 2), honestAddition(BLANK_SEATING, 2), [NEWCOMER],
     );
     assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// batches
+//
+// A batch is not `k` deltas checked in turn. The members' paths overlap, so the refresh set is their union and
+// every shared ancestor is refreshed exactly once — the rule that has to hold, because refreshing one twice
+// would leave two keys claiming the same node and generation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALICE = "alice" as types.cloud.UserId;
+const DAVE = "dave" as types.cloud.UserId;
+const ALICE_POSITION = 1;
+const DAVE_POSITION = 4;
+
+it("an honest batch removal of two members passes", async () => {
+    const seats = [ALICE_POSITION, DAVE_POSITION];
+    const state = stored(seats);
+    const problems = TreeTransitionValidator.validateRemoval(state, honestTransition(state, seats), [ALICE, DAVE]);
+    assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+});
+
+it("a shared ancestor is refreshed once, not once per member", async () => {
+    // Seats 0 and 1 sit under one parent, so their paths differ only in that leaf-level node. Eight seats means
+    // three levels: the union is 3 nodes, not the 6 two concatenated paths would give.
+    const seats = [0, 1];
+    const transition = honestTransition(stored(seats), seats);
+    assert.deepStrictEqual(transition.refreshedNodes.map(n => n.nodeIndex).sort((a, b) => a - b), [1, 3, 7]);
+});
+
+it("removing both members under one parent leaves that parent owing no edges", async () => {
+    // Nothing can climb into a node whose every leaf is blank. It still gets a fresh key so the refresh reaches
+    // the root, but the re-keying owes no wrap for it — the shape the whole-tree validator accepts too.
+    const seats = [0, 1];
+    const state = stored(seats);
+    const transition = honestTransition(state, seats);
+    const problems = TreeTransitionValidator.validateRemoval(state, transition, ["janek" as types.cloud.UserId, ALICE]);
+    assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+    assert.ok(!transition.edges.some(e => e.parentIndex === 1), "node 1 has no live child to wrap to");
+});
+
+it("SECURITY: a batch that refreshes only one member's path is refused", async () => {
+    // The unrefreshed path keeps keys the second departing member still holds, so their removal is cosmetic.
+    const seats = [ALICE_POSITION, DAVE_POSITION];
+    const state = stored(seats);
+    const transition = honestTransition(state, [ALICE_POSITION]);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateRemoval(state, {...transition, blankedPositions: seats}, [ALICE, DAVE])),
+        ["REFRESH_NOT_THE_PATH"],
+    );
+});
+
+it("SECURITY: a batch naming the same member twice is refused", async () => {
+    // One seat blanked, two removals counted: the roster and the tree would disagree from then on.
+    const state = stored([ALICE_POSITION]);
+    const transition = honestTransition(state, [ALICE_POSITION]);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateRemoval(state, {...transition, blankedPositions: [ALICE_POSITION, ALICE_POSITION]}, [ALICE, ALICE])),
+        ["DUPLICATE_MEMBER"],
+    );
+});
+
+it("SECURITY: a batch whose seats do not match its members is refused", async () => {
+    const seats = [ALICE_POSITION, DAVE_POSITION];
+    const state = stored(seats);
+    const transition = honestTransition(state, seats);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateRemoval(state, {...transition, blankedPositions: [ALICE_POSITION, 6]}, [ALICE, DAVE])),
+        ["WRONG_SEATS"],
+    );
+});
+
+it("an empty batch is refused rather than treated as a no-op", async () => {
+    const state = stored();
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateRemoval(state, {...honestTransition(state), blankedPositions: []}, [])),
+        ["EMPTY_BATCH"],
+    );
+});
+
+it("an honest batch addition into two blanks passes", async () => {
+    const seats = [2, 7];
+    const members = [NEWCOMER, "heidi" as types.cloud.UserId];
+    const problems = TreeTransitionValidator.validateAddition(
+        storedForSeat(BLANK_SEATING, seats), honestAddition(BLANK_SEATING, seats, members), members,
+    );
+    assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+});
+
+it("an honest batch addition that grows the tree passes", async () => {
+    const full = ["janek", "alice", "bob", "carol", "dave"];
+    const seats = [5, 6];
+    const members = [NEWCOMER, "heidi" as types.cloud.UserId];
+    const problems = TreeTransitionValidator.validateAddition(
+        storedForSeat(full, seats), honestAddition(full, seats, members), members,
+    );
+    assert.deepStrictEqual(problems, [], JSON.stringify(problems));
+});
+
+it("SECURITY: two newcomers on one seat are refused", async () => {
+    // The second would overwrite the first in `leafAssignment`, leaving a member on the roster with no leaf.
+    const members = [NEWCOMER, "heidi" as types.cloud.UserId];
+    const transition = honestAddition(BLANK_SEATING, [2, 7], members);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateAddition(
+            storedForSeat(BLANK_SEATING, [2, 7]), {...transition, positions: [2, 2]}, members,
+        )),
+        ["DUPLICATE_POSITION"],
+    );
+});
+
+it("SECURITY: a batch that skips a seat when appending is refused", async () => {
+    // Seats are filled lowest-blank-first and only ever appended, so a gap is one nothing can ever reuse.
+    const full = ["janek", "alice", "bob", "carol", "dave"];
+    const members = [NEWCOMER, "heidi" as types.cloud.UserId];
+    const transition = honestAddition(full, [5, 7], members);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateAddition(storedForSeat(full, [5, 7]), transition, members)),
+        ["SEAT_OUT_OF_RANGE"],
+    );
+});
+
+it("SECURITY: more members than seats is refused", async () => {
+    const members = [NEWCOMER, "heidi" as types.cloud.UserId];
+    const transition = honestAddition(BLANK_SEATING, [2], [NEWCOMER]);
+    assert.deepStrictEqual(
+        kinds(TreeTransitionValidator.validateAddition(storedForSeat(BLANK_SEATING, [2]), transition, members)),
+        ["MEMBER_COUNT_MISMATCH"],
+    );
 });

@@ -184,9 +184,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldServeOnlyTheHistoryTheClientIsMissing() {
-        // A client verifies the signed chain once and remembers where it got to; re-sending what it has already
-        // verified is pure weight, since each entry carries the roster it was written with.
+    async shouldServeOnlyTheHeadUnlessAskedForTheTrail() {
+        // A read verifies the head and nothing else, so the head is what a read gets. The trail is one full
+        // metadata envelope per version — real weight, and only an audit has a reason to carry it.
         await this.addMembersToContext([alice, bob, carol, dave]);
         await this.createTreeBackedGroup();
         await this.removeMember(bob, BOB_POSITION);
@@ -260,7 +260,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
      */
     private async removeMemberByDelta(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId, forUserId: userId});
+        const {group} = await this.apis.contextApi.groupGet({groupId, forUserIds: [userId]});
         assert(group.treeScope === "path", "the delta is meant to be built from a path view");
         const view: types.cloud.GroupTreeState = {
             numLeaves: group.numLeaves!,
@@ -270,9 +270,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         };
         const newEpoch = this.keyVersion + 1;
         const transition = withTransitionNodeKeys(removalTransition(view, position, this.keyVersion), nodeKey);
-        const res = await this.apis.contextApi.groupRemoveMember({
+        const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
@@ -280,7 +280,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupRemoveMember with a transition did not return OK");
+        assert(res === "OK", "groupRemoveMembers with a transition did not return OK");
         this.keyVersion = newEpoch;
         this.version += 1;
         this._removedByDelta = userId;
@@ -314,9 +314,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const current = await this.currentTree();
         const newEpoch = this.keyVersion + 1;
         const transition = withTransitionNodeKeys(removalTransition(current, position, this.keyVersion), nodeKey);
-        const res = await this.apis.contextApi.groupRemoveMember({
+        const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
@@ -331,7 +331,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             },
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupRemoveMember did not return OK");
+        assert(res === "OK", "groupRemoveMembers did not return OK");
         this.keyVersion = newEpoch;
         this.version += 1;
     }
@@ -339,17 +339,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async addMember(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
         const current = await this.currentTree();
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: withAdditionTransitionNodeKeys(additionTransition(current, userId, position, this.keyVersion), nodeKey),
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupAddMember did not return OK");
+        assert(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
@@ -359,23 +357,21 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const transition = withAdditionTransitionNodeKeys(
             additionTransition(current, userId, position, this.keyVersion), nodeKey,
         );
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
         });
-        assert(res === "OK", "groupAddMember did not return OK");
+        assert(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
     private async addMemberByDelta(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const {group} = await this.apis.contextApi.groupGet({groupId, forPosition: position});
+        const {group} = await this.apis.contextApi.groupGet({groupId, forNewMembers: 1});
         assert.ok(group.treeScope === "path", "the delta is meant to be built from a path view");
         const view: types.cloud.GroupTreeState = {
             numLeaves: group.numLeaves!,
@@ -386,17 +382,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const transition = withAdditionTransitionNodeKeys(
             additionTransition(view, userId, position, this.keyVersion), nodeKey,
         );
-        const res = await this.apis.contextApi.groupAddMember({
+        const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
-            userId: userId,
-            role: "user",
-            position: position,
+            members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
         });
-        assert.ok(res === "OK", "groupAddMember did not return OK");
+        assert.ok(res === "OK", "groupAddMembers did not return OK");
         this.version += 1;
     }
     
@@ -569,11 +563,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 nodeIndex: offPath, fromGeneration: 0, generation: 1,
                 publicKey: nodeKey(offPath, 1),
             });
-            await this.apis.contextApi.groupAddMember({
+            await this.apis.contextApi.groupAddMembers({
                 id: this.requireGroupId(),
-                userId: dave,
-                role: "user",
-                position: BOB_POSITION,
+                members: [{userId: dave, role: "user"}],
                 keyId: keyIdAt(this.keyVersion),
                 data: "group-data" as types.group.GroupData,
                 transition: transition,
@@ -657,23 +649,32 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async verifyHistoryIsWindowed() {
         const groupId = this.requireGroupId();
-        const {group: whole} = await this.apis.contextApi.groupGet({groupId});
-        assert.ok(whole.history.length === 3, `three versions so far, got ${whole.history.length}`);
-        assert.ok(whole.firstServedVersion === 1, "no parameter means from genesis");
+        // No parameter is the head alone. Every entry is a full metadata envelope, so serving the trail by
+        // default would make each read grow with the group's age — and nothing on the read path replays it:
+        // the head attests the roster, and an older epoch's key comes down the ladder, not out of an old entry.
+        const {group: head} = await this.apis.contextApi.groupGet({groupId});
+        assert.ok(head.history.length === 1, `no parameter serves the head alone, got ${head.history.length}`);
+        assert.ok(head.data.length === 1, "the data array carries the head alone too");
+        assert.ok(head.firstServedVersion === head.version,
+            `the head is version ${head.version}, said ${head.firstServedVersion}`);
+        
+        // The audit trail is what `fromVersion` is for, and asking for it costs what it costs.
+        const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromVersion: 1});
+        assert.ok(trail.history.length === 3, `three versions so far, got ${trail.history.length}`);
+        assert.ok(trail.firstServedVersion === 1, "asking from 1 means from genesis");
+        const sizeOf = (g: unknown) => JSON.stringify(g).length;
+        assert.ok(sizeOf(head) < sizeOf(trail), `head ${sizeOf(head)} B is not smaller than the trail ${sizeOf(trail)} B`);
         
         const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromVersion: 3});
         assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
         assert.ok(windowed.firstServedVersion === 3, `window starts at 3, said ${windowed.firstServedVersion}`);
-        assert.ok(windowed.data.length === 1, "the data array is windowed the same way");
-        assert.ok(windowed.version === whole.version, "the head version is unchanged by windowing");
-        const sizeOf = (g: unknown) => JSON.stringify(g).length;
-        assert.ok(sizeOf(windowed) < sizeOf(whole), `windowed ${sizeOf(windowed)} B is not smaller than ${sizeOf(whole)} B`);
+        assert.ok(windowed.version === trail.version, "the head version is unchanged by windowing");
         
         // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
         const {group: past} = await this.apis.contextApi.groupGet({groupId, fromVersion: 99});
         assert.ok(past.history.length === 1 && past.data.length === 1,
             `asking past the head must still serve the head, got ${past.history.length} entries`);
-        assert.ok(past.firstServedVersion === whole.version, `the head is version ${whole.version}, said ${past.firstServedVersion}`);
+        assert.ok(past.firstServedVersion === trail.version, `the head is version ${trail.version}, said ${past.firstServedVersion}`);
     }
     
     private async verifyListingCarriesNoState() {
@@ -695,7 +696,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const transition = withTransitionNodeKeys(
                 removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
             );
-            await this.apis.contextApi.groupRemoveMember({
+            await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 expectedKeyVersion: this.keyVersion - 1,
             });
@@ -712,7 +713,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             // Drop the root from the refresh set: the tree of four has its root at index 3.
             assert(transition.refreshedNodes.some(node => node.nodeIndex === 3), "the root is on the path");
             transition.refreshedNodes = transition.refreshedNodes.filter(node => node.nodeIndex !== 3);
-            await this.apis.contextApi.groupRemoveMember(this.removalPayload(bob, transition));
+            await this.apis.contextApi.groupRemoveMembers(this.removalPayload(bob, transition));
         }, "GROUP_TREE_INVALID");
     }
     
@@ -722,7 +723,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const transition = withTransitionNodeKeys(
                 removalTransition(await this.currentTree(), BOB_POSITION, this.keyVersion), nodeKey,
             );
-            await this.apis.contextApi.groupRemoveMember({
+            await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 rungs: [
                     ...this.rungsFor(this.keyVersion + 1),
@@ -760,7 +761,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const newEpoch = this.keyVersion + 1;
         return {
             id: this.requireGroupId(),
-            userId: userId,
+            userIds: [userId],
             groupPubKey: epochKey(newEpoch),
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,

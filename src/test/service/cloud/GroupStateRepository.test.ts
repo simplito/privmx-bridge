@@ -19,7 +19,8 @@ import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { MongoQuery } from "../../../db/mongo/MongoQuery";
 import { QueryResult } from "../../../db/ObjectRepository";
 import { createFake } from "../../testUtils/TestUtils";
-import { buildTree } from "../../testUtils/TreeFixtures";
+import { buildTree, removalTransition } from "../../testUtils/TreeFixtures";
+import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 
@@ -232,4 +233,43 @@ it("a rung is identified by the span it covers and its recipient, so re-submitti
         .map(op => op.replaceOne.filter._id);
     assert.strictEqual(ids[0], ids[1]);
     assert.strictEqual(ids[0], `${groupId}|6|5|epoch|`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// applying a removal delta
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("a batch removal retires each departing member's own edge, whatever order they were named in", async () => {
+    // The validator only requires `userIds` and `blankedPositions` to agree as sets, and the endpoint sorts the
+    // seats while leaving the names in the caller's order. Pairing the two by index therefore deletes ids nobody
+    // holds and leaves the real edges behind — addressed to members who no longer have a leaf.
+    const tree = buildTree(SEATING, EPOCH);
+    const alice = "alice" as types.cloud.UserId;
+    const dave = "dave" as types.cloud.UserId;
+    const seats = [tree.leafAssignment.indexOf(alice), tree.leafAssignment.indexOf(dave)];
+    const {repository, captured} = createStateRepository({nodes: nodeDocs(tree), edges: edgeDocs(tree)});
+    await repository.applyRemovalTransition(
+        groupId,
+        // Seats ascending, names in the opposite order: exactly what the client sends.
+        removalTransition(tree, seats, EPOCH),
+        [dave, alice],
+        tree.numLeaves,
+        tree.leafAssignment,
+    );
+    const deleted = (captured.edges.operations as unknown as {deleteOne?: {filter: {_id: string}}}[])
+        .filter(op => op.deleteOne)
+        .map(op => op.deleteOne!.filter._id);
+    const edgeIdFor = (userId: types.cloud.UserId) => GroupStateRepository.edgeId(groupId, {
+        parentIndex: TreeMath.parent(TreeMath.leafNode(tree.leafAssignment.indexOf(userId)), tree.numLeaves),
+        parentGeneration: 0,
+        childKind: "user",
+        childUserId: userId,
+        data: "" as types.core.UserKeyData,
+    });
+    assert.deepStrictEqual(deleted.sort(), [edgeIdFor(alice), edgeIdFor(dave)].sort());
+    // And every id deleted is one that actually existed, rather than a mispaired seat/name combination.
+    const stored = new Set(edgeDocs(tree).map(edge => edge.id));
+    for (const id of deleted) {
+        assert.ok(stored.has(id as never), `deleted ${id}, which no edge document ever had`);
+    }
 });

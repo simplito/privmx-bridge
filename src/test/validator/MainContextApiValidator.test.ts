@@ -157,7 +157,7 @@ function validTree(): types.cloud.GroupTreeState {
 function validRemovalTransition(): types.cloud.GroupTreeTransition {
     return {
         baseKeyVersion: 1,
-        blankedPosition: 1,
+        blankedPositions: [1],
         refreshedNodes: [{nodeIndex: 1, fromGeneration: 0, generation: 1, publicKey: nodePubKey}],
         edges: [
             {parentIndex: 1, parentGeneration: 1, childKind: "user", childUserId: "janek" as types.cloud.UserId, data: "w1" as types.core.UserKeyData},
@@ -169,7 +169,7 @@ function validRemovalTransition(): types.cloud.GroupTreeTransition {
 function validAdditionTransition(): types.cloud.GroupTreeAdditionTransition {
     return {
         baseKeyVersion: 1,
-        position: 2,
+        positions: [2],
         seatedNodes: [{nodeIndex: 3, generation: 0, publicKey: nodePubKey}],
         edges: [
             {parentIndex: 3, parentGeneration: 0, childKind: "node", childIndex: 1, childGeneration: 0, data: "w1" as types.core.UserKeyData},
@@ -205,40 +205,36 @@ it("ContextApiValidator.groupCreate rejects an unknown child kind", () => {
     expect(result.success).toBe(false);
 });
 
-it("ContextApiValidator.groupAddMember valid", () => {
-    const model: contextApi.GroupAddMemberModel = {
+it("ContextApiValidator.groupAddMembers valid", () => {
+    const model: contextApi.GroupAddMembersModel = {
         id: groupId,
-        userId: "nowy" as types.cloud.UserId,
-        role: "user",
-        position: 2,
+        members: [{userId: "nowy" as types.cloud.UserId, role: "user"}],
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
         expectedKeyVersion: 1,
     };
-    const result = Utils.try(() => validator().validate("groupAddMember", model));
+    const result = Utils.try(() => validator().validate("groupAddMembers", model));
     expect(result.success).toBe(true);
 });
 
-it("ContextApiValidator.groupAddMember rejects an unknown role", () => {
+it("ContextApiValidator.groupAddMembers rejects an unknown role", () => {
     const model = {
         id: groupId,
-        userId: "nowy" as types.cloud.UserId,
-        role: "owner",
-        position: 2,
+        members: [{userId: "nowy" as types.cloud.UserId, role: "owner"}],
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
         expectedKeyVersion: 1,
     };
-    const result = Utils.try(() => validator().validate("groupAddMember", model));
+    const result = Utils.try(() => validator().validate("groupAddMembers", model));
     expect(result.success).toBe(false);
 });
 
-it("ContextApiValidator.groupRemoveMember valid", () => {
-    const model: contextApi.GroupRemoveMemberModel = {
+it("ContextApiValidator.groupRemoveMembers valid", () => {
+    const model: contextApi.GroupRemoveMembersModel = {
         id: groupId,
-        userId: "ola" as types.cloud.UserId,
+        userIds: ["ola" as types.cloud.UserId],
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
@@ -246,14 +242,14 @@ it("ContextApiValidator.groupRemoveMember valid", () => {
         rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
     };
-    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(true);
 });
 
-it("ContextApiValidator.groupRemoveMember rejects a rung with epoch zero", () => {
+it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () => {
     const model = {
         id: groupId,
-        userId: "ola" as types.cloud.UserId,
+        userIds: ["ola" as types.cloud.UserId],
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
@@ -261,22 +257,22 @@ it("ContextApiValidator.groupRemoveMember rejects a rung with epoch zero", () =>
         rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
     };
-    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
 });
 
-it("ContextApiValidator.groupRemoveMember rejects a missing rung list", () => {
+it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
     // The rungs are not optional: a new epoch without them orphans the group's own history.
     const model = {
         id: groupId,
-        userId: "ola" as types.cloud.UserId,
+        userIds: ["ola" as types.cloud.UserId],
         groupPubKey: groupPubKey,
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
         expectedKeyVersion: 1,
     };
-    const result = Utils.try(() => validator().validate("groupRemoveMember", model));
+    const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
 });
 

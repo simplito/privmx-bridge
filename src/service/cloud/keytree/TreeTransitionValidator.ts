@@ -23,7 +23,11 @@ export type TransitionRejection =
     | {kind: "STALE_BASE_EPOCH", expected: number, got: number}
     | {kind: "STALE_BASE_GENERATION", nodeIndex: number, expected: number, got: number}
     | {kind: "MEMBER_HAS_NO_LEAF", userId: types.cloud.UserId}
-    | {kind: "WRONG_SEAT", expected: number, got: number}
+    | {kind: "WRONG_SEATS", expected: number[], got: number[]}
+    | {kind: "EMPTY_BATCH"}
+    | {kind: "DUPLICATE_MEMBER", userId: types.cloud.UserId}
+    | {kind: "DUPLICATE_POSITION", position: number}
+    | {kind: "MEMBER_COUNT_MISMATCH", members: number, positions: number}
     | {kind: "REFRESH_NOT_THE_PATH", missing: number[], unexpected: number[]}
     | {kind: "NODE_NOT_REFRESHED", nodeIndex: number}
     | {kind: "NODE_KEY_REUSED", nodeIndex: number}
@@ -61,35 +65,60 @@ export interface StoredPathState {
  */
 export class TreeTransitionValidator {
     
+    /**
+     * Checks a removal delta covering one or more members.
+     *
+     * The batch is not n removals checked in turn: the members' paths overlap, and every shared ancestor must be
+     * refreshed exactly once. So the refresh set is the **union** of their direct paths, and the epoch advances
+     * once for the whole batch — which is also why a batch is cheaper than the same removals done one by one, and
+     * why it cannot half-land.
+     */
     static validateRemoval(
         stored: StoredPathState,
         transition: types.cloud.GroupTreeTransition,
-        removedUser: types.cloud.UserId,
+        removedUsers: types.cloud.UserId[],
     ): TransitionRejection[] {
         const problems: TransitionRejection[] = [];
         if (transition.baseKeyVersion !== stored.keyVersion) {
             // Nothing else is worth checking: every generation in the delta was read at another epoch.
             return [{kind: "STALE_BASE_EPOCH", expected: stored.keyVersion, got: transition.baseKeyVersion}];
         }
-        const position = stored.leafAssignment.indexOf(removedUser);
-        if (position < 0) {
-            return [{kind: "MEMBER_HAS_NO_LEAF", userId: removedUser}];
+        if (removedUsers.length === 0) {
+            return [{kind: "EMPTY_BATCH"}];
         }
-        if (transition.blankedPosition !== position) {
-            return [{kind: "WRONG_SEAT", expected: position, got: transition.blankedPosition}];
+        const repeated = TreeTransitionValidator.firstDuplicate(removedUsers);
+        if (repeated !== undefined) {
+            // Naming somebody twice would blank one seat and count two removals — the roster and the tree would
+            // disagree from then on.
+            return [{kind: "DUPLICATE_MEMBER", userId: repeated}];
+        }
+        const positions: number[] = [];
+        for (const removedUser of removedUsers) {
+            const position = stored.leafAssignment.indexOf(removedUser);
+            if (position < 0) {
+                return [{kind: "MEMBER_HAS_NO_LEAF", userId: removedUser}];
+            }
+            positions.push(position);
+        }
+        // Seats are derived from the roster, never taken from the request: the client says *who* leaves, the
+        // bridge says *where* they sat. The submitted set only has to agree.
+        const expectedSeats = [...positions].sort((a, b) => a - b);
+        const gotSeats = [...transition.blankedPositions].sort((a, b) => a - b);
+        if (expectedSeats.length !== gotSeats.length || expectedSeats.some((seat, i) => seat !== gotSeats[i])) {
+            return [{kind: "WRONG_SEATS", expected: expectedSeats, got: gotSeats}];
         }
         
-        const path = TreeMath.directPath(position, stored.numLeaves);
+        const frontier = TreeMath.frontier(positions, stored.numLeaves);
         const storedNodes = new Map(stored.nodes.map(node => [node.nodeIndex, node]));
         const refreshed = new Map(transition.refreshedNodes.map(node => [node.nodeIndex, node]));
-        problems.push(...TreeTransitionValidator.checkRefreshedNodes(path, storedNodes, refreshed));
+        problems.push(...TreeTransitionValidator.checkRefreshedNodes(frontier, storedNodes, refreshed));
         if (problems.length > 0) {
             // Generations below are computed from the refresh set; checking edges against a wrong one only
             // produces noise.
             return problems;
         }
         const newEpoch = stored.keyVersion + 1;
-        problems.push(...TreeTransitionValidator.checkEdges(stored, transition, position, path, storedNodes, refreshed, newEpoch));
+        problems.push(...TreeTransitionValidator.checkEdges(stored, transition, positions, frontier, storedNodes, refreshed, newEpoch));
         return problems;
     }
     
@@ -101,38 +130,76 @@ export class TreeTransitionValidator {
     static validateAddition(
         stored: StoredPathState,
         transition: types.cloud.GroupTreeAdditionTransition,
-        addedUser: types.cloud.UserId,
+        addedUsers: types.cloud.UserId[],
     ): TransitionRejection[] {
         const problems: TransitionRejection[] = [];
         if (transition.baseKeyVersion !== stored.keyVersion) {
             return [{kind: "STALE_BASE_EPOCH", expected: stored.keyVersion, got: transition.baseKeyVersion}];
         }
-        const alreadyAt = stored.leafAssignment.indexOf(addedUser);
-        if (alreadyAt >= 0) {
-            return [{kind: "ALREADY_SEATED", userId: addedUser, position: alreadyAt}];
+        if (addedUsers.length === 0) {
+            return [{kind: "EMPTY_BATCH"}];
         }
-        const position = transition.position;
-        if (!Number.isInteger(position) || position < 0 || position > stored.numLeaves) {
-            // Seats are filled lowest-blank-first and only ever appended, so anything past the end is a client
-            // that computed against a different tree.
-            return [{kind: "SEAT_OUT_OF_RANGE", position, numLeaves: stored.numLeaves}];
+        // `positions[i]` is where `addedUsers[i]` sits: the two travel as parallel lists, so a length mismatch
+        // would silently seat somebody at another member's coordinate.
+        if (transition.positions.length !== addedUsers.length) {
+            return [{kind: "MEMBER_COUNT_MISMATCH", members: addedUsers.length, positions: transition.positions.length}];
         }
-        if (position < stored.numLeaves && stored.leafAssignment[position] !== "") {
-            return [{kind: "SEAT_NOT_BLANK", position, occupant: stored.leafAssignment[position]}];
+        const repeatedUser = TreeTransitionValidator.firstDuplicate(addedUsers);
+        if (repeatedUser !== undefined) {
+            return [{kind: "DUPLICATE_MEMBER", userId: repeatedUser}];
+        }
+        const repeatedSeat = TreeTransitionValidator.firstDuplicate(transition.positions);
+        if (repeatedSeat !== undefined) {
+            // Two newcomers on one seat: the second overwrites the first in `leafAssignment`, leaving a member
+            // on the roster with no leaf to climb from.
+            return [{kind: "DUPLICATE_POSITION", position: repeatedSeat}];
+        }
+        for (const addedUser of addedUsers) {
+            const alreadyAt = stored.leafAssignment.indexOf(addedUser);
+            if (alreadyAt >= 0) {
+                return [{kind: "ALREADY_SEATED", userId: addedUser, position: alreadyAt}];
+            }
+        }
+        // Walked in seat order, because appends have to be contiguous: seats are filled lowest-blank-first and
+        // only ever appended, so a batch that skips one would burn a seat nothing can ever reuse.
+        let grown = stored.numLeaves;
+        for (const position of [...transition.positions].sort((a, b) => a - b)) {
+            if (!Number.isInteger(position) || position < 0 || position > grown) {
+                return [{kind: "SEAT_OUT_OF_RANGE", position, numLeaves: grown}];
+            }
+            if (position < stored.numLeaves) {
+                if (stored.leafAssignment[position] !== "") {
+                    return [{kind: "SEAT_NOT_BLANK", position, occupant: stored.leafAssignment[position]}];
+                }
+                continue;
+            }
+            grown = position + 1;
         }
         
-        const numLeaves = TreeMath.numLeavesToSeat(position, stored.numLeaves);
-        const path = TreeMath.directPath(position, numLeaves);
+        const numLeaves = grown;
+        const frontier = TreeMath.frontier(transition.positions, numLeaves);
         const storedNodes = new Map(stored.nodes.map(node => [node.nodeIndex, node]));
         const seated = new Map(transition.seatedNodes.map(node => [node.nodeIndex, node]));
-        problems.push(...TreeTransitionValidator.checkSeatedNodes(path, storedNodes, seated));
+        problems.push(...TreeTransitionValidator.checkSeatedNodes(frontier, storedNodes, seated));
         if (problems.length > 0) {
             return problems;
         }
         problems.push(...TreeTransitionValidator.checkAdditionEdges(
-            stored, transition, addedUser, position, numLeaves, path, storedNodes, seated,
+            stored, transition, addedUsers, numLeaves, frontier, storedNodes, seated,
         ));
         return problems;
+    }
+    
+    /** First value that appears twice, or `undefined`. */
+    private static firstDuplicate<T>(values: T[]): T|undefined {
+        const seen = new Set<T>();
+        for (const value of values) {
+            if (seen.has(value)) {
+                return value;
+            }
+            seen.add(value);
+        }
+        return undefined;
     }
     
     /**
@@ -201,10 +268,9 @@ export class TreeTransitionValidator {
     private static checkAdditionEdges(
         stored: StoredPathState,
         transition: types.cloud.GroupTreeAdditionTransition,
-        addedUser: types.cloud.UserId,
-        position: number,
+        addedUsers: types.cloud.UserId[],
         numLeaves: number,
-        path: number[],
+        frontier: number[],
         storedNodes: Map<number, types.cloud.GroupTreeNode>,
         seated: Map<number, types.cloud.GroupTreeSeatedNode>,
     ): TransitionRejection[] {
@@ -213,10 +279,12 @@ export class TreeTransitionValidator {
         while (seating.length < numLeaves) {
             seating.push("" as types.cloud.UserId);
         }
-        seating[position] = addedUser;
+        transition.positions.forEach((position, i) => {
+            seating[position] = addedUsers[i];
+        });
         
         const required = new Map<string, {parentGeneration: number, childGeneration?: number, describe: {parent: string, child: string}}>();
-        for (const parentIndex of path) {
+        for (const parentIndex of frontier) {
             const parentGeneration = seated.get(parentIndex)!.generation;
             for (const childIndex of TreeMath.children(parentIndex, numLeaves)) {
                 if (TreeMath.isLeaf(childIndex)) {
@@ -377,22 +445,27 @@ export class TreeTransitionValidator {
     private static checkEdges(
         stored: StoredPathState,
         transition: types.cloud.GroupTreeTransition,
-        position: number,
-        path: number[],
+        positions: number[],
+        frontier: number[],
         storedNodes: Map<number, types.cloud.GroupTreeNode>,
         refreshed: Map<number, types.cloud.GroupTreeRefreshedNode>,
         newEpoch: number,
     ): TransitionRejection[] {
         const problems: TransitionRejection[] = [];
-        const blankedLeaf = TreeMath.leafNode(position);
+        const blankedLeaves = new Set(positions.map(position => TreeMath.leafNode(position)));
         const seating = [...stored.leafAssignment];
-        seating[position] = "" as types.cloud.UserId;
+        for (const position of positions) {
+            seating[position] = "" as types.cloud.UserId;
+        }
         
         const required = new Map<string, {parentGeneration: number, childGeneration?: number, describe: {parent: string, child: string}}>();
-        for (const parentIndex of path) {
+        for (const parentIndex of frontier) {
             const parentGeneration = refreshed.get(parentIndex)!.generation;
             for (const childIndex of TreeMath.children(parentIndex, stored.numLeaves)) {
-                if (childIndex === blankedLeaf) {
+                if (blankedLeaves.has(childIndex)) {
+                    // No edge to a seat nobody holds. A node whose children are *all* blanked ends up owing none
+                    // at all: it still gets a fresh key so the refresh reaches the root, but nothing can climb
+                    // into it — the same shape the whole-tree validator accepts for an empty subtree.
                     continue;
                 }
                 if (TreeMath.isLeaf(childIndex)) {
@@ -498,25 +571,34 @@ export class TreeTransitionValidator {
         };
     }
     
-    /** Which nodes the bridge has to read to check a removal at `position`: the path and its copath. */
-    static nodesNeededFor(position: number, numLeaves: number): number[] {
-        return [
-            ...TreeMath.directPath(position, numLeaves),
-            ...TreeMath.copath(position, numLeaves).filter(nodeIndex => !TreeMath.isLeaf(nodeIndex)),
-        ];
+    /**
+     * Which nodes the bridge has to read to check a removal of `positions`: their paths and copaths.
+     *
+     * Deduplicated, so a batch of neighbours costs barely more than one of them — the shared ancestors and the
+     * copath nodes they have in common are read once.
+     */
+    static nodesNeededFor(positions: number[], numLeaves: number): number[] {
+        const needed = new Set<number>();
+        for (const position of positions) {
+            for (const nodeIndex of TreeMath.directPath(position, numLeaves)) {
+                needed.add(nodeIndex);
+            }
+            for (const nodeIndex of TreeMath.copath(position, numLeaves)) {
+                if (!TreeMath.isLeaf(nodeIndex)) {
+                    needed.add(nodeIndex);
+                }
+            }
+        }
+        return [...needed];
     }
     
     /**
-     * Which nodes checking an addition at `position` needs, in the geometry seating it produces.
+     * Which nodes checking an addition at `positions` needs, in the geometry seating them produces.
      *
      * Indices that do not exist yet are included and simply come back absent — growth mints them, and the
      * validator needs to know they were absent rather than assume it.
      */
-    static nodesNeededForSeat(position: number, numLeaves: number): number[] {
-        const grown = TreeMath.numLeavesToSeat(position, numLeaves);
-        return [
-            ...TreeMath.directPath(position, grown),
-            ...TreeMath.copath(position, grown).filter(nodeIndex => !TreeMath.isLeaf(nodeIndex)),
-        ];
+    static nodesNeededForSeat(positions: number[], numLeaves: number): number[] {
+        return TreeTransitionValidator.nodesNeededFor(positions, TreeMath.numLeavesToSeatAll(positions, numLeaves));
     }
 }

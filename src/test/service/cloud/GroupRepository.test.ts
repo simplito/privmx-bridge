@@ -116,7 +116,7 @@ function removal(oldGroup: db.group.Group) {
     return {
         oldGroup: oldGroup,
         modifier: janek,
-        removedUser: bob,
+        removedUsers: [bob],
         newGroupPubKey: nextGroupPubKey,
         keyId: newKeyId,
         data: data,
@@ -137,7 +137,7 @@ it("a removal updates the fields that changed instead of replacing the document"
     // A whole-document replace meant rewriting the entire tree to add one edge.
     const {repository, updates, replacements} = createRepository();
     const oldGroup = group();
-    await repository.removeMemberWithTransition(removal(oldGroup));
+    await repository.removeMembersWithTransition(removal(oldGroup));
     assert.strictEqual(updates.length, 1);
     assert.strictEqual(replacements.length, 0);
     const written = Object.keys(updates[0].set).sort();
@@ -149,7 +149,7 @@ it("a removal updates the fields that changed instead of replacing the document"
 
 it("a removal keeps the compare-and-swap on the epoch it was computed against", async () => {
     const {repository, updates} = createRepository();
-    await repository.removeMemberWithTransition(removal(group()));
+    await repository.removeMembersWithTransition(removal(group()));
     assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH});
     assert.strictEqual(updates[0].set.keyVersion, EPOCH + 1);
 });
@@ -157,7 +157,7 @@ it("a removal keeps the compare-and-swap on the epoch it was computed against", 
 it("a lost race writes nothing at all, in the document or beside it", async () => {
     // Half a transition is worse than none: edges of a tree the document never adopted would be read as real.
     const {repository, state} = createRepository({casMiss: true});
-    const result = await repository.removeMemberWithTransition(removal(group()));
+    const result = await repository.removeMembersWithTransition(removal(group()));
     assert.strictEqual(result, null);
     hasNoCalls(state.insertHistoryEntry);
     hasNoCalls(state.applyRemovalTransition);
@@ -167,13 +167,13 @@ it("a lost race writes nothing at all, in the document or beside it", async () =
 it("only the transition is written, never a whole tree", async () => {
     const {repository, state} = createRepository();
     const params = removal(group());
-    await repository.removeMemberWithTransition(params);
+    await repository.removeMembersWithTransition(params);
     hasOneCall(state.applyRemovalTransition);
     hasNoCalls(state.writeTree);
     const call = (state.applyRemovalTransition as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
     assert.strictEqual(call[0], groupId);
     assert.strictEqual(call[1], params.transition);
-    assert.strictEqual(call[2], bob);
+    assert.deepStrictEqual(call[2], [bob]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ it("only the transition is written, never a whole tree", async () => {
 it("appending a version is one insert, and the number comes from the counter", async () => {
     // Not from an array length: counting the entries would mean reading the whole history to append to it.
     const {repository, state} = createRepository();
-    const result = await repository.removeMemberWithTransition(removal(group({version: 41 as types.group.GroupVersion})));
+    const result = await repository.removeMembersWithTransition(removal(group({version: 41 as types.group.GroupVersion})));
     hasOneCall(state.insertHistoryEntry);
     assert.strictEqual(result?.version, 42);
     const entry = historyEntry(state);
@@ -191,19 +191,20 @@ it("appending a version is one insert, and the number comes from the counter", a
     assert.strictEqual(entry.groupId, groupId);
     assert.strictEqual(entry.id, `${groupId}|42`);
     assert.strictEqual(entry.keyId, newKeyId);
-    assert.strictEqual(entry.users.includes(bob), false);
+    // No roster on the entry: the removal is committed as a signed delta inside `data`, which the bridge does
+    // not read. That bob is gone is asserted on the group document above, which is what ACL actually uses.
+    assert.strictEqual("users" in entry, false);
 });
 
 it("an addition advances the version without advancing the epoch", async () => {
     // The epoch staying put is what keeps every container the group can read valid.
     const {repository, state, updates} = createRepository();
     const oldGroup = group();
-    const result = await repository.addMemberWithTransition({
+    const result = await repository.addMembersWithTransition({
         oldGroup: oldGroup,
         transition: additionTransition(buildTree(SEATING, EPOCH), "dave" as types.cloud.UserId, 4, EPOCH),
         modifier: janek,
-        addedUser: "dave" as types.cloud.UserId,
-        role: "user",
+        addedMembers: [{userId: "dave" as types.cloud.UserId, role: "user"}],
         keyId: keyId,
         data: data,
     });

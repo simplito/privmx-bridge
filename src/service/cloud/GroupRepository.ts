@@ -163,8 +163,8 @@ export class GroupRepository {
         return this.state.getTree(group);
     }
     
-    async getHistory(groupId: types.group.GroupId): Promise<db.group.GroupHistoryEntry[]> {
-        return this.state.getHistory(groupId);
+    async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
+        return this.state.getHistory(groupId, fromVersion);
     }
     
     /** Every keyId the group has ever used — what a submitted key entry is checked against. */
@@ -231,8 +231,6 @@ export class GroupRepository {
             version: firstVersion,
             keyId: keyId,
             data: data,
-            users: users,
-            managers: managers,
             groupPubKey: groupPubKey,
             created: now,
             author: creator,
@@ -241,9 +239,10 @@ export class GroupRepository {
         return group;
     }
     
-    /** The nodes needed to check a removal at `position`: its path and copath, `O(log n)` reads. */
-    async getPathNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
-        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededFor(position, group.numLeaves));
+    /** The nodes needed to check a removal of `positions`: their paths and copaths, deduplicated. `O(k log n)`
+     *  reads for a batch of `k`, and far less than that when the seats are neighbours. */
+    async getPathNodes(group: db.group.Group, positions: number[]): Promise<types.cloud.GroupTreeNode[]> {
+        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededFor(positions, group.numLeaves));
     }
     
     /** The root node alone, which is all a rotation is checked against. */
@@ -252,16 +251,17 @@ export class GroupRepository {
     }
     
     /**
-     * Removes a member: blank the leaf, refresh its path, advance the epoch, append the rungs. All under one
-     * compare-and-swap on `keyVersion`, so two managers removing concurrently cannot interleave.
+     * Removes one or more members: blank their leaves, refresh the union of their paths, advance the epoch once,
+     * append the rungs. All under one compare-and-swap on `keyVersion`, so two managers removing concurrently
+     * cannot interleave — and a batch cannot half-land the way the same removals done one call at a time can.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
-    async removeMemberWithTransition(params: {
+    async removeMembersWithTransition(params: {
         oldGroup: db.group.Group,
         transition: types.cloud.GroupTreeTransition,
         modifier: types.cloud.UserId,
-        removedUser: types.cloud.UserId,
+        removedUsers: types.cloud.UserId[],
         newGroupPubKey: types.cloud.GroupPubKey,
         keyId: types.core.KeyId,
         data: types.group.GroupData,
@@ -269,14 +269,17 @@ export class GroupRepository {
         groupKeys?: types.cloud.GroupKeysEntry[],
         confirmationTag?: types.core.Base64,
     }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, removedUser, transition} = params;
+        const {oldGroup, modifier, removedUsers, transition} = params;
         const now = DateUtils.now();
-        const users = oldGroup.users.filter(u => u !== removedUser);
-        const managers = oldGroup.managers.filter(u => u !== removedUser);
+        const leaving = new Set(removedUsers);
+        const users = oldGroup.users.filter(u => !leaving.has(u));
+        const managers = oldGroup.managers.filter(u => !leaving.has(u));
         const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
         const leafAssignment = [...oldGroup.leafAssignment];
-        leafAssignment[transition.blankedPosition] = "" as types.cloud.UserId;
+        for (const position of transition.blankedPositions) {
+            leafAssignment[position] = "" as types.cloud.UserId;
+        }
         const changes: Partial<db.group.Group> = {
             groupPubKey: params.newGroupPubKey,
             lastModifier: modifier,
@@ -300,54 +303,57 @@ export class GroupRepository {
             version: version,
             keyId: params.keyId,
             data: params.data,
-            users: users,
-            managers: managers,
             groupPubKey: params.newGroupPubKey,
             created: now,
             author: modifier,
             ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
         });
-        await this.state.applyRemovalTransition(oldGroup.id, transition, removedUser, oldGroup.numLeaves ?? 0);
+        await this.state.applyRemovalTransition(
+            oldGroup.id, transition, removedUsers, oldGroup.numLeaves ?? 0, oldGroup.leafAssignment,
+        );
         await this.state.insertRungs(oldGroup.id, params.rungs);
         return {...oldGroup, ...changes};
     }
     
-    /** Which nodes checking an addition at `position` needs: the seat's path and copath in the grown geometry. */
-    async getSeatNodes(group: db.group.Group, position: number): Promise<types.cloud.GroupTreeNode[]> {
-        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededForSeat(position, group.numLeaves));
+    /** Which nodes checking an addition at `positions` needs: their paths and copaths in the grown geometry. */
+    async getSeatNodes(group: db.group.Group, positions: number[]): Promise<types.cloud.GroupTreeNode[]> {
+        return this.state.getNodesAt(group.id, TreeTransitionValidator.nodesNeededForSeat(positions, group.numLeaves));
     }
     
     /**
-     * Seats a member **without advancing the epoch**, so every container the group can read stays valid.
+     * Seats one or more members **without advancing the epoch**, so every container the group can read stays
+     * valid.
      *
      * Still a CAS on the unchanged epoch, so an addition racing a removal loses: it was computed against a tree
      * the removal has already replaced.
      *
      * @returns the updated group, or `null` on a lost CAS race
      */
-    async addMemberWithTransition(params: {
+    async addMembersWithTransition(params: {
         oldGroup: db.group.Group,
         transition: types.cloud.GroupTreeAdditionTransition,
         modifier: types.cloud.UserId,
-        addedUser: types.cloud.UserId,
-        role: types.cloud.ContainerRole,
+        addedMembers: {userId: types.cloud.UserId, role: types.cloud.ContainerRole}[],
         keyId: types.core.KeyId,
         data: types.group.GroupData,
     }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, addedUser, transition} = params;
+        const {oldGroup, modifier, addedMembers, transition} = params;
         const now = DateUtils.now();
-        const users = params.role === "user" ? Utils.unique([...oldGroup.users, addedUser]) : oldGroup.users;
-        const managers = params.role === "manager" ? Utils.unique([...oldGroup.managers, addedUser]) : oldGroup.managers;
+        const addedUsers = addedMembers.map(member => member.userId);
+        const users = Utils.unique([...oldGroup.users, ...addedMembers.filter(m => m.role === "user").map(m => m.userId)]);
+        const managers = Utils.unique([...oldGroup.managers, ...addedMembers.filter(m => m.role === "manager").map(m => m.userId)]);
         const expectedKeyVersion = oldGroup.keyVersion;
         const version = this.nextVersion(oldGroup);
         const oldNumLeaves = oldGroup.numLeaves;
         const oldLeafAssignment = [...oldGroup.leafAssignment];
-        const numLeaves = TreeMath.numLeavesToSeat(transition.position, oldNumLeaves);
+        const numLeaves = TreeMath.numLeavesToSeatAll(transition.positions, oldNumLeaves);
         const leafAssignment = [...oldLeafAssignment];
         while (leafAssignment.length < numLeaves) {
             leafAssignment.push("" as types.cloud.UserId);
         }
-        leafAssignment[transition.position] = addedUser;
+        transition.positions.forEach((position, i) => {
+            leafAssignment[position] = addedUsers[i];
+        });
         const changes: Partial<db.group.Group> = {
             lastModifier: modifier,
             lastModificationDate: now,
@@ -368,13 +374,11 @@ export class GroupRepository {
             version: version,
             keyId: params.keyId,
             data: params.data,
-            users: users,
-            managers: managers,
             groupPubKey: oldGroup.groupPubKey,
             created: now,
             author: modifier,
         });
-        await this.state.applyAdditionTransition(oldGroup.id, transition, addedUser, oldNumLeaves, oldLeafAssignment);
+        await this.state.applyAdditionTransition(oldGroup.id, transition, addedUsers, oldNumLeaves, oldLeafAssignment);
         return {...oldGroup, ...changes};
     }
     
@@ -444,8 +448,6 @@ export class GroupRepository {
             version: version,
             keyId: keyId,
             data: data,
-            users: oldGroup.users,
-            managers: oldGroup.managers,
             groupPubKey: oldGroup.groupPubKey,
             created: now,
             author: modifier,
@@ -532,8 +534,6 @@ export class GroupRepository {
             version: version,
             keyId: params.keyId,
             data: params.data,
-            users: oldGroup.users,
-            managers: oldGroup.managers,
             groupPubKey: params.newGroupPubKey,
             created: now,
             author: modifier,

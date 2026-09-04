@@ -251,9 +251,9 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
         const alicePosition = group.leafAssignment.indexOf(aliceId);
         assert(alicePosition >= 0, "alice should hold a seat before she is removed");
         const newEpoch = group.keyVersion + 1;
-        const res = await this.apis.contextApi.groupRemoveMember({
+        const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
-            userId: aliceId,
+            userIds: [aliceId],
             groupPubKey: rotatedGroupPubKey,
             keyId: rotatedGroupKeyId,
             data: "AAAA" as types.group.GroupData,
@@ -272,7 +272,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             },
             expectedKeyVersion: group.keyVersion,
         });
-        assert(res === "OK", "groupRemoveMember did not return OK");
+        assert(res === "OK", "groupRemoveMembers did not return OK");
     }
     
     private async aliceCanNoLongerGetThread() {
