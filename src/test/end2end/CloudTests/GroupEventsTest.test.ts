@@ -147,7 +147,6 @@ export class GroupEventsTest extends BaseTestSet {
             data: data,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
-            force: false,
         });
         assert(res === "OK", "groupUpdate did not return OK");
     }

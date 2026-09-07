@@ -229,7 +229,6 @@ export interface GroupUpdateModel {
     data: types.group.GroupData;
     keyId: types.core.KeyId;
     version: types.group.GroupVersion;
-    force: boolean;
     policy?: types.cloud.ContainerPolicy;
 }
 

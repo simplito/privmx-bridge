@@ -79,7 +79,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.updateGroup(cloudUser, model.id, model.data, model.keyId, model.version, model.force, model.policy, model.resourceId || null);
+        const group = await this.groupService.updateGroup(cloudUser, model.id, model.data, model.keyId, model.version, model.policy, model.resourceId || null);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }

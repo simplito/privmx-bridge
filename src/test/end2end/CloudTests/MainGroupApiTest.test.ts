@@ -143,7 +143,6 @@ export class GroupApiTests extends BaseTestSet {
             data: "AAAAB" as types.group.GroupData,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
-            force: false,
         });
         assert(res === "OK", "groupUpdate did not return OK");
         const {group} = await this.apis.contextApi.groupGet({groupId});
@@ -152,13 +151,14 @@ export class GroupApiTests extends BaseTestSet {
     
     private async tryUpdateWithStaleVersionAndFail() {
         const groupId = this.requireGroupId();
-        // current version is now 2; submitting version 1 without force must be rejected (optimistic concurrency).
+        // Current version is now 2, so submitting version 1 must be rejected. Unlike the other containers there is
+        // no force to override it: a group entry commits a tag over the version it lands at, so a stale update
+        // could only publish a tag no client would accept.
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdate({
             id: groupId,
             data: "AAAAC" as types.group.GroupData,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
-            force: false,
         }), "GROUP_VERSION_MISMATCH");
     }
     

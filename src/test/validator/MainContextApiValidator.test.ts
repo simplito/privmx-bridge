@@ -71,10 +71,24 @@ it("ContextApiValidator.groupUpdate valid", () => {
         data: "someData" as types.group.GroupData,
         keyId: keyId,
         version: 1 as types.group.GroupVersion,
-        force: false,
     };
     const result = Utils.try(() => validator().validate("groupUpdate", model));
     expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupUpdate rejects a force field", () => {
+    // Groups have no version-check override: the entry commits a tag over the version it lands at, so a stale
+    // update could only publish a tag no client would accept. A caller still sending `force` is using an API
+    // that no longer exists and has to be told, not silently accepted.
+    const model = {
+        id: groupId,
+        data: "someData" as types.group.GroupData,
+        keyId: keyId,
+        version: 1 as types.group.GroupVersion,
+        force: false,
+    };
+    const result = Utils.try(() => validator().validate("groupUpdate", model));
+    expect(result.success).toBe(false);
 });
 
 it("ContextApiValidator.groupGet valid", () => {
