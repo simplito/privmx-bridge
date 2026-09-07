@@ -69,9 +69,9 @@ export class GroupService extends BaseContainerService {
     
     /** The group plus its out-of-document state. Separate from `getGroup` so callers that need only the
      *  document do not drag a tree and a full history along with it. */
-    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromVersion?: number) {
+    async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromRosterVersion?: number) {
         const group = await this.getGroup(executor, groupId, type);
-        const state = await this.repositoryFactory.createGroupRepository().getFullState(group, fromVersion);
+        const state = await this.repositoryFactory.createGroupRepository().getFullState(group, fromRosterVersion);
         return {group, state};
     }
     
@@ -95,7 +95,7 @@ export class GroupService extends BaseContainerService {
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
-        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState,
+        meta: types.group.GroupData, keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState,
         groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">) {
         const allUsers = Utils.uniqueFromArrays(users, managers);
         this.policyService.validateContainerPolicyForContainer("policy", policy);
@@ -115,7 +115,7 @@ export class GroupService extends BaseContainerService {
             // leaves the group itself uncreated, or the other way round.
             const group = await this.repositoryFactory.withTransaction(session =>
                 this.repositoryFactory.createGroupRepository(session)
-                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, keyId, policy, tree, newGroupKeys),
+                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, meta, keyId, policy, tree, newGroupKeys),
             );
             this.groupNotificationService.sendCreatedGroup(group);
             return group;
@@ -149,10 +149,15 @@ export class GroupService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
             this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, policy);
-            // Unconditional, unlike the other containers: the entry's roster tag commits the version it lands at,
+            // Unconditional, unlike the other containers: the metadata entry commits the version it lands at,
             // so letting a stale update through would publish a tag no client can verify.
             if (oldGroup.version !== version) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
+            }
+            // Metadata must be written under the current epoch's key, or a member removed at the next rotation
+            // would keep the key to everything written after they left.
+            if (keyId !== oldGroup.keyId) {
+                throw new AppException("GROUP_META_KEY_MISMATCH");
             }
             if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
@@ -160,6 +165,10 @@ export class GroupService extends BaseContainerService {
             // Metadata integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
                 const group = await groupRepository.updateGroup(oldGroup, user.userId, data, keyId, policy, resourceId);
+                if (!group) {
+                    // The CAS lost: another update landed between the read above and the write.
+                    throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
+                }
                 return group;
             }
             catch (err) {
@@ -232,6 +241,11 @@ export class GroupService extends BaseContainerService {
             const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMembers", ["groupId=" + model.id]);
+            // An addition does not rotate the epoch, so it must not rotate the content key either — the roster
+            // head has to stay at the current epoch for a metadata write to resolve the right key off it.
+            if (model.keyId !== oldGroup.keyId) {
+                throw new AppException("GROUP_META_KEY_MISMATCH");
+            }
             const addedUserIds = model.members.map(member => member.userId);
             const managers = [...oldGroup.managers, ...model.members.filter(member => member.role === "manager").map(member => member.userId)];
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
@@ -343,6 +357,7 @@ export class GroupService extends BaseContainerService {
             if (model.newFloor > keyVersion) {
                 throw new AppException("INVALID_PARAMS", `newFloor cannot exceed the current epoch ${keyVersion}`);
             }
+            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.newFloor);
             const result = await groupRepository.cutEra(oldGroup, model.newFloor);
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
@@ -369,6 +384,7 @@ export class GroupService extends BaseContainerService {
             if (model.belowEpoch > keyVersion) {
                 throw new AppException("INVALID_PARAMS", `belowEpoch cannot exceed the current epoch ${keyVersion}`);
             }
+            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.belowEpoch);
             const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", await this.buildRotatedAlreadyData(groupRepository, (await groupRepository.get(model.id))!));
@@ -393,6 +409,29 @@ export class GroupService extends BaseContainerService {
     }
     
     /** Loads a group for a tree operation and rejects a caller working from a superseded epoch. */
+    /**
+     * Refuses to strand the group's metadata below a floor.
+     *
+     * The metadata entry stays at the epoch it was written under — that is what stops a membership change from
+     * rewriting it — so cutting or pruning below that epoch would take away the only route to its key and make
+     * `publicMeta`/`privateMeta` unreadable for everyone, permanently. Before the planes were split this could
+     * not happen: every removal republished the metadata at the new epoch.
+     *
+     * One projected read. The way out is a single `updateGroup`, which rewrites the metadata at the current
+     * epoch — so the message says so rather than leaving the caller to guess.
+     */
+    private async assertMetaSurvivesFloor(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        groupId: types.group.GroupId,
+        floor: number,
+    ) {
+        const metaKeyVersion = await groupRepository.getMetaHeadKeyVersion(groupId);
+        if (metaKeyVersion !== null && metaKeyVersion < floor) {
+            throw new AppException("GROUP_META_UNREACHABLE",
+                `group metadata sits at epoch ${metaKeyVersion}, below the requested floor ${floor}; call groupUpdate first to rewrite it at the current epoch`);
+        }
+    }
+
     private async getGroupForTreeOperation(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         cloudUser: CloudUser,

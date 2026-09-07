@@ -72,18 +72,21 @@ function createStateRepository(docs: {
     nodes?: db.group.GroupTreeNode[],
     edges?: db.group.GroupTreeEdge[],
     history?: db.group.GroupHistoryEntry[],
+    metaEntries?: db.group.GroupMetaEntry[],
     rungs?: db.group.GroupArchiveRung[],
 } = {}) {
-    const captured: Record<"nodes"|"edges"|"history"|"rungs", Captured> = {
+    const captured: Record<"nodes"|"edges"|"history"|"metaEntries"|"rungs", Captured> = {
         nodes: {filter: null, operations: []},
         edges: {filter: null, operations: []},
         history: {filter: null, operations: []},
+        metaEntries: {filter: null, operations: []},
         rungs: {filter: null, operations: []},
     };
     const repository = new GroupStateRepository(
         fakeRepository(docs.nodes ?? [], captured.nodes),
         fakeRepository(docs.edges ?? [], captured.edges),
         fakeRepository(docs.history ?? [], captured.history),
+        fakeRepository(docs.metaEntries ?? [], captured.metaEntries),
         fakeRepository(docs.rungs ?? [], captured.rungs),
     );
     return {repository, captured};
@@ -103,6 +106,7 @@ function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
         users: [],
         managers: ["janek" as types.cloud.UserId],
         version: 1 as types.group.GroupVersion,
+        rosterVersion: 1,
         keyVersion: 1,
         eraFloor: 1,
         numLeaves: tree.numLeaves,

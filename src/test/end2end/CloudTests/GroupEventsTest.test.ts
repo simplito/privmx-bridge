@@ -111,6 +111,7 @@ export class GroupEventsTest extends BaseTestSet {
             users: [testData.userId],
             managers: [testData.userId],
             data: "AAAA" as types.group.GroupData,
+            meta: "META" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree([testData.userId], 1),
         });
@@ -124,6 +125,7 @@ export class GroupEventsTest extends BaseTestSet {
             users: [testData.userId],
             managers: [testData.userId],
             data: "BBBB" as types.group.GroupData,
+            meta: "META2" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree([testData.userId], 1),
         });

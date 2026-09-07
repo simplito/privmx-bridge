@@ -127,6 +127,7 @@ export class GroupNotificationService {
             groupId: group.id,
             contextId: group.contextId,
             version: group.version,
+            rosterVersion: group.rosterVersion ?? 0,
             keyVersion: group.keyVersion ?? 0,
             changeKind: changeKind,
         };

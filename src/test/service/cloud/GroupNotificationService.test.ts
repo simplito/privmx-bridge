@@ -59,6 +59,7 @@ function group(memberCount = 3): db.group.Group {
         users: users,
         managers: [janek],
         version: 7 as types.group.GroupVersion,
+        rosterVersion: 7,
         keyVersion: 4,
         numLeaves: 4,
         leafAssignment: [janek, alice],
@@ -92,7 +93,7 @@ function createService() {
     
     // The notification path must not read group state any more; a call here is the regression.
     const groupRepository = createMock<GroupRepository>({});
-    mock(groupRepository, "getFullState", async () => ({tree: buildTree(["janek"], 1), history: []}));
+    mock(groupRepository, "getFullState", (async () => ({tree: buildTree(["janek"], 1), history: [], meta: undefined})) as never);
     
     const repositoryFactory = createMock<RepositoryFactory>({});
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);

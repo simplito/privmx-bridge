@@ -34,6 +34,7 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         users: ["janek"] as types.cloud.UserId[],
         managers: ["janek"] as types.cloud.UserId[],
         data: "someData" as types.group.GroupData,
+        meta: "someMeta" as types.group.GroupData,
         keyId: keyId,
         tree: buildTree(["janek"], 1),
     };

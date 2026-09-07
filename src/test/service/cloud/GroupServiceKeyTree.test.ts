@@ -127,6 +127,7 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
         users: [alice, bob, carol],
         managers: [janek],
         version: 1 as types.group.GroupVersion,
+        rosterVersion: 1,
         policy: {},
         keyVersion: EPOCH,
         keyHistory: [],
@@ -274,7 +275,7 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
     // one ciphertext per member just to hand out the current key.
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
     );
     hasOneCall(groupRepository.createGroup);
@@ -283,12 +284,13 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
 it("createGroup stores the metadata key as one self-addressed entry", async () => {
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
         {groupEpoch: 1, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     );
     const call = groupRepository.createGroup.mock.calls[0];
-    const groupKeys = [...call][11] as types.cloud.GroupKeysEntry[];
+    // One further along than before: `meta` sits between `data` and `keyId`.
+    const groupKeys = [...call][12] as types.cloud.GroupKeysEntry[];
     assert.strictEqual(groupKeys.length, 1, "one entry, whatever the group's size");
     assert.strictEqual(groupKeys[0].keys[0].groupEpoch, 1);
 });
@@ -296,7 +298,7 @@ it("createGroup stores the metadata key as one self-addressed entry", async () =
 it("createGroup refuses a self-addressed entry naming an epoch the group does not start at", async () => {
     const {groupService, groupRepository} = createGroupService();
     await expectFailure("INVALID_PARAMS", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
         {groupEpoch: 2, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     ));
@@ -307,7 +309,7 @@ it("createGroup refuses more members than the configured limit, and says so", as
     const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {maxGroupMembers: 3});
     const tooMany = ["u1", "u2", "u3", "u4"].map(u => u as types.cloud.UserId);
     const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, data, keyId, {},
         buildTree([...tooMany, janek], 1),
     ));
     assert.deepStrictEqual(error.getData(), {limit: 3, requested: 5}, "the error carries both numbers");
@@ -335,7 +337,7 @@ it("addMember refuses to grow the tree past the limit, blanks and all", async ()
 it("createGroup rejects a tree that does not seat every member", async () => {
     const {groupService, groupRepository} = createGroupService();
     await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(["janek", "alice", "bob", ""], 1),
     ));
     hasNoCalls(groupRepository.createGroup);
@@ -344,7 +346,7 @@ it("createGroup rejects a tree that does not seat every member", async () => {
 it("createGroup rejects a tree addressed to an epoch other than the first", async () => {
     const {groupService} = createGroupService();
     await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 4),
     ));
 });

@@ -47,7 +47,9 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            // Two envelopes, one per plane: `data` carries the roster tag, `meta` the metadata and its own tag.
             data: this.tv.groupData,
+            meta: this.tv.groupData,
             keyId: this.tv.keyId,
             // One: the group is a grantee of itself and has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
@@ -88,9 +90,9 @@ export class ContextApiValidator extends BaseValidator {
             forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
             // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
             forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
-            // History from this version on — the audit trail. Absent serves the head alone, which is all a read
-            // needs; asking for more is a choice, because each entry is a full metadata envelope.
-            fromVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            // Roster history from this version on — the audit trail. Absent serves the head alone, which is all
+            // a read needs. There is no metadata trail to ask for: the current entry is always served.
+            fromRosterVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
         this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,

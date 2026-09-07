@@ -41,7 +41,9 @@ const group: db.group.Group = {
     data: data,
     users: [alice],
     managers: [janek],
-    version: 4 as types.group.GroupVersion,
+    // Deliberately different numbers: the two planes count independently, and a swap between them has to show.
+    version: 7 as types.group.GroupVersion,
+    rosterVersion: 4,
     keyVersion: 3,
     keyHistory: [],
     policy: {},
@@ -57,6 +59,7 @@ function state(): db.group.GroupState {
         groupId: groupId,
         version: version as types.group.GroupVersion,
         keyId: keyId,
+        keyVersion: 3,
         data: data,
         users: [alice],
         managers: [janek],
@@ -64,13 +67,28 @@ function state(): db.group.GroupState {
         created: 100 as types.core.Timestamp,
         author: janek,
     }));
-    return {tree, history};
+    // At epoch 2 while the group is at 3: a metadata entry stays where it was written, and a rotation since then
+    // does not move it. That lag is normal, and the reader descends the Ladder to its key.
+    const meta: db.group.GroupMetaEntry = {
+        id: `${groupId}|7` as db.group.GroupMetaEntryId,
+        groupId: groupId,
+        version: 7 as types.group.GroupVersion,
+        keyId: keyId,
+        keyVersion: 2,
+        data: data,
+        created: 150 as types.core.Timestamp,
+        author: alice,
+    };
+    return {tree, history, meta};
 }
 
-it("convertGroup serves the state it was handed, and the version from the counter", async () => {
+it("convertGroup serves the state it was handed, and each plane's own counter", async () => {
     const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
-    // Four entries in the collection, and a counter that says four.
-    assert.strictEqual(converted.version, 4);
+    // Four roster entries and a roster counter that says four; the metadata counter is its own number.
+    assert.strictEqual(converted.rosterVersion, 4);
+    assert.strictEqual(converted.version, 7, "the metadata counter, not the roster one");
+    assert.strictEqual(converted.meta.version, 7);
+    assert.strictEqual(converted.meta.keyVersion, 2, "metadata stays at the epoch it was written under");
     assert.strictEqual(converted.history.length, 4);
     assert.strictEqual(converted.data.length, 4);
     assert.strictEqual(converted.treeNodes?.length, tree.nodes.length);
@@ -83,9 +101,10 @@ it("a listing carries the roster and the epoch, and nothing that grows with hist
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
     assert.deepStrictEqual(Object.keys(summary).sort(), [
         "contextId", "createDate", "creator", "groupPubKey", "id", "keyVersion",
-        "lastModificationDate", "lastModifier", "managers", "policy", "type", "users", "version",
+        "lastModificationDate", "lastModifier", "managers", "policy", "rosterVersion", "type", "users", "version",
     ]);
-    assert.strictEqual(summary.version, 4);
+    assert.strictEqual(summary.version, 7);
+    assert.strictEqual(summary.rosterVersion, 4);
     assert.strictEqual(summary.keyVersion, 3);
 });
 
@@ -95,7 +114,7 @@ it("the default view serves the caller's climb, not the whole tree", async () =>
     const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
     const big = buildTree(seating, 3);
     const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
-    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     
     assert.strictEqual(converted.treeScope, "path");
     assert.strictEqual(converted.ownLeafPosition, 1);
@@ -115,7 +134,7 @@ it("scope full serves the whole tree, for a client that validates it itself", as
     const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
     const big = buildTree(seating, 3);
     const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
-    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history}, "full");
+    const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big}, "full");
     
     assert.strictEqual(converted.treeScope, "full");
     assert.strictEqual(converted.treeNodes?.length, big.nodes.length);
@@ -135,7 +154,7 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
 it("serves the whole history, from genesis, when the caller does not say what it has", async () => {
     const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
     assert.strictEqual(converted.history.length, 4);
-    assert.strictEqual(converted.firstServedVersion, 1, "from genesis");
+    assert.strictEqual(converted.firstServedRosterVersion, 1, "from genesis");
 });
 
 it("says where a windowed history starts", async () => {
@@ -146,7 +165,7 @@ it("says where a windowed history starts", async () => {
     const converted = new GroupConverter().convertGroup(alice, group, windowed, "full");
     assert.strictEqual(converted.history.length, 2);
     assert.strictEqual(converted.data.length, 2);
-    assert.strictEqual(converted.firstServedVersion, 3);
+    assert.strictEqual(converted.firstServedRosterVersion, 3);
 });
 
 it("reports the current version when the window turns out empty", async () => {
@@ -156,7 +175,7 @@ it("reports the current version when the window turns out empty", async () => {
     empty.history = [];
     const converted = new GroupConverter().convertGroup(alice, group, empty, "full");
     assert.deepStrictEqual(converted.history, []);
-    assert.strictEqual(converted.firstServedVersion, group.version);
+    assert.strictEqual(converted.firstServedRosterVersion, group.rosterVersion);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +195,7 @@ it("forUserIds hands back the seats it resolved, not just the nodes around them"
     // serve, so returning it is what lets a manager skip downloading the roster to find it.
     const {big, group8} = bigGroup();
     const converted = new GroupConverter().convertGroup(
-        alice, group8, {tree: big, history: state().history}, "path", ["frank" as types.cloud.UserId],
+        alice, group8, {...state(), tree: big}, "path", ["frank" as types.cloud.UserId],
     );
     assert.deepStrictEqual(converted.subjectLeafPositions, [6]);
     assert.strictEqual(converted.ownLeafPosition, 1);
@@ -185,7 +204,7 @@ it("forUserIds hands back the seats it resolved, not just the nodes around them"
 it("forUserIds naming somebody with no seat omits them rather than reporting seat -1", async () => {
     const {big, group8} = bigGroup();
     const converted = new GroupConverter().convertGroup(
-        alice, group8, {tree: big, history: state().history}, "path", ["outsider" as types.cloud.UserId],
+        alice, group8, {...state(), tree: big}, "path", ["outsider" as types.cloud.UserId],
     );
     assert.deepStrictEqual(converted.subjectLeafPositions, []);
 });
@@ -193,7 +212,7 @@ it("forUserIds naming somebody with no seat omits them rather than reporting sea
 it("forNewMembers allocates blanks lowest-first before appending", async () => {
     const {big, group8} = bigGroup(["janek", "alice", "", "carol", "", "erin", "frank", "grace"]);
     const converted = new GroupConverter().convertGroup(
-        alice, group8, {tree: big, history: state().history}, "path", undefined, 3,
+        alice, group8, {...state(), tree: big}, "path", undefined, 3,
     );
     // Two blanks get reused before the tree is allowed to grow — otherwise remove/add cycles inflate `numLeaves`
     // without ever growing the roster.
@@ -202,9 +221,9 @@ it("forNewMembers allocates blanks lowest-first before appending", async () => {
 
 it("forNewMembers serves the nodes an addition to those seats needs", async () => {
     const {big, group8} = bigGroup(["janek", "alice", "", "carol", "dave", "erin", "frank", ""]);
-    const plain = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    const plain = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     const withSeats = new GroupConverter().convertGroup(
-        alice, group8, {tree: big, history: state().history}, "path", undefined, 2,
+        alice, group8, {...state(), tree: big}, "path", undefined, 2,
     );
     assert.deepStrictEqual(withSeats.nextFreeSeats, [2, 7]);
     // Still a path view, just a wider one: the caller's climb plus what seating those two needs.
@@ -219,7 +238,7 @@ it("forNewMembers serves the nodes an addition to those seats needs", async () =
 
 it("no seats are reported when nobody asked for any", async () => {
     const {big, group8} = bigGroup();
-    const converted = new GroupConverter().convertGroup(alice, group8, {tree: big, history: state().history});
+    const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     assert.strictEqual(converted.nextFreeSeats, undefined);
     assert.strictEqual(converted.subjectLeafPositions, undefined);
 });

@@ -110,6 +110,7 @@ const group: db.group.Group = {
     managers: [janek],
     // The genesis entry lives in `groupHistoryEntry`; the document keeps the count.
     version: 1 as types.group.GroupVersion,
+    rosterVersion: 1,
     policy: {},
     keyVersion: 1,
     eraFloor: 1,
@@ -197,7 +198,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
 
 it("Should create group", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, {}, tree);
+    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, keyId, {}, tree);
     expect(res).not.toBeNull();
     hasOneCall(groupRepository.createGroup);
     hasOneCall(groupNotificationService.sendCreatedGroup);
@@ -206,7 +207,7 @@ it("Should create group", async () => {
 it("Should fail to create group as an unknown user", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, keyId, {}, tree);
+        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, keyId, {}, tree);
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);

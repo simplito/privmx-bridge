@@ -77,6 +77,7 @@ export class GroupApiTests extends BaseTestSet {
             users: users,
             managers: managers,
             data: "AAAA" as types.group.GroupData,
+            meta: "BBBB" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree(users, 1),
         });

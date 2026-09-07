@@ -30,13 +30,15 @@ export class GroupStateRepository {
     static readonly TREE_NODE_COLLECTION_NAME = "groupTreeNode";
     static readonly TREE_EDGE_COLLECTION_NAME = "groupTreeEdge";
     static readonly HISTORY_COLLECTION_NAME = "groupHistoryEntry";
+    static readonly META_ENTRY_COLLECTION_NAME = "groupMetaEntry";
     static readonly ARCHIVE_RUNG_COLLECTION_NAME = "groupArchiveRung";
     static readonly COLLECTION_ID_PROP = "id";
-    
+
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
         private edges: MongoObjectRepository<db.group.GroupTreeEdgeId, db.group.GroupTreeEdge>,
         private history: MongoObjectRepository<db.group.GroupHistoryEntryId, db.group.GroupHistoryEntry>,
+        private metaEntries: MongoObjectRepository<db.group.GroupMetaEntryId, db.group.GroupMetaEntry>,
         private rungs: MongoObjectRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>,
     ) {
     }
@@ -56,6 +58,10 @@ export class GroupStateRepository {
     
     static historyEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
         return `${groupId}|${version}` as db.group.GroupHistoryEntryId;
+    }
+
+    static metaEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
+        return `${groupId}|${version}` as db.group.GroupMetaEntryId;
     }
     
     /** Identified by the span it covers and its recipient, which makes re-submitting a rung idempotent. */
@@ -102,17 +108,18 @@ export class GroupStateRepository {
      * A read needs exactly one entry — the head carries the group's current `data`, names the current keyId, and
      * carries the tag that attests the roster. Nothing verifies by walking what came before: the chain that used
      * to require that is gone, and an older epoch's grant key comes down the Epoch Ladder, not out of an old
-     * entry. So `fromVersion` is how a caller asks for the audit trail, and only an audit does.
+     * entry. So `fromRosterVersion` is how a caller asks for the audit trail, and only an audit does.
      *
-     * Serving everything by default would make each read cost `O(versions)` envelopes — the group's whole
-     * metadata re-sent once per membership change — to answer a question about one of them.
+     * Since the planes were split these entries carry no metadata at all, so the old cost this comment warned
+     * about — the group's whole metadata re-sent once per membership change — is gone by construction. The
+     * default is still the head alone: a read has no use for rosters it has already left behind.
      */
-    async getHistory(groupId: types.group.GroupId, fromVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
-        if (fromVersion === undefined) {
+    async getHistory(groupId: types.group.GroupId, fromRosterVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
+        if (fromRosterVersion === undefined) {
             return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
         }
         const entries = await this.history.query(
-            q => q.and(q.eq("groupId", groupId), q.gte("version", fromVersion as types.group.GroupVersion)),
+            q => q.and(q.eq("groupId", groupId), q.gte("version", fromRosterVersion as types.group.GroupVersion)),
         ).sort("version", true).array();
         if (entries.length > 0) {
             return entries;
@@ -127,6 +134,27 @@ export class GroupStateRepository {
     async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
         const entries = await this.history.query(q => q.eq("groupId", groupId)).props("keyId").array();
         return entries.map(entry => entry.keyId);
+    }
+
+    /** The current metadata entry: highest `version`, one indexed lookup. A read needs exactly this one. */
+    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
+        const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
+        return head ?? null;
+    }
+
+    /**
+     * The epoch the head metadata entry is keyed at, projected.
+     *
+     * `cutEra` and `pruneArchive` ask this before dropping rungs: the metadata entry stays at the epoch it was
+     * written under, so cutting below it would make the group's metadata unreadable for everyone, permanently.
+     */
+    async getMetaHeadKeyVersion(groupId: types.group.GroupId): Promise<number|null> {
+        const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).props("keyVersion").array();
+        return head ? head.keyVersion : null;
+    }
+
+    async insertMetaEntry(entry: db.group.GroupMetaEntry): Promise<void> {
+        await this.metaEntries.insert(entry);
     }
     
     /** Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
@@ -404,6 +432,7 @@ export class GroupStateRepository {
             this.nodes.deleteMany(q => q.eq("groupId", groupId)),
             this.edges.deleteMany(q => q.eq("groupId", groupId)),
             this.history.deleteMany(q => q.eq("groupId", groupId)),
+            this.metaEntries.deleteMany(q => q.eq("groupId", groupId)),
             this.rungs.deleteMany(q => q.eq("groupId", groupId)),
         ]);
     }
