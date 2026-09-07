@@ -33,7 +33,7 @@ export class GroupStateRepository {
     static readonly META_ENTRY_COLLECTION_NAME = "groupMetaEntry";
     static readonly ARCHIVE_RUNG_COLLECTION_NAME = "groupArchiveRung";
     static readonly COLLECTION_ID_PROP = "id";
-
+    
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
         private edges: MongoObjectRepository<db.group.GroupTreeEdgeId, db.group.GroupTreeEdge>,
@@ -59,7 +59,7 @@ export class GroupStateRepository {
     static historyEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
         return `${groupId}|${version}` as db.group.GroupHistoryEntryId;
     }
-
+    
     static metaEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
         return `${groupId}|${version}` as db.group.GroupMetaEntryId;
     }
@@ -135,13 +135,13 @@ export class GroupStateRepository {
         const entries = await this.history.query(q => q.eq("groupId", groupId)).props("keyId").array();
         return entries.map(entry => entry.keyId);
     }
-
+    
     /** The current metadata entry: highest `version`, one indexed lookup. A read needs exactly this one. */
     async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
         const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
         return head ?? null;
     }
-
+    
     /**
      * The epoch the head metadata entry is keyed at, projected.
      *
@@ -152,7 +152,7 @@ export class GroupStateRepository {
         const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).props("keyVersion").array();
         return head ? head.keyVersion : null;
     }
-
+    
     async insertMetaEntry(entry: db.group.GroupMetaEntry): Promise<void> {
         await this.metaEntries.insert(entry);
     }

@@ -25,16 +25,16 @@ import { MigrationId } from "./MigrationManager";
  * is unreleased, and the Migration071 data move ("BR-08") it would have had to interact with was never run.
  */
 export class Migration073GroupMetaEntries {
-
+    
     static id = <MigrationId>"Migration_073_GroupMetaEntries";
-
+    
     static async go(ioc: IOC): Promise<void> {
         const dbManager = ioc.getMongoDbManager();
-
+        
         const metaCollection = await dbManager.createOrGetCollection("groupMetaEntry");
         // The head is the highest `version` for a group — one indexed lookup, never a scan of the plane.
         await metaCollection.createIndex({groupId: 1, version: 1});
-
+        
         // Both planes continue from the single counter, rather than restarting at 1 under a reader that would
         // then refuse the lower number as a rollback.
         const groupCollection = await dbManager.createOrGetCollection("group");

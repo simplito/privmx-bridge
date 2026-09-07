@@ -431,7 +431,7 @@ export class GroupService extends BaseContainerService {
                 `group metadata sits at epoch ${metaKeyVersion}, below the requested floor ${floor}; call groupUpdate first to rewrite it at the current epoch`);
         }
     }
-
+    
     private async getGroupForTreeOperation(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         cloudUser: CloudUser,

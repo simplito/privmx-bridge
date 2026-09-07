@@ -318,7 +318,7 @@ export namespace group {
         author: types.cloud.UserId;
         confirmationTag?: types.core.Base64;
     }
-
+    
     /**
      * One metadata-plane entry, written only by `groupUpdate`.
      *

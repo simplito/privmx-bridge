@@ -662,19 +662,19 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert.ok(head.firstServedRosterVersion === head.rosterVersion,
             `the head is roster version ${head.rosterVersion}, said ${head.firstServedRosterVersion}`);
         assert.ok(!!head.meta, "a read always carries the current metadata entry");
-
+        
         // The audit trail is what `fromRosterVersion` is for, and asking for it costs what it costs.
         const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 1});
         assert.ok(trail.history.length === 3, `three roster versions so far, got ${trail.history.length}`);
         assert.ok(trail.firstServedRosterVersion === 1, "asking from 1 means from genesis");
         const sizeOf = (g: unknown) => JSON.stringify(g).length;
         assert.ok(sizeOf(head) < sizeOf(trail), `head ${sizeOf(head)} B is not smaller than the trail ${sizeOf(trail)} B`);
-
+        
         const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 3});
         assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
         assert.ok(windowed.firstServedRosterVersion === 3, `window starts at 3, said ${windowed.firstServedRosterVersion}`);
         assert.ok(windowed.rosterVersion === trail.rosterVersion, "the head roster version is unchanged by windowing");
-
+        
         // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
         const {group: past} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 99});
         assert.ok(past.history.length === 1 && past.data.length === 1,

@@ -173,7 +173,7 @@ export class GroupRepository {
     async getMetaHeadKeyVersion(groupId: types.group.GroupId): Promise<number|null> {
         return this.state.getMetaHeadKeyVersion(groupId);
     }
-
+    
     async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
         return this.state.getHistoryKeyIds(groupId);
     }
@@ -604,7 +604,7 @@ export class GroupRepository {
         }
         return (group.version + 1) as types.group.GroupVersion;
     }
-
+    
     /** The roster plane's counter — moved only by a membership change or a rotation. */
     private nextRosterVersion(group: db.group.Group): types.group.GroupVersion {
         if (!Number.isInteger(group.rosterVersion)) {
