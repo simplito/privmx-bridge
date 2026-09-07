@@ -140,7 +140,7 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
 }
 
 function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number,
-    headEntry?: Partial<db.group.GroupHistoryEntry>|null} = {}) {
+    headEntry?: Partial<db.group.GroupHistoryEntry>|null, metaKeyVersion?: number} = {}) {
     let archiveWindow: {from?: number, to?: number}|null = null;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -194,6 +194,8 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         nodesAt(TreeTransitionValidator.nodesNeededFor(positions, g.numLeaves))) as never);
     mock(groupRepository, "getSeatNodes", (async (g: db.group.Group, positions: number[]) =>
         nodesAt(TreeTransitionValidator.nodesNeededForSeat(positions, g.numLeaves))) as never);
+    // Where the metadata entry sits. Cutting or pruning above it would strand it, so the service reads it first.
+    mock(groupRepository, "getMetaHeadKeyVersion", (async () => options.metaKeyVersion ?? group.keyVersion) as never);
     mock(groupRepository, "cutEra", (options.casMiss ? async () => null : async (g: db.group.Group, floor: number) => ({...g, eraFloor: floor})) as never);
     mock(groupRepository, "pruneArchive", (options.casMiss ? async () => null : async (g: db.group.Group, below: number) => ({...g, archivePrunedBelow: below})) as never);
     
@@ -712,6 +714,14 @@ it("cutEra refuses a floor above the current epoch", async () => {
     await expectFailure("INVALID_PARAMS", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: EPOCH + 1, expectedKeyVersion: EPOCH}));
 });
 
+it("cutEra refuses a floor that would strand the metadata entry", async () => {
+    // The metadata entry stays at the epoch it was written under, so a floor above it takes away the only route
+    // to its key — permanently, for everybody. The caller has to rewrite it with groupUpdate first.
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {metaKeyVersion: 2});
+    await expectFailure("GROUP_META_UNREACHABLE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.cutEra);
+});
+
 it("cutEra requires a manager", async () => {
     const {groupService} = createGroupService();
     await expectFailure("ACCESS_DENIED", () => groupService.cutEra(aliceCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
@@ -721,6 +731,12 @@ it("pruneArchive records a watermark", async () => {
     const {groupService, groupRepository} = createGroupService();
     await groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH});
     hasOneCall(groupRepository.pruneArchive);
+});
+
+it("pruneArchive refuses a watermark that would strand the metadata entry", async () => {
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {metaKeyVersion: 2});
+    await expectFailure("GROUP_META_UNREACHABLE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.pruneArchive);
 });
 
 it("pruneArchive refuses to prune past the current epoch", async () => {

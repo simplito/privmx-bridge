@@ -98,9 +98,11 @@ export class GroupEventsTest extends BaseTestSet {
         const events = this.received.filter(e => e.type === "groupUpdated");
         assert(events.length === 1, `expected one groupUpdated, got ${events.length}`);
         const data = events[0].data;
-        assert.deepStrictEqual(Object.keys(data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "version"]);
+        assert.deepStrictEqual(Object.keys(data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "rosterVersion", "version"]);
         assert(data.groupId === this.requireGroupId(), "groupId mismatch");
         assert(data.version === 2, `version should be 2 after one update, got ${JSON.stringify(data.version)}`);
+        // The planes have their own counters, and an update moves only the metadata one.
+        assert(data.rosterVersion === 1, `rosterVersion should be untouched by an update, got ${JSON.stringify(data.rosterVersion)}`);
         assert(data.changeKind === "updated", `changeKind mismatch: ${JSON.stringify(data.changeKind)}`);
     }
     

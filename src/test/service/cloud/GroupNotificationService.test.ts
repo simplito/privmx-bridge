@@ -59,7 +59,7 @@ function group(memberCount = 3): db.group.Group {
         users: users,
         managers: [janek],
         version: 7 as types.group.GroupVersion,
-        rosterVersion: 7,
+        rosterVersion: 9,
         keyVersion: 4,
         numLeaves: 4,
         leafAssignment: [janek, alice],
@@ -112,9 +112,11 @@ it("a group event carries what changed and nothing that grows with the group", a
     await settle();
     
     assert.strictEqual(sent.length, 1);
-    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "version"]);
+    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "rosterVersion", "version"]);
     assert.strictEqual(sent[0].event.data.groupId, groupId);
     assert.strictEqual(sent[0].event.data.version, 7);
+    // Both counters travel: the planes moved apart, so a reader has to be told which one advanced.
+    assert.strictEqual(sent[0].event.data.rosterVersion, 9);
     assert.strictEqual(sent[0].event.data.keyVersion, 4);
     assert.strictEqual(sent[0].event.data.changeKind, "memberRemoved");
 });

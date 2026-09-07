@@ -87,6 +87,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private keyVersion = 1;
     // Only roster operations move this: rotations, removals and additions. `updateGroup` has its own counter.
     private rosterVersion = 1;
+    // That other counter: the metadata plane's, moved by `updateGroup` alone.
+    private metaVersion = 1;
     
     @Test()
     async shouldKeepGroupStateOutOfTheDocument() {
@@ -149,6 +151,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.removeMember(alice, 1);
         await this.verifyTheArchiveIsServedFromItsCollection();
         await this.verifyTheArchiveIsWindowed();
+        // The metadata entry is still the one `groupCreate` wrote at epoch 1 — removals move the roster plane and
+        // leave it alone — so the ladder cannot be cut out from under it until it is rewritten at the current epoch.
+        await this.verifyTheLadderCannotBeCutOutFromUnderTheMetadata();
+        await this.rewriteMetadataAtTheCurrentEpoch();
         await this.verifyPruningDeletesRungsAndRecordsAWatermark();
         await this.verifyCuttingAnEraDropsTheRungsBelowTheFloor();
     }
@@ -252,6 +258,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         this.groupId = res.groupId;
         this.keyVersion = 1;
         this.rosterVersion = 1;
+        this.metaVersion = 1;
         return tree;
     }
     
@@ -597,6 +604,44 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(served.rungs.every(rung => rung.atKeyVersion === 3), "and only epoch 3's are served");
         const all = await this.apis.contextApi.groupGetKeyArchive({id: groupId});
         assert(served.rungs.length < all.rungs.length, "the window actually narrows the answer");
+    }
+    
+    /**
+     * A floor above the metadata entry's epoch is refused, on both operations that raise one.
+     *
+     * The entry stays at the epoch it was written under, and its key is addressed to that epoch's grant key — the
+     * very key material a cut drops. Letting the floor past it would make `publicMeta`/`privateMeta` unreadable
+     * for everybody, permanently, so it is refused with the way out named.
+     */
+    private async verifyTheLadderCannotBeCutOutFromUnderTheMetadata() {
+        const groupId = this.requireGroupId();
+        const before = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupPruneArchive({
+            id: groupId, belowEpoch: 2, expectedKeyVersion: this.keyVersion,
+        }), "GROUP_META_UNREACHABLE");
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupCutEra({
+            id: groupId, newFloor: 3, expectedKeyVersion: this.keyVersion,
+        }), "GROUP_META_UNREACHABLE");
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.length === before.length, `a refused cut deletes nothing, went from ${before.length} to ${rungs.length} rungs`);
+        const document = await this.readGroupDocument();
+        assert(document.eraFloor === 1 && document.archivePrunedBelow === undefined, "and records neither floor nor watermark");
+    }
+    
+    /** The way out the refusal names: one `groupUpdate`, which republishes the metadata under the current epoch's key. */
+    private async rewriteMetadataAtTheCurrentEpoch() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.contextApi.groupUpdate({
+            id: groupId,
+            data: "group-meta@current" as types.group.GroupData,
+            keyId: keyIdAt(this.keyVersion),
+            version: this.metaVersion as types.group.GroupVersion,
+        });
+        assert(res === "OK", "groupUpdate did not return OK");
+        this.metaVersion += 1;
+        const [head] = await this.helpers.readCollection("groupMetaEntry", {groupId, version: this.metaVersion});
+        assert(head.keyVersion === this.keyVersion,
+            `the metadata entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(head.keyVersion)}`);
     }
     
     private async verifyPruningDeletesRungsAndRecordsAWatermark() {

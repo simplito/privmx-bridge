@@ -147,9 +147,10 @@ it("a removal updates the fields that changed instead of replacing the document"
     assert.strictEqual(updates.length, 1);
     assert.strictEqual(replacements.length, 0);
     const written = Object.keys(updates[0].set).sort();
+    // `rosterVersion` and not `version`: a removal moves the roster plane, and the metadata counter is not its business.
     assert.deepStrictEqual(written, [
         "data", "groupPubKey", "keyHistory", "keyId", "keyVersion",
-        "lastModificationDate", "lastModifier", "leafAssignment", "managers", "users", "version",
+        "lastModificationDate", "lastModifier", "leafAssignment", "managers", "rosterVersion", "users",
     ]);
 });
 
