@@ -34,7 +34,8 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         users: ["janek"] as types.cloud.UserId[],
         managers: ["janek"] as types.cloud.UserId[],
         data: "someData" as types.group.GroupData,
-        meta: "someMeta" as types.group.GroupData,
+        publicMeta: "somePublicMeta" as types.group.GroupData,
+        privateMeta: "somePrivateMeta" as types.group.GroupData,
         keyId: keyId,
         tree: buildTree(["janek"], 1),
     };
@@ -66,30 +67,108 @@ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
     expect(result.success).toBe(false);
 });
 
-it("ContextApiValidator.groupUpdate valid", () => {
-    const model: contextApi.GroupUpdateModel = {
+it("ContextApiValidator.groupCreate rejects a leftover meta field", () => {
+    // An old client on the single-envelope API must be told, not have a group created for it with half a
+    // contract — the metadata it thinks it wrote would simply not be there.
+    const model: Record<string, unknown> = {...validGroupCreate(), meta: "someMeta"};
+    delete model.publicMeta;
+    delete model.privateMeta;
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(false);
+});
+
+function validPublicMetaUpdate() {
+    return {
         id: groupId,
         data: "someData" as types.group.GroupData,
         keyId: keyId,
         version: 1 as types.group.GroupVersion,
     };
-    const result = Utils.try(() => validator().validate("groupUpdate", model));
+}
+
+it("ContextApiValidator.groupUpdatePublicMeta valid", () => {
+    const model: contextApi.GroupUpdatePublicMetaModel = validPublicMetaUpdate();
+    const result = Utils.try(() => validator().validate("groupUpdatePublicMeta", model));
     expect(result.success).toBe(true);
 });
 
-it("ContextApiValidator.groupUpdate rejects a force field", () => {
+it("ContextApiValidator.groupUpdatePrivateMeta valid", () => {
+    const model: contextApi.GroupUpdatePrivateMetaModel = validPublicMetaUpdate();
+    const result = Utils.try(() => validator().validate("groupUpdatePrivateMeta", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupUpdatePolicy valid", () => {
+    const model: contextApi.GroupUpdatePolicyModel = {id: groupId, policy: {}};
+    const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
+    expect(result.success).toBe(true);
+});
+
+// These are the load-bearing rejections: each one is why the per-plane ACL entry bounds what a call can *do*
+// rather than only what it is meant for. `createObject` is strict, so a request structurally cannot carry a
+// field from a plane its grant does not cover.
+it("a metadata update structurally cannot carry the other plane, or the policy", () => {
+    const cases: [string, string][] = [
+        ["groupUpdatePublicMeta", "privateMeta"],
+        ["groupUpdatePublicMeta", "policy"],
+        ["groupUpdatePrivateMeta", "publicMeta"],
+        ["groupUpdatePrivateMeta", "policy"],
+    ];
+    for (const [method, field] of cases) {
+        const model = {...validPublicMetaUpdate(), [field]: "smuggled"};
+        const result = Utils.try(() => validator().validate(method, model));
+        expect(result.success).toBe(false);
+    }
+});
+
+it("groupUpdatePolicy carries neither an envelope nor a version", () => {
+    // No envelope and no CAS on this method: there is nothing to write under a key and no counter to compare.
+    for (const field of ["data", "keyId", "version"]) {
+        const model = {id: groupId, policy: {}, [field]: "x"};
+        const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
+        expect(result.success).toBe(false);
+    }
+});
+
+it("groupUpdatePolicy requires a policy", () => {
+    // It used to be optional, where absent meant "leave the policy alone". On a method that does nothing else,
+    // an absent policy is a request that asks for nothing and has passed a policy gate for it.
+    const result = Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId}));
+    expect(result.success).toBe(false);
+});
+
+it("a metadata update cannot omit its version or its keyId", () => {
+    for (const field of ["version", "keyId"]) {
+        const model: Record<string, unknown> = validPublicMetaUpdate();
+        delete model[field];
+        const result = Utils.try(() => validator().validate("groupUpdatePublicMeta", model));
+        expect(result.success).toBe(false);
+    }
+});
+
+it("a metadata update rejects a force field", () => {
     // Groups have no version-check override: the entry commits a tag over the version it lands at, so a stale
     // update could only publish a tag no client would accept. A caller still sending `force` is using an API
     // that no longer exists and has to be told, not silently accepted.
-    const model = {
-        id: groupId,
-        data: "someData" as types.group.GroupData,
-        keyId: keyId,
-        version: 1 as types.group.GroupVersion,
-        force: false,
-    };
-    const result = Utils.try(() => validator().validate("groupUpdate", model));
+    const model = {...validPublicMetaUpdate(), force: false};
+    const result = Utils.try(() => validator().validate("groupUpdatePublicMeta", model));
     expect(result.success).toBe(false);
+});
+
+it("groupUpdate is gone", () => {
+    // The one place the removal is catchable. A surviving registration would be an endpoint with no handler:
+    // `BaseApi.execute` answers METHOD_NOT_FOUND while the validator quietly keeps accepting the request.
+    const result = Utils.try(() => validator().validate("groupUpdate", validPublicMetaUpdate()));
+    expect(result.success).toBe(false);
+});
+
+it("each metadata plane still refuses data past a megabyte", () => {
+    // Each plane is capped independently, so a group's create body can now carry three of these.
+    for (const method of ["groupUpdatePublicMeta", "groupUpdatePrivateMeta"]) {
+        const model = {...validPublicMetaUpdate(), data: "x".repeat(1024 * 1024 + 1) as unknown as types.group.GroupData};
+        const result = Utils.try(() => validator().validate(method, model));
+        expect(result.success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupGet valid", () => {
@@ -121,7 +200,7 @@ it("ContextApiValidator.groupList rejects invalid sortBy", () => {
     expect(result.success).toBe(false);
 });
 
-// ---------- Phase 2: generateNewGroupKey + groupUpdate epoch CAS ----------
+// ---------- Phase 2: generateNewGroupKey + the metadata planes' epoch CAS ----------
 
 it("ContextApiValidator.groupGenerateNewKey valid", () => {
     const tree = buildTree(["janek"], 1);

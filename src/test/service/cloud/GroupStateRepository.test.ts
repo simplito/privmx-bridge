@@ -37,6 +37,8 @@ const EPOCH = 5;
 interface Captured {
     filter: QueryResult|null;
     operations: mongodb.AnyBulkWriteOperation[];
+    /** Ids fetched by derived-id lookup, in call order — how the metadata planes are read. */
+    gets: string[];
 }
 
 function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
@@ -50,8 +52,13 @@ function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
             return {} as never;
         }) as never,
     });
-    const sortable = {
-        sort: () => sortable,
+    // The whole builder the repository chains, not just `sort`: a head read is
+    // `query(...).sort(...).limit(1).props(...).array()`, and a fake missing a link fails as a TypeError rather
+    // than as the assertion the test is actually making.
+    const chain = {
+        sort: () => chain,
+        limit: () => chain,
+        props: () => chain,
         array: async () => docs,
     };
     return createFake<MongoObjectRepository<K, V>>({
@@ -59,7 +66,12 @@ function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
         getOptions: (() => ({})) as never,
         query: ((f: (q: MongoQuery<V>) => QueryResult) => {
             captured.filter = f(new MongoQuery<V>("id" as keyof V));
-            return sortable;
+            return chain;
+        }) as never,
+        // A metadata plane is one row per group, so its head is a lookup by derived id rather than a query.
+        get: (async (id: K) => {
+            captured.gets.push(id);
+            return docs[0] ?? null;
         }) as never,
         insert: (async () => {}) as never,
         deleteMany: ((f: (q: MongoQuery<V>) => QueryResult) => {
@@ -72,21 +84,24 @@ function createStateRepository(docs: {
     nodes?: db.group.GroupTreeNode[],
     edges?: db.group.GroupTreeEdge[],
     history?: db.group.GroupHistoryEntry[],
-    metaEntries?: db.group.GroupMetaEntry[],
+    publicMetaEntries?: db.group.GroupPublicMetaEntry[],
+    privateMetaEntries?: db.group.GroupPrivateMetaEntry[],
     rungs?: db.group.GroupArchiveRung[],
 } = {}) {
-    const captured: Record<"nodes"|"edges"|"history"|"metaEntries"|"rungs", Captured> = {
-        nodes: {filter: null, operations: []},
-        edges: {filter: null, operations: []},
-        history: {filter: null, operations: []},
-        metaEntries: {filter: null, operations: []},
-        rungs: {filter: null, operations: []},
+    const captured: Record<"nodes"|"edges"|"history"|"publicMetaEntries"|"privateMetaEntries"|"rungs", Captured> = {
+        nodes: {filter: null, operations: [], gets: []},
+        edges: {filter: null, operations: [], gets: []},
+        history: {filter: null, operations: [], gets: []},
+        publicMetaEntries: {filter: null, operations: [], gets: []},
+        privateMetaEntries: {filter: null, operations: [], gets: []},
+        rungs: {filter: null, operations: [], gets: []},
     };
     const repository = new GroupStateRepository(
         fakeRepository(docs.nodes ?? [], captured.nodes),
         fakeRepository(docs.edges ?? [], captured.edges),
         fakeRepository(docs.history ?? [], captured.history),
-        fakeRepository(docs.metaEntries ?? [], captured.metaEntries),
+        fakeRepository(docs.publicMetaEntries ?? [], captured.publicMetaEntries),
+        fakeRepository(docs.privateMetaEntries ?? [], captured.privateMetaEntries),
         fakeRepository(docs.rungs ?? [], captured.rungs),
     );
     return {repository, captured};
@@ -104,7 +119,8 @@ function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
         keyId: "SomeKeyId" as types.core.KeyId,
         users: [],
         managers: ["janek" as types.cloud.UserId],
-        version: 1 as types.group.GroupVersion,
+        publicMetaVersion: 1 as types.group.GroupVersion,
+        privateMetaVersion: 1 as types.group.GroupVersion,
         rosterVersion: 1,
         keyVersion: 1,
         eraFloor: 1,
@@ -207,6 +223,36 @@ it("the archive is read through a windowed query, not filtered after loading", a
             {atKeyVersion: {$lte: 900}},
         ],
     });
+});
+
+it("each metadata plane is read from its own collection, by its own derived id", async () => {
+    // With two collections a forgotten plane is a compile error; with one and a discriminator it would be a
+    // silent wrong answer. This pins that the two reads really are separate, and that each asks for the id
+    // belonging to its own plane — swapping the two derivations is the mistake this catches.
+    const {repository, captured} = createStateRepository({publicMetaEntries: [], privateMetaEntries: []});
+    await repository.getMetaHeadKeyVersions(groupId);
+    assert.deepStrictEqual(captured.publicMetaEntries.gets, [`${groupId}|publicMeta`]);
+    assert.deepStrictEqual(captured.privateMetaEntries.gets, [`${groupId}|privateMeta`]);
+});
+
+it("each metadata plane's head is one lookup, not a sort over the plane", async () => {
+    // One row per group, so there is nothing to sort: a query here would mean the version-derived ids came
+    // back, and with them rows no reader can reach.
+    const {repository, captured} = createStateRepository({publicMetaEntries: [], privateMetaEntries: []});
+    await repository.getPublicMetaHead(groupId);
+    await repository.getPrivateMetaHead(groupId);
+    assert.strictEqual(captured.publicMetaEntries.filter, null);
+    assert.strictEqual(captured.privateMetaEntries.filter, null);
+    assert.deepStrictEqual(captured.publicMetaEntries.gets, [`${groupId}|publicMeta`]);
+    assert.deepStrictEqual(captured.privateMetaEntries.gets, [`${groupId}|privateMeta`]);
+});
+
+it("deleting a group's state leaves neither metadata plane behind", async () => {
+    // Entries are keyed by groupId, so a leftover both leaks the group's shape and never reclaims the space.
+    const {repository, captured} = createStateRepository();
+    await repository.deleteState(groupId);
+    assert.deepStrictEqual(captured.publicMetaEntries.filter, {groupId: groupId});
+    assert.deepStrictEqual(captured.privateMetaEntries.filter, {groupId: groupId});
 });
 
 it("an unwindowed archive read asks only for the group", async () => {

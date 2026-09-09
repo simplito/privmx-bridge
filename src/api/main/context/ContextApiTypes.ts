@@ -114,8 +114,8 @@ export interface GroupCreateModel {
     managers: types.cloud.UserId[];
     /** The roster/tree plane's first entry: carries the roster tag and no metadata. */
     data: types.group.GroupData;
-    /** The metadata plane's first entry: `publicMeta`/`privateMeta` and the tag pinning them to version 1. */
-    meta: types.group.GroupData;
+    publicMeta: types.group.GroupData;
+    privateMeta: types.group.GroupData;
     keyId: types.core.KeyId;
     /**
      * The metadata key wrapped once to the group's own grant public key, at epoch 1. One entry, whatever the
@@ -236,16 +236,43 @@ export interface GroupCreateResult {
 }
 
 /**
- * Updates the group's metadata. Membership is **not** here: moving a member moves the tree, so it goes through
+ * Rewrites the public metadata plane.
+ *
+ * Structurally cannot carry the private plane's envelope or the policy — which is what makes
+ * `context/groupUpdatePublicMeta` an enforceable grant rather than a declarative one.
+ *
+ * Membership is **not** here either: moving a member moves the tree, so it goes through
  * `groupAddMembers`/`groupRemoveMembers`, which is the only place a seat and its keys change together.
  */
-export interface GroupUpdateModel {
+export interface GroupUpdatePublicMetaModel {
+    id: types.group.GroupId;
+    resourceId?: types.core.ClientResourceId;
+    data: types.group.GroupData;
+    keyId: types.core.KeyId;
+    /** CAS on `publicMetaVersion`, unconditional — there is no `force`. */
+    version: types.group.GroupVersion;
+}
+
+/** The private plane's mirror, CAS-guarded on `privateMetaVersion`. */
+export interface GroupUpdatePrivateMetaModel {
     id: types.group.GroupId;
     resourceId?: types.core.ClientResourceId;
     data: types.group.GroupData;
     keyId: types.core.KeyId;
     version: types.group.GroupVersion;
-    policy?: types.cloud.ContainerPolicy;
+}
+
+/**
+ * Sets the group's container policy.
+ *
+ * No version and no CAS: the policy lives outside the client's signed envelope, so there is no counter a client
+ * could know and nothing for it to re-verify. Last write wins, and neither metadata plane moves — deliberately,
+ * or a policy change would strand the epoch of a plane it did not rewrite.
+ */
+export interface GroupUpdatePolicyModel {
+    id: types.group.GroupId;
+    /** Required. `{}` clears to the context defaults; absent would be a request that asks for nothing. */
+    policy: types.cloud.ContainerPolicy;
 }
 
 /**
@@ -368,7 +395,8 @@ export interface GroupSummary {
     lastModifier: types.cloud.UserId;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-    version: types.group.GroupVersion;
+    publicMetaVersion: types.group.GroupVersion;
+    privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
     keyVersion: number;
     policy: types.cloud.ContainerPolicy;
@@ -399,7 +427,7 @@ export interface GroupHistoryEntryInfo {
     keyVersion: number;
 }
 
-/** The metadata plane's current entry, served alongside the roster head. */
+/** One metadata plane's current entry, served alongside the roster head. Instantiated once per plane. */
 export interface GroupMetaEntryInfo {
     version: types.group.GroupVersion;
     keyId: types.core.KeyId;
@@ -422,12 +450,18 @@ export interface GroupInfo {
     lastModifier: types.cloud.UserId;
     /** Roster/tree plane entries. The head attests the roster; none of them carry metadata. */
     data: GroupDataEntry[];
-    /** The current metadata entry. May sit at an older epoch than the group — descend the Ladder to its key. */
-    meta: GroupMetaEntryInfo;
+    /**
+     * The current entry of each metadata plane. Either may sit at an older epoch than the group — descend the
+     * Ladder to its key — and the two may sit at different epochs, since only a write to a plane lifts it.
+     */
+    publicMeta: GroupMetaEntryInfo;
+    privateMeta: GroupMetaEntryInfo;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-    /** Metadata plane counter. Moves only on `groupUpdate`. */
-    version: types.group.GroupVersion;
+    /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`. */
+    publicMetaVersion: types.group.GroupVersion;
+    /** Private metadata plane counter. Moves only on `groupUpdatePrivateMeta`. */
+    privateMetaVersion: types.group.GroupVersion;
     /** Roster plane counter. Moves only on a membership change or a rotation. */
     rosterVersion: number;
     keyVersion: number;
@@ -461,7 +495,8 @@ export interface GroupInfo {
 }
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
-export type GroupChangeKind = "created"|"updated"|"keyRotated"|"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned";
+export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
+    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -469,13 +504,17 @@ export type GroupChangeKind = "created"|"updated"|"keyRotated"|"memberAdded"|"me
  *
  * The state used to travel in here, converted once per recipient — a thousand members meant a thousand copies of
  * the tree and the history, hundreds of megabytes over the socket for one membership change. A client that cares
- * about the change calls `groupGet`; one that does not pays nothing. The three counters are what let it decide
+ * about the change calls `groupGet`; one that does not pays nothing. The four counters are what let it decide
  * without asking — and which plane moved.
+ *
+ * A `policyUpdated` moves no counter at all: the policy is not inside any signed envelope, so there is nothing
+ * for a client to re-verify and no version for it to advance.
  */
 export interface GroupChangedEventData {
     groupId: types.group.GroupId;
     contextId: types.context.ContextId;
-    version: types.group.GroupVersion;
+    publicMetaVersion: types.group.GroupVersion;
+    privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
     keyVersion: number;
     changeKind: GroupChangeKind;
@@ -497,7 +536,9 @@ export interface IContextApi {
     contextListUsers(model: ContextListUsersModel): Promise<ContextListUsersResult>
     contextSendCustomEvent(model: ContextSendCustomEventModel): Promise<types.core.OK>;
     groupCreate(model: GroupCreateModel): Promise<GroupCreateResult>;
-    groupUpdate(model: GroupUpdateModel): Promise<types.core.OK>;
+    groupUpdatePublicMeta(model: GroupUpdatePublicMetaModel): Promise<types.core.OK>;
+    groupUpdatePrivateMeta(model: GroupUpdatePrivateMetaModel): Promise<types.core.OK>;
+    groupUpdatePolicy(model: GroupUpdatePolicyModel): Promise<types.core.OK>;
     groupGenerateNewKey(model: GroupGenerateNewKeyModel): Promise<types.core.OK>;
     groupDelete(model: GroupDeleteModel): Promise<types.core.OK>;
     groupGet(model: GroupGetModel): Promise<GroupGetResult>;

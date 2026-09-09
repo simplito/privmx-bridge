@@ -47,6 +47,7 @@ export class GroupEventsTest extends BaseTestSet {
         await this.listenOn(`context/groups/update|contextId=${testData.contextId}`);
         await this.updateGroup();
         await this.verifyEventArrivedCarryingOnlyWhatChanged();
+        await this.verifyTheOtherTwoKindsArriveOnTheSameChannel();
     }
     
     @Test()
@@ -98,12 +99,41 @@ export class GroupEventsTest extends BaseTestSet {
         const events = this.received.filter(e => e.type === "groupUpdated");
         assert(events.length === 1, `expected one groupUpdated, got ${events.length}`);
         const data = events[0].data;
-        assert.deepStrictEqual(Object.keys(data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "rosterVersion", "version"]);
+        assert.deepStrictEqual(Object.keys(data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "privateMetaVersion", "publicMetaVersion", "rosterVersion"]);
         assert(data.groupId === this.requireGroupId(), "groupId mismatch");
-        assert(data.version === 2, `version should be 2 after one update, got ${JSON.stringify(data.version)}`);
-        // The planes have their own counters, and an update moves only the metadata one.
+        // Every plane has its own counter, and a public-metadata write moves exactly one of the three.
+        assert(data.publicMetaVersion === 2, `publicMetaVersion should be 2 after one write, got ${JSON.stringify(data.publicMetaVersion)}`);
+        assert(data.privateMetaVersion === 1, `privateMetaVersion should be untouched, got ${JSON.stringify(data.privateMetaVersion)}`);
         assert(data.rosterVersion === 1, `rosterVersion should be untouched by an update, got ${JSON.stringify(data.rosterVersion)}`);
-        assert(data.changeKind === "updated", `changeKind mismatch: ${JSON.stringify(data.changeKind)}`);
+        assert(data.changeKind === "publicMetaUpdated", `changeKind mismatch: ${JSON.stringify(data.changeKind)}`);
+    }
+    
+    /**
+     * The private plane and the policy announce themselves on the same channel and under the same event type.
+     *
+     * A client subscribed before the split keeps receiving everything; only `changeKind` and the counters say
+     * which plane moved. A `policyUpdated` moves no counter at all, which is how a client knows there is no
+     * envelope to re-verify.
+     */
+    private async verifyTheOtherTwoKindsArriveOnTheSameChannel() {
+        const groupId = this.requireGroupId();
+        await this.apis.contextApi.groupUpdatePrivateMeta({
+            id: groupId, data: "PRIV2" as types.group.GroupData,
+            keyId: testData.keyId, version: 1 as types.group.GroupVersion,
+        });
+        await this.settle();
+        const afterPrivate = this.received.filter(e => e.type === "groupUpdated");
+        const privateEvent = afterPrivate[afterPrivate.length - 1].data;
+        assert(privateEvent.changeKind === "privateMetaUpdated", `changeKind mismatch: ${JSON.stringify(privateEvent.changeKind)}`);
+        assert(privateEvent.privateMetaVersion === 2, "the private counter must have advanced");
+        
+        await this.apis.contextApi.groupUpdatePolicy({id: groupId, policy: {get: "all" as types.cloud.PolicyEntry}});
+        await this.settle();
+        const afterPolicy = this.received.filter(e => e.type === "groupUpdated");
+        const policyEvent = afterPolicy[afterPolicy.length - 1].data;
+        assert(policyEvent.changeKind === "policyUpdated", `changeKind mismatch: ${JSON.stringify(policyEvent.changeKind)}`);
+        assert(policyEvent.publicMetaVersion === privateEvent.publicMetaVersion, "a policy write moved the public counter");
+        assert(policyEvent.privateMetaVersion === privateEvent.privateMetaVersion, "a policy write moved the private counter");
     }
     
     private async createGroup() {
@@ -113,7 +143,8 @@ export class GroupEventsTest extends BaseTestSet {
             users: [testData.userId],
             managers: [testData.userId],
             data: "AAAA" as types.group.GroupData,
-            meta: "META" as types.group.GroupData,
+            publicMeta: "META" as types.group.GroupData,
+            privateMeta: "META_PRIV" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree([testData.userId], 1),
         });
@@ -127,7 +158,8 @@ export class GroupEventsTest extends BaseTestSet {
             users: [testData.userId],
             managers: [testData.userId],
             data: "BBBB" as types.group.GroupData,
-            meta: "META2" as types.group.GroupData,
+            publicMeta: "META2" as types.group.GroupData,
+            privateMeta: "META2_PRIV" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree([testData.userId], 1),
         });
@@ -146,13 +178,13 @@ export class GroupEventsTest extends BaseTestSet {
     }
     
     private async update(id: types.group.GroupId, data: types.group.GroupData) {
-        const res = await this.apis.contextApi.groupUpdate({
+        const res = await this.apis.contextApi.groupUpdatePublicMeta({
             id: id,
             data: data,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
         });
-        assert(res === "OK", "groupUpdate did not return OK");
+        assert(res === "OK", "groupUpdatePublicMeta did not return OK");
     }
     
     private requireGroupId(): types.group.GroupId {

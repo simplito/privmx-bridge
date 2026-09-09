@@ -71,15 +71,31 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.meta, model.keyId, model.policy || {}, model.tree, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.policy || {}, model.tree, model.groupKeys);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
     
     @ApiMethod({})
-    async groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
+    async groupUpdatePublicMeta(model: contextApi.GroupUpdatePublicMetaModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.updateGroup(cloudUser, model.id, model.data, model.keyId, model.version, model.policy, model.resourceId || null);
+        const group = await this.groupService.updatePublicMeta(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupUpdatePrivateMeta(model: contextApi.GroupUpdatePrivateMetaModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.updatePrivateMeta(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupUpdatePolicy(model: contextApi.GroupUpdatePolicyModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.updatePolicy(cloudUser, model);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }

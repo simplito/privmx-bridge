@@ -46,6 +46,24 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldUpdatePolicyWithoutTouchingMetadata() {
+        await this.createGroup();
+        await this.updatePolicyWithoutTouchingMetadata();
+    }
+    
+    @Test()
+    async shouldLetBothMetadataPlanesBeWrittenConcurrently() {
+        await this.createGroup();
+        await this.concurrentPlaneWritesBothLand();
+    }
+    
+    @Test()
+    async shouldNoLongerExposeGroupUpdate() {
+        await this.createGroup();
+        await this.groupUpdateIsGone();
+    }
+    
+    @Test()
     async shouldRejectDeletingGroupReferencedByThread() {
         await this.createGroup();
         const groupId = this.requireGroupId();
@@ -77,7 +95,8 @@ export class GroupApiTests extends BaseTestSet {
             users: users,
             managers: managers,
             data: "AAAA" as types.group.GroupData,
-            meta: "BBBB" as types.group.GroupData,
+            publicMeta: "PUB" as types.group.GroupData,
+            privateMeta: "PRIV" as types.group.GroupData,
             keyId: testData.keyId,
             tree: buildTree(users, 1),
         });
@@ -92,7 +111,11 @@ export class GroupApiTests extends BaseTestSet {
         assert(group.groupPubKey === groupPubKey, "groupPubKey mismatch");
         assert(group.users.length === 1 && group.users[0] === testData.userId, "users mismatch");
         assert(group.managers.length === 1 && group.managers[0] === testData.userId, "managers mismatch");
-        assert(group.version === 1, `version should be 1, got ${group.version}`);
+        assert(group.publicMetaVersion === 1, `publicMetaVersion should be 1, got ${group.publicMetaVersion}`);
+        assert(group.privateMetaVersion === 1, `privateMetaVersion should be 1, got ${group.privateMetaVersion}`);
+        // Each envelope comes back on its own field, and the two are not crossed.
+        assert(group.publicMeta.data === "PUB", `publicMeta mismatch, got ${String(group.publicMeta.data)}`);
+        assert(group.privateMeta.data === "PRIV", `privateMeta mismatch, got ${String(group.privateMeta.data)}`);
         assert(group.history.length === 1, "history should have a single genesis entry");
         assert(group.history[0].author === testData.userId, "genesis author mismatch");
     }
@@ -101,10 +124,11 @@ export class GroupApiTests extends BaseTestSet {
         const res = await this.apis.contextApi.groupList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc"});
         assert(res.count === 1 && res.groups.length === 1, `expected 1 group, got ${res.count}`);
         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
-        assert(res.groups[0].version === 1, `listed version should be 1, got ${res.groups[0].version}`);
+        assert(res.groups[0].publicMetaVersion === 1, `listed publicMetaVersion should be 1, got ${res.groups[0].publicMetaVersion}`);
+        assert(res.groups[0].privateMetaVersion === 1, `listed privateMetaVersion should be 1, got ${res.groups[0].privateMetaVersion}`);
         // A listing must grow as `groups × roster`, not `groups × state`.
         const served = res.groups[0] as unknown as Record<string, unknown>;
-        for (const field of ["data", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
+        for (const field of ["data", "publicMeta", "privateMeta", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
             assert(!(field in served), `groupList must not serve '${field}'`);
         }
     }
@@ -139,28 +163,120 @@ export class GroupApiTests extends BaseTestSet {
     
     private async updateGroup() {
         const groupId = this.requireGroupId();
-        const res = await this.apis.contextApi.groupUpdate({
+        // The strongest end-to-end statement of the split: the two counters advance independently, so after one
+        // write to each plane they read 2 and 2 — and after the first write alone, 2 and 1.
+        const publicRes = await this.apis.contextApi.groupUpdatePublicMeta({
             id: groupId,
-            data: "AAAAB" as types.group.GroupData,
+            data: "PUB2" as types.group.GroupData,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
         });
-        assert(res === "OK", "groupUpdate did not return OK");
-        const {group} = await this.apis.contextApi.groupGet({groupId});
-        assert(group.version === 2, `version should be 2 after update, got ${group.version}`);
+        assert(publicRes === "OK", "groupUpdatePublicMeta did not return OK");
+        const afterPublic = (await this.apis.contextApi.groupGet({groupId})).group;
+        assert(afterPublic.publicMetaVersion === 2, `publicMetaVersion should be 2, got ${afterPublic.publicMetaVersion}`);
+        assert(afterPublic.privateMetaVersion === 1, `a public write must not move the private counter, got ${afterPublic.privateMetaVersion}`);
+        assert(afterPublic.privateMeta.data === "PRIV", "a public write must not disturb the private envelope");
+        
+        const privateRes = await this.apis.contextApi.groupUpdatePrivateMeta({
+            id: groupId,
+            data: "PRIV2" as types.group.GroupData,
+            keyId: testData.keyId,
+            version: 1 as types.group.GroupVersion,
+        });
+        assert(privateRes === "OK", "groupUpdatePrivateMeta did not return OK");
+        const afterPrivate = (await this.apis.contextApi.groupGet({groupId})).group;
+        assert(afterPrivate.publicMetaVersion === 2, `publicMetaVersion should still be 2, got ${afterPrivate.publicMetaVersion}`);
+        assert(afterPrivate.privateMetaVersion === 2, `privateMetaVersion should be 2, got ${afterPrivate.privateMetaVersion}`);
+        assert(afterPrivate.publicMeta.data === "PUB2", "the public envelope must carry through");
+        assert(afterPrivate.privateMeta.data === "PRIV2", "the private envelope must carry through");
     }
     
     private async tryUpdateWithStaleVersionAndFail() {
         const groupId = this.requireGroupId();
-        // Current version is now 2, so submitting version 1 must be rejected. Unlike the other containers there is
-        // no force to override it: a group entry commits a tag over the version it lands at, so a stale update
+        // Both counters are now 2, so submitting 1 must be rejected. Unlike the other containers there is no
+        // force to override it: a group entry commits a tag over the version it lands at, so a stale update
         // could only publish a tag no client would accept.
-        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdate({
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePublicMeta({
             id: groupId,
-            data: "AAAAC" as types.group.GroupData,
+            data: "PUB3" as types.group.GroupData,
             keyId: testData.keyId,
             version: 1 as types.group.GroupVersion,
         }), "GROUP_VERSION_MISMATCH");
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePrivateMeta({
+            id: groupId,
+            data: "PRIV3" as types.group.GroupData,
+            keyId: testData.keyId,
+            version: 1 as types.group.GroupVersion,
+        }), "GROUP_VERSION_MISMATCH");
+    }
+    
+    /**
+     * The policy has a method of its own, and it disturbs neither signed envelope.
+     *
+     * No version is submitted and none is checked, so two writes in a row both land — there is no counter for a
+     * client to know, because the policy has never been inside an envelope a reader verifies.
+     */
+    private async updatePolicyWithoutTouchingMetadata() {
+        const groupId = this.requireGroupId();
+        const before = (await this.apis.contextApi.groupGet({groupId})).group;
+        
+        assert(await this.apis.contextApi.groupUpdatePolicy({
+            id: groupId, policy: {get: "all" as types.cloud.PolicyEntry},
+        }) === "OK", "groupUpdatePolicy did not return OK");
+        const after = (await this.apis.contextApi.groupGet({groupId})).group;
+        assert(after.policy.get === "all", `policy did not land, got ${String(after.policy.get)}`);
+        assert(after.publicMetaVersion === before.publicMetaVersion, "a policy write moved the public counter");
+        assert(after.privateMetaVersion === before.privateMetaVersion, "a policy write moved the private counter");
+        assert(after.rosterVersion === before.rosterVersion, "a policy write moved the roster version");
+        assert(after.publicMeta.data === before.publicMeta.data, "a policy write rewrote the public envelope");
+        assert(after.privateMeta.data === before.privateMeta.data, "a policy write rewrote the private envelope");
+        
+        // No CAS: the second write is not a lost race, it simply wins.
+        assert(await this.apis.contextApi.groupUpdatePolicy({
+            id: groupId, policy: {get: "user" as types.cloud.PolicyEntry},
+        }) === "OK", "a second policy write in a row must not be refused");
+        const twice = (await this.apis.contextApi.groupGet({groupId})).group;
+        assert(twice.policy.get === "user", "the later policy write must win");
+        assert(twice.publicMetaVersion === before.publicMetaVersion, "still no counter moved");
+    }
+    
+    /**
+     * Concurrent writes to the two planes both land.
+     *
+     * Both `$set` `lastModifier`/`lastModificationDate` on the same document, so Mongo raises a WriteConflict
+     * and the driver's `session.withTransaction` retries the loser; the retried body re-reads and re-checks its
+     * OWN counter, which the other plane never moved. Before the split the two shared one counter and one of
+     * them always lost — so "both landed" is precisely what this change bought.
+     */
+    private async concurrentPlaneWritesBothLand() {
+        const groupId = this.requireGroupId();
+        const before = (await this.apis.contextApi.groupGet({groupId})).group;
+        const [publicRes, privateRes] = await Promise.all([
+            this.apis.contextApi.groupUpdatePublicMeta({
+                id: groupId, data: "RACED_PUB" as types.group.GroupData,
+                keyId: testData.keyId, version: before.publicMetaVersion,
+            }),
+            this.apis.contextApi.groupUpdatePrivateMeta({
+                id: groupId, data: "RACED_PRIV" as types.group.GroupData,
+                keyId: testData.keyId, version: before.privateMetaVersion,
+            }),
+        ]);
+        assert(publicRes === "OK" && privateRes === "OK", "a plane lost a race it shares no counter with");
+        const after = (await this.apis.contextApi.groupGet({groupId})).group;
+        assert(after.publicMetaVersion === before.publicMetaVersion + 1, "the public counter did not advance once");
+        assert(after.privateMetaVersion === before.privateMetaVersion + 1, "the private counter did not advance once");
+        assert(after.publicMeta.data === "RACED_PUB", "the public write reported success without landing");
+        assert(after.privateMeta.data === "RACED_PRIV", "the private write reported success without landing");
+    }
+    
+    /** The removed method must be gone from the wire, not merely unused. */
+    private async groupUpdateIsGone() {
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.conn.call("context.groupUpdate", {
+            id: this.requireGroupId(),
+            data: "X" as types.group.GroupData,
+            keyId: testData.keyId,
+            version: 1 as types.group.GroupVersion,
+        }, {sendAlone: true}), "METHOD_NOT_FOUND");
     }
     
     private requireGroupId(): types.group.GroupId {

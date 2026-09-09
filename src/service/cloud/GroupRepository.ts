@@ -9,6 +9,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+import * as mongodb from "mongodb";
 import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
 import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 import * as types from "../../types";
@@ -16,6 +17,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { AppException } from "../../api/AppException";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { GroupStateRepository } from "./GroupStateRepository";
 import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { TreeMath } from "./keytree/TreeMath";
@@ -37,7 +39,8 @@ export class GroupRepository {
         lastModifier: 1,
         users: 1,
         managers: 1,
-        version: 1,
+        publicMetaVersion: 1,
+        privateMetaVersion: 1,
         rosterVersion: 1,
         keyVersion: 1,
         policy: 1,
@@ -168,9 +171,9 @@ export class GroupRepository {
         return this.state.getHistory(groupId, fromRosterVersion);
     }
     
-    /** The group's metadata entry — what a read serves and what `cutEra`/`pruneArchive` must not strand. */
-    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
-        return this.state.getMetaHead(groupId);
+    /** The epoch each plane's head entry is keyed at — what `cutEra`/`pruneArchive` must not cut below. */
+    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
+        return this.state.getMetaHeadKeyVersions(groupId);
     }
     
     /** Every keyId the group has ever used — what a submitted key entry is checked against. */
@@ -182,29 +185,36 @@ export class GroupRepository {
         return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion);
     }
     
-    /** Tree, roster history and the current metadata entry — what a read path needs to serve a whole group. */
+    /** Tree, roster history and both metadata heads — what a read path needs to serve a whole group. */
     async getFullState(group: db.group.Group, fromRosterVersion?: number): Promise<db.group.GroupState> {
-        const [tree, history, meta] = await Promise.all([
+        const [tree, history, publicMeta, privateMeta] = await Promise.all([
             this.state.getTree(group),
             this.state.getHistory(group.id, fromRosterVersion),
-            this.state.getMetaHead(group.id),
+            this.state.getPublicMetaHead(group.id),
+            this.state.getPrivateMetaHead(group.id),
         ]);
-        if (!meta) {
-            // An invariant, not a client error: `createGroup` writes the document and this entry in one
-            // transaction, so only a group left over from an older build of this branch can be missing it.
-            // Reported the same way as the missing roster counter below — nothing the caller sends changes the
-            // answer, and the group has to be recreated. Also what keeps `GroupState.meta` non-nullable, so
-            // the converter never has to think about it.
-            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no metadata entry; it predates the metadata plane and must be recreated`);
+        // An invariant, not a client error: `createGroup` writes the document and both entries in one
+        // transaction, so only a group left over from an older build of this branch can be missing either.
+        // Reported the same way as the missing roster counter below — nothing the caller sends changes the
+        // answer, and the group has to be recreated. Deliberately not `GROUP_META_UNREACHABLE`: that one means
+        // an entry exists but sits below the requested epoch floor, which a metadata rewrite lifts. A missing
+        // entry lifts for nothing. This is also what keeps both `GroupState` planes non-nullable, so the
+        // converter never has to think about it.
+        if (!publicMeta) {
+            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no public metadata entry; it predates the metadata planes and must be recreated`);
         }
-        return {tree, history, meta};
+        if (!privateMeta) {
+            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no private metadata entry; it predates the metadata planes and must be recreated`);
+        }
+        return {tree, history, publicMeta, privateMeta};
     }
     
     // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
     
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId|null, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
-        data: types.group.GroupData, meta: types.group.GroupData, keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
+        data: types.group.GroupData, publicMeta: types.group.GroupData, privateMeta: types.group.GroupData,
+        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
         tree: types.cloud.GroupTreeState, groupKeys: Omit<types.cloud.GroupKeysEntry, "group">[] = []) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
@@ -221,7 +231,8 @@ export class GroupRepository {
             keyId: keyId,
             users: users,
             managers: managers,
-            version: firstVersion,
+            publicMetaVersion: firstVersion,
+            privateMetaVersion: firstVersion,
             rosterVersion: firstVersion,
             policy: policy,
             // A group starts at epoch 1 with an era floor of 1: there is no earlier epoch to descend to, and the
@@ -240,7 +251,7 @@ export class GroupRepository {
         // The document first: a duplicate resourceId is the one failure that is its own, and failing before any
         // state is written keeps that case clean.
         await this.repository.insert(group);
-        // Both planes seeded at 1, under the same epoch-1 key. From here they move independently.
+        // All three planes seeded at 1, under the same epoch-1 key. From here they move independently.
         await this.state.insertHistoryEntry({
             id: GroupStateRepository.historyEntryId(group.id, firstVersion),
             groupId: group.id,
@@ -252,13 +263,23 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        await this.state.writeMetaEntry({
-            id: GroupStateRepository.metaEntryId(group.id),
+        await this.state.writePublicMetaEntry({
+            id: GroupStateRepository.publicMetaEntryId(group.id),
             groupId: group.id,
             version: firstVersion,
             keyId: keyId,
             keyVersion: 1,
-            data: meta,
+            data: publicMeta,
+            created: now,
+            author: creator,
+        });
+        await this.state.writePrivateMetaEntry({
+            id: GroupStateRepository.privateMetaEntryId(group.id),
+            groupId: group.id,
+            version: firstVersion,
+            keyId: keyId,
+            keyVersion: 1,
+            data: privateMeta,
             created: now,
             author: creator,
         });
@@ -303,7 +324,7 @@ export class GroupRepository {
         const managers = oldGroup.managers.filter(u => !leaving.has(u));
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only. `version` is the metadata counter and a removal does not touch metadata.
-        const version = this.nextVersion(oldGroup, "rosterVersion");
+        const version = this.nextVersionOf(oldGroup, "rosterVersion");
         const leafAssignment = [...oldGroup.leafAssignment];
         for (const position of transition.blankedPositions) {
             leafAssignment[position] = "" as types.cloud.UserId;
@@ -372,7 +393,7 @@ export class GroupRepository {
         const managers = Utils.unique([...oldGroup.managers, ...addedMembers.filter(m => m.role === "manager").map(m => m.userId)]);
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only — seating a member is not a metadata edit.
-        const version = this.nextVersion(oldGroup, "rosterVersion");
+        const version = this.nextVersionOf(oldGroup, "rosterVersion");
         const oldNumLeaves = oldGroup.numLeaves;
         const oldLeafAssignment = [...oldGroup.leafAssignment];
         const numLeaves = TreeMath.numLeavesToSeatAll(transition.positions, oldNumLeaves);
@@ -453,37 +474,36 @@ export class GroupRepository {
     }
     
     /**
-     * Metadata only: the roster, the tree, the epoch and the group's `keyId` are all untouched.
+     * The public metadata plane only: the private plane, the roster, the tree, the epoch, the group's `keyId`
+     * and the policy are all untouched.
      *
-     * A real CAS on `version` rather than a read-then-write inside the transaction: the metadata entry commits
-     * the version it lands at, so a write that landed at a different one would be unreadable forever. Returns
-     * `null` when another update won the race, which the caller reports as `GROUP_VERSION_MISMATCH`.
+     * A real CAS on `publicMetaVersion` rather than a read-then-write inside the transaction: the entry commits
+     * the version it lands at, so a write that landed at a different one would be unreadable forever. The
+     * filter names its own counter and only its own, which is what lets a concurrent private-metadata write
+     * land as well. Returns `null` when another public-metadata write won the race, which the caller reports as
+     * `GROUP_VERSION_MISMATCH`.
      */
-    async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, data: types.group.GroupData,
-        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null): Promise<db.group.Group|null> {
+    async updatePublicMeta(oldGroup: db.group.Group, modifier: types.cloud.UserId, data: types.group.GroupData,
+        keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null): Promise<db.group.Group|null> {
         const now = DateUtils.now();
-        const version = this.nextVersion(oldGroup, "version");
+        const version = this.nextVersionOf(oldGroup, "publicMetaVersion");
         const changes: Partial<db.group.Group> = {
             lastModifier: modifier,
             lastModificationDate: now,
-            version: version,
+            publicMetaVersion: version,
         };
-        if (policy !== undefined) {
-            changes.policy = policy;
-        }
         if (resourceId && !oldGroup.clientResourceId) {
             changes.clientResourceId = resourceId;
         }
-        const result = await this.repository.collection.updateOne(
-            {_id: oldGroup.id, version: oldGroup.version},
-            {$set: this.toDbChanges(changes)},
-            this.repository.getOptions(),
+        const result = await this.updateOneWrappingDuplicates(
+            {_id: oldGroup.id, publicMetaVersion: oldGroup.publicMetaVersion},
+            changes,
         );
         if (result.matchedCount === 0) {
             return null;
         }
-        await this.state.writeMetaEntry({
-            id: GroupStateRepository.metaEntryId(oldGroup.id),
+        await this.state.writePublicMetaEntry({
+            id: GroupStateRepository.publicMetaEntryId(oldGroup.id),
             groupId: oldGroup.id,
             version: version,
             keyId: keyId,
@@ -494,6 +514,87 @@ export class GroupRepository {
             author: modifier,
         });
         return {...oldGroup, ...changes};
+    }
+    
+    /** The private metadata plane's mirror, CAS-guarded on `privateMetaVersion` and nothing else. */
+    async updatePrivateMeta(oldGroup: db.group.Group, modifier: types.cloud.UserId, data: types.group.GroupData,
+        keyId: types.core.KeyId, resourceId: types.core.ClientResourceId|null): Promise<db.group.Group|null> {
+        const now = DateUtils.now();
+        const version = this.nextVersionOf(oldGroup, "privateMetaVersion");
+        const changes: Partial<db.group.Group> = {
+            lastModifier: modifier,
+            lastModificationDate: now,
+            privateMetaVersion: version,
+        };
+        if (resourceId && !oldGroup.clientResourceId) {
+            changes.clientResourceId = resourceId;
+        }
+        const result = await this.updateOneWrappingDuplicates(
+            {_id: oldGroup.id, privateMetaVersion: oldGroup.privateMetaVersion},
+            changes,
+        );
+        if (result.matchedCount === 0) {
+            return null;
+        }
+        await this.state.writePrivateMetaEntry({
+            id: GroupStateRepository.privateMetaEntryId(oldGroup.id),
+            groupId: oldGroup.id,
+            version: version,
+            keyId: keyId,
+            keyVersion: oldGroup.keyVersion,
+            data: data,
+            created: now,
+            author: modifier,
+        });
+        return {...oldGroup, ...changes};
+    }
+    
+    /**
+     * The policy alone, and no CAS.
+     *
+     * The policy lives outside the client's signed envelope, so there is no version a client could send and
+     * nothing to compare — `_id` alone, last write wins. It appends **no** entry in either plane: that is the
+     * load-bearing part, because moving a counter a client's envelope pins without writing the entry that
+     * commits it would leave the group unreadable.
+     *
+     * `null` means the group was deleted between the caller's read and here, not a lost race.
+     */
+    async updatePolicy(oldGroup: db.group.Group, modifier: types.cloud.UserId,
+        policy: types.cloud.ContainerPolicy): Promise<db.group.Group|null> {
+        const changes: Partial<db.group.Group> = {
+            policy: policy,
+            lastModifier: modifier,
+            lastModificationDate: DateUtils.now(),
+        };
+        const result = await this.repository.collection.updateOne(
+            {_id: oldGroup.id},
+            {$set: this.toDbChanges(changes)},
+            this.repository.getOptions(),
+        );
+        return result.matchedCount === 0 ? null : {...oldGroup, ...changes};
+    }
+    
+    /**
+     * `updateOne` through the raw driver, with 11000 mapped to `DbDuplicateError`.
+     *
+     * `MongoObjectRepository` wraps duplicates only for `insert`/`update`, and these writes need a filter it
+     * cannot express — so without this the service's `DbDuplicateError` catch would be decorative and a
+     * duplicate `clientResourceId` would surface as a raw driver error.
+     */
+    private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
+        try {
+            return await this.repository.collection.updateOne(
+                filter,
+                {$set: this.toDbChanges(changes)},
+                this.repository.getOptions(),
+            );
+        }
+        catch (err) {
+            if (this.repository.isMongoDuplicateError(err)) {
+                throw new DbDuplicateError();
+            }
+            throw err;
+        }
     }
     
     async deleteGroup(id: types.group.GroupId) {
@@ -564,7 +665,7 @@ export class GroupRepository {
         const now = DateUtils.now();
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane: a rotation republishes the roster entry under the new epoch, but writes no metadata.
-        const version = this.nextVersion(oldGroup, "rosterVersion");
+        const version = this.nextVersionOf(oldGroup, "rosterVersion");
         const changes: Partial<db.group.Group> = {
             groupPubKey: params.newGroupPubKey,
             lastModifier: modifier,
@@ -606,17 +707,21 @@ export class GroupRepository {
     }
     
     /**
-     * The next value of one plane's counter. `version` is the metadata plane's, moved only by `updateGroup`;
-     * `rosterVersion` is the roster plane's, moved only by a membership change or a rotation.
+     * The next value of one plane's counter. Each is moved only by writes to its own plane: the two metadata
+     * counters by their own `groupUpdate*Meta` endpoint, `rosterVersion` by a membership change or a rotation.
      *
-     * The guard is not about migrations — `createGroup` sets both — but about not writing `NaN` into the
-     * document if a group somehow lacks one. An error is recoverable; a `NaN` counter no reader can compare
-     * against is not.
+     * One helper taking the field rather than three near-identical ones: the field is the only thing that
+     * differs, and passing it in is what stops a copy-paste from incrementing the wrong plane's counter.
+     *
+     * The guard is not about migrations — `createGroup` sets all three, and there is no backfill to wait for —
+     * but about not writing `NaN` into the document if a group somehow lacks one. An error is recoverable; a
+     * `NaN` counter no reader can compare against is not.
      */
-    private nextVersion(group: db.group.Group, plane: "version"|"rosterVersion"): types.group.GroupVersion {
-        const current = group[plane];
+    private nextVersionOf(group: db.group.Group,
+        field: "publicMetaVersion"|"privateMetaVersion"|"rosterVersion"): types.group.GroupVersion {
+        const current = group[field];
         if (!Number.isInteger(current)) {
-            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no '${plane}' counter`);
+            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no '${field}' counter`);
         }
         return (current + 1) as types.group.GroupVersion;
     }

@@ -18,7 +18,9 @@ export type AclFunctionNameX =
     | "context/groupGet"
     | "context/groupList"
     | "context/groupCreate"
-    | "context/groupUpdate"
+    | "context/groupUpdatePublicMeta"
+    | "context/groupUpdatePrivateMeta"
+    | "context/groupUpdatePolicy"
     | "context/groupRotateKeys"
     | "context/groupAddMembers"
     | "context/groupRemoveMembers"
@@ -150,7 +152,9 @@ export class CloudAclChecker {
         const contextWrite = {
             "context/contextSendCustomNotification": ["contextId"],
             "context/groupCreate": [],
-            "context/groupUpdate": ["groupId"],
+            "context/groupUpdatePublicMeta": ["groupId"],
+            "context/groupUpdatePrivateMeta": ["groupId"],
+            "context/groupUpdatePolicy": ["groupId"],
             "context/groupRotateKeys": ["groupId"],
             "context/groupAddMembers": ["groupId"],
             "context/groupRemoveMembers": ["groupId"],

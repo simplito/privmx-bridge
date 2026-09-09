@@ -125,14 +125,15 @@ export class RepositoryFactory {
         return new GroupRepository(this.createObjectRepositoryFor(GroupRepository, session), this.createGroupStateRepository(session));
     }
     
-    /** The five collections a group's state lives in outside its document — always in the caller's session. */
+    /** The six collections a group's state lives in outside its document — always in the caller's session. */
     createGroupStateRepository(session?: mongodb.ClientSession) {
         const idProp = GroupStateRepository.COLLECTION_ID_PROP;
         return new GroupStateRepository(
             this.mongoDbManager.getRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>(GroupStateRepository.TREE_NODE_COLLECTION_NAME, idProp, session),
             this.mongoDbManager.getRepository<db.group.GroupTreeEdgeId, db.group.GroupTreeEdge>(GroupStateRepository.TREE_EDGE_COLLECTION_NAME, idProp, session),
             this.mongoDbManager.getRepository<db.group.GroupHistoryEntryId, db.group.GroupHistoryEntry>(GroupStateRepository.HISTORY_COLLECTION_NAME, idProp, session),
-            this.mongoDbManager.getRepository<db.group.GroupMetaEntryId, db.group.GroupMetaEntry>(GroupStateRepository.META_ENTRY_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupPublicMetaEntryId, db.group.GroupPublicMetaEntry>(GroupStateRepository.PUBLIC_META_ENTRY_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupPrivateMetaEntryId, db.group.GroupPrivateMetaEntry>(GroupStateRepository.PRIVATE_META_ENTRY_COLLECTION_NAME, idProp, session),
             this.mongoDbManager.getRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>(GroupStateRepository.ARCHIVE_RUNG_COLLECTION_NAME, idProp, session),
         );
     }

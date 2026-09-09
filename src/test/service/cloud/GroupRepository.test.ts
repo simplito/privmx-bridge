@@ -63,8 +63,11 @@ function group(overrides: Partial<db.group.Group> = {}): db.group.Group {
         keyId: keyId,
         users: [alice, bob, carol],
         managers: [janek],
-        version: 7 as types.group.GroupVersion,
-        rosterVersion: 7,
+        // Deliberately three different numbers: a write that increments the wrong plane's counter, or a filter
+        // that pins the wrong one, has to show rather than coincide.
+        publicMetaVersion: 7 as types.group.GroupVersion,
+        privateMetaVersion: 11 as types.group.GroupVersion,
+        rosterVersion: 5,
         policy: {},
         keyVersion: EPOCH,
         keyHistory: [],
@@ -101,7 +104,8 @@ function createRepository(options: {casMiss?: boolean} = {}) {
     });
     const state = createMock<GroupStateRepository>({});
     mock(state, "insertHistoryEntry", async () => {});
-    mock(state, "writeMetaEntry", async () => {});
+    mock(state, "writePublicMetaEntry", async () => {});
+    mock(state, "writePrivateMetaEntry", async () => {});
     mock(state, "writeTree", async () => {});
     mock(state, "applyRemovalTransition", async () => {});
     mock(state, "applyAdditionTransition", async () => {});
@@ -130,8 +134,12 @@ function historyEntry(state: ReturnType<typeof createRepository>["state"]): db.g
     return (state.insertHistoryEntry as unknown as {mock: {calls: db.group.GroupHistoryEntry[][]}}).mock.calls[0][0];
 }
 
-function metaEntry(state: ReturnType<typeof createRepository>["state"]): db.group.GroupMetaEntry {
-    return (state.writeMetaEntry as unknown as {mock: {calls: db.group.GroupMetaEntry[][]}}).mock.calls[0][0];
+function publicMetaEntry(state: ReturnType<typeof createRepository>["state"]): db.group.GroupPublicMetaEntry {
+    return (state.writePublicMetaEntry as unknown as {mock: {calls: db.group.GroupPublicMetaEntry[][]}}).mock.calls[0][0];
+}
+
+function privateMetaEntry(state: ReturnType<typeof createRepository>["state"]): db.group.GroupPrivateMetaEntry {
+    return (state.writePrivateMetaEntry as unknown as {mock: {calls: db.group.GroupPrivateMetaEntry[][]}}).mock.calls[0][0];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,8 +154,8 @@ it("a removal updates the fields that changed instead of replacing the document"
     assert.strictEqual(updates.length, 1);
     assert.strictEqual(replacements.length, 0);
     const written = Object.keys(updates[0].set).sort();
-    // `rosterVersion` and not `version`: a removal moves the roster plane, and the metadata counter is not its
-    // business. No `data` either — the entry carries it, the document does not keep a copy.
+    // `rosterVersion` and neither metadata counter: a removal moves the roster plane, and the metadata planes
+    // are not its business. No `data` either — the entry carries it, the document does not keep a copy.
     assert.deepStrictEqual(written, [
         "groupPubKey", "keyHistory", "keyId", "keyVersion",
         "lastModificationDate", "lastModifier", "leafAssignment", "managers", "rosterVersion", "users",
@@ -160,7 +168,7 @@ it("a removal keeps the compare-and-swap on both counters it was computed agains
     // `data` commits the version it lands at, which would then be a version no reader can verify.
     const {repository, updates} = createRepository();
     await repository.removeMembersWithTransition(removal(group()));
-    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 7});
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5});
     assert.strictEqual(updates[0].set.keyVersion, EPOCH + 1);
 });
 
@@ -196,7 +204,8 @@ it("appending a roster version is one insert, and the number comes from the coun
     const result = await repository.removeMembersWithTransition(removal(group({rosterVersion: 41})));
     hasOneCall(state.insertHistoryEntry);
     assert.strictEqual(result?.rosterVersion, 42);
-    assert.strictEqual(result?.version, 7, "the metadata counter is not a removal's business");
+    assert.strictEqual(result?.publicMetaVersion, 7, "the metadata counters are not a removal's business");
+    assert.strictEqual(result?.privateMetaVersion, 11);
     const entry = historyEntry(state);
     assert.strictEqual(entry.version, 42);
     assert.strictEqual(entry.groupId, groupId);
@@ -219,59 +228,112 @@ it("an addition advances the roster version without advancing the epoch", async 
         keyId: keyId,
         data: data,
     });
-    assert.strictEqual(result?.rosterVersion, 8);
-    assert.strictEqual(result?.version, 7, "an addition is not a metadata edit either");
+    assert.strictEqual(result?.rosterVersion, 6);
+    assert.strictEqual(result?.publicMetaVersion, 7, "an addition is not a metadata edit either");
+    assert.strictEqual(result?.privateMetaVersion, 11);
     assert.strictEqual(result?.keyVersion, EPOCH);
     assert.strictEqual("keyVersion" in updates[0].set, false);
-    assert.strictEqual(historyEntry(state).version, 8);
+    assert.strictEqual(historyEntry(state).version, 6);
 });
 
-it("a metadata update appends a metadata entry and touches neither the tree nor the roster", async () => {
+it("a public-metadata update writes its own counter and nothing else", async () => {
     const {repository, state, updates, replacements} = createRepository();
-    const result = await repository.updateGroup(group(), janek, data, keyId, undefined, null);
+    const result = await repository.updatePublicMeta(group(), janek, data, keyId, null);
     assert.ok(result, "the CAS matched, so an update is returned");
-    assert.strictEqual(result.version, 8);
+    assert.strictEqual(result.publicMetaVersion, 8);
+    assert.strictEqual(result.privateMetaVersion, 11, "the other plane's counter is untouched");
     assert.strictEqual(replacements.length, 0);
-    assert.strictEqual("numLeaves" in updates[0].set, false);
-    assert.strictEqual("users" in updates[0].set, false);
-    assert.strictEqual("policy" in updates[0].set, false);
-    // Neither the roster counter nor the group's key: a metadata write moves the metadata plane and nothing else.
-    assert.strictEqual("rosterVersion" in updates[0].set, false);
-    assert.strictEqual("keyId" in updates[0].set, false);
-    // The entry lands in the metadata collection, and no roster entry is appended at all.
-    assert.strictEqual(metaEntry(state).version, 8);
-    assert.strictEqual(metaEntry(state).keyVersion, EPOCH, "written under the group's current epoch");
+    // An exact key set, which subsumes every "x is not in the set" assertion at once: no numLeaves, no users,
+    // no policy, no rosterVersion, no keyId — and, the new one, no privateMetaVersion.
+    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
+        "lastModificationDate", "lastModifier", "publicMetaVersion",
+    ]);
+    // The entry lands in its own plane's collection, and nothing is appended to the other two.
+    assert.strictEqual(publicMetaEntry(state).version, 8);
+    assert.strictEqual(publicMetaEntry(state).keyVersion, EPOCH, "written under the group's current epoch");
+    hasNoCalls(state.writePrivateMetaEntry);
     hasNoCalls(state.insertHistoryEntry);
 });
 
-it("a metadata update is a real CAS on the version it read", async () => {
+it("a private-metadata update is the exact mirror", async () => {
+    const {repository, state, updates} = createRepository();
+    const result = await repository.updatePrivateMeta(group(), janek, data, keyId, null);
+    assert.ok(result);
+    assert.strictEqual(result.privateMetaVersion, 12);
+    assert.strictEqual(result.publicMetaVersion, 7, "the other plane's counter is untouched");
+    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
+        "lastModificationDate", "lastModifier", "privateMetaVersion",
+    ]);
+    assert.strictEqual(privateMetaEntry(state).version, 12);
+    hasNoCalls(state.writePublicMetaEntry);
+    hasNoCalls(state.insertHistoryEntry);
+});
+
+it("each metadata update is a real CAS on its own counter", async () => {
     // Not a read-then-write inside the transaction: the entry commits the version it lands at, so landing at a
-    // different one would publish a tag no reader can ever accept.
-    const {repository, updates} = createRepository();
-    await repository.updateGroup(group(), janek, data, keyId, undefined, null);
-    assert.strictEqual(updates[0].filter.version, 7, "the filter pins the version that was read");
+    // different one would publish a tag no reader can ever accept. And each filter names only its own counter,
+    // which is what lets the two planes be written concurrently and both land.
+    const publicSide = createRepository();
+    await publicSide.repository.updatePublicMeta(group(), janek, data, keyId, null);
+    assert.deepStrictEqual(publicSide.updates[0].filter, {_id: groupId, publicMetaVersion: 7});
+    
+    const privateSide = createRepository();
+    await privateSide.repository.updatePrivateMeta(group(), janek, data, keyId, null);
+    assert.deepStrictEqual(privateSide.updates[0].filter, {_id: groupId, privateMetaVersion: 11});
 });
 
 it("a metadata update that loses the CAS reports it instead of writing", async () => {
     const {repository, state} = createRepository({casMiss: true});
-    const result = await repository.updateGroup(group(), janek, data, keyId, undefined, null);
-    assert.strictEqual(result, null, "the caller turns this into GROUP_VERSION_MISMATCH");
-    hasNoCalls(state.writeMetaEntry);
+    assert.strictEqual(await repository.updatePublicMeta(group(), janek, data, keyId, null), null,
+        "the caller turns this into GROUP_VERSION_MISMATCH");
+    assert.strictEqual(await repository.updatePrivateMeta(group(), janek, data, keyId, null), null);
+    hasNoCalls(state.writePublicMetaEntry);
+    hasNoCalls(state.writePrivateMetaEntry);
 });
 
-it("a group with no metadata entry is an internal invariant, not a client error", async () => {
-    // `createGroup` writes the document and the entry in one transaction, so only a leftover from an older
-    // build can be missing it. Nothing the caller sends changes the answer — same treatment as the missing
-    // roster counter. Not `GROUP_META_UNREACHABLE`: that one means "a cut would strand the entry, run
-    // groupUpdate first", which is a remedy, and there is none here.
-    const {repository, state} = createRepository();
-    mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
-    mock(state, "getHistory", async () => [] as never);
-    mock(state, "getMetaHead", async () => null as never);
-    await assert.rejects(
-        () => repository.getFullState(group()),
-        (err: unknown) => err instanceof AppException && err.getCode() === API_ERROR_CODES.INTERNAL_ERROR.code,
-    );
+it("a group with a metadata plane missing is an internal invariant, not a client error", async () => {
+    // `createGroup` writes the document and both entries in one transaction, so only a leftover from an older
+    // build can be missing one. Nothing the caller sends changes the answer — same treatment as the missing
+    // roster counter. Not `GROUP_META_UNREACHABLE`: that one means "a cut would strand the entry, rewrite the
+    // plane first", which is a remedy, and there is none here. Both planes, because either can be the one gone.
+    for (const missing of ["getPublicMetaHead", "getPrivateMetaHead"] as const) {
+        const {repository, state} = createRepository();
+        mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
+        mock(state, "getHistory", async () => [] as never);
+        mock(state, "getPublicMetaHead", async () => ({}) as never);
+        mock(state, "getPrivateMetaHead", async () => ({}) as never);
+        mock(state, missing, async () => null as never);
+        await assert.rejects(
+            () => repository.getFullState(group()),
+            (err: unknown) => err instanceof AppException && err.getCode() === API_ERROR_CODES.INTERNAL_ERROR.code,
+            `a missing ${missing} must be an INTERNAL_ERROR`,
+        );
+    }
+});
+
+it("a policy update sets the policy, moves no counter and appends no entry", async () => {
+    // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
+    // entry that commits it would leave the group unreadable. So: neither.
+    const {repository, state, updates, replacements} = createRepository();
+    const result = await repository.updatePolicy(group(), janek, {get: "all"} as types.cloud.ContainerPolicy);
+    assert.ok(result);
+    assert.strictEqual(replacements.length, 0);
+    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
+        "lastModificationDate", "lastModifier", "policy",
+    ]);
+    // No CAS: the policy is outside the signed envelope, so there is no version a client could send.
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId});
+    assert.strictEqual(result.publicMetaVersion, 7);
+    assert.strictEqual(result.privateMetaVersion, 11);
+    hasNoCalls(state.writePublicMetaEntry);
+    hasNoCalls(state.writePrivateMetaEntry);
+    hasNoCalls(state.insertHistoryEntry);
+});
+
+it("a policy update on a group that has gone away reports it", async () => {
+    const {repository} = createRepository({casMiss: true});
+    const result = await repository.updatePolicy(group(), janek, {} as types.cloud.ContainerPolicy);
+    assert.strictEqual(result, null, "the caller turns this into GROUP_DOES_NOT_EXIST");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,9 +413,12 @@ it("pruning the archive still touches no key material", async () => {
 it("a new tree-backed group keeps its seating and writes the rest beside the document", async () => {
     const {repository, state, inserted} = createRepository();
     const tree = buildTree(SEATING, 1);
-    const created = await repository.createGroup(contextId, null, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, keyId, {}, tree);
-    assert.strictEqual(created.version, 1);
-    assert.strictEqual(created.rosterVersion, 1, "both planes start at 1 and diverge from there");
+    const created = await repository.createGroup(contextId, null, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, data, keyId, {}, tree);
+    assert.strictEqual(created.publicMetaVersion, 1);
+    assert.strictEqual(created.privateMetaVersion, 1);
+    assert.strictEqual(created.rosterVersion, 1, "all three planes start at 1 and diverge from there");
+    // The single counter is gone from the document, not merely unused.
+    assert.strictEqual("version" in inserted[0], false);
     assert.strictEqual(created.keyVersion, 1);
     assert.strictEqual(created.eraFloor, 1);
     assert.strictEqual(inserted[0].numLeaves, tree.numLeaves);
@@ -362,11 +427,13 @@ it("a new tree-backed group keeps its seating and writes the rest beside the doc
     assert.strictEqual("tree" in inserted[0], false);
     assert.strictEqual("history" in inserted[0], false);
     hasOneCall(state.writeTree);
-    // One entry per plane, both under the epoch-1 key.
+    // One entry per plane, all three under the epoch-1 key.
     assert.strictEqual(historyEntry(state).version, 1);
     assert.strictEqual(historyEntry(state).keyVersion, 1);
-    assert.strictEqual(metaEntry(state).version, 1);
-    assert.strictEqual(metaEntry(state).keyVersion, 1);
+    assert.strictEqual(publicMetaEntry(state).version, 1);
+    assert.strictEqual(publicMetaEntry(state).keyVersion, 1);
+    assert.strictEqual(privateMetaEntry(state).version, 1);
+    assert.strictEqual(privateMetaEntry(state).keyVersion, 1);
 });
 
 it("deleting a group takes its state with it", async () => {
@@ -394,7 +461,7 @@ it("a rotation advances the epoch and writes exactly one edge", async () => {
         rungs: rungsFor(EPOCH + 1, 1),
     });
     assert.strictEqual(result?.keyVersion, EPOCH + 1);
-    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 7});
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5});
     assert.strictEqual("numLeaves" in updates[0].set, false, "a rotation does not touch the geometry");
     assert.strictEqual("users" in updates[0].set, false, "nor the roster");
     hasOneCall(state.replaceGrantEdge);
