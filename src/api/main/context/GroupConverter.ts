@@ -52,9 +52,6 @@ export class GroupConverter {
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: state.history.map(x => this.convertHistoryEntry(x)),
-            // Derived from the entries rather than echoed from the request, so a client can see what it was
-            // actually given instead of trusting its own arithmetic.
-            firstServedRosterVersion: state.history[0]?.version ?? (group.rosterVersion as types.group.GroupVersion),
             groupKeys: group.groupKeys ?? [],
             ...this.treeState(group, state.tree, user, scope, forUserIds, forNewMembers),
         };

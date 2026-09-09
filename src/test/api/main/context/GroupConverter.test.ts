@@ -38,7 +38,6 @@ const group: db.group.Group = {
     lastModificationDate: 200 as types.core.Timestamp,
     lastModifier: janek,
     keyId: keyId,
-    data: data,
     users: [alice],
     managers: [janek],
     // Deliberately different numbers: the two planes count independently, and a swap between them has to show.
@@ -154,28 +153,26 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
 it("serves the whole history, from genesis, when the caller does not say what it has", async () => {
     const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
     assert.strictEqual(converted.history.length, 4);
-    assert.strictEqual(converted.firstServedRosterVersion, 1, "from genesis");
+    assert.strictEqual(converted.history[0].version, 1, "from genesis");
 });
 
 it("says where a windowed history starts", async () => {
-    // The window is applied by the repository query; the converter reports what it was handed, so a client can
-    // tell a window from a full history without repeating the server's arithmetic.
+    // The window is applied by the repository query; the converter passes through what it was handed. Where the
+    // window starts is read off the first entry — there is no echoed counter to trust instead.
     const windowed = state();
     windowed.history = windowed.history.filter(entry => entry.version >= 3);
     const converted = new GroupConverter().convertGroup(alice, group, windowed, "full");
     assert.strictEqual(converted.history.length, 2);
     assert.strictEqual(converted.data.length, 2);
-    assert.strictEqual(converted.firstServedRosterVersion, 3);
+    assert.strictEqual(converted.history[0].version, 3);
 });
 
-it("reports the current version when the window turns out empty", async () => {
-    // A client asking from above the head has nothing to verify, and has to be able to see that rather than
-    // read an empty array as "this group has no history".
+it("converts an empty window to empty arrays rather than failing", async () => {
     const empty = state();
     empty.history = [];
     const converted = new GroupConverter().convertGroup(alice, group, empty, "full");
     assert.deepStrictEqual(converted.history, []);
-    assert.strictEqual(converted.firstServedRosterVersion, group.rosterVersion);
+    assert.deepStrictEqual(converted.data, []);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

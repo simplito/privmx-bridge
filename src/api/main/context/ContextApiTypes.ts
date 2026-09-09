@@ -149,6 +149,17 @@ export interface GroupAddMembersModel {
     transition: types.cloud.GroupTreeAdditionTransition;
     /** Guards against computing the tree against a state a concurrent removal has already replaced. */
     expectedKeyVersion: number;
+    /**
+     * The roster version this write is planned against; the entry lands at `expectedRosterVersion + 1`.
+     *
+     * `expectedKeyVersion` cannot stand in for it: an addition moves the roster without moving the epoch, so a
+     * caller can hold the current epoch and still be planning against a roster that has already grown. The
+     * entry's `rosterTag` commits the version it lands at, so a write the bridge renumbered would carry a tag
+     * no reader can verify — this is what makes the number the caller predicts the number it gets.
+     *
+     * Every roster-plane write carries one; the other two point here rather than restating this.
+     */
+    expectedRosterVersion: number;
 }
 
 /**
@@ -182,6 +193,8 @@ export interface GroupRemoveMembersModel {
      */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;
+    /** @see GroupAddMembersModel.expectedRosterVersion */
+    expectedRosterVersion: number;
     confirmationTag?: types.core.Base64;
 }
 
@@ -254,6 +267,8 @@ export interface GroupGenerateNewKeyModel {
     /** The new metadata key wrapped once to the new grant public key. */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;
+    /** @see GroupAddMembersModel.expectedRosterVersion */
+    expectedRosterVersion: number;
     confirmationTag?: types.core.Base64;
 }
 
@@ -379,8 +394,9 @@ export interface GroupHistoryEntryInfo {
     created: types.core.Timestamp;
     author: types.cloud.UserId;
     confirmationTag?: types.core.Base64;
-    version?: types.group.GroupVersion;
-    keyVersion?: number;
+    /** The roster version this entry landed at, and the epoch its tag is keyed at. Always both. */
+    version: types.group.GroupVersion;
+    keyVersion: number;
 }
 
 /** The metadata plane's current entry, served alongside the roster head. */
@@ -418,13 +434,6 @@ export interface GroupInfo {
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
-    /**
-     * Roster version of the first entry in `data` and `history`. Always present, so a client can tell what it was
-     * given rather than assuming. Equal to `rosterVersion` when the response carries the head alone, which is the
-     * default; lower when `fromRosterVersion` asked for the audit trail. There is no metadata audit trail: a read
-     * is served the current metadata entry and nothing older.
-     */
-    firstServedRosterVersion: types.group.GroupVersion;
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
     numLeaves: number;
     leafAssignment: types.cloud.UserId[];

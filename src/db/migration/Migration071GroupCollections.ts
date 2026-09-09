@@ -13,19 +13,33 @@ import { IOC } from "../../service/ioc/IOC";
 import { MigrationId } from "./MigrationManager";
 
 /**
- * Creates the collections a group's state lives in outside its document, with their indexes. Touches no existing
- * data — moving what current documents still carry in `tree`, `history` and `archiveRungs` is BR-08.
+ * Every collection and index a group needs.
+ *
+ * One migration rather than three, because the group API is unreleased: no deployment exists that ran an
+ * earlier slice of this without the rest, so there is nothing for a shorter migration to be compatible with.
+ * All of it is `createOrGetCollection` + `createIndex`, both idempotent, so re-running is free.
+ *
+ * There is deliberately no data step. A group written before the metadata plane existed cannot be made
+ * readable: `data` is opaque ciphertext and both tags are HMACs under keys the bridge has never held, so it
+ * can copy a blob but not re-tag one. Backfilling `rosterVersion` was tried and removed — it let tree
+ * operations succeed on such a group while every read still failed on the missing metadata entry, leaving it
+ * writable but unreadable. Without the backfill it is refused on both paths, which is the better of the two
+ * broken states, and those groups are dev leftovers that get recreated.
  */
-export class Migration071GroupStateCollections {
+export class Migration071GroupCollections {
     
-    static id = <MigrationId>"Migration_071_GroupStateCollections";
+    static id = <MigrationId>"Migration_071_GroupCollections";
     
     static async go(ioc: IOC): Promise<void> {
         const dbManager = ioc.getMongoDbManager();
         
-        // The group collection never had a migration of its own, so its lookup index is added here too.
         const groupCollection = await dbManager.createOrGetCollection("group");
+        // `contextId` alone stays alongside the two compound indexes: it is a prefix of both, but also the only
+        // one a `contextId`-only query can use without walking a multikey index, and `contextId` never changes
+        // after insert — so it costs nothing on the rotation path that rewrites these documents.
         await groupCollection.createIndex("contextId");
+        await groupCollection.createIndex({contextId: 1, users: 1});
+        await groupCollection.createIndex({contextId: 1, managers: 1});
         
         const nodeCollection = await dbManager.createOrGetCollection("groupTreeNode");
         await nodeCollection.createIndex({groupId: 1, nodeIndex: 1});
@@ -38,6 +52,10 @@ export class Migration071GroupStateCollections {
         
         const historyCollection = await dbManager.createOrGetCollection("groupHistoryEntry");
         await historyCollection.createIndex({groupId: 1, version: 1});
+        
+        // Reads go by derived `_id`; this is for the range delete that drops a group's state.
+        const metaCollection = await dbManager.createOrGetCollection("groupMetaEntry");
+        await metaCollection.createIndex({groupId: 1});
         
         const rungCollection = await dbManager.createOrGetCollection("groupArchiveRung");
         // Descending from a given epoch reads a window off this index.

@@ -105,7 +105,6 @@ const group: db.group.Group = {
     lastModificationDate: DateUtils.now(),
     lastModifier: janek,
     keyId: keyId,
-    data: data,
     users: [janek, alice],
     managers: [janek],
     // The genesis entry lives in `groupHistoryEntry`; the document keeps the count.
@@ -321,7 +320,7 @@ it("updateGroup touches metadata only, never the roster and never the epoch", as
 it("Should generate a new group key (rotation without membership change)", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
     const res = await groupService.generateNewGroupKey(janekCloudUser, {
-        id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1,
+        id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1,
     });
     expect(res.keyVersion).toBe(2);
     hasOneCall(groupRepository.generateNewGroupKey);
@@ -332,7 +331,7 @@ it("Should reject generateNewGroupKey with a stale expectedKeyVersion (ROTATED_A
     const {groupService, groupRepository} = createGroupService();
     try {
         await groupService.generateNewGroupKey(janekCloudUser, {
-            id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 99,
+            id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 99, expectedRosterVersion: 1,
         });
     }
     catch (e) {
@@ -347,7 +346,7 @@ it("Should return ROTATED_ALREADY when the rotation CAS loses mid-write", async 
     const {groupService, groupRepository} = createGroupService();
     mock(groupRepository, "generateNewGroupKey", (async () => null) as never); // CAS lost after the version check
     try {
-        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);
@@ -360,7 +359,7 @@ it("Should reject a rotation when the (IPC) rate limiter denies it", async () =>
     const {groupService, groupRotationRateLimiter} = createGroupService();
     mock(groupRotationRateLimiter, "check", async () => ({allowed: false}));
     try {
-        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "GROUP_ROTATION_RATE_LIMIT")).toBe(true);
@@ -373,7 +372,7 @@ it("Should reject generateNewGroupKey from a non-manager (context ACL alone is i
     const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
     // alice has ALLOW ALL context ACL and is a group member, but is NOT a group manager.
     try {
-        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -389,7 +388,7 @@ it("gates generateNewGroupKey on the rotateKeys policy, not on update", async ()
     // operator who widened `update` handed out key rotation with it. alice is a member and not a manager.
     const {groupService, groupRepository} = createGroupService(false, {group: {update: "all"}});
     try {
-        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -403,13 +402,13 @@ it("lets a context widen rotateKeys for groups", async () => {
     // The other direction: the knob has to actually reach the gate, or the test above would also pass with
     // rotation still hardwired to manager-only.
     const {groupService, groupRepository} = createGroupService(false, {group: {rotateKeys: "user"}});
-    await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+    await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     hasOneCall(groupRepository.generateNewGroupKey);
 });
 
 it("charges the rotation rate-limit budget only after a successful rotation", async () => {
     const {groupService, groupRotationRateLimiter} = createGroupService();
-    await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+    await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     hasOneCall(groupRotationRateLimiter.record);
 });
 
@@ -417,7 +416,7 @@ it("does NOT charge the rate-limit budget on a lost CAS race (ROTATED_ALREADY)",
     const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
     mock(groupRepository, "generateNewGroupKey", (async () => null) as never); // CAS lost mid-write
     try {
-        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1});
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);

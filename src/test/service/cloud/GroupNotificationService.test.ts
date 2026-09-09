@@ -55,7 +55,6 @@ function group(memberCount = 3): db.group.Group {
         lastModificationDate: 0 as types.core.Timestamp,
         lastModifier: janek,
         keyId: "SomeKeyId" as types.core.KeyId,
-        data: "SomeGroupData" as types.group.GroupData,
         users: users,
         managers: [janek],
         version: 7 as types.group.GroupVersion,

@@ -102,7 +102,6 @@ function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
         lastModificationDate: 0 as types.core.Timestamp,
         lastModifier: "janek" as types.cloud.UserId,
         keyId: "SomeKeyId" as types.core.KeyId,
-        data: "SomeGroupData" as types.group.GroupData,
         users: [],
         managers: ["janek" as types.cloud.UserId],
         version: 1 as types.group.GroupVersion,

@@ -168,12 +168,12 @@ export class GroupRepository {
         return this.state.getHistory(groupId, fromRosterVersion);
     }
     
-    /** Every keyId the group has ever used — what a submitted key entry is checked against. */
-    /** The epoch the head metadata entry is keyed at — what `cutEra`/`pruneArchive` must not cut below. */
-    async getMetaHeadKeyVersion(groupId: types.group.GroupId): Promise<number|null> {
-        return this.state.getMetaHeadKeyVersion(groupId);
+    /** The group's metadata entry — what a read serves and what `cutEra`/`pruneArchive` must not strand. */
+    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
+        return this.state.getMetaHead(groupId);
     }
     
+    /** Every keyId the group has ever used — what a submitted key entry is checked against. */
     async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
         return this.state.getHistoryKeyIds(groupId);
     }
@@ -190,7 +190,12 @@ export class GroupRepository {
             this.state.getMetaHead(group.id),
         ]);
         if (!meta) {
-            throw new AppException("GROUP_META_UNREACHABLE", "group has no metadata entry");
+            // An invariant, not a client error: `createGroup` writes the document and this entry in one
+            // transaction, so only a group left over from an older build of this branch can be missing it.
+            // Reported the same way as the missing roster counter below — nothing the caller sends changes the
+            // answer, and the group has to be recreated. Also what keeps `GroupState.meta` non-nullable, so
+            // the converter never has to think about it.
+            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no metadata entry; it predates the metadata plane and must be recreated`);
         }
         return {tree, history, meta};
     }
@@ -214,7 +219,6 @@ export class GroupRepository {
             lastModifier: creator,
             lastModificationDate: now,
             keyId: keyId,
-            data: data,
             users: users,
             managers: managers,
             version: firstVersion,
@@ -248,8 +252,8 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        await this.state.insertMetaEntry({
-            id: GroupStateRepository.metaEntryId(group.id, firstVersion),
+        await this.state.writeMetaEntry({
+            id: GroupStateRepository.metaEntryId(group.id),
             groupId: group.id,
             version: firstVersion,
             keyId: keyId,
@@ -299,7 +303,7 @@ export class GroupRepository {
         const managers = oldGroup.managers.filter(u => !leaving.has(u));
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only. `version` is the metadata counter and a removal does not touch metadata.
-        const version = this.nextRosterVersion(oldGroup);
+        const version = this.nextVersion(oldGroup, "rosterVersion");
         const leafAssignment = [...oldGroup.leafAssignment];
         for (const position of transition.blankedPositions) {
             leafAssignment[position] = "" as types.cloud.UserId;
@@ -309,7 +313,6 @@ export class GroupRepository {
             lastModifier: modifier,
             lastModificationDate: now,
             keyId: params.keyId,
-            data: params.data,
             users: users,
             managers: managers,
             rosterVersion: version,
@@ -318,7 +321,7 @@ export class GroupRepository {
             leafAssignment: leafAssignment,
             ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
         };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion)) {
             return null;
         }
         await this.state.insertHistoryEntry({
@@ -369,7 +372,7 @@ export class GroupRepository {
         const managers = Utils.unique([...oldGroup.managers, ...addedMembers.filter(m => m.role === "manager").map(m => m.userId)]);
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only — seating a member is not a metadata edit.
-        const version = this.nextRosterVersion(oldGroup);
+        const version = this.nextVersion(oldGroup, "rosterVersion");
         const oldNumLeaves = oldGroup.numLeaves;
         const oldLeafAssignment = [...oldGroup.leafAssignment];
         const numLeaves = TreeMath.numLeavesToSeatAll(transition.positions, oldNumLeaves);
@@ -384,14 +387,13 @@ export class GroupRepository {
             lastModifier: modifier,
             lastModificationDate: now,
             keyId: params.keyId,
-            data: params.data,
             users: users,
             managers: managers,
             rosterVersion: version,
             numLeaves: numLeaves,
             leafAssignment: leafAssignment,
         };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion)) {
             return null;
         }
         await this.state.insertHistoryEntry({
@@ -460,7 +462,7 @@ export class GroupRepository {
     async updateGroup(oldGroup: db.group.Group, modifier: types.cloud.UserId, data: types.group.GroupData,
         keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy|undefined, resourceId: types.core.ClientResourceId|null): Promise<db.group.Group|null> {
         const now = DateUtils.now();
-        const version = this.nextMetaVersion(oldGroup);
+        const version = this.nextVersion(oldGroup, "version");
         const changes: Partial<db.group.Group> = {
             lastModifier: modifier,
             lastModificationDate: now,
@@ -480,8 +482,8 @@ export class GroupRepository {
         if (result.matchedCount === 0) {
             return null;
         }
-        await this.state.insertMetaEntry({
-            id: GroupStateRepository.metaEntryId(oldGroup.id, version),
+        await this.state.writeMetaEntry({
+            id: GroupStateRepository.metaEntryId(oldGroup.id),
             groupId: oldGroup.id,
             version: version,
             keyId: keyId,
@@ -520,18 +522,27 @@ export class GroupRepository {
     }
     
     /**
-     * Applies a transition to the group document only if `keyVersion` still matches.
+     * Applies a transition to the group document only if the counters it was planned against still match.
      *
      * Atomicity comes from the session (`GroupService` runs every transition in one), not from this. What the
-     * CAS does is refuse a caller working from a superseded epoch, and serialise two transitions racing on the
-     * same epoch so the loser retries against the winner instead of half-landing beside it.
+     * CAS does is refuse a caller working from a superseded state, and serialise two transitions racing on it
+     * so the loser retries against the winner instead of half-landing beside it.
+     *
+     * `expectedRosterVersion` is what the writers of a roster entry pass, and it is not redundant with the
+     * epoch: an addition moves `rosterVersion` without moving `keyVersion`, so two concurrent additions both
+     * match on the epoch alone. Without it, a transaction retried on a write conflict would recompute
+     * `nextRosterVersion` server-side and land the entry at a version the caller's `rosterTag` never committed
+     * to — unverifiable forever. A cut or a prune writes no entry and passes nothing.
      *
      * A `$set` of what changed, not a whole-document replace.
      *
      * @returns false on a CAS miss, in which case nothing has been written
      */
-    async casRotate(oldGroup: db.group.Group, expectedKeyVersion: number, changes: Partial<db.group.Group>): Promise<boolean> {
-        const filter = {_id: oldGroup.id, keyVersion: expectedKeyVersion};
+    async casRotate(oldGroup: db.group.Group, expectedKeyVersion: number, changes: Partial<db.group.Group>,
+        expectedRosterVersion?: number): Promise<boolean> {
+        const filter = expectedRosterVersion === undefined
+            ? {_id: oldGroup.id, keyVersion: expectedKeyVersion}
+            : {_id: oldGroup.id, keyVersion: expectedKeyVersion, rosterVersion: expectedRosterVersion};
         const result = await this.repository.collection.updateOne(filter, {$set: this.toDbChanges(changes)}, this.repository.getOptions());
         return result.matchedCount > 0;
     }
@@ -553,19 +564,18 @@ export class GroupRepository {
         const now = DateUtils.now();
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane: a rotation republishes the roster entry under the new epoch, but writes no metadata.
-        const version = this.nextRosterVersion(oldGroup);
+        const version = this.nextVersion(oldGroup, "rosterVersion");
         const changes: Partial<db.group.Group> = {
             groupPubKey: params.newGroupPubKey,
             lastModifier: modifier,
             lastModificationDate: now,
             keyId: params.keyId,
-            data: params.data,
             rosterVersion: version,
             keyVersion: expectedKeyVersion + 1,
             keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
             ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
         };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion)) {
             return null;
         }
         await this.state.insertHistoryEntry({
@@ -595,22 +605,20 @@ export class GroupRepository {
         return set;
     }
     
-    /** The metadata plane's counter — moved only by `updateGroup`, which is CAS-guarded on it. */
-    private nextMetaVersion(group: db.group.Group): types.group.GroupVersion {
-        if (!Number.isInteger(group.version)) {
-            // Documents written before the history moved out counted versions by array length. BR-08 backfills the
-            // counter; until it runs, refuse rather than write a NaN version nothing can compare against.
-            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no version counter; the group-state migration has not run`);
+    /**
+     * The next value of one plane's counter. `version` is the metadata plane's, moved only by `updateGroup`;
+     * `rosterVersion` is the roster plane's, moved only by a membership change or a rotation.
+     *
+     * The guard is not about migrations — `createGroup` sets both — but about not writing `NaN` into the
+     * document if a group somehow lacks one. An error is recoverable; a `NaN` counter no reader can compare
+     * against is not.
+     */
+    private nextVersion(group: db.group.Group, plane: "version"|"rosterVersion"): types.group.GroupVersion {
+        const current = group[plane];
+        if (!Number.isInteger(current)) {
+            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no '${plane}' counter`);
         }
-        return (group.version + 1) as types.group.GroupVersion;
-    }
-    
-    /** The roster plane's counter — moved only by a membership change or a rotation. */
-    private nextRosterVersion(group: db.group.Group): types.group.GroupVersion {
-        if (!Number.isInteger(group.rosterVersion)) {
-            throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no roster version counter; the group-state migration has not run`);
-        }
-        return (group.rosterVersion + 1) as types.group.GroupVersion;
+        return (current + 1) as types.group.GroupVersion;
     }
     
 }

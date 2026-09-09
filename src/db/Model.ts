@@ -216,7 +216,6 @@ export namespace group {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
-        data: types.group.GroupData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         policy?: types.cloud.ContainerPolicy;
@@ -304,8 +303,8 @@ export namespace group {
         data: types.core.UserKeyData;
     }
     
-    /** One group version. `id` is derived from `(groupId, version)`, so appending is an insert. */
-    /** One roster-plane entry. Carries no metadata: a membership change does not rewrite what it did not change. */
+    /** One roster-plane entry, `id` derived from `(groupId, rosterVersion)` so appending is an insert. Carries
+     *  no metadata: a membership change does not rewrite what it did not change. */
     export interface GroupHistoryEntry {
         id: GroupHistoryEntryId;
         groupId: types.group.GroupId;
@@ -325,6 +324,9 @@ export namespace group {
      * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
      * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
      * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable.
+     *
+     * One row per group: `id` is derived from `groupId` alone and an update replaces it. There is no metadata
+     * audit trail to serve, so a version-derived id would only leave rows no reader can reach.
      */
     export interface GroupMetaEntry {
         id: GroupMetaEntryId;

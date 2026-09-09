@@ -60,8 +60,10 @@ export class GroupStateRepository {
         return `${groupId}|${version}` as db.group.GroupHistoryEntryId;
     }
     
-    static metaEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
-        return `${groupId}|${version}` as db.group.GroupMetaEntryId;
+    /** One row per group, not one per version: nothing reads the metadata plane below its head, so a
+     *  version-derived id would only accumulate rows no reader can reach. */
+    static metaEntryId(groupId: types.group.GroupId) {
+        return `${groupId}|meta` as db.group.GroupMetaEntryId;
     }
     
     /** Identified by the span it covers and its recipient, which makes re-submitting a rung idempotent. */
@@ -136,25 +138,25 @@ export class GroupStateRepository {
         return entries.map(entry => entry.keyId);
     }
     
-    /** The current metadata entry: highest `version`, one indexed lookup. A read needs exactly this one. */
-    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
-        const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
-        return head ?? null;
-    }
-    
     /**
-     * The epoch the head metadata entry is keyed at, projected.
+     * The group's metadata entry — a lookup by derived id.
      *
-     * `cutEra` and `pruneArchive` ask this before dropping rungs: the metadata entry stays at the epoch it was
-     * written under, so cutting below it would make the group's metadata unreadable for everyone, permanently.
+     * A read needs exactly this one, and so do `cutEra`/`pruneArchive`: the entry stays at the epoch it was
+     * written under, so cutting below its `keyVersion` would make the group's metadata unreadable for everyone,
+     * permanently.
      */
-    async getMetaHeadKeyVersion(groupId: types.group.GroupId): Promise<number|null> {
-        const [head] = await this.metaEntries.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).props("keyVersion").array();
-        return head ? head.keyVersion : null;
+    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
+        return this.metaEntries.get(GroupStateRepository.metaEntryId(groupId));
     }
     
-    async insertMetaEntry(entry: db.group.GroupMetaEntry): Promise<void> {
-        await this.metaEntries.insert(entry);
+    /** Replaces the group's metadata entry: one row per group, so a later version supersedes rather than piles up. */
+    async writeMetaEntry(entry: db.group.GroupMetaEntry): Promise<void> {
+        const {id, ...doc} = entry;
+        await this.metaEntries.collection.replaceOne(
+            {_id: id},
+            doc as Omit<db.group.GroupMetaEntry, "id">,
+            {...this.metaEntries.getOptions(), upsert: true},
+        );
     }
     
     /** Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a

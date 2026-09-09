@@ -187,7 +187,7 @@ export class GroupService extends BaseContainerService {
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const rGroup = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupRotateKeys", ["groupId=" + model.id]);
             // Gated by the `rotateKeys` policy, same as every other container's rotate endpoint. It defaults to
@@ -238,7 +238,7 @@ export class GroupService extends BaseContainerService {
     async addMembers(cloudUser: CloudUser, model: GroupAddMembersModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMembers", ["groupId=" + model.id]);
             // An addition does not rotate the epoch, so it must not rotate the content key either — the roster
@@ -287,7 +287,7 @@ export class GroupService extends BaseContainerService {
     async removeMembers(cloudUser: CloudUser, model: GroupRemoveMembersModel) {
         const {group, context, removed} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupRemoveMembers", ["groupId=" + model.id]);
             const leaving = new Set(model.userIds);
@@ -408,7 +408,6 @@ export class GroupService extends BaseContainerService {
         return {group, rungs};
     }
     
-    /** Loads a group for a tree operation and rejects a caller working from a superseded epoch. */
     /**
      * Refuses to strand the group's metadata below a floor.
      *
@@ -417,30 +416,39 @@ export class GroupService extends BaseContainerService {
      * `publicMeta`/`privateMeta` unreadable for everyone, permanently. Before the planes were split this could
      * not happen: every removal republished the metadata at the new epoch.
      *
-     * One projected read. The way out is a single `updateGroup`, which rewrites the metadata at the current
-     * epoch — so the message says so rather than leaving the caller to guess.
+     * One lookup by derived id. The way out is a single `updateGroup`, which rewrites the metadata at the
+     * current epoch — so the message says so rather than leaving the caller to guess.
      */
     private async assertMetaSurvivesFloor(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         groupId: types.group.GroupId,
         floor: number,
     ) {
-        const metaKeyVersion = await groupRepository.getMetaHeadKeyVersion(groupId);
-        if (metaKeyVersion !== null && metaKeyVersion < floor) {
+        const meta = await groupRepository.getMetaHead(groupId);
+        if (meta && meta.keyVersion < floor) {
             throw new AppException("GROUP_META_UNREACHABLE",
-                `group metadata sits at epoch ${metaKeyVersion}, below the requested floor ${floor}; call groupUpdate first to rewrite it at the current epoch`);
+                `group metadata sits at epoch ${meta.keyVersion}, below the requested floor ${floor}; call groupUpdate first to rewrite it at the current epoch`);
         }
     }
     
+    /** Loads a group for a tree operation and rejects a caller working from a superseded epoch. */
     private async getGroupForTreeOperation(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         cloudUser: CloudUser,
         groupId: types.group.GroupId,
         expectedKeyVersion: number,
+        expectedRosterVersion?: number,
     ) {
         const group = await groupRepository.get(groupId);
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        // The roster plane's precondition, checked first because it is the cheaper answer: the caller can
+        // re-read and re-plan without adopting a new epoch. Only the operations that write a roster entry pass
+        // one — a cut or a prune touches neither plane's counter, so a concurrent addition is no conflict.
+        if (expectedRosterVersion !== undefined && group.rosterVersion !== expectedRosterVersion) {
+            await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+            throw new AppException("GROUP_ROSTER_VERSION_MISMATCH", {rosterVersion: group.rosterVersion, expected: expectedRosterVersion});
         }
         const currentKeyVersion = group.keyVersion;
         if (currentKeyVersion !== expectedKeyVersion) {
@@ -664,8 +672,6 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /** What a caller who lost the race needs to recompute against the winner. `winnerKeyEntry` is the group's
-     *  own self-addressed entry at the winning epoch — whoever can climb to the new grant key can open it. */
     /**
      * What a loser of a CAS race needs to adopt the winner's epoch instead of retrying blind.
      *
@@ -684,8 +690,10 @@ export class GroupService extends BaseContainerService {
         const winnerKeyEntry = (winner.groupKeys ?? [])
             .flatMap(entry => entry.keys)
             .find(k => k.keyId === winner.keyId);
-        // `fromVersion` is a lower bound, so asking from the head version returns exactly the head entry.
-        const [headEntry] = await groupRepository.getHistory(winner.id, winner.version);
+        // A lower bound, so asking from the head roster version returns exactly the head entry. The roster
+        // plane's counter, not `version` — that one is the metadata plane's and lags it, which would return the
+        // oldest trailing entry and hand the loser a tag from a superseded epoch.
+        const [headEntry] = await groupRepository.getHistory(winner.id, winner.rosterVersion);
         return {
             keyVersion: winner.keyVersion,
             groupPubKey: winner.groupPubKey,

@@ -75,6 +75,7 @@ export class ContextApiValidator extends BaseValidator {
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
             confirmationTag: this.builder.optional(this.tv.base64),
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
@@ -109,6 +110,7 @@ export class ContextApiValidator extends BaseValidator {
             data: this.tv.groupData,
             transition: this.tv.groupTreeAdditionTransition,
             expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
         }));
         this.registerMethod("groupRemoveMembers", this.builder.createObject({
             id: this.tv.groupId,
@@ -122,6 +124,7 @@ export class ContextApiValidator extends BaseValidator {
             // One: the group is a grantee of itself, and it has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
             confirmationTag: this.builder.optional(this.tv.base64),
         }));
         this.registerMethod("groupCutEra", this.builder.createObject({

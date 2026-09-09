@@ -288,6 +288,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             transition: transition,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupRemoveMembers with a transition did not return OK");
         this.keyVersion = newEpoch;
@@ -340,6 +341,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
             },
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupRemoveMembers did not return OK");
         this.keyVersion = newEpoch;
@@ -356,6 +358,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: withAdditionTransitionNodeKeys(additionTransition(current, userId, position, this.keyVersion), nodeKey),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupAddMembers did not return OK");
         this.rosterVersion += 1;
@@ -374,6 +377,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupAddMembers did not return OK");
         this.rosterVersion += 1;
@@ -399,6 +403,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert.ok(res === "OK", "groupAddMembers did not return OK");
         this.rosterVersion += 1;
@@ -581,6 +586,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 data: "group-data" as types.group.GroupData,
                 transition: transition,
                 expectedKeyVersion: this.keyVersion,
+                expectedRosterVersion: this.rosterVersion,
             });
         }, "GROUP_TREE_INVALID");
     }
@@ -704,28 +710,30 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const {group: head} = await this.apis.contextApi.groupGet({groupId});
         assert.ok(head.history.length === 1, `no parameter serves the head alone, got ${head.history.length}`);
         assert.ok(head.data.length === 1, "the data array carries the head alone too");
-        assert.ok(head.firstServedRosterVersion === head.rosterVersion,
-            `the head is roster version ${head.rosterVersion}, said ${head.firstServedRosterVersion}`);
+        // Where the window starts is read off the entries themselves. There is no echoed
+        // `firstServedRosterVersion` to trust instead — it was removed because nothing read it.
+        assert.ok(head.history[0].version === head.rosterVersion,
+            `the head is roster version ${head.rosterVersion}, served ${head.history[0].version}`);
         assert.ok(!!head.meta, "a read always carries the current metadata entry");
         
         // The audit trail is what `fromRosterVersion` is for, and asking for it costs what it costs.
         const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 1});
         assert.ok(trail.history.length === 3, `three roster versions so far, got ${trail.history.length}`);
-        assert.ok(trail.firstServedRosterVersion === 1, "asking from 1 means from genesis");
+        assert.ok(trail.history[0].version === 1, "asking from 1 means from genesis");
         const sizeOf = (g: unknown) => JSON.stringify(g).length;
         assert.ok(sizeOf(head) < sizeOf(trail), `head ${sizeOf(head)} B is not smaller than the trail ${sizeOf(trail)} B`);
         
         const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 3});
         assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
-        assert.ok(windowed.firstServedRosterVersion === 3, `window starts at 3, said ${windowed.firstServedRosterVersion}`);
+        assert.ok(windowed.history[0].version === 3, `window starts at 3, served ${windowed.history[0].version}`);
         assert.ok(windowed.rosterVersion === trail.rosterVersion, "the head roster version is unchanged by windowing");
         
         // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
         const {group: past} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 99});
         assert.ok(past.history.length === 1 && past.data.length === 1,
             `asking past the head must still serve the head, got ${past.history.length} entries`);
-        assert.ok(past.firstServedRosterVersion === trail.rosterVersion,
-            `the head is roster version ${trail.rosterVersion}, said ${past.firstServedRosterVersion}`);
+        assert.ok(past.history[0].version === trail.rosterVersion,
+            `the head is roster version ${trail.rosterVersion}, served ${past.history[0].version}`);
     }
     
     private async verifyListingCarriesNoState() {
@@ -750,6 +758,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 expectedKeyVersion: this.keyVersion - 1,
+                expectedRosterVersion: this.rosterVersion,
             });
         }, "ROTATED_ALREADY");
     }
@@ -819,6 +828,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             transition: transition,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         };
     }
     
