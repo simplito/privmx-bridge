@@ -324,3 +324,35 @@ it("ContextApiValidator.groupGetKeyArchive valid with a window", () => {
     const result = Utils.try(() => validator().validate("groupGetKeyArchive", model));
     expect(result.success).toBe(true);
 });
+
+it("ContextApiValidator.groupSendCustomEvent valid without a recipient list", () => {
+    const model: contextApi.GroupSendCustomEventModel = {
+        groupId: groupId,
+        channel: "typing" as types.core.WsChannelName,
+        data: "base64EnvelopeGoesHere",
+    };
+    const result = Utils.try(() => validator().validate("groupSendCustomEvent", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupSendCustomEvent valid with a recipient list", () => {
+    const model: contextApi.GroupSendCustomEventModel = {
+        groupId: groupId,
+        channel: "typing" as types.core.WsChannelName,
+        data: "base64EnvelopeGoesHere",
+        users: ["janek"] as types.cloud.UserId[],
+    };
+    const result = Utils.try(() => validator().validate("groupSendCustomEvent", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupSendCustomEvent rejects a payload over the 16 KB ceiling", () => {
+    // A notification is not a container. Anything this size belongs in a Store, with the event pointing at it.
+    const model: contextApi.GroupSendCustomEventModel = {
+        groupId: groupId,
+        channel: "typing" as types.core.WsChannelName,
+        data: "x".repeat(17 * 1024),
+    };
+    const result = Utils.try(() => validator().validate("groupSendCustomEvent", model));
+    expect(result.success).toBe(false);
+});

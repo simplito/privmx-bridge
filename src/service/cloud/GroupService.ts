@@ -732,6 +732,37 @@ export class GroupService extends BaseContainerService {
         return result.oldGroup;
     }
     
+    /**
+     * Relays an ephemeral notification to the group's members. The payload is already sealed with the group's own
+     * key, so the bridge only decides *who* — never *what*, and never a key per recipient.
+     *
+     * The sender's epoch is deliberately not checked. A member who has not caught up with a rotation still seals
+     * with a `keyId` the others can resolve, and refusing here would mean you cannot say "I am typing" until you
+     * have re-keyed. Durable writes are the ones that need `checkGroupEpochs`.
+     */
+    async sendCustomNotification(cloudUser: CloudUser, groupId: types.group.GroupId, data: unknown, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
+        const group = await this.repositoryFactory.createGroupRepository().get(groupId);
+        if (!group) {
+            throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "context/groupSendCustomEvent", ["groupId=" + groupId]);
+        if (!this.policy.canSendCustomNotification(user, context, group)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        const members = [...group.users, ...group.managers];
+        // The ACL above is context-scoped, so membership is a separate gate — unlike containers, where the
+        // policy check already reads the roster.
+        if (!members.includes(user.userId)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if (users && users.some(element => !members.includes(element))) {
+            throw new AppException("USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER");
+        }
+        this.groupNotificationService.sendGroupCustomEvent(group, data, {id: user.userId, pub: user.userPubKey}, customChannelName, users);
+        return group;
+    }
+    
     async deleteGroupsByContext(contextId: types.context.ContextId) {
         const groupRepository = this.repositoryFactory.createGroupRepository();
         await groupRepository.deleteOneByOneByContext(contextId, async group => {
