@@ -123,10 +123,10 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
         lastModificationDate: DateUtils.now(),
         lastModifier: janek,
         keyId: keyId,
-        data: data,
         users: [alice, bob, carol],
         managers: [janek],
         version: 1 as types.group.GroupVersion,
+        rosterVersion: 1,
         policy: {},
         keyVersion: EPOCH,
         keyHistory: [],
@@ -139,8 +139,9 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
 }
 
 function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number,
-    headEntry?: Partial<db.group.GroupHistoryEntry>|null} = {}) {
+    headEntry?: Partial<db.group.GroupHistoryEntry>|null, metaKeyVersion?: number} = {}) {
     let archiveWindow: {from?: number, to?: number}|null = null;
+    let historyAskedFrom: number|undefined;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const groupNotificationService = createMock<GroupNotificationService>({});
@@ -173,9 +174,10 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     mock(groupRepository, "getTree", async () => group.tree);
     mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
     // The confirmation tag lives on the winning version's history entry, which is where a lost CAS race reads it.
-    mock(groupRepository, "getHistory", (async () => options.headEntry === null ? [] : [
-        options.headEntry ?? {confirmationTag: WINNER_TAG},
-    ]) as never);
+    mock(groupRepository, "getHistory", (async (_id: types.group.GroupId, from?: number) => {
+        historyAskedFrom = from;
+        return options.headEntry === null ? [] : [options.headEntry ?? {confirmationTag: WINNER_TAG}];
+    }) as never);
     mock(groupRepository, "getRootNode", (async () =>
         group.tree.nodes.find(n => n.nodeIndex === TreeMath.root(group.numLeaves))) as never);
     mock(groupRepository, "getArchiveRungs", (async (_id: types.group.GroupId, from?: number, to?: number) => {
@@ -193,6 +195,9 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         nodesAt(TreeTransitionValidator.nodesNeededFor(positions, g.numLeaves))) as never);
     mock(groupRepository, "getSeatNodes", (async (g: db.group.Group, positions: number[]) =>
         nodesAt(TreeTransitionValidator.nodesNeededForSeat(positions, g.numLeaves))) as never);
+    // Where the metadata entry sits. Cutting or pruning above it would strand it, so the service reads it first.
+    mock(groupRepository, "getMetaHead", (async () =>
+        ({keyVersion: options.metaKeyVersion ?? group.keyVersion})) as never);
     mock(groupRepository, "cutEra", (options.casMiss ? async () => null : async (g: db.group.Group, floor: number) => ({...g, eraFloor: floor})) as never);
     mock(groupRepository, "pruneArchive", (options.casMiss ? async () => null : async (g: db.group.Group, below: number) => ({...g, archivePrunedBelow: below})) as never);
     
@@ -216,7 +221,8 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         return context;
     });
     
-    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow};
+    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow,
+        getHistoryAskedFrom: () => historyAskedFrom};
 }
 
 /** The payload an honest client submits to seat `dave` in a blank at position 1. */
@@ -229,6 +235,7 @@ function additionModel(group: TreeGroup, position = 1, newMember: types.cloud.Us
         data: data,
         transition: additionTransition(group.tree, newMember, position, group.keyVersion),
         expectedKeyVersion: group.keyVersion,
+        expectedRosterVersion: group.rosterVersion,
     };
 }
 
@@ -251,6 +258,7 @@ function removalModel(group: TreeGroup, position: number) {
         transition: removalTransition(group.tree, position, group.keyVersion),
         rungs,
         expectedKeyVersion: group.keyVersion,
+        expectedRosterVersion: group.rosterVersion,
     };
 }
 
@@ -274,7 +282,7 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
     // one ciphertext per member just to hand out the current key.
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
     );
     hasOneCall(groupRepository.createGroup);
@@ -283,12 +291,13 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
 it("createGroup stores the metadata key as one self-addressed entry", async () => {
     const {groupService, groupRepository} = createGroupService();
     await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
         {groupEpoch: 1, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     );
     const call = groupRepository.createGroup.mock.calls[0];
-    const groupKeys = [...call][11] as types.cloud.GroupKeysEntry[];
+    // One further along than before: `meta` sits between `data` and `keyId`.
+    const groupKeys = [...call][12] as types.cloud.GroupKeysEntry[];
     assert.strictEqual(groupKeys.length, 1, "one entry, whatever the group's size");
     assert.strictEqual(groupKeys[0].keys[0].groupEpoch, 1);
 });
@@ -296,7 +305,7 @@ it("createGroup stores the metadata key as one self-addressed entry", async () =
 it("createGroup refuses a self-addressed entry naming an epoch the group does not start at", async () => {
     const {groupService, groupRepository} = createGroupService();
     await expectFailure("INVALID_PARAMS", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 1),
         {groupEpoch: 2, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     ));
@@ -307,7 +316,7 @@ it("createGroup refuses more members than the configured limit, and says so", as
     const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {maxGroupMembers: 3});
     const tooMany = ["u1", "u2", "u3", "u4"].map(u => u as types.cloud.UserId);
     const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, data, keyId, {},
         buildTree([...tooMany, janek], 1),
     ));
     assert.deepStrictEqual(error.getData(), {limit: 3, requested: 5}, "the error carries both numbers");
@@ -335,7 +344,7 @@ it("addMember refuses to grow the tree past the limit, blanks and all", async ()
 it("createGroup rejects a tree that does not seat every member", async () => {
     const {groupService, groupRepository} = createGroupService();
     await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(["janek", "alice", "bob", ""], 1),
     ));
     hasNoCalls(groupRepository.createGroup);
@@ -344,7 +353,7 @@ it("createGroup rejects a tree that does not seat every member", async () => {
 it("createGroup rejects a tree addressed to an epoch other than the first", async () => {
     const {groupService} = createGroupService();
     await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, keyId, {},
+        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, keyId, {},
         buildTree(SEATING, 4),
     ));
 });
@@ -710,6 +719,14 @@ it("cutEra refuses a floor above the current epoch", async () => {
     await expectFailure("INVALID_PARAMS", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: EPOCH + 1, expectedKeyVersion: EPOCH}));
 });
 
+it("cutEra refuses a floor that would strand the metadata entry", async () => {
+    // The metadata entry stays at the epoch it was written under, so a floor above it takes away the only route
+    // to its key — permanently, for everybody. The caller has to rewrite it with groupUpdate first.
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {metaKeyVersion: 2});
+    await expectFailure("GROUP_META_UNREACHABLE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.cutEra);
+});
+
 it("cutEra requires a manager", async () => {
     const {groupService} = createGroupService();
     await expectFailure("ACCESS_DENIED", () => groupService.cutEra(aliceCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
@@ -719,6 +736,12 @@ it("pruneArchive records a watermark", async () => {
     const {groupService, groupRepository} = createGroupService();
     await groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH});
     hasOneCall(groupRepository.pruneArchive);
+});
+
+it("pruneArchive refuses a watermark that would strand the metadata entry", async () => {
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {metaKeyVersion: 2});
+    await expectFailure("GROUP_META_UNREACHABLE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.pruneArchive);
 });
 
 it("pruneArchive refuses to prune past the current epoch", async () => {
@@ -783,6 +806,7 @@ function batchRemovalModel(group: TreeGroup, positions: number[]) {
             author: janek,
         })),
         expectedKeyVersion: group.keyVersion,
+        expectedRosterVersion: group.rosterVersion,
     };
 }
 
@@ -822,6 +846,7 @@ function batchAdditionModel(group: TreeGroup, seats: number[], members: types.cl
         data: data,
         transition: additionTransition(group.tree, members, seats, group.keyVersion),
         expectedKeyVersion: group.keyVersion,
+        expectedRosterVersion: group.rosterVersion,
     };
 }
 
@@ -857,6 +882,29 @@ it("a lost race hands back the winner's confirmation tag, not just its epoch", a
     const payload = error.getData() as {confirmationTag?: string, keyVersion: number};
     assert.strictEqual(payload.confirmationTag, WINNER_TAG);
     assert.strictEqual(payload.keyVersion, EPOCH);
+});
+
+it("a roster write planned against a superseded roster version is refused", async () => {
+    // The epoch is not enough of a precondition on its own: an addition moves `rosterVersion` and leaves
+    // `keyVersion` alone, so a caller can hold the current epoch and still be planning against a roster that
+    // has already grown. Letting that through would land the entry at a version its `rosterTag` never
+    // committed to, which no reader could then verify.
+    const group = treeBackedGroup({rosterVersion: 9});
+    const {groupService} = createGroupService(group);
+    await expectFailure("GROUP_ROSTER_VERSION_MISMATCH",
+        () => groupService.addMembers(janekCloudUser, {...additionModel(group), expectedRosterVersion: 8}));
+    await expectFailure("GROUP_ROSTER_VERSION_MISMATCH",
+        () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), expectedRosterVersion: 8}));
+});
+
+it("a lost race reads the winner's tag off the roster plane, not the metadata counter", async () => {
+    // The two counters move independently, and history entries are keyed by roster version. Asking with
+    // `version` returns the oldest trailing entry instead of the winner's, so the loser gets a tag from an
+    // epoch that has long since been superseded and refuses to adopt.
+    const group = treeBackedGroup({version: 2 as types.group.GroupVersion, rosterVersion: 7});
+    const {groupService, getHistoryAskedFrom} = createGroupService(group, {casMiss: true});
+    await expectFailure("ROTATED_ALREADY", () => groupService.removeMembers(janekCloudUser, removalModel(group, 2)));
+    assert.strictEqual(getHistoryAskedFrom(), 7, "asked from the roster version, not the metadata version");
 });
 
 it("a winner written without a tag says so rather than inventing one", async () => {

@@ -118,6 +118,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             users: users,
             managers: managers,
             data: "AAAA" as types.group.GroupData,
+            meta: "BBBB" as types.group.GroupData,
             keyId: groupKeyId,
             tree: withNodeKeys(buildTree(users, 1), nodeKey),
         });
@@ -271,6 +272,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
                 data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
             },
             expectedKeyVersion: group.keyVersion,
+            expectedRosterVersion: group.rosterVersion,
         });
         assert(res === "OK", "groupRemoveMembers did not return OK");
     }

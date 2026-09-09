@@ -36,16 +36,22 @@ export class GroupConverter {
             lastModificationDate: group.lastModificationDate,
             lastModifier: group.lastModifier,
             data: state.history.map(x => ({keyId: x.keyId, data: x.data})),
+            meta: {
+                version: state.meta.version,
+                keyId: state.meta.keyId,
+                keyVersion: state.meta.keyVersion,
+                data: state.meta.data,
+                created: state.meta.created,
+                author: state.meta.author,
+            },
             users: group.users,
             managers: group.managers,
             version: group.version,
+            rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
             keyHistory: group.keyHistory ?? [],
             policy: group.policy || {},
             history: state.history.map(x => this.convertHistoryEntry(x)),
-            // Derived from the entries rather than echoed from the request, so a client can see what it was
-            // actually given instead of trusting its own arithmetic.
-            firstServedVersion: state.history[0]?.version ?? group.version,
             groupKeys: group.groupKeys ?? [],
             ...this.treeState(group, state.tree, user, scope, forUserIds, forNewMembers),
         };
@@ -69,6 +75,7 @@ export class GroupConverter {
             users: group.users,
             managers: group.managers,
             version: group.version,
+            rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
             policy: group.policy || {},
         };
@@ -213,6 +220,8 @@ export class GroupConverter {
             groupPubKey: entry.groupPubKey,
             created: entry.created,
             author: entry.author,
+            version: entry.version,
+            keyVersion: entry.keyVersion,
         };
         if (entry.confirmationTag !== undefined) {
             res.confirmationTag = entry.confirmationTag;

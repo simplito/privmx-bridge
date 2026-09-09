@@ -127,7 +127,10 @@ export class GroupNotificationService {
             groupId: group.id,
             contextId: group.contextId,
             version: group.version,
-            keyVersion: group.keyVersion ?? 0,
+            // No `?? 0` on either: both are non-optional on the document, and 0 is below every real value —
+            // a client would read it as the counter going backwards.
+            rosterVersion: group.rosterVersion,
+            keyVersion: group.keyVersion,
             changeKind: changeKind,
         };
     }

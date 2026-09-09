@@ -55,10 +55,10 @@ function group(memberCount = 3): db.group.Group {
         lastModificationDate: 0 as types.core.Timestamp,
         lastModifier: janek,
         keyId: "SomeKeyId" as types.core.KeyId,
-        data: "SomeGroupData" as types.group.GroupData,
         users: users,
         managers: [janek],
         version: 7 as types.group.GroupVersion,
+        rosterVersion: 9,
         keyVersion: 4,
         numLeaves: 4,
         leafAssignment: [janek, alice],
@@ -92,7 +92,7 @@ function createService() {
     
     // The notification path must not read group state any more; a call here is the regression.
     const groupRepository = createMock<GroupRepository>({});
-    mock(groupRepository, "getFullState", async () => ({tree: buildTree(["janek"], 1), history: []}));
+    mock(groupRepository, "getFullState", (async () => ({tree: buildTree(["janek"], 1), history: [], meta: undefined})) as never);
     
     const repositoryFactory = createMock<RepositoryFactory>({});
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
@@ -111,9 +111,11 @@ it("a group event carries what changed and nothing that grows with the group", a
     await settle();
     
     assert.strictEqual(sent.length, 1);
-    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "version"]);
+    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "rosterVersion", "version"]);
     assert.strictEqual(sent[0].event.data.groupId, groupId);
     assert.strictEqual(sent[0].event.data.version, 7);
+    // Both counters travel: the planes moved apart, so a reader has to be told which one advanced.
+    assert.strictEqual(sent[0].event.data.rosterVersion, 9);
     assert.strictEqual(sent[0].event.data.keyVersion, 4);
     assert.strictEqual(sent[0].event.data.changeKind, "memberRemoved");
 });

@@ -85,7 +85,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private groupId?: types.group.GroupId;
     private _removedByDelta?: types.cloud.UserId;
     private keyVersion = 1;
-    private version = 1;
+    // Only roster operations move this: rotations, removals and additions. `updateGroup` has its own counter.
+    private rosterVersion = 1;
+    // That other counter: the metadata plane's, moved by `updateGroup` alone.
+    private metaVersion = 1;
     
     @Test()
     async shouldKeepGroupStateOutOfTheDocument() {
@@ -148,6 +151,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.removeMember(alice, 1);
         await this.verifyTheArchiveIsServedFromItsCollection();
         await this.verifyTheArchiveIsWindowed();
+        // The metadata entry is still the one `groupCreate` wrote at epoch 1 — removals move the roster plane and
+        // leave it alone — so the ladder cannot be cut out from under it until it is rewritten at the current epoch.
+        await this.verifyTheLadderCannotBeCutOutFromUnderTheMetadata();
+        await this.rewriteMetadataAtTheCurrentEpoch();
         await this.verifyPruningDeletesRungsAndRecordsAWatermark();
         await this.verifyCuttingAnEraDropsTheRungsBelowTheFloor();
     }
@@ -243,13 +250,15 @@ export class GroupKeyTreeTests extends BaseTestSet {
             users: [alice, bob, carol],
             managers: [testData.userId],
             data: "group-data" as types.group.GroupData,
+            meta: "group-meta" as types.group.GroupData,
             keyId: keyIdAt(1),
             tree: tree,
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         this.groupId = res.groupId;
         this.keyVersion = 1;
-        this.version = 1;
+        this.rosterVersion = 1;
+        this.metaVersion = 1;
         return tree;
     }
     
@@ -279,10 +288,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
             transition: transition,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupRemoveMembers with a transition did not return OK");
         this.keyVersion = newEpoch;
-        this.version += 1;
+        this.rosterVersion += 1;
         this._removedByDelta = userId;
     }
     
@@ -290,7 +300,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const document = await this.readGroupDocument();
         assert(document.keyVersion === 2, `epoch should have advanced, got ${JSON.stringify(document.keyVersion)}`);
-        assert(document.version === 2, "and a version appended");
+        assert(document.rosterVersion === 2, "and a roster version appended");
+        assert(document.version === 1, "the metadata counter is untouched by a removal");
         assert((document.leafAssignment as string[])[BOB_POSITION] === "", "the seat is blanked");
         assert(!(document.users as string[]).includes(bob), "and the roster no longer names them");
         
@@ -330,10 +341,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 data: `metadata-key@${newEpoch}` as types.core.UserKeyData,
             },
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupRemoveMembers did not return OK");
         this.keyVersion = newEpoch;
-        this.version += 1;
+        this.rosterVersion += 1;
     }
     
     private async addMember(userId: types.cloud.UserId, position: number) {
@@ -346,9 +358,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: withAdditionTransitionNodeKeys(additionTransition(current, userId, position, this.keyVersion), nodeKey),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupAddMembers did not return OK");
-        this.version += 1;
+        this.rosterVersion += 1;
     }
     
     private async addMemberByRekeyingThePath(userId: types.cloud.UserId, position: number) {
@@ -364,9 +377,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert(res === "OK", "groupAddMembers did not return OK");
-        this.version += 1;
+        this.rosterVersion += 1;
     }
     
     private async addMemberByDelta(userId: types.cloud.UserId, position: number) {
@@ -389,9 +403,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         });
         assert.ok(res === "OK", "groupAddMembers did not return OK");
-        this.version += 1;
+        this.rosterVersion += 1;
     }
     
     /** One epoch's worth of rungs: the mandatory unit rung down to the previous epoch, plus the skips. */
@@ -414,7 +429,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         for (const field of ["tree", "history", "archiveRungs", "allTimeUsers", "keys"]) {
             assert(!(field in document), `the group document must not carry '${field}'`);
         }
-        assert(document.version === 1, `version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
+        assert(document.version === 1, `metadata version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
+        assert(document.rosterVersion === 1, `roster version should be a counter set to 1, got ${JSON.stringify(document.rosterVersion)}`);
         assert(document.numLeaves === 4, "the seating stays on the document");
         assert(Array.isArray(document.leafAssignment) && document.leafAssignment.length === 4, "leafAssignment stays on the document");
         assert(document.keyVersion === 1, "a new tree-backed group starts at epoch 1");
@@ -444,7 +460,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert.deepStrictEqual(sortNodes(group.treeNodes ?? []), sortNodes(submitted.nodes));
         assert.deepStrictEqual(sortEdges(group.treeEdges ?? []), sortEdges(submitted.edges));
         assert(group.ownLeafPosition === 0, "janek sits in seat 0");
-        assert(group.version === 1, "version comes from the counter");
+        assert(group.version === 1 && group.rosterVersion === 1, "both counters come from the document");
         assert(group.history.length === 1, "the history is served from its collection");
         // Storage detail must not leak into the API.
         assert(group.treeNodes?.every(node => !("groupId" in node) && !("id" in node)), "served nodes carry no storage fields");
@@ -488,7 +504,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const document = await this.readGroupDocument();
         assert(document.keyVersion === 2, "a removal advances the epoch");
-        assert(document.version === 2, "and appends a version");
+        assert(document.rosterVersion === 2, "and appends a roster version");
         assert(!(document.users as string[]).includes(bob), "bob is out of the roster");
         assert((document.leafAssignment as string[])[BOB_POSITION] === "", "his seat is left blank rather than compacted");
         const history = await this.helpers.readCollection("groupHistoryEntry", {groupId});
@@ -503,7 +519,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async verifyTheAdditionCostOneEdge(edgesBefore: EdgeDocument[], epochBefore: number) {
         const document = await this.readGroupDocument();
         assert(document.keyVersion === epochBefore, "an addition must not advance the epoch — that is the whole economy of the tree");
-        assert(document.version === this.version, "it does append a version");
+        assert(document.rosterVersion === this.rosterVersion, "it does append a roster version");
         assert((document.users as string[]).includes(dave), "dave joined the roster");
         assert((document.leafAssignment as string[])[BOB_POSITION] === dave, "dave took the blank seat");
         const edgesAfter = await this.readEdges();
@@ -570,6 +586,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 data: "group-data" as types.group.GroupData,
                 transition: transition,
                 expectedKeyVersion: this.keyVersion,
+                expectedRosterVersion: this.rosterVersion,
             });
         }, "GROUP_TREE_INVALID");
     }
@@ -593,6 +610,44 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(served.rungs.every(rung => rung.atKeyVersion === 3), "and only epoch 3's are served");
         const all = await this.apis.contextApi.groupGetKeyArchive({id: groupId});
         assert(served.rungs.length < all.rungs.length, "the window actually narrows the answer");
+    }
+    
+    /**
+     * A floor above the metadata entry's epoch is refused, on both operations that raise one.
+     *
+     * The entry stays at the epoch it was written under, and its key is addressed to that epoch's grant key — the
+     * very key material a cut drops. Letting the floor past it would make `publicMeta`/`privateMeta` unreadable
+     * for everybody, permanently, so it is refused with the way out named.
+     */
+    private async verifyTheLadderCannotBeCutOutFromUnderTheMetadata() {
+        const groupId = this.requireGroupId();
+        const before = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupPruneArchive({
+            id: groupId, belowEpoch: 2, expectedKeyVersion: this.keyVersion,
+        }), "GROUP_META_UNREACHABLE");
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupCutEra({
+            id: groupId, newFloor: 3, expectedKeyVersion: this.keyVersion,
+        }), "GROUP_META_UNREACHABLE");
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.length === before.length, `a refused cut deletes nothing, went from ${before.length} to ${rungs.length} rungs`);
+        const document = await this.readGroupDocument();
+        assert(document.eraFloor === 1 && document.archivePrunedBelow === undefined, "and records neither floor nor watermark");
+    }
+    
+    /** The way out the refusal names: one `groupUpdate`, which republishes the metadata under the current epoch's key. */
+    private async rewriteMetadataAtTheCurrentEpoch() {
+        const groupId = this.requireGroupId();
+        const res = await this.apis.contextApi.groupUpdate({
+            id: groupId,
+            data: "group-meta@current" as types.group.GroupData,
+            keyId: keyIdAt(this.keyVersion),
+            version: this.metaVersion as types.group.GroupVersion,
+        });
+        assert(res === "OK", "groupUpdate did not return OK");
+        this.metaVersion += 1;
+        const [head] = await this.helpers.readCollection("groupMetaEntry", {groupId, version: this.metaVersion});
+        assert(head.keyVersion === this.keyVersion,
+            `the metadata entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(head.keyVersion)}`);
     }
     
     private async verifyPruningDeletesRungsAndRecordsAWatermark() {
@@ -649,32 +704,36 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async verifyHistoryIsWindowed() {
         const groupId = this.requireGroupId();
-        // No parameter is the head alone. Every entry is a full metadata envelope, so serving the trail by
-        // default would make each read grow with the group's age — and nothing on the read path replays it:
-        // the head attests the roster, and an older epoch's key comes down the ladder, not out of an old entry.
+        // No parameter is the head alone. Nothing on the read path replays the trail: the head attests the
+        // roster, and an older epoch's key comes down the ladder, not out of an old entry. The metadata entry
+        // is served alongside it and is never windowed — there is only ever one current.
         const {group: head} = await this.apis.contextApi.groupGet({groupId});
         assert.ok(head.history.length === 1, `no parameter serves the head alone, got ${head.history.length}`);
         assert.ok(head.data.length === 1, "the data array carries the head alone too");
-        assert.ok(head.firstServedVersion === head.version,
-            `the head is version ${head.version}, said ${head.firstServedVersion}`);
+        // Where the window starts is read off the entries themselves. There is no echoed
+        // `firstServedRosterVersion` to trust instead — it was removed because nothing read it.
+        assert.ok(head.history[0].version === head.rosterVersion,
+            `the head is roster version ${head.rosterVersion}, served ${head.history[0].version}`);
+        assert.ok(!!head.meta, "a read always carries the current metadata entry");
         
-        // The audit trail is what `fromVersion` is for, and asking for it costs what it costs.
-        const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromVersion: 1});
-        assert.ok(trail.history.length === 3, `three versions so far, got ${trail.history.length}`);
-        assert.ok(trail.firstServedVersion === 1, "asking from 1 means from genesis");
+        // The audit trail is what `fromRosterVersion` is for, and asking for it costs what it costs.
+        const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 1});
+        assert.ok(trail.history.length === 3, `three roster versions so far, got ${trail.history.length}`);
+        assert.ok(trail.history[0].version === 1, "asking from 1 means from genesis");
         const sizeOf = (g: unknown) => JSON.stringify(g).length;
         assert.ok(sizeOf(head) < sizeOf(trail), `head ${sizeOf(head)} B is not smaller than the trail ${sizeOf(trail)} B`);
         
-        const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromVersion: 3});
+        const {group: windowed} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 3});
         assert.ok(windowed.history.length === 1, `asked from 3, got ${windowed.history.length} entries`);
-        assert.ok(windowed.firstServedVersion === 3, `window starts at 3, said ${windowed.firstServedVersion}`);
-        assert.ok(windowed.version === trail.version, "the head version is unchanged by windowing");
+        assert.ok(windowed.history[0].version === 3, `window starts at 3, served ${windowed.history[0].version}`);
+        assert.ok(windowed.rosterVersion === trail.rosterVersion, "the head roster version is unchanged by windowing");
         
         // The head entry is never windowed out: it carries the current `data`, which is what a reader decrypts.
-        const {group: past} = await this.apis.contextApi.groupGet({groupId, fromVersion: 99});
+        const {group: past} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 99});
         assert.ok(past.history.length === 1 && past.data.length === 1,
             `asking past the head must still serve the head, got ${past.history.length} entries`);
-        assert.ok(past.firstServedVersion === trail.version, `the head is version ${trail.version}, said ${past.firstServedVersion}`);
+        assert.ok(past.history[0].version === trail.rosterVersion,
+            `the head is roster version ${trail.rosterVersion}, served ${past.history[0].version}`);
     }
     
     private async verifyListingCarriesNoState() {
@@ -699,6 +758,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             await this.apis.contextApi.groupRemoveMembers({
                 ...this.removalPayload(bob, transition),
                 expectedKeyVersion: this.keyVersion - 1,
+                expectedRosterVersion: this.rosterVersion,
             });
         }, "ROTATED_ALREADY");
     }
@@ -741,7 +801,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const document = await this.readGroupDocument();
         assert(document.keyVersion === 1, "three refusals must leave the epoch where it was");
-        assert(document.version === 1, "and append no version");
+        assert(document.rosterVersion === 1, "and append no roster version");
         assert((document.users as string[]).includes(bob), "bob is still a member");
         const history = await this.helpers.readCollection("groupHistoryEntry", {groupId});
         assert(history.length === 1, `a refused removal must not append a history entry, found ${history.length}`);
@@ -768,6 +828,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             transition: transition,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
         };
     }
     

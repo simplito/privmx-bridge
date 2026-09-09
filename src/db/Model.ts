@@ -216,13 +216,15 @@ export namespace group {
         lastModificationDate: types.core.Timestamp;
         lastModifier: types.cloud.UserId;
         keyId: types.core.KeyId;
-        data: types.group.GroupData;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         policy?: types.cloud.ContainerPolicy;
-        /** Number of history entries. A counter, because the entries live in `groupHistoryEntry` and appending
-         *  one has to stay a single insert. */
+        /** Metadata plane counter. Moves only on `groupUpdate`, which is CAS-guarded on it — which is exactly
+         *  why the metadata entry may commit the version it lands at. Entries live in `groupMetaEntry`. */
         version: types.group.GroupVersion;
+        /** Roster plane counter. Moves only on a membership change or a rotation. A metadata update leaves it
+         *  alone, so a concurrent `groupUpdate` can no longer strand a tree write at a version it never took. */
+        rosterVersion: number;
         /** Current epoch. Every group starts at 1 and only a rotation advances it. */
         keyVersion: number;
         keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
@@ -253,7 +255,7 @@ export namespace group {
      */
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
-        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"keyVersion"|"policy">;
+        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"rosterVersion"|"keyVersion"|"policy">;
     
     /**
      * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is
@@ -272,6 +274,7 @@ export namespace group {
     export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
     export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
     export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};
+    export type GroupMetaEntryId = string&{__groupMetaEntryId: never};
     export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
     
     /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
@@ -300,17 +303,40 @@ export namespace group {
         data: types.core.UserKeyData;
     }
     
-    /** One group version. `id` is derived from `(groupId, version)`, so appending is an insert. */
+    /** One roster-plane entry, `id` derived from `(groupId, rosterVersion)` so appending is an insert. Carries
+     *  no metadata: a membership change does not rewrite what it did not change. */
     export interface GroupHistoryEntry {
         id: GroupHistoryEntryId;
         groupId: types.group.GroupId;
-        version: types.group.GroupVersion;
+        version: types.group.GroupVersion;   // the roster version this entry landed at
         keyId: types.core.KeyId;
-        data: types.group.GroupData;        // opaque; carries the endpoint's DIO (members + chain-link committed inside)
+        keyVersion: number;                  // epoch the tag is keyed at
+        data: types.group.GroupData;         // opaque; carries the endpoint's DIO and the roster tag
         groupPubKey: types.cloud.GroupPubKey;
         created: types.core.Timestamp;
         author: types.cloud.UserId;
         confirmationTag?: types.core.Base64;
+    }
+    
+    /**
+     * One metadata-plane entry, written only by `groupUpdate`.
+     *
+     * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
+     * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
+     * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable.
+     *
+     * One row per group: `id` is derived from `groupId` alone and an update replaces it. There is no metadata
+     * audit trail to serve, so a version-derived id would only leave rows no reader can reach.
+     */
+    export interface GroupMetaEntry {
+        id: GroupMetaEntryId;
+        groupId: types.group.GroupId;
+        version: types.group.GroupVersion;
+        keyId: types.core.KeyId;
+        keyVersion: number;
+        data: types.group.GroupData;
+        created: types.core.Timestamp;
+        author: types.cloud.UserId;
     }
     
     /** One Epoch Ladder rung. Append-only apart from pruning, a range delete over `targetKeyVersion`. */
@@ -329,6 +355,8 @@ export namespace group {
     export interface GroupState {
         tree: types.cloud.GroupTreeState;
         history: GroupHistoryEntry[];
+        /** The current metadata entry. A read needs it alongside the roster head — two entries, never O(versions). */
+        meta: GroupMetaEntry;
     }
 }
 

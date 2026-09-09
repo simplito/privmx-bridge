@@ -34,6 +34,7 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         users: ["janek"] as types.cloud.UserId[],
         managers: ["janek"] as types.cloud.UserId[],
         data: "someData" as types.group.GroupData,
+        meta: "someMeta" as types.group.GroupData,
         keyId: keyId,
         tree: buildTree(["janek"], 1),
     };
@@ -132,6 +133,7 @@ it("ContextApiValidator.groupGenerateNewKey valid", () => {
         grantEdge: rotationGrantEdge(tree, 2),
         rungs: rungsFor(2, 1),
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
     expect(result.success).toBe(true);
@@ -227,6 +229,7 @@ it("ContextApiValidator.groupAddMembers valid", () => {
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupAddMembers", model));
     expect(result.success).toBe(true);
@@ -240,6 +243,7 @@ it("ContextApiValidator.groupAddMembers rejects an unknown role", () => {
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupAddMembers", model));
     expect(result.success).toBe(false);
@@ -255,6 +259,7 @@ it("ContextApiValidator.groupRemoveMembers valid", () => {
         transition: validRemovalTransition(),
         rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(true);
@@ -270,6 +275,7 @@ it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () =
         transition: validRemovalTransition(),
         rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
@@ -285,6 +291,7 @@ it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
         expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
