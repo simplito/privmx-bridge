@@ -121,8 +121,11 @@ const group: db.group.Group = {
     keyId: keyId,
     users: [janek, alice],
     managers: [janek],
-    // The genesis entry lives in `groupHistoryEntry`; the document keeps the count.
-    version: 1 as types.group.GroupVersion,
+    // The genesis entries live beside the document; the document keeps the counts. Deliberately different
+    // numbers per metadata plane, so a method reading the wrong plane's counter has to fail rather than pass by
+    // coincidence.
+    publicMetaVersion: 1 as types.group.GroupVersion,
+    privateMetaVersion: 5 as types.group.GroupVersion,
     rosterVersion: 1,
     policy: {},
     keyVersion: 1,
@@ -168,7 +171,9 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     
     mock(groupRepository, "get", async (id) => id === groupId ? group : null);
     mock(groupRepository, "createGroup", async () => group);
-    mock(groupRepository, "updateGroup", async () => group);
+    mock(groupRepository, "updatePublicMeta", async () => group);
+    mock(groupRepository, "updatePrivateMeta", async () => group);
+    mock(groupRepository, "updatePolicy", async () => group);
     mock(groupRepository, "deleteGroup", async () => {});
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
     // Phase 2 (epochs/CAS): default mocks — success path.
@@ -212,7 +217,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
 
 it("Should create group", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, keyId, {}, tree);
+    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree);
     expect(res).not.toBeNull();
     hasOneCall(groupRepository.createGroup);
     hasOneCall(groupNotificationService.sendCreatedGroup);
@@ -221,7 +226,7 @@ it("Should create group", async () => {
 it("Should fail to create group as an unknown user", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, keyId, {}, tree);
+        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree);
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -278,23 +283,94 @@ it("Should fail to get a not existing group", async () => {
     expect(true).toBeFalsy();
 });
 
-it("Should update group with a valid version", async () => {
+const publicMetaModel = (version: number) => ({id: groupId, data, keyId, version: version as types.group.GroupVersion});
+const privateMetaModel = (version: number) => ({id: groupId, data, keyId, version: version as types.group.GroupVersion});
+
+it("Should update the public metadata plane with a valid version", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, undefined, null);
-    hasOneCall(groupRepository.updateGroup);
+    await groupService.updatePublicMeta(janekCloudUser, publicMetaModel(1));
+    hasOneCall(groupRepository.updatePublicMeta);
+    hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("Should update the private metadata plane with a valid version", async () => {
+    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+    await groupService.updatePrivateMeta(janekCloudUser, privateMetaModel(5));
+    hasOneCall(groupRepository.updatePrivateMeta);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
 
 // There is no force to leave out: a group's entry commits a tag over the version it lands at, so a stale update
 // has nothing it could publish that a client would accept. The check is unconditional.
-it("Should reject update with a stale version", async () => {
+it("Should reject a metadata update with a stale version", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 99 as types.group.GroupVersion, undefined, null);
+        await groupService.updatePublicMeta(janekCloudUser, publicMetaModel(99));
     }
     catch (e) {
         expect(AppException.is(e, "GROUP_VERSION_MISMATCH")).toBe(true);
-        hasNoCalls(groupRepository.updateGroup);
+        hasNoCalls(groupRepository.updatePublicMeta);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+async function expectRefusal(kind: Parameters<typeof AppException.is>[1], run: () => Promise<unknown>) {
+    try {
+        await run();
+    }
+    catch (e) {
+        expect(AppException.is(e, kind)).toBe(true);
+        return;
+    }
+    expect(true).toBeFalsy();
+}
+
+// The fixture puts the public plane at 1 and the private at 5, so each of these passes only if the method reads
+// its OWN counter. With a single shared counter, or with the two fields transposed, this is the test that fails.
+it("each metadata plane checks its own counter and not the other's", async () => {
+    const publicSide = createGroupService();
+    await expectRefusal("GROUP_VERSION_MISMATCH",
+        () => publicSide.groupService.updatePublicMeta(janekCloudUser, publicMetaModel(5)));
+    hasNoCalls(publicSide.groupRepository.updatePublicMeta);
+    
+    const privateSide = createGroupService();
+    await expectRefusal("GROUP_VERSION_MISMATCH",
+        () => privateSide.groupService.updatePrivateMeta(janekCloudUser, privateMetaModel(1)));
+    hasNoCalls(privateSide.groupRepository.updatePrivateMeta);
+});
+
+it("a metadata update must use the current epoch's key", async () => {
+    // A write under a superseded key would stay readable to whoever was removed at that rotation.
+    const {groupService, groupRepository} = createGroupService();
+    try {
+        await groupService.updatePublicMeta(janekCloudUser, {...publicMetaModel(1), keyId: "otherKey" as types.core.KeyId});
+    }
+    catch (e) {
+        expect(AppException.is(e, "GROUP_META_KEY_MISMATCH")).toBe(true);
+        hasNoCalls(groupRepository.updatePublicMeta);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("Should update the policy without touching either metadata plane", async () => {
+    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+    await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {get: "all"} as types.cloud.ContainerPolicy});
+    hasOneCall(groupRepository.updatePolicy);
+    hasNoCalls(groupRepository.updatePublicMeta);
+    hasNoCalls(groupRepository.updatePrivateMeta);
+    hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("a policy that is not valid at container level is refused before any write", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    try {
+        await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {listMy: "all"} as types.cloud.ContainerPolicy});
+    }
+    catch (e) {
+        expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
+        hasNoCalls(groupRepository.updatePolicy);
         return;
     }
     expect(true).toBeFalsy();
@@ -321,14 +397,21 @@ it("Should refuse to delete a group still referenced by a container", async () =
     expect(true).toBeFalsy();
 });
 
-// ---------- rotation is decoupled from updateGroup ----------
+// ---------- rotation is decoupled from the metadata writes ----------
 
-it("updateGroup touches metadata only, never the roster and never the epoch", async () => {
+it("a metadata write touches its own plane only, never the roster and never the epoch", async () => {
     // Neither is reachable from here any more: membership moves the tree, so it goes through
     // addMember/removeMember, and rotating the grant key goes through generateNewGroupKey.
     const {groupService, groupRepository} = createGroupService();
-    await groupService.updateGroup(janekCloudUser, groupId, data, keyId, 1 as types.group.GroupVersion, undefined, null);
-    hasOneCall(groupRepository.updateGroup);
+    await groupService.updatePublicMeta(janekCloudUser, publicMetaModel(1));
+    hasOneCall(groupRepository.updatePublicMeta);
+    hasNoCalls(groupRepository.updatePrivateMeta);
+    hasNoCalls(groupRepository.casRotate);
+});
+
+it("a policy write rotates nothing either", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
     hasNoCalls(groupRepository.casRotate);
 });
 
@@ -419,6 +502,74 @@ it("lets a context widen rotateKeys for groups", async () => {
     const {groupService, groupRepository} = createGroupService(false, {group: {rotateKeys: "user"}});
     await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     hasOneCall(groupRepository.generateNewGroupKey);
+});
+
+// ---------- the granularity the split exists for ----------
+
+it("rejects a metadata write from a non-manager (context ACL alone is insufficient)", async () => {
+    // alice has ALLOW ALL context ACL and is a group member, but is not a group manager, and `update` defaults
+    // to manager. Both planes, because each has its own ACL entry but the same policy gate.
+    const publicSide = createGroupService();
+    await expectRefusal("ACCESS_DENIED",
+        () => publicSide.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1)));
+    hasNoCalls(publicSide.groupRepository.updatePublicMeta);
+    
+    const privateSide = createGroupService();
+    await expectRefusal("ACCESS_DENIED",
+        () => privateSide.groupService.updatePrivateMeta(aliceCloudUser, privateMetaModel(5)));
+    hasNoCalls(privateSide.groupRepository.updatePrivateMeta);
+});
+
+it("lets a context widen update for both metadata planes", async () => {
+    // The other direction: the knob has to reach the gate, or the test above would pass with the gate hardwired.
+    const publicSide = createGroupService(false, {group: {update: "all"}});
+    await publicSide.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1));
+    hasOneCall(publicSide.groupRepository.updatePublicMeta);
+    
+    const privateSide = createGroupService(false, {group: {update: "all"}});
+    await privateSide.groupService.updatePrivateMeta(aliceCloudUser, privateMetaModel(5));
+    hasOneCall(privateSide.groupRepository.updatePrivateMeta);
+});
+
+it("gates updatePolicy on the updatePolicy policy, not on update", async () => {
+    // The same invariant the rotation split established, transplanted: an operator who widens `update` must not
+    // hand out policy rewriting along with it. This is the whole point of giving the policy its own method.
+    const {groupService, groupRepository} = createGroupService(false, {group: {update: "all"}});
+    try {
+        await groupService.updatePolicy(aliceCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupRepository.updatePolicy);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("lets a context widen updatePolicy for groups", async () => {
+    const {groupService, groupRepository} = createGroupService(false, {group: {updatePolicy: "user"}});
+    await groupService.updatePolicy(aliceCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
+    hasOneCall(groupRepository.updatePolicy);
+});
+
+it("widening rotateKeys does not hand out metadata writes", async () => {
+    // The reverse direction of the same separation: the metadata gate is `update`, not `rotateKeys`.
+    const {groupService, groupRepository} = createGroupService(false, {group: {rotateKeys: "all"}});
+    await expectRefusal("ACCESS_DENIED", () => groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1)));
+    hasNoCalls(groupRepository.updatePublicMeta);
+});
+
+it("a context that forbids overwriting its policy still allows metadata writes", async () => {
+    // Pins that the context-level veto left the metadata path along with `makeUpdateContainerCheck`, rather
+    // than staying reachable from it.
+    const policySide = createGroupService(false, {group: {canOverwriteContextPolicy: "no"}});
+    await expectRefusal("ACCESS_DENIED",
+        () => policySide.groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy}));
+    hasNoCalls(policySide.groupRepository.updatePolicy);
+    
+    const metaSide = createGroupService(false, {group: {canOverwriteContextPolicy: "no"}});
+    await metaSide.groupService.updatePublicMeta(janekCloudUser, publicMetaModel(1));
+    hasOneCall(metaSide.groupRepository.updatePublicMeta);
 });
 
 it("charges the rotation rate-limit budget only after a successful rotation", async () => {

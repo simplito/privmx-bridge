@@ -40,8 +40,10 @@ const group: db.group.Group = {
     keyId: keyId,
     users: [alice],
     managers: [janek],
-    // Deliberately different numbers: the two planes count independently, and a swap between them has to show.
-    version: 7 as types.group.GroupVersion,
+    // Deliberately different numbers: the three planes count independently, and a swap between any two of them
+    // has to show.
+    publicMetaVersion: 7 as types.group.GroupVersion,
+    privateMetaVersion: 11 as types.group.GroupVersion,
     rosterVersion: 4,
     keyVersion: 3,
     keyHistory: [],
@@ -66,10 +68,12 @@ function state(): db.group.GroupState {
         created: 100 as types.core.Timestamp,
         author: janek,
     }));
-    // At epoch 2 while the group is at 3: a metadata entry stays where it was written, and a rotation since then
-    // does not move it. That lag is normal, and the reader descends the Ladder to its key.
-    const meta: db.group.GroupMetaEntry = {
-        id: `${groupId}|7` as db.group.GroupMetaEntryId,
+    // Public at epoch 2 while the group is at 3: an entry stays where it was written, and a rotation since then
+    // does not move it. That lag is normal, and the reader descends the Ladder to its key. Private at 3, so the
+    // two planes sit at *different* epochs — a state only the split can produce, and one the converter must
+    // carry across without crossing them.
+    const publicMeta: db.group.GroupPublicMetaEntry = {
+        id: `${groupId}|7` as db.group.GroupPublicMetaEntryId,
         groupId: groupId,
         version: 7 as types.group.GroupVersion,
         keyId: keyId,
@@ -78,16 +82,30 @@ function state(): db.group.GroupState {
         created: 150 as types.core.Timestamp,
         author: alice,
     };
-    return {tree, history, meta};
+    const privateMeta: db.group.GroupPrivateMetaEntry = {
+        id: `${groupId}|11` as db.group.GroupPrivateMetaEntryId,
+        groupId: groupId,
+        version: 11 as types.group.GroupVersion,
+        keyId: keyId,
+        keyVersion: 3,
+        data: data,
+        created: 160 as types.core.Timestamp,
+        author: janek,
+    };
+    return {tree, history, publicMeta, privateMeta};
 }
 
 it("convertGroup serves the state it was handed, and each plane's own counter", async () => {
     const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
-    // Four roster entries and a roster counter that says four; the metadata counter is its own number.
+    // Four roster entries and a roster counter that says four; each metadata counter is its own number.
     assert.strictEqual(converted.rosterVersion, 4);
-    assert.strictEqual(converted.version, 7, "the metadata counter, not the roster one");
-    assert.strictEqual(converted.meta.version, 7);
-    assert.strictEqual(converted.meta.keyVersion, 2, "metadata stays at the epoch it was written under");
+    assert.strictEqual(converted.publicMetaVersion, 7, "the public-metadata counter, not the roster one");
+    assert.strictEqual(converted.privateMetaVersion, 11, "the private-metadata counter, and not the public one");
+    assert.strictEqual(converted.publicMeta.version, 7);
+    assert.strictEqual(converted.privateMeta.version, 11);
+    // The planes legitimately sit at different epochs, and the converter must not cross them.
+    assert.strictEqual(converted.publicMeta.keyVersion, 2, "an entry stays at the epoch it was written under");
+    assert.strictEqual(converted.privateMeta.keyVersion, 3);
     assert.strictEqual(converted.history.length, 4);
     assert.strictEqual(converted.data.length, 4);
     assert.strictEqual(converted.treeNodes?.length, tree.nodes.length);
@@ -98,11 +116,14 @@ it("convertGroup serves the state it was handed, and each plane's own counter", 
 
 it("a listing carries the roster and the epoch, and nothing that grows with history", async () => {
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
+    // Still no `publicMeta`/`privateMeta`: a listing must not carry two envelopes per group.
     assert.deepStrictEqual(Object.keys(summary).sort(), [
         "contextId", "createDate", "creator", "groupPubKey", "id", "keyVersion",
-        "lastModificationDate", "lastModifier", "managers", "policy", "rosterVersion", "type", "users", "version",
+        "lastModificationDate", "lastModifier", "managers", "policy", "privateMetaVersion", "publicMetaVersion",
+        "rosterVersion", "type", "users",
     ]);
-    assert.strictEqual(summary.version, 7);
+    assert.strictEqual(summary.publicMetaVersion, 7);
+    assert.strictEqual(summary.privateMetaVersion, 11);
     assert.strictEqual(summary.rosterVersion, 4);
     assert.strictEqual(summary.keyVersion, 3);
 });

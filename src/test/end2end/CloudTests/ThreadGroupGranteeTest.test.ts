@@ -118,7 +118,8 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             users: users,
             managers: managers,
             data: "AAAA" as types.group.GroupData,
-            meta: "BBBB" as types.group.GroupData,
+            publicMeta: "BBBB" as types.group.GroupData,
+            privateMeta: "CCCC" as types.group.GroupData,
             keyId: groupKeyId,
             tree: withNodeKeys(buildTree(users, 1), nodeKey),
         });

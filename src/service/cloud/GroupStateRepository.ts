@@ -30,7 +30,11 @@ export class GroupStateRepository {
     static readonly TREE_NODE_COLLECTION_NAME = "groupTreeNode";
     static readonly TREE_EDGE_COLLECTION_NAME = "groupTreeEdge";
     static readonly HISTORY_COLLECTION_NAME = "groupHistoryEntry";
-    static readonly META_ENTRY_COLLECTION_NAME = "groupMetaEntry";
+    // One collection per metadata plane rather than one with a plane discriminator: the two are written by
+    // different endpoints and move independently, so separating them is what makes a forgotten plane predicate
+    // impossible rather than merely unlikely.
+    static readonly PUBLIC_META_ENTRY_COLLECTION_NAME = "groupPublicMetaEntry";
+    static readonly PRIVATE_META_ENTRY_COLLECTION_NAME = "groupPrivateMetaEntry";
     static readonly ARCHIVE_RUNG_COLLECTION_NAME = "groupArchiveRung";
     static readonly COLLECTION_ID_PROP = "id";
     
@@ -38,7 +42,8 @@ export class GroupStateRepository {
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
         private edges: MongoObjectRepository<db.group.GroupTreeEdgeId, db.group.GroupTreeEdge>,
         private history: MongoObjectRepository<db.group.GroupHistoryEntryId, db.group.GroupHistoryEntry>,
-        private metaEntries: MongoObjectRepository<db.group.GroupMetaEntryId, db.group.GroupMetaEntry>,
+        private publicMetaEntries: MongoObjectRepository<db.group.GroupPublicMetaEntryId, db.group.GroupPublicMetaEntry>,
+        private privateMetaEntries: MongoObjectRepository<db.group.GroupPrivateMetaEntryId, db.group.GroupPrivateMetaEntry>,
         private rungs: MongoObjectRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>,
     ) {
     }
@@ -60,10 +65,19 @@ export class GroupStateRepository {
         return `${groupId}|${version}` as db.group.GroupHistoryEntryId;
     }
     
-    /** One row per group, not one per version: nothing reads the metadata plane below its head, so a
-     *  version-derived id would only accumulate rows no reader can reach. */
-    static metaEntryId(groupId: types.group.GroupId) {
-        return `${groupId}|meta` as db.group.GroupMetaEntryId;
+    /**
+     * One row per group in each plane, not one per version: nothing reads a metadata plane below its head, so a
+     * version-derived id would only accumulate rows no reader can reach.
+     *
+     * The plane is part of the id even though the two live in different collections. It costs nothing, and it
+     * means a row that turns up in the wrong collection is self-evidently misplaced rather than plausible.
+     */
+    static publicMetaEntryId(groupId: types.group.GroupId) {
+        return `${groupId}|publicMeta` as db.group.GroupPublicMetaEntryId;
+    }
+    
+    static privateMetaEntryId(groupId: types.group.GroupId) {
+        return `${groupId}|privateMeta` as db.group.GroupPrivateMetaEntryId;
     }
     
     /** Identified by the span it covers and its recipient, which makes re-submitting a rung idempotent. */
@@ -138,24 +152,52 @@ export class GroupStateRepository {
         return entries.map(entry => entry.keyId);
     }
     
-    /**
-     * The group's metadata entry — a lookup by derived id.
-     *
-     * A read needs exactly this one, and so do `cutEra`/`pruneArchive`: the entry stays at the epoch it was
-     * written under, so cutting below its `keyVersion` would make the group's metadata unreadable for everyone,
-     * permanently.
-     */
-    async getMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupMetaEntry|null> {
-        return this.metaEntries.get(GroupStateRepository.metaEntryId(groupId));
+    /** The group's public-metadata entry — a lookup by derived id. */
+    async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
+        return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));
     }
     
-    /** Replaces the group's metadata entry: one row per group, so a later version supersedes rather than piles up. */
-    async writeMetaEntry(entry: db.group.GroupMetaEntry): Promise<void> {
+    /** The group's private-metadata entry — a lookup by derived id. */
+    async getPrivateMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPrivateMetaEntry|null> {
+        return this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId));
+    }
+    
+    /**
+     * The epoch each plane's head entry is keyed at, projected.
+     *
+     * `cutEra` and `pruneArchive` ask this before dropping rungs: an entry stays at the epoch it was written
+     * under, so cutting below it would make that plane unreadable for everyone, permanently. Both planes,
+     * because they move independently and only one of them may be stranded.
+     */
+    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
+        const [publicHead, privateHead] = await Promise.all([
+            this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId)),
+            this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId)),
+        ]);
+        return {
+            publicMeta: publicHead ? publicHead.keyVersion : null,
+            privateMeta: privateHead ? privateHead.keyVersion : null,
+        };
+    }
+    
+    /** Replaces the group's public-metadata entry: one row per group, so a later version supersedes rather
+     *  than piles up. */
+    async writePublicMetaEntry(entry: db.group.GroupPublicMetaEntry): Promise<void> {
         const {id, ...doc} = entry;
-        await this.metaEntries.collection.replaceOne(
+        await this.publicMetaEntries.collection.replaceOne(
             {_id: id},
-            doc as Omit<db.group.GroupMetaEntry, "id">,
-            {...this.metaEntries.getOptions(), upsert: true},
+            doc as Omit<db.group.GroupPublicMetaEntry, "id">,
+            {...this.publicMetaEntries.getOptions(), upsert: true},
+        );
+    }
+    
+    /** Replaces the group's private-metadata entry. */
+    async writePrivateMetaEntry(entry: db.group.GroupPrivateMetaEntry): Promise<void> {
+        const {id, ...doc} = entry;
+        await this.privateMetaEntries.collection.replaceOne(
+            {_id: id},
+            doc as Omit<db.group.GroupPrivateMetaEntry, "id">,
+            {...this.privateMetaEntries.getOptions(), upsert: true},
         );
     }
     
@@ -434,7 +476,8 @@ export class GroupStateRepository {
             this.nodes.deleteMany(q => q.eq("groupId", groupId)),
             this.edges.deleteMany(q => q.eq("groupId", groupId)),
             this.history.deleteMany(q => q.eq("groupId", groupId)),
-            this.metaEntries.deleteMany(q => q.eq("groupId", groupId)),
+            this.publicMetaEntries.deleteMany(q => q.eq("groupId", groupId)),
+            this.privateMetaEntries.deleteMany(q => q.eq("groupId", groupId)),
             this.rungs.deleteMany(q => q.eq("groupId", groupId)),
         ]);
     }

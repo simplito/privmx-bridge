@@ -85,10 +85,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private groupId?: types.group.GroupId;
     private _removedByDelta?: types.cloud.UserId;
     private keyVersion = 1;
-    // Only roster operations move this: rotations, removals and additions. `updateGroup` has its own counter.
+    // Only roster operations move this: rotations, removals and additions. Each metadata plane has its own.
     private rosterVersion = 1;
-    // That other counter: the metadata plane's, moved by `updateGroup` alone.
-    private metaVersion = 1;
+    // Those other counters, one per metadata plane, each moved only by writes to that plane.
+    private publicMetaVersion = 1;
+    private privateMetaVersion = 1;
     
     @Test()
     async shouldKeepGroupStateOutOfTheDocument() {
@@ -154,7 +155,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         // The metadata entry is still the one `groupCreate` wrote at epoch 1 — removals move the roster plane and
         // leave it alone — so the ladder cannot be cut out from under it until it is rewritten at the current epoch.
         await this.verifyTheLadderCannotBeCutOutFromUnderTheMetadata();
-        await this.rewriteMetadataAtTheCurrentEpoch();
+        await this.rewriteEachMetadataPlaneAtTheCurrentEpoch();
         await this.verifyPruningDeletesRungsAndRecordsAWatermark();
         await this.verifyCuttingAnEraDropsTheRungsBelowTheFloor();
     }
@@ -250,7 +251,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
             users: [alice, bob, carol],
             managers: [testData.userId],
             data: "group-data" as types.group.GroupData,
-            meta: "group-meta" as types.group.GroupData,
+            publicMeta: "group-public-meta" as types.group.GroupData,
+            privateMeta: "group-private-meta" as types.group.GroupData,
             keyId: keyIdAt(1),
             tree: tree,
         });
@@ -258,7 +260,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         this.groupId = res.groupId;
         this.keyVersion = 1;
         this.rosterVersion = 1;
-        this.metaVersion = 1;
+        this.publicMetaVersion = 1;
+        this.privateMetaVersion = 1;
         return tree;
     }
     
@@ -301,7 +304,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const document = await this.readGroupDocument();
         assert(document.keyVersion === 2, `epoch should have advanced, got ${JSON.stringify(document.keyVersion)}`);
         assert(document.rosterVersion === 2, "and a roster version appended");
-        assert(document.version === 1, "the metadata counter is untouched by a removal");
+        assert(document.publicMetaVersion === 1, "the public-metadata counter is untouched by a removal");
+        assert(document.privateMetaVersion === 1, "and so is the private one");
         assert((document.leafAssignment as string[])[BOB_POSITION] === "", "the seat is blanked");
         assert(!(document.users as string[]).includes(bob), "and the roster no longer names them");
         
@@ -429,7 +433,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
         for (const field of ["tree", "history", "archiveRungs", "allTimeUsers", "keys"]) {
             assert(!(field in document), `the group document must not carry '${field}'`);
         }
-        assert(document.version === 1, `metadata version should be a counter set to 1, got ${JSON.stringify(document.version)}`);
+        assert(document.publicMetaVersion === 1, `publicMetaVersion should be a counter set to 1, got ${JSON.stringify(document.publicMetaVersion)}`);
+        assert(document.privateMetaVersion === 1, `privateMetaVersion should be a counter set to 1, got ${JSON.stringify(document.privateMetaVersion)}`);
+        // The single counter is gone from the document, not merely unread.
+        assert(!("version" in document), "the group document must not carry the pre-split 'version' counter");
         assert(document.rosterVersion === 1, `roster version should be a counter set to 1, got ${JSON.stringify(document.rosterVersion)}`);
         assert(document.numLeaves === 4, "the seating stays on the document");
         assert(Array.isArray(document.leafAssignment) && document.leafAssignment.length === 4, "leafAssignment stays on the document");
@@ -460,7 +467,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert.deepStrictEqual(sortNodes(group.treeNodes ?? []), sortNodes(submitted.nodes));
         assert.deepStrictEqual(sortEdges(group.treeEdges ?? []), sortEdges(submitted.edges));
         assert(group.ownLeafPosition === 0, "janek sits in seat 0");
-        assert(group.version === 1 && group.rosterVersion === 1, "both counters come from the document");
+        assert(group.publicMetaVersion === 1 && group.privateMetaVersion === 1 && group.rosterVersion === 1,
+            "all three counters come from the document");
         assert(group.history.length === 1, "the history is served from its collection");
         // Storage detail must not leak into the API.
         assert(group.treeNodes?.every(node => !("groupId" in node) && !("id" in node)), "served nodes carry no storage fields");
@@ -634,20 +642,65 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(document.eraFloor === 1 && document.archivePrunedBelow === undefined, "and records neither floor nor watermark");
     }
     
-    /** The way out the refusal names: one `groupUpdate`, which republishes the metadata under the current epoch's key. */
-    private async rewriteMetadataAtTheCurrentEpoch() {
+    /**
+     * The way out the refusal names — but per plane, which is the point.
+     *
+     * The two planes lag independently, so rewriting one lifts one epoch and the cut stays refused until the
+     * other is rewritten too. This walks that: rewrite public, check the refusal now names only the private
+     * plane, then rewrite private and check the cut goes through. An implementation that took `min(public,
+     * private)` and named both planes unconditionally would pass every step but the middle one.
+     */
+    private async rewriteEachMetadataPlaneAtTheCurrentEpoch() {
         const groupId = this.requireGroupId();
-        const res = await this.apis.contextApi.groupUpdate({
+        
+        const bothStranded = await this.expectCutRefusal();
+        assert(bothStranded.includes("groupUpdatePublicMeta") && bothStranded.includes("groupUpdatePrivateMeta"),
+            `with both planes lagging the refusal must name both, got ${bothStranded}`);
+        
+        assert(await this.apis.contextApi.groupUpdatePublicMeta({
             id: groupId,
-            data: "group-meta@current" as types.group.GroupData,
+            data: "group-public-meta@current" as types.group.GroupData,
             keyId: keyIdAt(this.keyVersion),
-            version: this.metaVersion as types.group.GroupVersion,
-        });
-        assert(res === "OK", "groupUpdate did not return OK");
-        this.metaVersion += 1;
-        const [head] = await this.helpers.readCollection("groupMetaEntry", {groupId, version: this.metaVersion});
-        assert(head.keyVersion === this.keyVersion,
-            `the metadata entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(head.keyVersion)}`);
+            version: this.publicMetaVersion as types.group.GroupVersion,
+        }) === "OK", "groupUpdatePublicMeta did not return OK");
+        this.publicMetaVersion += 1;
+        const [publicHead] = await this.helpers.readCollection("groupPublicMetaEntry", {groupId, version: this.publicMetaVersion});
+        assert(publicHead.keyVersion === this.keyVersion,
+            `the public entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(publicHead.keyVersion)}`);
+        
+        // The step a `min()`-only floor check fails: one plane is current, the other is not, and the message has
+        // to have stopped naming the plane that no longer needs rewriting.
+        const onlyPrivate = await this.expectCutRefusal();
+        assert(onlyPrivate.includes("groupUpdatePrivateMeta"),
+            `the private plane still lags, so the refusal must name it, got ${onlyPrivate}`);
+        assert(!onlyPrivate.includes("groupUpdatePublicMeta"),
+            `the public plane is current now, so the refusal must not still name it, got ${onlyPrivate}`);
+        assert(!onlyPrivate.includes("groupUpdatePolicy"),
+            `a policy write lifts no epoch, so it must never be offered as the fix, got ${onlyPrivate}`);
+        
+        assert(await this.apis.contextApi.groupUpdatePrivateMeta({
+            id: groupId,
+            data: "group-private-meta@current" as types.group.GroupData,
+            keyId: keyIdAt(this.keyVersion),
+            version: this.privateMetaVersion as types.group.GroupVersion,
+        }) === "OK", "groupUpdatePrivateMeta did not return OK");
+        this.privateMetaVersion += 1;
+        const [privateHead] = await this.helpers.readCollection("groupPrivateMetaEntry", {groupId, version: this.privateMetaVersion});
+        assert(privateHead.keyVersion === this.keyVersion,
+            `the private entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(privateHead.keyVersion)}`);
+    }
+    
+    /** Runs the cut that must still be refused and hands back the message, so a caller can read what it names. */
+    private async expectCutRefusal(): Promise<string> {
+        try {
+            await this.apis.contextApi.groupCutEra({
+                id: this.requireGroupId(), newFloor: this.keyVersion, expectedKeyVersion: this.keyVersion,
+            });
+        }
+        catch (e) {
+            return JSON.stringify(e);
+        }
+        throw new Error("the cut was expected to be refused while a metadata plane still lags");
     }
     
     private async verifyPruningDeletesRungsAndRecordsAWatermark() {
@@ -714,7 +767,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         // `firstServedRosterVersion` to trust instead — it was removed because nothing read it.
         assert.ok(head.history[0].version === head.rosterVersion,
             `the head is roster version ${head.rosterVersion}, served ${head.history[0].version}`);
-        assert.ok(!!head.meta, "a read always carries the current metadata entry");
+        assert.ok(!!head.publicMeta && !!head.privateMeta, "a read always carries both current metadata entries");
         
         // The audit trail is what `fromRosterVersion` is for, and asking for it costs what it costs.
         const {group: trail} = await this.apis.contextApi.groupGet({groupId, fromRosterVersion: 1});
@@ -743,7 +796,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         for (const field of ["treeNodes", "treeEdges", "leafAssignment", "numLeaves", "history", "data", "keys", "groupKeys"]) {
             assert(!(field in listed), `groupList must not serve '${field}' — a page of these is the payload problem, not the fix`);
         }
-        assert(listed.keyVersion === 1 && listed.version === 1, "a listing does carry the epoch and the version");
+        assert(listed.keyVersion === 1 && listed.publicMetaVersion === 1 && listed.privateMetaVersion === 1,
+            "a listing does carry the epoch and both metadata counters");
         // The same group asked for by id still serves everything.
         const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId()});
         assert(!!group.treeNodes && !!group.leafAssignment, "groupGet still serves the tree");

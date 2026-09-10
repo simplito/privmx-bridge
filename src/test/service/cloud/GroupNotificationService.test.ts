@@ -58,7 +58,9 @@ function group(memberCount = 3): db.group.Group {
         keyId: "SomeKeyId" as types.core.KeyId,
         users: users,
         managers: [janek],
-        version: 7 as types.group.GroupVersion,
+        // Deliberately different numbers, so a transposition between the planes has to show.
+        publicMetaVersion: 7 as types.group.GroupVersion,
+        privateMetaVersion: 11 as types.group.GroupVersion,
         rosterVersion: 9,
         keyVersion: 4,
         numLeaves: 4,
@@ -96,7 +98,7 @@ function createService() {
     
     // The notification path must not read group state any more; a call here is the regression.
     const groupRepository = createMock<GroupRepository>({});
-    mock(groupRepository, "getFullState", (async () => ({tree: buildTree(["janek"], 1), history: [], meta: undefined})) as never);
+    mock(groupRepository, "getFullState", (async () => ({tree: buildTree(["janek"], 1), history: [], publicMeta: undefined, privateMeta: undefined})) as never);
     
     const repositoryFactory = createMock<RepositoryFactory>({});
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
@@ -115,10 +117,12 @@ it("a group event carries what changed and nothing that grows with the group", a
     await settle();
     
     assert.strictEqual(sent.length, 1);
-    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "rosterVersion", "version"]);
+    assert.deepStrictEqual(Object.keys(sent[0].event.data).sort(), ["changeKind", "contextId", "groupId", "keyVersion", "privateMetaVersion", "publicMetaVersion", "rosterVersion"]);
     assert.strictEqual(sent[0].event.data.groupId, groupId);
-    assert.strictEqual(sent[0].event.data.version, 7);
-    // Both counters travel: the planes moved apart, so a reader has to be told which one advanced.
+    // All counters travel, each with its own value: the planes move apart, so a reader has to be told which
+    // one advanced without having to fetch the group.
+    assert.strictEqual(sent[0].event.data.publicMetaVersion, 7);
+    assert.strictEqual(sent[0].event.data.privateMetaVersion, 11);
     assert.strictEqual(sent[0].event.data.rosterVersion, 9);
     assert.strictEqual(sent[0].event.data.keyVersion, 4);
     assert.strictEqual(sent[0].event.data.changeKind, "memberRemoved");
@@ -128,7 +132,7 @@ it("the payload is sent once for every recipient, not built per recipient", asyn
     // One send for a group of three and one for a group of three hundred: the cost of an event must not follow
     // the size of the group.
     const {service, sent, settle} = createService();
-    service.sendUpdatedGroup(group(300), [], "updated");
+    service.sendUpdatedGroup(group(300), [], "publicMetaUpdated");
     await settle();
     
     assert.strictEqual(sent.length, 1);
@@ -142,6 +146,20 @@ it("the notification path reads no group state", async () => {
     service.sendUpdatedGroup(group(), [], "keyRotated");
     await settle();
     hasNoCalls(groupRepository.getFullState);
+});
+
+it("each of the three write kinds is the same event on the same channel", async () => {
+    // The split adds change kinds, not event types or channels. A client subscribed before it keeps receiving
+    // everything; only `changeKind` and the counters tell it which plane moved. Adding a new type here instead
+    // would have silently cut those clients off from metadata changes.
+    for (const changeKind of ["publicMetaUpdated", "privateMetaUpdated", "policyUpdated"] as const) {
+        const {service, sent, settle} = createService();
+        service.sendUpdatedGroup(group(), [], changeKind);
+        await settle();
+        assert.strictEqual(sent.length, 1);
+        assert.strictEqual(sent[0].event.type, "groupUpdated", `${changeKind} must not invent an event type`);
+        assert.strictEqual(sent[0].event.data.changeKind, changeKind);
+    }
 });
 
 it("a created group announces itself the same way", async () => {

@@ -69,6 +69,29 @@ describe("CloudAclChecker.verifyAccess", () => {
             "DENY ALL",
             "ALLOW thread/WRITE",
         ], "thread/threadMessageGet", [], false],
+        // The three group metadata/policy names came for free: being in `contextWrite` puts them in
+        // context/WRITE, context/ALL, WRITE and ALL, so no deployed `ALLOW ALL` token needs migrating.
+        ["ALLOW ALL", "context/groupUpdatePublicMeta", [], true],
+        ["ALLOW WRITE", "context/groupUpdatePrivateMeta", [], true],
+        ["ALLOW context/WRITE", "context/groupUpdatePolicy", [], true],
+        ["ALLOW context/ALL", "context/groupUpdatePublicMeta", [], true],
+        ["ALLOW context/READ", "context/groupUpdatePublicMeta", [], false],
+        ["ALLOW context/READ", "context/groupUpdatePolicy", [], false],
+        // One plane's grant carries neither the other plane nor the policy. This is the split, as an ACL fact.
+        ["ALLOW context/groupUpdatePublicMeta groupId=g1", "context/groupUpdatePrivateMeta", ["groupId=g1"], false],
+        ["ALLOW context/groupUpdatePublicMeta groupId=g1", "context/groupUpdatePolicy", ["groupId=g1"], false],
+        ["ALLOW context/groupUpdatePublicMeta groupId=g1", "context/groupUpdatePublicMeta", ["groupId=g1"], true],
+        // The groupId argument still binds, exactly as it did on the single name.
+        ["ALLOW context/groupUpdatePublicMeta groupId=g1", "context/groupUpdatePublicMeta", ["groupId=g2"], false],
+        // The capability the split exists to make expressible: metadata writes granted, policy withheld.
+        [[
+            "ALLOW context/WRITE",
+            "DENY context/groupUpdatePolicy",
+        ], "context/groupUpdatePolicy", ["groupId=g1"], false],
+        [[
+            "ALLOW context/WRITE",
+            "DENY context/groupUpdatePolicy",
+        ], "context/groupUpdatePublicMeta", ["groupId=g1"], true],
     ]).it("input=%s", async ([acl, fnName, args, valid]) => {
         const cloudAclChecker = new CloudAclChecker();
         const res = Utils.try(() => cloudAclChecker.verifyAccess(asAcl(acl), fnName, args));
@@ -88,6 +111,13 @@ describe("CloudAclChecker.validateAcl", () => {
         ["ALLOW store/storeGet", true],
         ["ALLOW store/storeGet storeId=zxc", true],
         ["ALLOW store/storeGet abc=zxc", false],
+        ["ALLOW context/groupUpdatePublicMeta groupId=zxc", true],
+        ["ALLOW context/groupUpdatePrivateMeta groupId=zxc", true],
+        ["ALLOW context/groupUpdatePolicy groupId=zxc", true],
+        ["ALLOW context/groupUpdatePolicy threadId=zxc", false],
+        // The only place the removal of `groupUpdate` is catchable: under `verifyAccess` an unknown name simply
+        // never matches, so an operator's stale line is silently inert rather than refused.
+        ["ALLOW context/groupUpdate", false],
         ["allow ALL", false],
         ["deny ALL", false],
         ["qwerty", false],

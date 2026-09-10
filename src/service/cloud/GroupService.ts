@@ -24,7 +24,7 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeValidator } from "./keytree/TreeValidator";
 import { TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
@@ -95,7 +95,8 @@ export class GroupService extends BaseContainerService {
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId|null, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
-        meta: types.group.GroupData, keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState,
+        publicMeta: types.group.GroupData, privateMeta: types.group.GroupData, keyId: types.core.KeyId,
+        policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState,
         groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">) {
         const allUsers = Utils.uniqueFromArrays(users, managers);
         this.policyService.validateContainerPolicyForContainer("policy", policy);
@@ -115,7 +116,7 @@ export class GroupService extends BaseContainerService {
             // leaves the group itself uncreated, or the other way round.
             const group = await this.repositoryFactory.withTransaction(session =>
                 this.repositoryFactory.createGroupRepository(session)
-                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, meta, keyId, policy, tree, newGroupKeys),
+                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, publicMeta, privateMeta, keyId, policy, tree, newGroupKeys),
             );
             this.groupNotificationService.sendCreatedGroup(group);
             return group;
@@ -129,45 +130,52 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Updates the group's metadata: `data`, `keyId`, policy, resource id.
+     * Rewrites the public metadata plane.
+     *
+     * Structurally cannot carry the private plane's envelope or the policy — the model has no field for either —
+     * which is what makes `context/groupUpdatePublicMeta` bound what the call can *do* rather than only what it
+     * is meant for.
      *
      * Membership is deliberately not here — seating a member and re-keying their path is one operation on the
      * tree. `addMembers`/`removeMembers` are the only ways in.
      */
-    async updateGroup(cloudUser: CloudUser, id: types.group.GroupId, data: types.group.GroupData, keyId: types.core.KeyId,
-        version: types.group.GroupVersion, policy: types.cloud.ContainerPolicy|undefined,
-        resourceId: types.core.ClientResourceId|null) {
-        if (policy) {
-            this.policyService.validateContainerPolicyForContainer("policy", policy);
-        }
+    async updatePublicMeta(cloudUser: CloudUser, model: GroupUpdatePublicMetaModel) {
         const rGroup = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await groupRepository.get(id);
+            const oldGroup = await groupRepository.get(model.id);
             if (!oldGroup) {
                 throw new AppException("GROUP_DOES_NOT_EXIST");
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdate", ["groupId=" + id]);
-            this.policy.makeUpdateContainerCheck(user, context, oldGroup, oldGroup.managers, policy);
-            // Unconditional, unlike the other containers: the metadata entry commits the version it lands at,
-            // so letting a stale update through would publish a tag no client can verify.
-            if (oldGroup.version !== version) {
-                throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePublicMeta", ["groupId=" + model.id]);
+            // `canUpdateContainer` rather than `makeUpdateContainerCheck`: nothing here changes the managers
+            // list, so that helper's two manager checks reduce to `P && !P` and cannot fire, and its policy
+            // branch is unreachable because this call has no policy parameter.
+            if (!this.policy.canUpdateContainer(user, context, oldGroup)) {
+                throw new AppException("ACCESS_DENIED", "policy is not met");
+            }
+            // Its own counter and only its own — a concurrent private-metadata write must not make this lose.
+            // Unconditional, unlike the other containers: the entry commits the version it lands at, so letting
+            // a stale write through would publish a tag no client can verify.
+            if (oldGroup.publicMetaVersion !== model.version) {
+                throw new AppException("GROUP_VERSION_MISMATCH", "publicMetaVersion does not match");
             }
             // Metadata must be written under the current epoch's key, or a member removed at the next rotation
             // would keep the key to everything written after they left.
-            if (keyId !== oldGroup.keyId) {
+            if (model.keyId !== oldGroup.keyId) {
                 throw new AppException("GROUP_META_KEY_MISMATCH");
             }
-            if (oldGroup.clientResourceId && resourceId && oldGroup.clientResourceId !== resourceId) {
+            if (oldGroup.clientResourceId && model.resourceId && oldGroup.clientResourceId !== model.resourceId) {
                 throw new AppException("RESOURCE_ID_MISSMATCH");
             }
             // Metadata integrity is committed inside the opaque `data` (endpoint DIO) and verified client-side.
             try {
-                const group = await groupRepository.updateGroup(oldGroup, user.userId, data, keyId, policy, resourceId);
+                const group = await groupRepository.updatePublicMeta(
+                    oldGroup, user.userId, model.data, model.keyId, model.resourceId || null,
+                );
                 if (!group) {
-                    // The CAS lost: another update landed between the read above and the write.
-                    throw new AppException("GROUP_VERSION_MISMATCH", "version does not match");
+                    // The CAS lost: another public-metadata write landed between the read above and the write.
+                    throw new AppException("GROUP_VERSION_MISMATCH", "publicMetaVersion does not match");
                 }
                 return group;
             }
@@ -178,8 +186,91 @@ export class GroupService extends BaseContainerService {
                 throw err;
             }
         });
-        this.groupNotificationService.sendUpdatedGroup(rGroup, [], "updated");
+        this.groupNotificationService.sendUpdatedGroup(rGroup, [], "publicMetaUpdated");
         return rGroup;
+    }
+    
+    /**
+     * Rewrites the private metadata plane — the mirror of `updatePublicMeta`, against its own counter and its
+     * own ACL entry.
+     *
+     * Kept as its own body rather than a helper parameterised by plane: the two counters would then sit one
+     * variable apart, which is exactly the slip the split exists to prevent.
+     */
+    async updatePrivateMeta(cloudUser: CloudUser, model: GroupUpdatePrivateMetaModel) {
+        const rGroup = await this.repositoryFactory.withTransaction(async session => {
+            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+            const oldGroup = await groupRepository.get(model.id);
+            if (!oldGroup) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePrivateMeta", ["groupId=" + model.id]);
+            if (!this.policy.canUpdateContainer(user, context, oldGroup)) {
+                throw new AppException("ACCESS_DENIED", "policy is not met");
+            }
+            if (oldGroup.privateMetaVersion !== model.version) {
+                throw new AppException("GROUP_VERSION_MISMATCH", "privateMetaVersion does not match");
+            }
+            if (model.keyId !== oldGroup.keyId) {
+                throw new AppException("GROUP_META_KEY_MISMATCH");
+            }
+            if (oldGroup.clientResourceId && model.resourceId && oldGroup.clientResourceId !== model.resourceId) {
+                throw new AppException("RESOURCE_ID_MISSMATCH");
+            }
+            try {
+                const group = await groupRepository.updatePrivateMeta(
+                    oldGroup, user.userId, model.data, model.keyId, model.resourceId || null,
+                );
+                if (!group) {
+                    throw new AppException("GROUP_VERSION_MISMATCH", "privateMetaVersion does not match");
+                }
+                return group;
+            }
+            catch (err) {
+                if (err instanceof DbDuplicateError) {
+                    throw new AppException("DUPLICATE_RESOURCE_ID");
+                }
+                throw err;
+            }
+        });
+        this.groupNotificationService.sendUpdatedGroup(rGroup, [], "privateMetaUpdated");
+        return rGroup;
+    }
+    
+    /**
+     * Sets the group's policy, and nothing else.
+     *
+     * No version, no CAS and no epoch guard: the policy lives outside the client's signed envelope, so there is
+     * no counter a client could know, no key to write it under and nothing for a reader to re-verify. It moves
+     * neither metadata counter and appends no entry — deliberately, or a policy change would strand the epoch of
+     * a plane it did not rewrite.
+     *
+     * No transaction either: one document, one `updateOne`, nothing appended anywhere. `withTransaction` would
+     * buy nothing a single-document write does not already give and only add a retry surface.
+     */
+    async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
+        this.policyService.validateContainerPolicyForContainer("policy", model.policy);
+        const groupRepository = this.repositoryFactory.createGroupRepository();
+        const oldGroup = await groupRepository.get(model.id);
+        if (!oldGroup) {
+            throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePolicy", ["groupId=" + model.id]);
+        // The `updatePolicy` gate and the context-level veto, and NOT `update`. Follows generateNewGroupKey and
+        // threadRotateKeys: riding on `update` meant an operator who widened `update` handed out policy
+        // rewriting along with it.
+        if (!this.policy.canOverwriteContextPolicy(context) || !this.policy.canUpdateContainerPolicy(user, context, oldGroup)) {
+            throw new AppException("ACCESS_DENIED", "cannot update policy");
+        }
+        const group = await groupRepository.updatePolicy(oldGroup, user.userId, model.policy);
+        if (!group) {
+            // No CAS to lose: the only way the filter misses is the group going away between the read and here.
+            throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        this.groupNotificationService.sendUpdatedGroup(group, [], "policyUpdated");
+        return group;
     }
     
     /** Rotates the grant keypair without removing anybody: the epoch advances, the new grant key is wrapped to
@@ -409,25 +500,35 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Refuses to strand the group's metadata below a floor.
+     * Refuses to strand either metadata plane below a floor.
      *
-     * The metadata entry stays at the epoch it was written under — that is what stops a membership change from
+     * Each plane's entry stays at the epoch it was written under — that is what stops a membership change from
      * rewriting it — so cutting or pruning below that epoch would take away the only route to its key and make
-     * `publicMeta`/`privateMeta` unreadable for everyone, permanently. Before the planes were split this could
-     * not happen: every removal republished the metadata at the new epoch.
+     * that plane unreadable for everyone, permanently. Before the planes were split this could not happen: every
+     * removal republished the metadata at the new epoch.
      *
-     * One lookup by derived id. The way out is a single `updateGroup`, which rewrites the metadata at the
-     * current epoch — so the message says so rather than leaving the caller to guess.
+     * One lookup by derived id per plane. The two planes move independently, so they may sit at different
+     * epochs and only one may be stranded. The message therefore names the stranded planes and the endpoint
+     * that lifts each one rather than leaving the caller to guess: it is a per-plane fix, and rewriting the
+     * wrong plane costs the client a signed envelope for nothing. It deliberately does not name
+     * `groupUpdatePolicy` — a policy write moves no counter and appends no entry, so it lifts no epoch, and
+     * advertising it would send the operator into a loop that can never clear the refusal.
      */
     private async assertMetaSurvivesFloor(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         groupId: types.group.GroupId,
         floor: number,
     ) {
-        const meta = await groupRepository.getMetaHead(groupId);
-        if (meta && meta.keyVersion < floor) {
+        const heads = await groupRepository.getMetaHeadKeyVersions(groupId);
+        const stranded = ([
+            {plane: "public", at: heads.publicMeta, fix: "context.groupUpdatePublicMeta"},
+            {plane: "private", at: heads.privateMeta, fix: "context.groupUpdatePrivateMeta"},
+        ] as const).filter(entry => entry.at !== null && entry.at < floor);
+        if (stranded.length > 0) {
+            const where = stranded.map(entry => `${entry.plane} metadata sits at epoch ${entry.at}`).join(" and ");
+            const how = stranded.map(entry => entry.fix).join(" and ");
             throw new AppException("GROUP_META_UNREACHABLE",
-                `group metadata sits at epoch ${meta.keyVersion}, below the requested floor ${floor}; call groupUpdate first to rewrite it at the current epoch`);
+                `${where}, below the requested floor ${floor}; call ${how} first to rewrite ${stranded.length > 1 ? "them" : "it"} at the current epoch`);
         }
     }
     
@@ -690,9 +791,11 @@ export class GroupService extends BaseContainerService {
         const winnerKeyEntry = (winner.groupKeys ?? [])
             .flatMap(entry => entry.keys)
             .find(k => k.keyId === winner.keyId);
-        // A lower bound, so asking from the head roster version returns exactly the head entry. The roster
-        // plane's counter, not `version` — that one is the metadata plane's and lags it, which would return the
-        // oldest trailing entry and hand the loser a tag from a superseded epoch.
+        // `fromRosterVersion` is a lower bound, so asking from the head roster version returns exactly the head
+        // entry. The roster plane's counter, because that is the plane `groupHistoryEntry` records: this used to
+        // pass the metadata counter, which lags it and so read the wrong window whenever the two had drifted
+        // apart, returning the oldest trailing entry and handing the loser a tag from a superseded epoch. Both
+        // were plain `number` before the metadata planes were split, so nothing caught it.
         const [headEntry] = await groupRepository.getHistory(winner.id, winner.rosterVersion);
         return {
             keyVersion: winner.keyVersion,

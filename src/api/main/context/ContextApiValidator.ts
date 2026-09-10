@@ -47,23 +47,41 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
-            // Two envelopes, one per plane: `data` carries the roster tag, `meta` the metadata and its own tag.
+            // Three envelopes, one per plane: `data` carries the roster tag, each metadata plane its own DIO
+            // and its own domain-separated tag.
             data: this.tv.groupData,
-            meta: this.tv.groupData,
+            publicMeta: this.tv.groupData,
+            privateMeta: this.tv.groupData,
             keyId: this.tv.keyId,
             // One: the group is a grantee of itself and has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
             policy: this.builder.optional(this.tv.containerPolicy),
             tree: this.tv.groupTreeState,
         }));
-        // Metadata only. Membership moves the tree, so it goes through groupAddMembers/groupRemoveMembers.
-        this.registerMethod("groupUpdate", this.builder.createObject({
+        // One plane per method, and `createObject` is strict — so a request here structurally cannot carry the
+        // other plane's envelope or the policy. That is what makes the per-plane ACL entry bound the effect
+        // rather than only the intent. Membership moves the tree, so it goes through
+        // groupAddMembers/groupRemoveMembers.
+        this.registerMethod("groupUpdatePublicMeta", this.builder.createObject({
             id: this.tv.groupId,
             resourceId: this.builder.optional(this.tv.uuidv4),
             data: this.tv.groupData,
             keyId: this.tv.keyId,
             version: this.builder.int,
-            policy: this.builder.optional(this.tv.containerPolicy),
+        }));
+        this.registerMethod("groupUpdatePrivateMeta", this.builder.createObject({
+            id: this.tv.groupId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            version: this.builder.int,
+        }));
+        // No version and no keyId: the policy is outside the signed envelope, so there is nothing to CAS and no
+        // key to write it under. A caller still sending either is on an API that no longer exists and has to be
+        // told. `policy` is required — on a dedicated method an absent one asks for nothing.
+        this.registerMethod("groupUpdatePolicy", this.builder.createObject({
+            id: this.tv.groupId,
+            policy: this.tv.containerPolicy,
         }));
         this.registerMethod("groupGenerateNewKey", this.builder.createObject({
             id: this.tv.groupId,

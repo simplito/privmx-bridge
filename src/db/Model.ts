@@ -219,11 +219,15 @@ export namespace group {
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
         policy?: types.cloud.ContainerPolicy;
-        /** Metadata plane counter. Moves only on `groupUpdate`, which is CAS-guarded on it — which is exactly
-         *  why the metadata entry may commit the version it lands at. Entries live in `groupMetaEntry`. */
-        version: types.group.GroupVersion;
+        /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
+         *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
+         *  `groupPublicMetaEntry`. */
+        publicMetaVersion: types.group.GroupVersion;
+        /** Private metadata plane counter. Moves only on `groupUpdatePrivateMeta`, CAS-guarded on it, and by
+         *  nothing else — a public-plane write leaves it alone, which is what lets the two race and both win. */
+        privateMetaVersion: types.group.GroupVersion;
         /** Roster plane counter. Moves only on a membership change or a rotation. A metadata update leaves it
-         *  alone, so a concurrent `groupUpdate` can no longer strand a tree write at a version it never took. */
+         *  alone, so a concurrent metadata write can no longer strand a tree write at a version it never took. */
         rosterVersion: number;
         /** Current epoch. Every group starts at 1 and only a rotation advances it. */
         keyVersion: number;
@@ -255,7 +259,8 @@ export namespace group {
      */
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
-        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"version"|"rosterVersion"|"keyVersion"|"policy">;
+        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"publicMetaVersion"|"privateMetaVersion"
+        |"rosterVersion"|"keyVersion"|"policy">;
     
     /**
      * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is
@@ -274,7 +279,11 @@ export namespace group {
     export type GroupTreeNodeId = string&{__groupTreeNodeId: never};
     export type GroupTreeEdgeId = string&{__groupTreeEdgeId: never};
     export type GroupHistoryEntryId = string&{__groupHistoryEntryId: never};
-    export type GroupMetaEntryId = string&{__groupMetaEntryId: never};
+    // Two brands, not one: entry ids are derived from `(groupId, version)` and both planes start at 1, so a
+    // head read that forgot which plane it was after would silently return the other's entry. Branding makes
+    // that a compile error instead.
+    export type GroupPublicMetaEntryId = string&{__groupPublicMetaEntryId: never};
+    export type GroupPrivateMetaEntryId = string&{__groupPrivateMetaEntryId: never};
     export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
     
     /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
@@ -319,17 +328,18 @@ export namespace group {
     }
     
     /**
-     * One metadata-plane entry, written only by `groupUpdate`.
+     * The body both metadata-plane entries share.
      *
      * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
      * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
-     * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable.
+     * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable. The
+     * two planes move independently, so they may sit at different epochs and only one may be stranded.
      *
-     * One row per group: `id` is derived from `groupId` alone and an update replaces it. There is no metadata
-     * audit trail to serve, so a version-derived id would only leave rows no reader can reach.
+     * One row per group per plane: `id` is derived from `groupId` and the plane alone, and a write replaces it.
+     * Neither plane serves an audit trail, so a version-derived id would only leave rows no reader can reach.
+     * `version` is still carried on the row — it is the plane's current counter, just not part of its identity.
      */
-    export interface GroupMetaEntry {
-        id: GroupMetaEntryId;
+    interface GroupMetaEntryFields {
         groupId: types.group.GroupId;
         version: types.group.GroupVersion;
         keyId: types.core.KeyId;
@@ -337,6 +347,16 @@ export namespace group {
         data: types.group.GroupData;
         created: types.core.Timestamp;
         author: types.cloud.UserId;
+    }
+    
+    /** One public-metadata entry, written only by `groupUpdatePublicMeta`. Lives in `groupPublicMetaEntry`. */
+    export interface GroupPublicMetaEntry extends GroupMetaEntryFields {
+        id: GroupPublicMetaEntryId;
+    }
+    
+    /** One private-metadata entry, written only by `groupUpdatePrivateMeta`. Lives in `groupPrivateMetaEntry`. */
+    export interface GroupPrivateMetaEntry extends GroupMetaEntryFields {
+        id: GroupPrivateMetaEntryId;
     }
     
     /** One Epoch Ladder rung. Append-only apart from pruning, a range delete over `targetKeyVersion`. */
@@ -355,8 +375,10 @@ export namespace group {
     export interface GroupState {
         tree: types.cloud.GroupTreeState;
         history: GroupHistoryEntry[];
-        /** The current metadata entry. A read needs it alongside the roster head — two entries, never O(versions). */
-        meta: GroupMetaEntry;
+        /** The current entry of each metadata plane. A read needs both alongside the roster head — three
+         *  entries, never O(versions). */
+        publicMeta: GroupPublicMetaEntry;
+        privateMeta: GroupPrivateMetaEntry;
     }
 }
 

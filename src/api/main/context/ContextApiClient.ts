@@ -39,8 +39,16 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupCreate", model);
     }
     
-    groupUpdate(model: contextApi.GroupUpdateModel): Promise<types.core.OK> {
-        return this.request("context.groupUpdate", model);
+    groupUpdatePublicMeta(model: contextApi.GroupUpdatePublicMetaModel): Promise<types.core.OK> {
+        return this.request("context.groupUpdatePublicMeta", model);
+    }
+    
+    groupUpdatePrivateMeta(model: contextApi.GroupUpdatePrivateMetaModel): Promise<types.core.OK> {
+        return this.request("context.groupUpdatePrivateMeta", model);
+    }
+    
+    groupUpdatePolicy(model: contextApi.GroupUpdatePolicyModel): Promise<types.core.OK> {
+        return this.request("context.groupUpdatePolicy", model);
     }
     
     groupGenerateNewKey(model: contextApi.GroupGenerateNewKeyModel): Promise<types.core.OK> {
