@@ -122,6 +122,45 @@ export class GroupNotificationService {
         });
     }
     
+    /**
+     * One query, one publish, one payload — whether the group has two members or ten thousand. `eventData` is an
+     * opaque envelope already sealed with the group's key, so there is nothing to convert per recipient and no
+     * key to wrap per recipient.
+     *
+     * Nothing is stored for members who are offline: a custom event is a notification, not a record.
+     */
+    sendGroupCustomEvent(
+        group: db.group.Group,
+        eventData: unknown,
+        author: types.cloud.UserIdentity,
+        customChannelName: types.core.WsChannelName,
+        users?: types.cloud.UserId[],
+    ) {
+        this.safe("groupCustomEvent", async () => {
+            const now = DateUtils.now();
+            const recipients = users ?? [...group.users, ...group.managers];
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, recipients);
+            this.webSocketSender.sendCloudEventAtChannel<contextApi.GroupCustomEvent>(
+                contextUsers.map(user => user.userPubKey),
+                {
+                    contextId: group.contextId,
+                    containerId: group.id,
+                    channel: `context/groups/custom/${customChannelName}` as types.core.WsChannelName,
+                },
+                {
+                    channel: `group/${group.id}/${customChannelName}`,
+                    type: "custom",
+                    data: {
+                        id: group.id,
+                        author: author,
+                        eventData: eventData,
+                    },
+                    timestamp: now,
+                },
+            );
+        });
+    }
+    
     private changedData(group: db.group.Group, changeKind: contextApi.GroupChangeKind): contextApi.GroupChangedEventData {
         return {
             groupId: group.id,

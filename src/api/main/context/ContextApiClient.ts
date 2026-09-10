@@ -78,4 +78,8 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         return this.request("context.groupGetKeyArchive", model);
     }
+    
+    groupSendCustomEvent(model: contextApi.GroupSendCustomEventModel): Promise<types.core.OK> {
+        return this.request("context.groupSendCustomEvent", model);
+    }
 }

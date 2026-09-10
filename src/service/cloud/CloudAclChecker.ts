@@ -25,6 +25,7 @@ export type AclFunctionNameX =
     | "context/groupCutEra"
     | "context/groupPruneArchive"
     | "context/groupDelete"
+    | "context/groupSendCustomEvent"
     | "context/READ"
     | "context/WRITE"
     | "context/ALL"
@@ -157,6 +158,7 @@ export class CloudAclChecker {
             "context/groupCutEra": ["groupId"],
             "context/groupPruneArchive": ["groupId"],
             "context/groupDelete": ["groupId"],
+            "context/groupSendCustomEvent": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
         const contextAll = {...contextRead, ...contextWrite};

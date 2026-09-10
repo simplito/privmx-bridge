@@ -158,6 +158,14 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         return this.groupConverter.convertKeyArchive(group, rungs);
     }
     
+    @ApiMethod({})
+    async groupSendCustomEvent(model: contextApi.GroupSendCustomEventModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.sendCustomNotification(cloudUser, model.groupId, model.data, model.channel, model.users);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
     private convertContext(x: db.context.ContextUser, context: db.context.Context) {
         const res: contextApi.ContextInfo = {
             contextId: x.contextId,

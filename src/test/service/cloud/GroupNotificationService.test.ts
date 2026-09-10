@@ -41,7 +41,8 @@ const removed = "removed" as types.cloud.UserId;
 
 interface SentEvent {
     clients: types.core.Client[];
-    event: {type: string, data: Record<string, unknown>};
+    target: {contextId?: string, containerId?: string, channel: string};
+    event: {type: string, channel: string, data: Record<string, unknown>};
 }
 
 function group(memberCount = 3): db.group.Group {
@@ -77,13 +78,16 @@ function createService() {
     }) as JobService["addJob"]);
     
     const webSocketSender = createMock<WebSocketSender>({});
-    mock(webSocketSender, "sendCloudEventAtChannel", ((clients: types.core.Client[], _channel: unknown, event: unknown) => {
-        sent.push({clients, event: event as SentEvent["event"]});
+    mock(webSocketSender, "sendCloudEventAtChannel", ((clients: types.core.Client[], target: unknown, event: unknown) => {
+        sent.push({clients, target: target as SentEvent["target"], event: event as SentEvent["event"]});
     }) as never);
     
+    const rosterReads: types.cloud.UserId[][] = [];
     const contextUserRepository = createMock<ContextUserRepository>({});
-    mock(contextUserRepository, "getUsers", (async (_ctx: types.context.ContextId, users: types.cloud.UserId[]) =>
-        users.map(userId => ({userId, userPubKey: `pub-${userId}` as types.cloud.UserPubKey}))) as never);
+    mock(contextUserRepository, "getUsers", (async (_ctx: types.context.ContextId, users: types.cloud.UserId[]) => {
+        rosterReads.push(users);
+        return users.map(userId => ({userId, userPubKey: `pub-${userId}` as types.cloud.UserPubKey}));
+    }) as never);
     
     const notificationRepository = createMock<NotificationRepository>({});
     mock(notificationRepository, "insert", (async (pub: types.cloud.UserPubKey, _channel: unknown, event: unknown) => {
@@ -100,7 +104,7 @@ function createService() {
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     
     const service = new GroupNotificationService(jobService, webSocketSender, repositoryFactory);
-    return {service, sent, stored, groupRepository, settle: async () => {
+    return {service, sent, stored, rosterReads, groupRepository, settle: async () => {
         await Promise.all(jobs);
     }};
 }
@@ -163,4 +167,53 @@ it("a member who was just removed is told, and an inactive one has it stored", a
     assert.strictEqual(sent[1].event.data.changeKind, "memberRemoved");
     assert.strictEqual(stored.length, 1);
     assert.strictEqual(stored[0].pub, "pub-gone");
+});
+
+it("a custom event relays the sealed payload untouched, to the roster, on its own channel", async () => {
+    const {service, sent, settle} = createService();
+    service.sendGroupCustomEvent(group(2), "base64Envelope", {id: janek, pub: "pub-janek" as types.cloud.UserPubKey}, "typing" as types.core.WsChannelName);
+    await settle();
+    
+    assert.strictEqual(sent.length, 1);
+    assert.strictEqual(sent[0].event.type, "custom");
+    assert.strictEqual(sent[0].event.data.eventData, "base64Envelope", "the bridge must not touch the envelope");
+    assert.deepStrictEqual(sent[0].event.data.author, {id: janek, pub: "pub-janek"});
+    assert.strictEqual(sent[0].event.channel, `group/${groupId}/typing`);
+    assert.strictEqual(sent[0].target.channel, "context/groups/custom/typing");
+    // Without containerId a subscription scoped to one group would match every group in the context (BR-37).
+    assert.strictEqual(sent[0].target.containerId, groupId);
+    assert.deepStrictEqual(sent[0].clients.sort(), ["pub-janek", "pub-member_0", "pub-member_1"]);
+});
+
+it("a custom event costs one roster read and one send, whatever the group's size", async () => {
+    // This is the whole reason groupSendCustomEvent exists rather than reusing contextSendCustomEvent, which
+    // wraps a throwaway key per recipient and publishes once per recipient. A loop appearing here is the
+    // regression, and a group of 500 is where it would show.
+    for (const memberCount of [2, 500]) {
+        const {service, sent, rosterReads, settle} = createService();
+        service.sendGroupCustomEvent(group(memberCount), "base64Envelope", {id: janek, pub: "pub-janek" as types.cloud.UserPubKey}, "typing" as types.core.WsChannelName);
+        await settle();
+        
+        assert.strictEqual(sent.length, 1, `one send for ${memberCount} members`);
+        assert.strictEqual(rosterReads.length, 1, `one roster read for ${memberCount} members`);
+        assert.strictEqual(sent[0].clients.length, memberCount + 1);
+    }
+});
+
+it("a custom event narrowed to a subset reads and sends only to that subset", async () => {
+    const one = "member_5" as types.cloud.UserId;
+    const {service, sent, rosterReads, settle} = createService();
+    service.sendGroupCustomEvent(group(300), "base64Envelope", {id: janek, pub: "pub-janek" as types.cloud.UserPubKey}, "typing" as types.core.WsChannelName, [one]);
+    await settle();
+    
+    assert.deepStrictEqual(rosterReads, [[one]], "no reason to read the whole roster to reach one member");
+    assert.deepStrictEqual(sent[0].clients, ["pub-member_5"]);
+});
+
+it("a custom event stores nothing for members who are offline", async () => {
+    // A notification is not a record. Whoever was not listening missed it.
+    const {service, stored, settle} = createService();
+    service.sendGroupCustomEvent(group(), "base64Envelope", {id: janek, pub: "pub-janek" as types.cloud.UserPubKey}, "typing" as types.core.WsChannelName);
+    await settle();
+    assert.strictEqual(stored.length, 0);
 });

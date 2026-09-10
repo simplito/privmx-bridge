@@ -58,6 +58,12 @@ const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
 const janekCloudUser = new CloudUser(janekPub);
 const aliceCloudUser = new CloudUser(alicePub);
 const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
+// carol belongs to the context with a full ACL but to no group — the group ACL is context-scoped, so she is
+// what proves membership is gated separately from it.
+const carol = "carol" as types.cloud.UserId;
+const carolKeys = ECUtils.generateKeyPair();
+const carolPub = carolKeys.pub58 as types.cloud.UserPubKey;
+const carolCloudUser = new CloudUser(carolPub);
 
 const myContext: db.context.Context = {
     id: contextId,
@@ -86,6 +92,14 @@ const aliceUser: db.context.ContextUser = {
     contextId: contextId,
     userId: alice,
     userPubKey: alicePub,
+    acl: "ALLOW ALL" as types.cloud.ContextAcl,
+};
+const carolUser: db.context.ContextUser = {
+    id: "zzz" as db.context.ContextUserId,
+    created: DateUtils.now(),
+    contextId: contextId,
+    userId: carol,
+    userPubKey: carolPub,
     acl: "ALLOW ALL" as types.cloud.ContextAcl,
 };
 // Every group is tree-backed, so even the plumbing fixture carries one.
@@ -172,9 +186,10 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     mock(groupNotificationService, "sendCreatedGroup", () => {});
     mock(groupNotificationService, "sendUpdatedGroup", () => {});
     mock(groupNotificationService, "sendDeletedGroup", () => {});
+    mock(groupNotificationService, "sendGroupCustomEvent", () => {});
     
     mock(cloudAccessValidator, "getUserFromContext", async (cloudUser, ctx) => {
-        const usersByPub: Record<string, db.context.ContextUser> = {[janekPub]: janekUser, [alicePub]: aliceUser};
+        const usersByPub: Record<string, db.context.ContextUser> = {[janekPub]: janekUser, [alicePub]: aliceUser, [carolPub]: carolUser};
         const user = ctx === contextId ? usersByPub[cloudUser.pub] ?? null : null;
         const context = ctx === contextId ? usedContext : null;
         if (!user || !context) {
@@ -424,4 +439,77 @@ it("does NOT charge the rate-limit budget on a lost CAS race (ROTATED_ALREADY)",
         return;
     }
     expect(true).toBeFalsy();
+});
+
+const typing = "typing" as types.core.WsChannelName;
+
+it("a member can send a custom event, and the payload is relayed untouched", async () => {
+    const {groupService, groupNotificationService} = createGroupService();
+    await groupService.sendCustomNotification(aliceCloudUser, groupId, "base64Envelope", typing);
+    hasOneCall(groupNotificationService.sendGroupCustomEvent);
+    expect(groupNotificationService.sendGroupCustomEvent.mock.calls[0][1]).toBe("base64Envelope");
+    expect(groupNotificationService.sendGroupCustomEvent.mock.calls[0][2]).toEqual({id: alice, pub: alicePub});
+});
+
+it("a context user who is not in the group cannot send a custom event", async () => {
+    // The `context/groupSendCustomEvent` ACL is context-scoped and carol has ALLOW ALL, so the ACL alone lets
+    // her through. Membership is the gate that stops her.
+    const {groupService, groupNotificationService} = createGroupService();
+    try {
+        await groupService.sendCustomNotification(carolCloudUser, groupId, "base64Envelope", typing);
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupNotificationService.sendGroupCustomEvent);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("a custom event cannot be aimed at somebody outside the group", async () => {
+    const {groupService, groupNotificationService} = createGroupService();
+    try {
+        await groupService.sendCustomNotification(janekCloudUser, groupId, "base64Envelope", typing, [carol]);
+    }
+    catch (e) {
+        expect(AppException.is(e, "USER_DOES_NOT_HAVE_ACCESS_TO_CONTAINER")).toBe(true);
+        hasNoCalls(groupNotificationService.sendGroupCustomEvent);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("a custom event on a group that does not exist is refused", async () => {
+    const {groupService, groupNotificationService} = createGroupService();
+    try {
+        await groupService.sendCustomNotification(janekCloudUser, notExistingGroupId, "base64Envelope", typing);
+    }
+    catch (e) {
+        expect(AppException.is(e, "GROUP_DOES_NOT_EXIST")).toBe(true);
+        hasNoCalls(groupNotificationService.sendGroupCustomEvent);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("a context can narrow who may send a group custom event", async () => {
+    const {groupService, groupNotificationService} = createGroupService(false, {group: {sendCustomNotification: "manager"}});
+    try {
+        await groupService.sendCustomNotification(aliceCloudUser, groupId, "base64Envelope", typing);
+    }
+    catch (e) {
+        expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
+        hasNoCalls(groupNotificationService.sendGroupCustomEvent);
+        return;
+    }
+    expect(true).toBeFalsy();
+});
+
+it("a custom event never reads the group's tree or history", async () => {
+    // A notification does not need the state, and reading it would put the cost of a keystroke back on the
+    // size of the group.
+    const {groupService, groupRepository} = createGroupService();
+    await groupService.sendCustomNotification(janekCloudUser, groupId, "base64Envelope", typing);
+    hasNoCalls(groupRepository.getTree);
+    hasNoCalls(groupRepository.getHistoryKeyIds);
 });

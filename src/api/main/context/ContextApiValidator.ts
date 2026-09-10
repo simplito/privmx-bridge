@@ -142,5 +142,11 @@ export class ContextApiValidator extends BaseValidator {
             fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
             toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
+        this.registerMethod("groupSendCustomEvent", this.builder.createObject({
+            groupId: this.tv.groupId,
+            channel: this.tv.wsChannelName,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS)),
+        }));
     }
 }

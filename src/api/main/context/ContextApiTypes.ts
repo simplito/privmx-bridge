@@ -490,6 +490,30 @@ export interface GroupDeletedEventData {
     contextId: types.context.ContextId;
 }
 
+/**
+ * An ephemeral notification sent to the group's members, sealed with the group's own key.
+ *
+ * `data` is opaque here — a base64 group envelope. Only members can open it, so the bridge neither needs nor gets
+ * a per-recipient key: one payload is built once and published once, whatever the group's size. That is the whole
+ * reason this exists next to `contextSendCustomEvent`, which wraps a throwaway key per recipient.
+ */
+export interface GroupSendCustomEventModel {
+    groupId: types.group.GroupId;
+    channel: types.core.WsChannelName;
+    data: unknown;
+    /** A subset of the roster. Omitted means every member. */
+    users?: types.cloud.UserId[];
+}
+
+export type GroupCustomEvent = types.cloud.Event<"custom", `group/${types.group.GroupId}/${types.core.WsChannelName}`, GroupCustomEventData>;
+
+export interface GroupCustomEventData {
+    id: types.group.GroupId;
+    /** Claimed sender. The envelope's own signature is what actually attests to the author. */
+    author: types.cloud.UserIdentity;
+    eventData: unknown;
+}
+
 export interface IContextApi {
     contextGet(model: ContextGetModel): Promise<ContextGetResult>;
     contextList(model: ContextListModel): Promise<ContextListResult>;
@@ -507,4 +531,5 @@ export interface IContextApi {
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
+    groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
 }
