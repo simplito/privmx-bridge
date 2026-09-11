@@ -112,6 +112,10 @@ COPY --link --from=builder   --chown=1001:1001 /app/build /work/privmx-bridge
 COPY        --from=prod-deps --chown=1001:1001 /work/node_modules /work/privmx-bridge/node_modules
 COPY        --from=docs      --chown=1001:1001 /srv/slate/build /work/privmx-bridge/public/docs
 
+# Must exist in the image so a volume mounted here inherits privmx ownership
+# instead of being created root:root by the daemon.
+RUN mkdir -p storage/tmp storage/files && chown -R 1001:1001 storage
+
 USER 1001:1001
 
 EXPOSE 3000
