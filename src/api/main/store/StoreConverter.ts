@@ -12,10 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as storeApi from "./StoreApiTypes";
 import * as db from "../../../db/Model";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class StoreConverter {
     
-    convertStore(user: types.cloud.UserId, store: db.store.Store) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertStore(user: types.cloud.UserId, store: db.store.Store, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: storeApi.Store = {
             id: store.id,
             contextId: store.contextId,
@@ -28,6 +30,9 @@ export class StoreConverter {
             keyId: store.keyId,
             data: store.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (store.keys.find(x => x.user === user)?.keys) || [],
+            groups: store.groups || [],
+            groupKeys: ownGroupKeysOf(store.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(store, groupEpochs),
             version: <types.store.StoreVersion>store.history.length,
             lastFileDate: store.lastFileDate,
             files: store.files,

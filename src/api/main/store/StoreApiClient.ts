@@ -23,6 +23,10 @@ export class StoreApiClient extends BaseApiClient implements storeApi.IStoreApi 
         return this.request("store.storeUpdate", model);
     }
     
+    storeRotateKeys(model: storeApi.StoreRotateKeysModel): Promise<types.core.OK> {
+        return this.request("store.storeRotateKeys", model);
+    }
+    
     storeDelete(model: storeApi.StoreDeleteModel): Promise<types.core.OK> {
         return this.request("store.storeDelete", model);
     }

@@ -21,7 +21,12 @@ import { ManagementThreadConverter } from "../../api/plain/thread/ManagementThre
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { DateUtils } from "../../utils/DateUtils";
 import { TargetChannel } from "../ws/WebSocketConnectionManager";
+import { Utils } from "../../utils/Utils";
 
+/**
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `threadGet` would serve — see `getThreadRecipients`.
+ */
 export class ThreadNotificationService {
     
     constructor(
@@ -38,10 +43,22 @@ export class ThreadNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
+    private async getThreadRecipients(thread: db.thread.Thread): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
+        const groupIds = (thread.groups || []).map(g => g.groupId);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
+        return {
+            userIds: Utils.unique([...thread.users, ...thread.managers, ...groupsByUser.keys()]),
+            groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
+        };
+    }
+    
     sendThreadCustomEvent(thread: db.thread.Thread, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
         this.safe("threadCustomEvent", async () => {
             const now = DateUtils.now();
-            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadCustomEvent>(
                 contextUsers.map(u => u.userPubKey),
                 {
@@ -68,7 +85,8 @@ export class ThreadNotificationService {
     sendCreatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadCreated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getThreadRecipients(thread);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, userIds);
             const notification: managementThreadApi.ThreadCreatedEvent = {
                 channel: "thread",
                 type: "threadCreated",
@@ -89,7 +107,7 @@ export class ThreadNotificationService {
                     {
                         channel: "thread",
                         type: "threadCreated",
-                        data: this.threadConverter.convertThread(user.userId, thread),
+                        data: this.threadConverter.convertThread(user.userId, thread, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -100,7 +118,8 @@ export class ThreadNotificationService {
     sendUpdatedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId, additionalUsers: types.cloud.UserIdentityWithStatus[]) {
         this.safe("threadUpdated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getThreadRecipients(thread);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, userIds);
             const notification: managementThreadApi.ThreadUpdatedEvent = {
                 channel: "thread",
                 type: "threadUpdated",
@@ -118,7 +137,7 @@ export class ThreadNotificationService {
                 const userNotification: threadApi.ThreadUpdatedEvent = {
                     channel: "thread",
                     type: "threadUpdated",
-                    data: this.threadConverter.convertThread(user.userId, thread),
+                    data: this.threadConverter.convertThread(user.userId, thread, groupsByUser.get(user.userId) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 this.webSocketSender.sendCloudEventAtChannel<threadApi.ThreadUpdatedEvent>(
@@ -131,7 +150,9 @@ export class ThreadNotificationService {
                 const userNotification: threadApi.ThreadUpdatedEvent = {
                     channel: "thread",
                     type: "threadUpdated",
-                    data: this.threadConverter.convertThread(user.id, thread),
+                    // These are the users this update removed, so they hold no grant on the thread any more and
+                    // `groupsByUser` (built from its current grants) has nothing for them. `[]` is the answer.
+                    data: this.threadConverter.convertThread(user.id, thread, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {
@@ -151,7 +172,7 @@ export class ThreadNotificationService {
     sendThreadStats(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadStats", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             const notification: managementThreadApi.ThreadStatsEvent = {
                 channel: "thread",
                 type: "threadStats",
@@ -190,7 +211,7 @@ export class ThreadNotificationService {
     sendDeletedThread(thread: db.thread.Thread, solution: types.cloud.SolutionId) {
         this.safe("threadDeleted", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             const notification: managementThreadApi.ThreadDeletedEvent = {
                 channel: "thread",
                 type: "threadDeleted",
@@ -224,7 +245,7 @@ export class ThreadNotificationService {
     sendNewThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadNewMessage", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             const notification: managementThreadApi.ThreadNewMessageEvent = {
                 channel: "thread",
                 type: "threadNewMessage",
@@ -254,7 +275,7 @@ export class ThreadNotificationService {
     sendUpdatedThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadUpdatedMessage", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             const notification: managementThreadApi.ThreadUpdatedMessageEvent = {
                 channel: "thread",
                 type: "threadUpdatedMessage",
@@ -284,7 +305,7 @@ export class ThreadNotificationService {
     sendDeletedThreadMessage(thread: db.thread.Thread, msg: db.thread.ThreadMessage, solution: types.cloud.SolutionId) {
         this.safe("threadDeletedMessage", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, [...thread.users, ...thread.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(thread.contextId, (await this.getThreadRecipients(thread)).userIds);
             const notification: managementThreadApi.ThreadDeletedMessageEvent = {
                 channel: "thread",
                 type: "threadDeletedMessage",

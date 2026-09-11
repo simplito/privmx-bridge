@@ -41,6 +41,7 @@ import { MetricsContainer } from "../master/ipcServices/MetricsContainer";
 import { WebSocketOutboundHandler } from "../../service/ws/WebSocketOutboundHandler";
 import { SignatureVerificationService } from "../../service/auth/SignatureVerificationService";
 import { ActiveUsersMap } from "../master/ipcServices/ActiveUsers";
+import type { GroupRotationRateLimiter } from "../master/ipcServices/GroupRotationRateLimiter";
 import { HostList } from "./HostList";
 import { LockService } from "../master/ipcServices/LockService";
 import { CloudLockService } from "../master/ipcServices/CloudLockService";
@@ -402,6 +403,10 @@ export class WorkerRegistry {
     
     getActiveUsersMap() {
         return this.getIpcService<ActiveUsersMap>("activeUsersMap");
+    }
+    
+    getGroupRotationRateLimiter() {
+        return this.getIpcService<GroupRotationRateLimiter>("groupRotationRateLimiter");
     }
     
     getJanusRoomsWatcherCache() {

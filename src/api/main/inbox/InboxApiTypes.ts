@@ -24,6 +24,9 @@ export interface Inbox {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
+    groups: types.cloud.GroupGrant[];
+    groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.inbox.InboxVersion;
     type?: types.inbox.InboxType;
     policy: types.cloud.ContainerWithoutItemPolicy;
@@ -44,6 +47,8 @@ export interface InboxCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface InboxCreateResult {
@@ -65,6 +70,17 @@ export interface InboxUpdateModel {
     version: types.inbox.InboxVersion;
     force: boolean;
     policy?: types.cloud.ContainerWithoutItemPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+}
+
+export interface InboxRotateKeysModel {
+    id: types.inbox.InboxId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.inbox.InboxVersion;
+    force: boolean;
 }
 
 export interface InboxDeleteModel {
@@ -157,6 +173,7 @@ export interface InboxSendCustomEventModel {
 export interface IInboxApi {
     inboxCreate(model: InboxCreateModel): Promise<InboxCreateResult>;
     inboxUpdate(model: InboxUpdateModel): Promise<types.core.OK>;
+    inboxRotateKeys(model: InboxRotateKeysModel): Promise<types.core.OK>;
     inboxDelete(model: InboxDeleteModel): Promise<types.core.OK>;
     inboxDeleteMany(model: InboxDeleteManyModel): Promise<InboxDeleteManyResult>;
     inboxGet(model: InboxGetModel): Promise<InboxGetResult>;

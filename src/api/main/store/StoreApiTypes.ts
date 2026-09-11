@@ -21,6 +21,8 @@ export interface StoreCreateModel {
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface StoreUpdateModel {
@@ -34,6 +36,17 @@ export interface StoreUpdateModel {
     version: types.store.StoreVersion;
     force: boolean;
     policy?: types.cloud.ContainerPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+}
+
+export interface StoreRotateKeysModel {
+    id: types.store.StoreId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.store.StoreVersion;
+    force: boolean;
 }
 
 export interface StoreDeleteModel {
@@ -83,6 +96,9 @@ export interface Store {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
+    groups: types.cloud.GroupGrant[];
+    groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.store.StoreVersion;
     lastFileDate: types.core.Timestamp;
     files: number;
@@ -321,6 +337,7 @@ export interface StoreSendCustomEventModel {
 export interface IStoreApi {
     storeCreate(model: StoreCreateModel): Promise<StoreCreateResult>;
     storeUpdate(model: StoreUpdateModel): Promise<types.core.OK>;
+    storeRotateKeys(model: StoreRotateKeysModel): Promise<types.core.OK>;
     storeDelete(model: StoreDeleteModel): Promise<types.core.OK>;
     storeDeleteMany(model: StoreDeleteManyModel): Promise<StoreDeleteManyResult>;
     storeGet(model: StoreGetModel): Promise<StoreGetResult>;

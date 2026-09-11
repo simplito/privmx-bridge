@@ -20,6 +20,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { ManagementStreamConverter } from "../../api/plain/stream/ManagementStreamConverter";
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { DateUtils } from "../../utils/DateUtils";
+import { Utils } from "../../utils/Utils";
 import { UserIdentityWithStatus } from "../../types/cloud";
 import { TargetChannel } from "../ws/WebSocketConnectionManager";
 import { WebSocketExtendedWithJanus } from "../../CommonTypes";
@@ -43,6 +44,11 @@ export enum StreamRoomStreamChannelType {
     UNPUBLISH = "streamroom/streams/unpublish",
     UPDATE = "streamroom/streams/update",
 }
+
+/**
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `streamRoomGet` would serve — see `getStreamRoomRecipients`.
+ */
 export class StreamNotificationService {
     
     constructor(
@@ -60,10 +66,22 @@ export class StreamNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
+    private async getStreamRoomRecipients(streamRoom: db.stream.StreamRoom): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
+        const groupIds = (streamRoom.groups || []).map(g => g.groupId);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
+        return {
+            userIds: Utils.unique([...streamRoom.users, ...streamRoom.managers, ...groupsByUser.keys()]),
+            groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
+        };
+    }
+    
     sendStreamCustomEvent(streamRoom: db.stream.StreamRoom, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
         this.safe("streamCustomEvent", async () => {
             const now = DateUtils.now();
-            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, (await this.getStreamRoomRecipients(streamRoom)).userIds);
             this.webSocketSender.sendCloudEventAtChannel<streamApi.StreamRoomCustomEvent>(
                 contextUsers.map(u => u.userPubKey),
                 {
@@ -91,7 +109,7 @@ export class StreamNotificationService {
     private broadcastStreamEvent(streamRoom: db.stream.StreamRoom, channel: StreamRoomChannelType | StreamRoomStreamChannelType, type: string, data: unknown) {
         this.safe(`${type}Event`, async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, (await this.getStreamRoomRecipients(streamRoom)).userIds);
             this.webSocketSender.sendCloudEventAtChannel(
                 contextUsers.map(u => u.userPubKey),
                 {
@@ -141,7 +159,8 @@ export class StreamNotificationService {
     sendStreamRoomCreated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId) {
         this.safe("streamRoomCreated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStreamRoomRecipients(streamRoom);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, userIds);
             const notification: managementStreamApi.StreamRoomCreatedEvent = {
                 channel: "stream",
                 type: "streamRoomCreated",
@@ -161,7 +180,7 @@ export class StreamNotificationService {
                     {
                         channel: "stream",
                         type: "streamRoomCreated",
-                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom),
+                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -172,7 +191,8 @@ export class StreamNotificationService {
     sendStreamRoomUpdated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId, additionalUsers: UserIdentityWithStatus[]) {
         this.safe("streamRoomUpdated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStreamRoomRecipients(streamRoom);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, userIds);
             const notification: managementStreamApi.StreamRoomUpdatedEvent = {
                 channel: "stream",
                 type: "streamRoomUpdated",
@@ -193,7 +213,7 @@ export class StreamNotificationService {
                     {
                         channel: "stream",
                         type: "streamRoomUpdated",
-                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom),
+                        data: this.streamConverter.convertStreamRoom(user.userId, streamRoom, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -202,7 +222,10 @@ export class StreamNotificationService {
                 const userNotification: streamApi.StreamRoomUpdatedEvent = {
                     channel: "stream",
                     type: "streamRoomUpdated",
-                    data: this.streamConverter.convertStreamRoom(user.id, streamRoom),
+                    // These are the users this update removed, so they hold no grant on the streamRoom any
+                    // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
+                    // is the answer.
+                    data: this.streamConverter.convertStreamRoom(user.id, streamRoom, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {
@@ -222,7 +245,7 @@ export class StreamNotificationService {
     sendStreamRoomDeleted(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId) {
         this.safe("streamRoomDeleted", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, [...streamRoom.users, ...streamRoom.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(streamRoom.contextId, (await this.getStreamRoomRecipients(streamRoom)).userIds);
             const notification: managementStreamApi.StreamRoomDeletedEvent = {
                 channel: "stream",
                 type: "streamRoomDeleted",

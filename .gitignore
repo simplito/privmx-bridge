@@ -19,3 +19,5 @@ out
 /volumes
 /scripts/.env
 /public/panel
+.DS_Store
+**/.DS_Store

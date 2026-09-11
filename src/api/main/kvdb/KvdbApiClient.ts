@@ -23,6 +23,10 @@ export class KvdbApiClient extends BaseApiClient implements kvdbApi.IKvdbApi {
         return this.request("kvdb.kvdbUpdate", model);
     }
     
+    kvdbRotateKeys(model: kvdbApi.KvdbRotateKeysModel): Promise<types.core.OK> {
+        return this.request("kvdb.kvdbRotateKeys", model);
+    }
+    
     kvdbDelete(model: kvdbApi.KvdbDeleteModel): Promise<types.core.OK> {
         return this.request("kvdb.kvdbDelete", model);
     }

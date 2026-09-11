@@ -15,6 +15,19 @@ export type AclFunctionNameX =
     | "context/contextGetUsers"
     | "context/contextListUsers"
     | "context/contextSendCustomNotification"
+    | "context/groupGet"
+    | "context/groupList"
+    | "context/groupCreate"
+    | "context/groupUpdatePublicMeta"
+    | "context/groupUpdatePrivateMeta"
+    | "context/groupUpdatePolicy"
+    | "context/groupRotateKeys"
+    | "context/groupAddMembers"
+    | "context/groupRemoveMembers"
+    | "context/groupCutEra"
+    | "context/groupPruneArchive"
+    | "context/groupDelete"
+    | "context/groupSendCustomEvent"
     | "context/READ"
     | "context/WRITE"
     | "context/ALL"
@@ -27,6 +40,7 @@ export type AclFunctionNameX =
     | "thread/READ"
     | "thread/threadCreate"
     | "thread/threadUpdate"
+    | "thread/threadRotateKeys"
     | "thread/threadDelete"
     | "thread/threadDeleteMany"
     | "thread/threadMessageSend"
@@ -48,6 +62,7 @@ export type AclFunctionNameX =
     | "store/READ"
     | "store/storeCreate"
     | "store/storeUpdate"
+    | "store/storeRotateKeys"
     | "store/storeDelete"
     | "store/storeDeleteMany"
     | "store/storeFileCreate"
@@ -65,6 +80,7 @@ export type AclFunctionNameX =
     | "inbox/READ"
     | "inbox/inboxCreate"
     | "inbox/inboxUpdate"
+    | "inbox/inboxRotateKeys"
     | "inbox/inboxDelete"
     | "inbox/inboxDeleteMany"
     | "inbox/inboxSendCustomNotification"
@@ -78,6 +94,7 @@ export type AclFunctionNameX =
     | "stream/READ"
     | "stream/streamRoomCreate"
     | "stream/streamRoomUpdate"
+    | "stream/streamRoomRotateKeys"
     | "stream/streamRoomDelete"
     | "stream/streamRoomDeleteMany"
     | "stream/streamRoomClose"
@@ -101,6 +118,7 @@ export type AclFunctionNameX =
     | "kvdb/READ"
     | "kvdb/kvdbCreate"
     | "kvdb/kvdbUpdate"
+    | "kvdb/kvdbRotateKeys"
     | "kvdb/kvdbDelete"
     | "kvdb/kvdbDeleteMany"
     | "kvdb/kvdbSendCustomNotification"
@@ -128,10 +146,23 @@ export class CloudAclChecker {
         const contextRead = {
             "context/contextGetUsers": ["contextId"],
             "context/contextListUsers": ["contextId"],
+            "context/groupGet": ["groupId"],
+            "context/groupList": [],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {
             "context/contextSendCustomNotification": ["contextId"],
+            "context/groupCreate": [],
+            "context/groupUpdatePublicMeta": ["groupId"],
+            "context/groupUpdatePrivateMeta": ["groupId"],
+            "context/groupUpdatePolicy": ["groupId"],
+            "context/groupRotateKeys": ["groupId"],
+            "context/groupAddMembers": ["groupId"],
+            "context/groupRemoveMembers": ["groupId"],
+            "context/groupCutEra": ["groupId"],
+            "context/groupPruneArchive": ["groupId"],
+            "context/groupDelete": ["groupId"],
+            "context/groupSendCustomEvent": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
         const contextAll = {...contextRead, ...contextWrite};
@@ -152,6 +183,7 @@ export class CloudAclChecker {
         const threadWrite = {
             "thread/threadCreate": [],
             "thread/threadUpdate": ["threadId"],
+            "thread/threadRotateKeys": ["threadId"],
             "thread/threadDelete": ["threadId"],
             "thread/threadDeleteMany": [],
             "thread/threadMessageSend": ["threadId"],
@@ -182,6 +214,7 @@ export class CloudAclChecker {
         const storeWrite = {
             "store/storeCreate": [],
             "store/storeUpdate": ["storeId"],
+            "store/storeRotateKeys": ["storeId"],
             "store/storeDelete": ["storeId"],
             "store/storeDeleteMany": [],
             "store/storeFileCreate": ["storeId"],
@@ -208,6 +241,7 @@ export class CloudAclChecker {
         const inboxWrite = {
             "inbox/inboxCreate": [],
             "inbox/inboxUpdate": ["inboxId"],
+            "inbox/inboxRotateKeys": ["inboxId"],
             "inbox/inboxDelete": ["inboxId"],
             "inbox/inboxDeleteMany": [],
             "inbox/inboxSendCustomNotification": ["inboxId"],
@@ -232,6 +266,7 @@ export class CloudAclChecker {
         const streamWrite = {
             "stream/streamRoomCreate": [],
             "stream/streamRoomUpdate": ["streamRoomId"],
+            "stream/streamRoomRotateKeys": ["streamRoomId"],
             "stream/streamRoomDelete": ["streamRoomId"],
             "stream/streamRoomDeleteMany": [],
             "stream/streamRoomClose": ["streamRoomId"],
@@ -268,6 +303,7 @@ export class CloudAclChecker {
         const kvdbWrite = {
             "kvdb/kvdbCreate": [],
             "kvdb/kvdbUpdate": ["kvdbId"],
+            "kvdb/kvdbRotateKeys": ["kvdbId"],
             "kvdb/kvdbDelete": ["kvdbId"],
             "kvdb/kvdbDeleteMany": [],
             "kvdb/kvdbSendCustomNotification": ["kvdbId"],

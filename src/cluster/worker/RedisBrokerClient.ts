@@ -112,7 +112,15 @@ export class RedisBrokerClient implements IBrokerClient {
             sender: this.id,
             data: data,
         };
-        const messageBuffer: Buffer = this.packr.pack(fullPayload);
+        let messageBuffer: Buffer;
+        try {
+            messageBuffer = this.packr.pack(fullPayload);
+        }
+        catch (error) {
+            // See ZeroMQSubscriber.publish: a payload that cannot be packed must not take the worker with it.
+            this.logger.error(error, `[${this.id}] Error packing message, notification dropped`);
+            return;
+        }
         this.sendQueue.push(messageBuffer);
         void this.processSendQueue();
     }

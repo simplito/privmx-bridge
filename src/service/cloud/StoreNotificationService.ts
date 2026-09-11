@@ -21,7 +21,12 @@ import { ManagementStoreConverter } from "../../api/plain/store/ManagementStoreC
 import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
 import { DateUtils } from "../../utils/DateUtils";
 import { TargetChannel } from "../ws/WebSocketConnectionManager";
+import { Utils } from "../../utils/Utils";
 
+/**
+ * Payloads are converted once per recipient, so each carries `groupKeys` narrowed to that recipient's own
+ * groups and the `staleGroups` a `storeGet` would serve — see `getStoreRecipients`.
+ */
 export class StoreNotificationService {
     
     constructor(
@@ -38,10 +43,22 @@ export class StoreNotificationService {
         this.jobService.addJob(func, "Error " + errorMessage);
     }
     
+    /** Direct members plus the expanded members of any granted groups, each recipient's own grants, and those
+     *  groups' current epochs — all out of the single lookup the expansion already does. */
+    private async getStoreRecipients(store: db.store.Store): Promise<{userIds: types.cloud.UserId[], groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
+        const groupIds = (store.groups || []).map(g => g.groupId);
+        const {groupsByUser, groupEpochs} = await this.repositoryFactory.createGroupRepository().getGranteeView(groupIds);
+        return {
+            userIds: Utils.unique([...store.users, ...store.managers, ...groupsByUser.keys()]),
+            groupsByUser: groupsByUser,
+            groupEpochs: groupEpochs,
+        };
+    }
+    
     sendStoreCustomEvent(store: db.store.Store, keyId: types.core.KeyId, eventData: unknown, author: types.cloud.UserIdentity, customChannelName: types.core.WsChannelName, users?: types.cloud.UserId[]) {
         this.safe("storeCustomEvent", async () => {
             const now = DateUtils.now();
-            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers =  users ? await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, users) : await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             this.webSocketSender.sendCloudEventAtChannel<storeApi.StoreCustomEvent>(
                 contextUsers.map(u => u.userPubKey),
                 {
@@ -68,7 +85,8 @@ export class StoreNotificationService {
     sendStoreCreated(store: db.store.Store, solution: types.cloud.SolutionId) {
         this.safe("storeCreated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStoreRecipients(store);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, userIds);
             const notification: managementStoreApi.StoreCreatedEvent = {
                 channel: "store",
                 type: "storeCreated",
@@ -88,7 +106,7 @@ export class StoreNotificationService {
                     {
                         channel: "store",
                         type: "storeCreated",
-                        data: this.storeConverter.convertStore(user.userId, store),
+                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -99,7 +117,8 @@ export class StoreNotificationService {
     sendStoreUpdated(store: db.store.Store, solution: types.cloud.SolutionId, additionalUsers: types.cloud.UserIdentityWithStatus[]) {
         this.safe("storeUpdated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const {userIds, groupsByUser, groupEpochs} = await this.getStoreRecipients(store);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, userIds);
             const notification: managementStoreApi.StoreUpdatedEvent = {
                 channel: "store",
                 type: "storeUpdated",
@@ -120,7 +139,7 @@ export class StoreNotificationService {
                     {
                         channel: "store",
                         type: "storeUpdated",
-                        data: this.storeConverter.convertStore(user.userId, store),
+                        data: this.storeConverter.convertStore(user.userId, store, groupsByUser.get(user.userId) ?? [], groupEpochs),
                         timestamp: now,
                     },
                 );
@@ -129,7 +148,10 @@ export class StoreNotificationService {
                 const userNotification: storeApi.StoreUpdatedEvent = {
                     channel: "store",
                     type: "storeUpdated",
-                    data: this.storeConverter.convertStore(user.id, store),
+                    // These are the users this update removed, so they hold no grant on the store any
+                    // more and `groupsByUser` (built from its current grants) has nothing for them. `[]`
+                    // is the answer.
+                    data: this.storeConverter.convertStore(user.id, store, groupsByUser.get(user.id) ?? [], groupEpochs),
                     timestamp: now,
                 };
                 if (user.status === "inactive") {
@@ -149,7 +171,7 @@ export class StoreNotificationService {
     sendStoreDeleted(store: db.store.Store, solution: types.cloud.SolutionId) {
         this.safe("storeDeleted", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             const notification: managementStoreApi.StoreDeletedEvent = {
                 channel: "store",
                 type: "storeDeleted",
@@ -183,7 +205,7 @@ export class StoreNotificationService {
     sendStoreStatsChanged(store: db.store.Store, solution: types.cloud.SolutionId) {
         this.safe("storeStatsChanged", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             const notification: managementStoreApi.StoreStatsChangedEvent = {
                 channel: "store",
                 type: "storeStatsChanged",
@@ -223,7 +245,7 @@ export class StoreNotificationService {
     sendStoreFileCreated(store: db.store.Store, file: db.store.StoreFile, solution: types.cloud.SolutionId) {
         this.safe("storeFileCreated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             const notification: managementStoreApi.StoreFileCreatedEvent = {
                 channel: "store",
                 type: "storeFileCreated",
@@ -253,7 +275,7 @@ export class StoreNotificationService {
     sendStoreFileUpdated(store: db.store.Store, file: db.store.StoreFile, solution: types.cloud.SolutionId, operations: types.store.StoreFileRandomWriteOperation[]|null) {
         this.safe("storeFileUpdated", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             const notification: managementStoreApi.StoreFileUpdatedEvent = {
                 channel: "store",
                 type: "storeFileUpdated",
@@ -294,7 +316,7 @@ export class StoreNotificationService {
     sendStoreFileDeleted(store: db.store.Store, file: db.store.StoreFile, solution: types.cloud.SolutionId) {
         this.safe("storeFileDeleted", async () => {
             const now = DateUtils.now();
-            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, [...store.users, ...store.managers]);
+            const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(store.contextId, (await this.getStoreRecipients(store)).userIds);
             const notification: managementStoreApi.StoreFileDeletedEvent = {
                 channel: "store",
                 type: "storeFileDeleted",

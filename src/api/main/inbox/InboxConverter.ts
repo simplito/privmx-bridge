@@ -12,10 +12,12 @@ limitations under the License.
 import * as types from "../../../types";
 import * as inboxApi from "./InboxApiTypes";
 import * as db from "../../../db/Model";
+import { GroupEpochs, ownGroupKeysOf, staleGroupsOf } from "../GroupKeys";
 
 export class InboxConverter {
     
-    convertInbox(user: types.cloud.UserId, inbox: db.inbox.Inbox) {
+    /** `ownGroupIds` / `groupEpochs`: see `ownGroupKeysOf` and `staleGroupsOf` in GroupKeys.ts. */
+    convertInbox(user: types.cloud.UserId, inbox: db.inbox.Inbox, ownGroupIds: types.group.GroupId[]|undefined, groupEpochs: GroupEpochs) {
         const res: inboxApi.Inbox = {
             id: inbox.id,
             contextId: inbox.contextId,
@@ -28,6 +30,9 @@ export class InboxConverter {
             keyId: inbox.keyId,
             data: inbox.history.map(x => ({keyId: x.keyId, data: x.data})),
             keys: (inbox.keys.find(x => x.user === user)?.keys) || [],
+            groups: inbox.groups || [],
+            groupKeys: ownGroupKeysOf(inbox.groupKeys || [], ownGroupIds),
+            staleGroups: staleGroupsOf(inbox, groupEpochs),
             version: <types.inbox.InboxVersion>inbox.history.length,
             type: inbox.type,
             policy: inbox.policy || {},

@@ -40,5 +40,131 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("contextListUsers", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
         }));
+        this.registerMethod("groupCreate", this.builder.createObject({
+            contextId: this.tv.cloudContextId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            type: this.tv.optResourceType,
+            groupPubKey: this.tv.groupPubKey,
+            users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            // Three envelopes, one per plane: `data` carries the roster tag, each metadata plane its own DIO
+            // and its own domain-separated tag.
+            data: this.tv.groupData,
+            publicMeta: this.tv.groupData,
+            privateMeta: this.tv.groupData,
+            keyId: this.tv.keyId,
+            // One: the group is a grantee of itself and has exactly one grant key per epoch.
+            groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
+            policy: this.builder.optional(this.tv.containerPolicy),
+            tree: this.tv.groupTreeState,
+        }));
+        // One plane per method, and `createObject` is strict — so a request here structurally cannot carry the
+        // other plane's envelope or the policy. That is what makes the per-plane ACL entry bound the effect
+        // rather than only the intent. Membership moves the tree, so it goes through
+        // groupAddMembers/groupRemoveMembers.
+        this.registerMethod("groupUpdatePublicMeta", this.builder.createObject({
+            id: this.tv.groupId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            version: this.builder.int,
+        }));
+        this.registerMethod("groupUpdatePrivateMeta", this.builder.createObject({
+            id: this.tv.groupId,
+            resourceId: this.builder.optional(this.tv.uuidv4),
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            version: this.builder.int,
+        }));
+        // No version and no keyId: the policy is outside the signed envelope, so there is nothing to CAS and no
+        // key to write it under. A caller still sending either is on an API that no longer exists and has to be
+        // told. `policy` is required — on a dedicated method an absent one asks for nothing.
+        this.registerMethod("groupUpdatePolicy", this.builder.createObject({
+            id: this.tv.groupId,
+            policy: this.tv.containerPolicy,
+        }));
+        this.registerMethod("groupGenerateNewKey", this.builder.createObject({
+            id: this.tv.groupId,
+            groupPubKey: this.tv.groupPubKey,
+            data: this.tv.groupData,
+            keyId: this.tv.keyId,
+            // A rotation touches no node keys: one new grant edge, and the rungs that keep the old epochs reachable.
+            grantEdge: this.tv.groupTreeEdge,
+            rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
+            groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
+            confirmationTag: this.builder.optional(this.tv.base64),
+        }));
+        this.registerMethod("groupDelete", this.builder.createObject({
+            groupId: this.tv.groupId,
+        }));
+        this.registerMethod("groupGet", this.builder.createObject({
+            groupId: this.tv.groupId,
+            type: this.tv.optResourceType,
+            // Defaults to "path" — the caller's own climb. "full" is `O(n)` and only a client validating the whole
+            // structure for itself needs it.
+            scope: this.builder.optional(this.builder.createEnum(["path", "full"])),
+            // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
+            forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
+            // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
+            forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
+            // Roster history from this version on — the audit trail. Absent serves the head alone, which is all
+            // a read needs. There is no metadata trail to ask for: the current entry is always served.
+            fromRosterVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+        }));
+        this.registerMethod("groupList", this.builder.addFields(this.tv.listModel, {
+            contextId: this.tv.cloudContextId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+        }));
+        this.registerMethod("groupAddMembers", this.builder.createObject({
+            id: this.tv.groupId,
+            // At least one, or the call is a no-op that still appends a history entry and bumps the version.
+            members: this.builder.createListWithRangeLength(this.builder.createObject({
+                userId: this.tv.cloudUserId,
+                role: this.builder.createEnum(["user", "manager"]),
+            }), 1, TypesValidator.MAX_GROUP_BATCH),
+            keyId: this.tv.keyId,
+            data: this.tv.groupData,
+            transition: this.tv.groupTreeAdditionTransition,
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
+        }));
+        this.registerMethod("groupRemoveMembers", this.builder.createObject({
+            id: this.tv.groupId,
+            userIds: this.builder.createListWithRangeLength(this.tv.cloudUserId, 1, TypesValidator.MAX_GROUP_BATCH),
+            groupPubKey: this.tv.groupPubKey,
+            keyId: this.tv.keyId,
+            data: this.tv.groupData,
+            transition: this.tv.groupTreeTransition,
+            // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
+            rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
+            // One: the group is a grantee of itself, and it has exactly one grant key per epoch.
+            groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
+            confirmationTag: this.builder.optional(this.tv.base64),
+        }));
+        this.registerMethod("groupCutEra", this.builder.createObject({
+            id: this.tv.groupId,
+            newFloor: this.builder.min(this.builder.int, 1),
+            expectedKeyVersion: this.builder.int,
+        }));
+        this.registerMethod("groupPruneArchive", this.builder.createObject({
+            id: this.tv.groupId,
+            belowEpoch: this.builder.min(this.builder.int, 1),
+            expectedKeyVersion: this.builder.int,
+        }));
+        this.registerMethod("groupGetKeyArchive", this.builder.createObject({
+            id: this.tv.groupId,
+            fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+        }));
+        this.registerMethod("groupSendCustomEvent", this.builder.createObject({
+            groupId: this.tv.groupId,
+            channel: this.tv.wsChannelName,
+            data: this.tv.unknown16Kb,
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS)),
+        }));
     }
 }

@@ -28,6 +28,9 @@ export interface StreamRoom {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
     keys: types.core.KeyEntry[];
+    groups: types.cloud.GroupGrant[];
+    groupKeys: types.cloud.GroupKeysEntry[];
+    staleGroups: types.group.GroupId[];
     version: types.stream.StreamRoomVersion;
     type?: types.stream.StreamRoomType;
     policy: types.cloud.ContainerWithoutItemPolicy;
@@ -46,6 +49,8 @@ export interface StreamRoomCreateModel {
     keys: types.cloud.KeyEntrySet[];
     policy?: types.cloud.ContainerWithoutItemPolicy;
     emptyRoomTtl?: types.core.Timespan;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
 }
 
 export interface StreamRoomCreateResult {
@@ -63,6 +68,17 @@ export interface StreamRoomUpdateModel {
     version: types.stream.StreamRoomVersion;
     force: boolean;
     policy?: types.cloud.ContainerWithoutItemPolicy;
+    groups?: types.cloud.GroupGrant[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+}
+
+export interface StreamRoomRotateKeysModel {
+    id: types.stream.StreamRoomId;
+    keyId: types.core.KeyId;
+    keys: types.cloud.KeyEntrySet[];
+    groupKeys?: types.cloud.GroupKeyEntrySet[];
+    version: types.stream.StreamRoomVersion;
+    force: boolean;
 }
 
 export interface StreamRoomDeleteModel {
@@ -323,6 +339,7 @@ export interface StreamRoomCloseModel {
 export interface IStreamApi {
     streamRoomCreate(model: StreamRoomCreateModel): Promise<StreamRoomCreateResult>;
     streamRoomUpdate(model: StreamRoomUpdateModel): Promise<types.core.OK>;
+    streamRoomRotateKeys(model: StreamRoomRotateKeysModel): Promise<types.core.OK>;
     streamRoomDelete(model: StreamRoomDeleteModel): Promise<types.core.OK>;
     streamRoomDeleteMany(model: StreamRoomDeleteManyModel): Promise<SteramRoomDeleteManyResult>;
     streamRoomGet(model: StreamRoomGetModel): Promise<StreamRoomGetResult>;

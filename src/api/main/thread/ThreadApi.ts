@@ -34,7 +34,7 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadCreate(model: threadApi.ThreadCreateModel): Promise<threadApi.ThreadCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.createThread(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {});
+        const thread = await this.threadService.createThread(cloudUser, model.resourceId || null, model.contextId, model.type, model.users, model.managers, model.data, model.keyId, model.keys, model.policy || {}, model.groups || [], model.groupKeys || []);
         this.requestLogger.setContextId(thread.contextId);
         return {threadId: thread.id};
     }
@@ -42,7 +42,15 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadUpdate(model: threadApi.ThreadUpdateModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null);
+        const thread = await this.threadService.updateThread(cloudUser, model.id, model.users, model.managers, model.data, model.keyId, model.keys, model.version, model.force, model.policy, model.resourceId || null, model.groups || [], model.groupKeys || []);
+        this.requestLogger.setContextId(thread.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async threadRotateKeys(model: threadApi.ThreadRotateKeysModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const thread = await this.threadService.rotateThreadKeys(cloudUser, model.id, model.keyId, model.keys, model.groupKeys || [], model.version, model.force);
         this.requestLogger.setContextId(thread.contextId);
         return "OK";
     }
@@ -68,25 +76,25 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadGet(model: threadApi.ThreadGetModel): Promise<threadApi.ThreadGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const thread = await this.threadService.getThread(cloudUser, model.threadId, model.type);
+        const {thread, ownGroupIds, groupEpochs} = await this.threadService.getThread(cloudUser, model.threadId, model.type);
         this.requestLogger.setContextId(thread.contextId);
-        return {thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread)};
+        return {thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread, ownGroupIds, groupEpochs)};
     }
     
     @ApiMethod({})
     async threadList(model: threadApi.ThreadListModel): Promise<threadApi.ThreadListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, threads} = await this.threadService.getMyThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
+        const {user, threads, ownGroupIds, groupEpochs} = await this.threadService.getMyThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate", model.scope || "MEMBER");
         this.requestLogger.setContextId(model.contextId);
-        return {threads: threads.list.map(x => this.threadConverter.convertThread(user.userId, x)), count: threads.count};
+        return {threads: threads.list.map(x => this.threadConverter.convertThread(user.userId, x, ownGroupIds, groupEpochs)), count: threads.count};
     }
     
     @ApiMethod({})
     async threadListAll(model: threadApi.ThreadListAllModel): Promise<threadApi.ThreadListAllResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {user, threads} = await this.threadService.getAllThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
+        const {user, threads, ownGroupIds, groupEpochs} = await this.threadService.getAllThreads(cloudUser, model.contextId, model.type, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {threads: threads.list.map(x => this.threadConverter.convertThread(user.userId, x)), count: threads.count};
+        return {threads: threads.list.map(x => this.threadConverter.convertThread(user.userId, x, ownGroupIds, groupEpochs)), count: threads.count};
     }
     
     @ApiMethod({})
@@ -144,10 +152,10 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadMessagesGet(model: threadApi.ThreadMessagesGetModel): Promise<threadApi.ThreadMessagesGetResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {thread, messages} = await this.threadService.getThreadMessages(cloudUser, model.threadId, model, model.sortBy);
+        const {thread, messages, ownGroupIds, groupEpochs} = await this.threadService.getThreadMessages(cloudUser, model.threadId, model, model.sortBy);
         this.requestLogger.setContextId(thread.contextId);
         return {
-            thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread),
+            thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread, ownGroupIds, groupEpochs),
             messages: messages.list.map(x => this.threadConverter.convertMessage(thread, x)),
             count: messages.count,
         };
@@ -156,10 +164,10 @@ export class ThreadApi extends BaseApi implements threadApi.IThreadApi {
     @ApiMethod({})
     async threadMessagesGetMy(model: threadApi.ThreadMessagesGetMyModel): Promise<threadApi.ThreadMessagesGetMyResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {thread, messages} = await this.threadService.getThreadMyMessages(cloudUser, model.threadId, model);
+        const {thread, messages, ownGroupIds, groupEpochs} = await this.threadService.getThreadMyMessages(cloudUser, model.threadId, model);
         this.requestLogger.setContextId(thread.contextId);
         return {
-            thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread),
+            thread: this.threadConverter.convertThread(cloudUser.getUser(thread.contextId), thread, ownGroupIds, groupEpochs),
             messages: messages.list.map(x => this.threadConverter.convertMessage(thread, x)),
             count: messages.count,
         };

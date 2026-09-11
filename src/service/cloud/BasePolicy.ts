@@ -56,6 +56,10 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
         return this.isContainerPolicMet(user, context, container, p => p?.update);
     }
     
+    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, container: T) {
+        return this.isContainerPolicMet(user, context, container, p => p?.rotateKeys);
+    }
+    
     canUpdateContainerPolicy(user: db.context.ContextUser, context: db.context.Context, container: T) {
         return this.isContainerPolicMet(user, context, container, p => p?.updatePolicy);
     }
@@ -118,6 +122,25 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
     
     ownerCanBeRemovedFromManagers(context: db.context.Context, container: T) {
         return this.getPolicyBooleanValue2x(context, container, p => p?.ownerCanBeRemovedFromManagers);
+    }
+    
+    /**
+     * Whether item writes are refused while a grantee group's epoch is ahead of the container's key.
+     *
+     * **On by default** — `DefaultContextPolicy` sets `forwardSecrecy: "yes"` for thread/store/inbox/stream/kvdb,
+     * so a member removed from a grantee group stops reading new writes once the container is re-keyed, and
+     * writes are refused in the meantime. Clients must handle `CONTAINER_GROUP_EPOCH_OUTDATED` by re-keying —
+     * which the `staleGroups` field served on every container read is there to let them do before they are
+     * refused. A context or container can still opt out with `forwardSecrecy: "no"`.
+     */
+    isForwardSecrecyEnforced(context: db.context.Context, container: T): boolean {
+        const value = this.policyService.getPolicy2x(
+            context,
+            container.policy || {},
+            p => this.extractPolicyFromContext(p),
+            p => p?.forwardSecrecy,
+        );
+        return value === "yes";
     }
     
     creatorIsNotManagerAndItIsForbidden(context: db.context.Context, creator: db.context.ContextUser, managers: types.cloud.UserId[]) {
