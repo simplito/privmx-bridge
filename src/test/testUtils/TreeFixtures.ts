@@ -13,6 +13,12 @@ import * as types from "../../types";
 import { TreeMath } from "../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../service/cloud/keytree/LadderMath";
 import { CommitOp, TreeCommit, TreeTransitionValidator } from "../../service/cloud/keytree/TreeTransitionValidator";
+import { CommitStatement } from "../../service/cloud/keytree/CommitStatement";
+import { TreeHash } from "../../service/cloud/keytree/TreeHash";
+import { ECUtils } from "../../utils/crypto/ECUtils";
+import { Crypto } from "../../utils/crypto/Crypto";
+import { DateUtils } from "../../utils/DateUtils";
+import type * as elliptic from "elliptic";
 
 /**
  * Hidden key tree fixtures for the bridge's tests.
@@ -32,9 +38,19 @@ export function userId(name: string): types.cloud.UserId {
 
 let mintCounter = 0;
 
+let realNodeKeys = false;
+
 /** A placeholder public key, unique per call — what `PrivateKey::generateRandom()` gives the endpoint. */
 function freshKey(nodeIndex: number, generation: number): types.core.EccPubKey {
+    if (realNodeKeys) {
+        return ECUtils.generateKeyPair().pub58;
+    }
     return `pk:${nodeIndex}g${generation}#${++mintCounter}` as types.core.EccPubKey;
+}
+
+/** Mints real ECC public keys from here on, for tests whose requests pass the API validator. */
+export function useRealNodeKeys() {
+    realNodeKeys = true;
 }
 
 /** A placeholder wrap, unique per call so no two edges ever carry the same "ciphertext". */
@@ -61,6 +77,8 @@ export interface Plan {
     /** The whole stored state after the commit, edges included, by the storage rule of `applyCommit`. */
     after: types.cloud.GroupTreeState;
     keyVersion: number;
+    /** The seq of the statement this commit is signed as; its re-keyed records carry it in `setBy`. */
+    seq: number;
 }
 
 type Resolved = {kind: "node", nodeIndex: number, generation: number}|{kind: "user", userId: types.cloud.UserId};
@@ -105,7 +123,7 @@ function edgesOwed(numLeaves: number, seating: types.cloud.UserId[], records: Ma
  *
  * Deliberately does no validation: a test that wants a bad submission edits a good one.
  */
-export function planCommit(before: types.cloud.GroupTreeState, keyVersion: number, op: PlanOp): Plan {
+export function planCommit(before: types.cloud.GroupTreeState, keyVersion: number, op: PlanOp, seq = nextSeq(before, op)): Plan {
     let numLeaves = before.numLeaves;
     const seating = [...before.leafAssignment];
     const blank = new Set<number>();
@@ -153,7 +171,7 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
             generation,
             publicKey: freshKey(nodeIndex, generation),
         };
-        records.set(nodeIndex, {nodeIndex, generation, publicKey: refreshed.publicKey});
+        records.set(nodeIndex, {nodeIndex, generation, publicKey: refreshed.publicKey, setBy: seq});
         return refreshed;
     });
     
@@ -178,7 +196,93 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
             edges: [...kept, ...edges],
         },
         keyVersion: newKeyVersion,
+        seq,
     };
+}
+
+/**
+ * The next statement seq, as far as a tree can tell: one past the highest `setBy` it holds. A rotation moves the
+ * seq without touching a record, so a test that rotates passes the seq explicitly.
+ */
+function nextSeq(tree: types.cloud.GroupTreeState, op: PlanOp): number {
+    return op.kind === "create" ? 1 : Math.max(0, ...tree.nodes.map(node => node.setBy ?? 0)) + 1;
+}
+
+// ── commit statements ───────────────────────────────────────────────────────────────────────────────────────
+
+const userKeyPairs = new Map<string, elliptic.ec.KeyPair>();
+
+/** A member's long-term key pair — generated once per name, or the one registered for it (`registerUserKey`). */
+export function userKeys(name: string): {keyPair: elliptic.ec.KeyPair, pub58: types.cloud.UserPubKey} {
+    let keyPair = userKeyPairs.get(name);
+    if (!keyPair) {
+        keyPair = ECUtils.generateKeyPair().keyPair;
+        userKeyPairs.set(name, keyPair);
+    }
+    return {keyPair, pub58: ECUtils.publicToBase58DER(keyPair) as unknown as types.cloud.UserPubKey};
+}
+
+/** Makes `name` sign with a known key, e.g. the e2e test user's. */
+export function registerUserKey(name: string, wif: types.core.EccWif) {
+    userKeyPairs.set(name, ECUtils.fromWIF(wif)!);
+}
+
+/** Signs a statement the way the endpoint does: compact ECDSA over SHA-256 of the signed bytes. */
+export function signStatement(unsigned: Omit<types.cloud.GroupTreeCommitStatement, "signature">, signer: string = unsigned.committer): types.cloud.GroupTreeCommitStatement {
+    const signature = ECUtils.signToCompactSignature(userKeys(signer).keyPair, Crypto.sha256(CommitStatement.signedBytes(unsigned)));
+    return {...unsigned, signature: signature.toString("base64") as types.core.EccSignature};
+}
+
+/** What a statement names besides the tree: the group, the grant key and the roster after the commit. */
+export interface StatementContext {
+    groupId: string;
+    groupPubKey: types.cloud.GroupPubKey;
+    rosterVersion: number;
+    users: string[];
+    managers: string[];
+    /** For an addition: which of the newcomers join as managers. */
+    addedManagers?: string[];
+    date?: number;
+}
+
+/** The signed statement an honest committer sends with `plan`. */
+export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: string}, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
+    const sorted = (values: string[]) => TreeHash.sortedUnique(values.map(userId));
+    // A creation binds its roster through `rosterHash` alone.
+    const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : [];
+    const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : [];
+    return signStatement({
+        seq: plan.seq,
+        op: op.kind,
+        groupId: ctx.groupId,
+        treeVersion: TreeMath.TREE_VERSION,
+        date: ctx.date ?? DateUtils.now(),
+        keyVersion: plan.keyVersion,
+        groupPubKey: ctx.groupPubKey,
+        rosterVersion: ctx.rosterVersion,
+        rosterHash: TreeHash.rosterHash(ctx.users, ctx.managers).toString("hex"),
+        treeHash: TreeHash.treeHash(TreeHash.of(plan.after)).toString("hex"),
+        committer: userId(op.committer),
+        committerPubKey: userKeys(op.committer).pub58,
+        committerSeat: plan.after.leafAssignment.indexOf(userId(op.committer)),
+        path: plan.refreshedNodes.map(node => ({nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey})),
+        addedUsers: sorted(addedUsers),
+        addedManagers: sorted(addedManagers),
+        removed: sorted(op.kind === "remove" ? op.removed : []),
+    });
+}
+
+/** The creator's statement for a freshly built tree (`buildTree`): seq 1, epoch 1, the tree's records as the path.
+ *  `ctx.groupId` is the resourceId the creator chose. */
+export function creationStatement(tree: types.cloud.GroupTreeState, creator: string, ctx: Omit<StatementContext, "rosterVersion">) {
+    const path = tree.nodes.map(node => ({nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey!}));
+    return statementFor({refreshedNodes: path, edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion: 1, seq: 1},
+        {kind: "create", committer: creator}, {...ctx, rosterVersion: 1});
+}
+
+/** A rotation's statement: the tree as it stands, an empty path, the next seq and epoch. */
+export function rotationStatement(tree: types.cloud.GroupTreeState, seq: number, newKeyVersion: number, committer: string, ctx: StatementContext) {
+    return statementFor({refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion: newKeyVersion, seq}, {kind: "rotate", committer}, ctx);
 }
 
 /** The bridge's description of `op` — the caller and the subjects, nothing the client computed. */
@@ -221,75 +325,65 @@ export function cloneTree(tree: types.cloud.GroupTreeState): types.cloud.GroupTr
     return JSON.parse(JSON.stringify(tree)) as types.cloud.GroupTreeState;
 }
 
-/** The addition delta an honest adder submits. */
-export function additionTransition(
-    tree: types.cloud.GroupTreeState,
-    keyVersion: number,
-    committer: string,
-    members: string[],
-    positions: number[],
-): types.cloud.GroupTreeAdditionTransition {
-    const plan = planCommit(tree, keyVersion, {kind: "add", committer, members, positions});
+/** The wire transitions a plan becomes. */
+export function additionOf(plan: Plan, keyVersion: number, positions: number[]): types.cloud.GroupTreeAdditionTransition {
     return {baseKeyVersion: keyVersion, positions, seatedNodes: plan.refreshedNodes, edges: plan.edges};
 }
 
-/** The removal delta an honest remover submits. */
-export function removalTransition(
-    tree: types.cloud.GroupTreeState,
-    keyVersion: number,
-    committer: string,
-    removed: string[],
-): types.cloud.GroupTreeTransition {
-    const plan = planCommit(tree, keyVersion, {kind: "remove", committer, removed});
+export function removalOf(plan: Plan, keyVersion: number): types.cloud.GroupTreeTransition {
     return {baseKeyVersion: keyVersion, blankedPositions: plan.blankedPositions, refreshedNodes: plan.refreshedNodes, edges: plan.edges};
 }
 
-/** The self-update an honest member submits. */
-export function selfUpdateTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string): types.cloud.GroupTreeSelfUpdateTransition {
-    const plan = planCommit(tree, keyVersion, {kind: "selfUpdate", committer});
+export function selfUpdateOf(plan: Plan, keyVersion: number): types.cloud.GroupTreeSelfUpdateTransition {
     return {baseKeyVersion: keyVersion, refreshedNodes: plan.refreshedNodes, edges: plan.edges};
 }
 
-/** Real ECC keys in an addition delta, for the paths where the API validator insists on them. */
-export function withAdditionTransitionNodeKeys(
-    transition: types.cloud.GroupTreeAdditionTransition,
-    keyFor: (nodeIndex: number, generation: number) => types.core.EccPubKey,
-): types.cloud.GroupTreeAdditionTransition {
-    return {
-        ...transition,
-        seatedNodes: transition.seatedNodes.map(node => ({...node, publicKey: keyFor(node.nodeIndex, node.generation)})),
-    };
+/** The addition delta an honest adder submits. */
+export function additionTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, members: string[], positions: number[]) {
+    return additionOf(planCommit(tree, keyVersion, {kind: "add", committer, members, positions}), keyVersion, positions);
+}
+
+/** The removal delta an honest remover submits. */
+export function removalTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, removed: string[]) {
+    return removalOf(planCommit(tree, keyVersion, {kind: "remove", committer, removed}), keyVersion);
+}
+
+/** The self-update an honest member submits. */
+export function selfUpdateTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string) {
+    return selfUpdateOf(planCommit(tree, keyVersion, {kind: "selfUpdate", committer}), keyVersion);
+}
+
+/** What `groupGet` serves, as far as planning a commit against it goes. */
+export interface ServedGroup {
+    id: string;
+    numLeaves: number;
+    leafAssignment: types.cloud.UserId[];
+    treeNodes: types.cloud.GroupTreeNode[];
+    treeEdges: types.cloud.GroupTreeEdge[];
+    keyVersion: number;
+    groupPubKey: types.cloud.GroupPubKey;
+    rosterVersion: number;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    treeCommit?: types.cloud.GroupTreeCommitStatement;
 }
 
 /**
- * Swaps placeholder node keys for whatever `keyFor` returns — the API validator insists on real ECC keys, which
- * unit tests calling the service directly do not need. Blank nodes stay blank.
+ * Plans `op` against a served group (scope `"plan"` or `"full"`) and signs its statement — what a client does
+ * end to end. `groupPubKey` is the new grant key of a removal; added members join as users.
  */
-export function withNodeKeys(
-    tree: types.cloud.GroupTreeState,
-    keyFor: (nodeIndex: number, generation: number) => types.core.EccPubKey,
-): types.cloud.GroupTreeState {
-    const result = cloneTree(tree);
-    for (const node of result.nodes) {
-        if (node.publicKey) {
-            node.publicKey = keyFor(node.nodeIndex, node.generation);
-        }
-    }
-    return result;
-}
-
-/** Swaps the placeholder keys of a transition's refreshed nodes, as `withNodeKeys` does for a whole tree. */
-export function withTransitionNodeKeys<T extends {refreshedNodes: types.cloud.GroupTreeRefreshedNode[]}>(
-    transition: T,
-    keyFor: (nodeIndex: number, generation: number) => types.core.EccPubKey,
-): T {
-    return {
-        ...transition,
-        refreshedNodes: transition.refreshedNodes.map(node => ({
-            ...node,
-            publicKey: keyFor(node.nodeIndex, node.generation),
-        })),
-    };
+export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: types.cloud.GroupPubKey) {
+    const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+    const plan = planCommit(tree, served.keyVersion, op, (served.treeCommit?.seq ?? 0) + 1);
+    const leaving = new Set<string>(op.kind === "remove" ? op.removed : []);
+    const commit = statementFor(plan, op, {
+        groupId: served.id,
+        groupPubKey: groupPubKey ?? served.groupPubKey,
+        rosterVersion: served.rosterVersion + (op.kind === "selfUpdate" ? 0 : 1),
+        users: [...served.users.filter(u => !leaving.has(u)), ...(op.kind === "add" ? op.members : [])],
+        managers: served.managers.filter(u => !leaving.has(u)),
+    });
+    return {plan, commit};
 }
 
 /**

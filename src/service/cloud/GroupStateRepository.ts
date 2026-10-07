@@ -37,7 +37,10 @@ export class GroupStateRepository {
     static readonly PUBLIC_META_ENTRY_COLLECTION_NAME = "groupPublicMetaEntry";
     static readonly PRIVATE_META_ENTRY_COLLECTION_NAME = "groupPrivateMetaEntry";
     static readonly ARCHIVE_RUNG_COLLECTION_NAME = "groupArchiveRung";
+    static readonly TREE_COMMIT_COLLECTION_NAME = "groupTreeCommit";
     static readonly COLLECTION_ID_PROP = "id";
+    /** At most this many statements per `getTreeCommits` page. */
+    static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
     
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
@@ -46,6 +49,7 @@ export class GroupStateRepository {
         private publicMetaEntries: MongoObjectRepository<db.group.GroupPublicMetaEntryId, db.group.GroupPublicMetaEntry>,
         private privateMetaEntries: MongoObjectRepository<db.group.GroupPrivateMetaEntryId, db.group.GroupPrivateMetaEntry>,
         private rungs: MongoObjectRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>,
+        private commits: MongoObjectRepository<db.group.GroupTreeCommitId, db.group.GroupTreeCommit>,
     ) {
     }
     
@@ -60,6 +64,10 @@ export class GroupStateRepository {
         const parent = edge.isGrantEdge ? "grant" : `${edge.parentIndex ?? -1}`;
         const child = edge.childKind === "user" ? `user:${edge.childUserId ?? ""}` : `node:${edge.childIndex ?? -1}`;
         return `${groupId}|${parent}>${child}` as db.group.GroupTreeEdgeId;
+    }
+    
+    static treeCommitId(groupId: types.group.GroupId, seq: number) {
+        return `${groupId}|${seq}` as db.group.GroupTreeCommitId;
     }
     
     static historyEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
@@ -234,18 +242,13 @@ export class GroupStateRepository {
         );
     }
     
-    /** Writes a group's whole tree. Only creating a group does this — every later change is a commit
-     *  (`applyCommit`). A fresh tree is the creator's keyed path and the edges it owes, nothing blank. */
-    async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState): Promise<void> {
+    /** Writes a group's whole tree and its first statement. Only creating a group does this — every later change
+     *  is a commit (`applyCommit`). A fresh tree is the creator's keyed path and the edges it owes, nothing blank. */
+    async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement): Promise<void> {
         const nodeOperations: mongodb.AnyBulkWriteOperation[] = tree.nodes.map(node => ({
             replaceOne: {
                 filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
-                replacement: {
-                    groupId: groupId,
-                    nodeIndex: node.nodeIndex,
-                    generation: node.generation,
-                    publicKey: node.publicKey,
-                },
+                replacement: this.toNodeDoc(groupId, node, statement.seq),
                 upsert: true,
             },
         }));
@@ -261,6 +264,7 @@ export class GroupStateRepository {
         await Promise.all([
             GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
             GroupStateRepository.bulkWrite(this.edges, edgeOperations),
+            this.insertTreeCommit(groupId, statement),
         ]);
     }
     
@@ -296,8 +300,7 @@ export class GroupStateRepository {
     
     /**
      * Applies an accepted commit (`TreeTransitionValidator.validateCommit`) to a tree whose geometry before it was
-     * `before`.
-     *
+     * `before`, together with the statement that vouches for it: every re-keyed record names it in `setBy`.
      * Every edge out of a blanked, re-keyed or un-keyed node goes, and so does the old grant edge; then the new
      * edges go in. That is enough to keep the stored edge set equal to what the state owes: an edge's parent is
      * its child's lowest filled keyed ancestor, and any change to what a filled node must wrap to — a seat taken
@@ -307,7 +310,8 @@ export class GroupStateRepository {
      * Deletes run before inserts (one ordered bulk write), because a re-keyed node's new edges land on the ids of
      * the ones they replace.
      */
-    async applyCommit(groupId: types.group.GroupId, before: {numLeaves: number, leafAssignment: types.cloud.UserId[]}, commit: TreeCommit): Promise<void> {
+    async applyCommit(groupId: types.group.GroupId, before: {numLeaves: number, leafAssignment: types.cloud.UserId[]}, commit: TreeCommit,
+        statement: types.cloud.GroupTreeCommitStatement): Promise<void> {
         const parents = [...new Set([...commit.blanked, ...commit.refreshed.map(node => node.nodeIndex), ...commit.unkeyed])];
         const edgeOperations: mongodb.AnyBulkWriteOperation[] = [
             {deleteMany: {filter: {groupId: groupId, parentIndex: {$in: parents}}}},
@@ -324,16 +328,16 @@ export class GroupStateRepository {
             ...commit.refreshed.map(node => ({
                 replaceOne: {
                     filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
-                    replacement: {groupId: groupId, nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey},
+                    replacement: this.toNodeDoc(groupId, node, statement.seq),
                     upsert: true,
                 },
             })),
             // Blank keeps the record and its generation: whoever refills the node continues from there, so an edge
-            // written under the old key can never name the new one's generation.
+            // written under the old key can never name the new one's generation. No key, so nothing to vouch for.
             ...commit.blanked.map(nodeIndex => ({
                 updateOne: {
                     filter: {_id: GroupStateRepository.nodeId(groupId, nodeIndex)},
-                    update: {$unset: {publicKey: ""}},
+                    update: {$unset: {publicKey: "", setBy: ""}},
                 },
             })),
             // Un-keyed for good: the root only ever moves up, so the record can never be needed again.
@@ -344,7 +348,48 @@ export class GroupStateRepository {
         await Promise.all([
             GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
             GroupStateRepository.bulkWrite(this.edges, edgeOperations),
+            this.insertTreeCommit(groupId, statement),
         ]);
+    }
+    
+    /**
+     * Stores a commit statement exactly as signed. An insert, not an upsert: `seq` is part of the commit's CAS, so
+     * a second statement at the same seq can only be a bug, and should fail loudly rather than overwrite.
+     */
+    async insertTreeCommit(groupId: types.group.GroupId, statement: types.cloud.GroupTreeCommitStatement): Promise<void> {
+        await this.commits.insert({
+            id: GroupStateRepository.treeCommitId(groupId, statement.seq),
+            groupId: groupId,
+            seq: statement.seq,
+            statement: statement,
+        });
+    }
+    
+    /** The statements at the given seqs, ascending — a lookup by derived id. Missing ones are simply absent. */
+    async getTreeCommitsAt(groupId: types.group.GroupId, seqs: number[]): Promise<types.cloud.GroupTreeCommitStatement[]> {
+        if (seqs.length === 0) {
+            return [];
+        }
+        const docs = await this.commits.getMulti([...new Set(seqs)].map(seq => GroupStateRepository.treeCommitId(groupId, seq)));
+        return docs.sort((a, b) => a.seq - b.seq).map(doc => doc.statement);
+    }
+    
+    /** The latest statement of each group by group id — one lookup by derived id for all of them. A group without
+     *  a chain is absent. */
+    async getLatestTreeCommits(groups: {id: types.group.GroupId, treeCommitSeq?: number}[]): Promise<Map<types.group.GroupId, types.cloud.GroupTreeCommitStatement>> {
+        const ids = groups.filter(group => group.treeCommitSeq !== undefined).map(group => GroupStateRepository.treeCommitId(group.id, group.treeCommitSeq!));
+        const docs = ids.length === 0 ? [] : await this.commits.getMulti(ids);
+        return new Map(docs.map(doc => [doc.groupId, doc.statement]));
+    }
+    
+    /** Statements with `fromSeq < seq <= toSeq`, ascending, at most `MAX_TREE_COMMITS_PER_PAGE` — one range read
+     *  over the `{groupId, seq}` index. */
+    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<types.cloud.GroupTreeCommitStatement[]> {
+        const docs = await this.commits.query(q => q.and(q.eq("groupId", groupId), q.gt("seq", fromSeq), q.lte("seq", toSeq)))
+            .sort("seq", true)
+            .limit(GroupStateRepository.MAX_TREE_COMMITS_PER_PAGE)
+            .array();
+        return docs.map(doc => doc.statement);
     }
     
     async insertHistoryEntry(entry: db.group.GroupHistoryEntry): Promise<void> {
@@ -379,18 +424,24 @@ export class GroupStateRepository {
             this.publicMetaEntries.deleteMany(q => q.eq("groupId", groupId)),
             this.privateMetaEntries.deleteMany(q => q.eq("groupId", groupId)),
             this.rungs.deleteMany(q => q.eq("groupId", groupId)),
+            this.commits.deleteMany(q => q.eq("groupId", groupId)),
         ]);
     }
     
     // ── mapping ──────────────────────────────────────────────────────────────────────────────────────────────
     
-    /** A blank node is served without `publicKey`, not with an empty one. */
+    /** A blank node is served without `publicKey` or `setBy`, not with empty ones. */
     private toTreeNode(doc: db.group.GroupTreeNode): types.cloud.GroupTreeNode {
         return {
             nodeIndex: doc.nodeIndex,
             generation: doc.generation,
-            ...(doc.publicKey ? {publicKey: doc.publicKey} : {}),
+            ...(doc.publicKey ? {publicKey: doc.publicKey, ...(doc.setBy !== undefined ? {setBy: doc.setBy} : {})} : {}),
         };
+    }
+    
+    /** A freshly keyed record, vouched for by statement `seq` — whatever `setBy` the request carried. */
+    private toNodeDoc(groupId: types.group.GroupId, node: {nodeIndex: number, generation: number, publicKey?: types.core.EccPubKey}, seq: number): Omit<db.group.GroupTreeNode, "id"> {
+        return {groupId: groupId, nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey, setBy: seq};
     }
     
     /** Field by field rather than spreading the document: `groupId` and `id` are storage detail, and this

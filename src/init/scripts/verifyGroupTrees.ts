@@ -23,11 +23,14 @@ import { Callbacks } from "../../service/event/Callbacks";
 import { JobService } from "../../service/job/JobService";
 import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
 import { TreeMath } from "../../service/cloud/keytree/TreeMath";
+import { CommitStatement } from "../../service/cloud/keytree/CommitStatement";
 import * as util from "util";
 
 /**
  * Checks every group's stored tree against the rules a write has to satisfy — in particular that the stored edges
- * are exactly the ones the node records and the seating force (see `TreeValidator`).
+ * are exactly the ones the node records and the seating force (see `TreeValidator`), that the tree and roster hash
+ * to the latest commit statement, that every filled record is listed by the statement its `setBy` names, and that
+ * each of those statements is signed by the `committerPubKey` it carries — no context user's current key is consulted.
  *
  * Transitions are validated against stored state rather than replacing it, so the bridge never re-validates the
  * whole tree on a write. That is sound only while every write goes through a validator — a migration or repair
@@ -73,7 +76,12 @@ async function go() {
         }
         checked++;
         const tree = await groupRepository.getTree(group);
-        const problems = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
+        const problems: unknown[] = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
+        // The statement chain: the latest statement must describe this exact state, every filled record must be
+        // listed by the statement its `setBy` names, and each statement must verify with the key it names.
+        const seqs = [group.treeCommitSeq ?? 0, ...tree.nodes.map(node => node.setBy ?? 0)];
+        const statements = new Map((await groupRepository.getTreeCommitsAt(group.id, seqs)).map(statement => [statement.seq, statement]));
+        problems.push(...CommitStatement.checkStoredState(group, tree, statements).map(problem => ({kind: "STATEMENT", problem})));
         if (problems.length > 0) {
             broken++;
             console.log(`${group.id}: ${problems.length} problem(s)`);

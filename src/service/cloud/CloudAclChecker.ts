@@ -17,6 +17,7 @@ export type AclFunctionNameX =
     | "context/contextSendCustomNotification"
     | "context/groupGet"
     | "context/groupList"
+    | "context/groupGetTreeCommits"
     | "context/groupCreate"
     | "context/groupUpdatePublicMeta"
     | "context/groupUpdatePrivateMeta"
@@ -149,6 +150,7 @@ export class CloudAclChecker {
             "context/contextListUsers": ["contextId"],
             "context/groupGet": ["groupId"],
             "context/groupList": [],
+            "context/groupGetTreeCommits": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {

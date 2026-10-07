@@ -112,6 +112,9 @@ export interface GroupTreeNode {
     nodeIndex: number;
     generation: number;
     publicKey?: types.core.EccPubKey;
+    /** On a filled node: the `seq` of the commit statement that set this key — the statement that vouches for it.
+     *  Part of the node hash. Absent on a blank node. */
+    setBy?: number;
 }
 
 export type GroupTreeChildKind = "user"|"node";
@@ -198,6 +201,51 @@ export interface GroupTreeSelfUpdateTransition {
     refreshedNodes: GroupTreeRefreshedNode[];
     /** Edges out of the refreshed nodes, plus the grant edge re-wrapped at the unchanged epoch. */
     edges: GroupTreeEdge[];
+}
+
+export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate";
+
+/** One node a commit re-keyed, as the committer signed it. */
+export interface GroupTreeCommitPathEntry {
+    nodeIndex: number;
+    generation: number;
+    publicKey: types.core.EccPubKey;
+}
+
+/**
+ * A commit statement: what the tree, the roster and the grant key look like **after** one tree commit, signed by
+ * the member who made it with its long-term key. A client checks the latest one against what it is served, and the
+ * statement named by a node's `setBy` to know which member vouched for that node's key — so a bridge that swaps a
+ * public key, seats an outsider or replays an old state has nothing it can sign. Encoding and hashes:
+ * `keytree/CommitStatement.ts`, `keytree/TreeHash.ts`.
+ */
+export interface GroupTreeCommitStatement {
+    /** 1 at creation, then exactly one more for every tree commit of the group, rotations included. */
+    seq: number;
+    op: GroupTreeCommitOp;
+    /** The group's id; at creation, which happens before the bridge assigns one, the client's `resourceId`. */
+    groupId: string;
+    treeVersion: number;
+    /** Client time in milliseconds. */
+    date: number;
+    keyVersion: number;
+    groupPubKey: GroupPubKey;
+    rosterVersion: number;
+    /** Hex SHA-256 of the roster after the commit. */
+    rosterHash: string;
+    /** Hex SHA-256 of the tree after the commit. */
+    treeHash: string;
+    committer: UserId;
+    /** The committer's context public key when it signed — what the signature verifies against. */
+    committerPubKey: UserPubKey;
+    committerSeat: number;
+    /** The re-keyed nodes, bottom-up, as submitted. */
+    path: GroupTreeCommitPathEntry[];
+    addedUsers: UserId[];
+    addedManagers: UserId[];
+    removed: UserId[];
+    /** Base64 compact ECDSA (65 bytes) over SHA-256 of the signed bytes. */
+    signature: types.core.EccSignature;
 }
 
 /** Complete public tree state of a group. `leafAssignment` uses "" for a blank left by a removal. */

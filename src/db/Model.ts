@@ -235,6 +235,9 @@ export namespace group {
         /** Layout of the hidden key tree (`TreeMath.TREE_VERSION`). Absent on groups written before version 2,
          *  which are not migrated and on which no tree operation is accepted. */
         treeVersion?: number;
+        /** `seq` of the group's latest commit statement. Moves with every tree commit, and is part of each one's
+         *  compare-and-swap. Absent on a group written before commit statements existed. */
+        treeCommitSeq?: number;
         /** Size of the hidden key tree. Every group is tree-backed, so this is always present. */
         numLeaves: number;
         /**
@@ -263,7 +266,7 @@ export namespace group {
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
         |"lastModificationDate"|"lastModifier"|"users"|"managers"|"publicMetaVersion"|"privateMetaVersion"
-        |"rosterVersion"|"keyVersion"|"policy">;
+        |"rosterVersion"|"keyVersion"|"policy"|"treeCommitSeq">;
     
     /**
      * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is
@@ -288,6 +291,18 @@ export namespace group {
     export type GroupPublicMetaEntryId = string&{__groupPublicMetaEntryId: never};
     export type GroupPrivateMetaEntryId = string&{__groupPrivateMetaEntryId: never};
     export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
+    export type GroupTreeCommitId = string&{__groupTreeCommitId: never};
+    
+    /**
+     * One commit statement, `id` derived from `(groupId, seq)`. The statement is kept as a nested document exactly
+     * as signed: at seq 1 its own `groupId` is the client's resourceId, so the owning group needs a field of its own.
+     */
+    export interface GroupTreeCommit {
+        id: GroupTreeCommitId;
+        groupId: types.group.GroupId;
+        seq: number;
+        statement: types.cloud.GroupTreeCommitStatement;
+    }
     
     /**
      * Public half of one keyed tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in
@@ -299,6 +314,8 @@ export namespace group {
         nodeIndex: number;
         generation: number;
         publicKey?: types.core.EccPubKey;
+        /** `seq` of the commit statement that set `publicKey`. Absent on a blank node. */
+        setBy?: number;
     }
     
     /**
@@ -388,6 +405,8 @@ export namespace group {
          *  entries, never O(versions). */
         publicMeta: GroupPublicMetaEntry;
         privateMeta: GroupPrivateMetaEntry;
+        /** The latest commit statement; `null` only for a group from before statements existed. */
+        treeCommit: types.cloud.GroupTreeCommitStatement|null;
     }
 }
 

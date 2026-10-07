@@ -14,7 +14,7 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { additionTransition, buildTree, removalTransition, selfUpdateTransition, withAdditionTransitionNodeKeys, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
+import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
@@ -35,18 +35,10 @@ const bob = "bob" as types.cloud.UserId;
 const carol = "carol" as types.cloud.UserId;
 const dave = "dave" as types.cloud.UserId;
 
-/** Real ECC keys, memoized per `(nodeIndex, generation)`: the API validator rejects placeholder public keys. */
-const nodeKeys = new Map<string, types.core.EccPubKey>();
-function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
-    const cacheKey = `${nodeIndex}/${generation}`;
-    const existing = nodeKeys.get(cacheKey);
-    if (existing) {
-        return existing;
-    }
-    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
-    nodeKeys.set(cacheKey, generated);
-    return generated;
-}
+// Real ECC node keys — the API validator rejects placeholders — and statements signed with the test user's key,
+// which is the one the bridge checks them against.
+useRealNodeKeys();
+registerUserKey(testData.userId, testData.userPrivKey as types.core.EccWif);
 
 /** The group's grant public key at a given epoch — rotated by every removal. */
 const epochKeys = new Map<number, types.cloud.GroupPubKey>();
@@ -80,6 +72,7 @@ interface NodeDocument {
     nodeIndex: number;
     generation: number;
     publicKey?: string;
+    setBy?: number;
 }
 
 export class GroupKeyTreeTests extends BaseTestSet {
@@ -151,9 +144,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
         const nodesBefore = await this.readNodes();
+        const {plan, commit} = await this.commitFor({kind: "selfUpdate", committer: testData.userId});
         const res = await this.apis.contextApi.groupSelfUpdate({
             id: this.requireGroupId(),
-            transition: withTransitionNodeKeys(selfUpdateTransition(await this.currentTree(), this.keyVersion, testData.userId), nodeKey),
+            transition: selfUpdateOf(plan, this.keyVersion),
+            commit: commit,
             expectedKeyVersion: this.keyVersion,
         });
         assert(res === "OK", "groupSelfUpdate did not return OK");
@@ -166,6 +161,14 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const edges = await this.readEdges();
         assert(edges.length === 5 && edges.every(edge => edge.isGrantEdge ? edge.childGeneration === root.generation : edge.parentGeneration === root.generation),
             "every edge was re-wrapped under the new root");
+        // The statement chain moved, and a reader is served what vouches for what it reads.
+        assert(root.setBy === 2, `the re-keyed root is vouched for by statement 2, got ${String(root.setBy)}`);
+        const {commits} = await this.apis.contextApi.groupGetTreeCommits({groupId: this.requireGroupId(), fromSeq: 0});
+        assert.deepStrictEqual(commits.map(c => [c.seq, c.op]), [[1, "create"], [2, "selfUpdate"]]);
+        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId()});
+        assert(group.treeCommit?.seq === 2, "groupGet serves the latest statement");
+        assert.deepStrictEqual(group.treeCommits.map(c => c.seq), [2], "and the one vouching for the served root");
+        assert(group.copathHashes?.length === 2, "a path view of four seats has two copath hashes");
     }
     
     @Test()
@@ -174,8 +177,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
         await shouldThrowErrorWithCode2(async () => {
-            const transition = withTransitionNodeKeys(removalTransition(await this.currentTree(), this.keyVersion, testData.userId, [bob]), nodeKey);
-            await this.apis.contextApi.groupRemoveMembers({...this.removalPayload(bob, transition), userIds: [bob, testData.userId]});
+            const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [bob]}, epochKey(this.keyVersion + 1));
+            await this.apis.contextApi.groupRemoveMembers({...this.removalPayload(bob, removalOf(plan, this.keyVersion), commit), userIds: [bob, testData.userId]});
         }, "INVALID_PARAMS");
         await this.verifyNothingWasWritten();
     }
@@ -280,9 +283,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     private async createTreeBackedGroup() {
-        const tree = withNodeKeys(buildTree(SEATING, 1), nodeKey);
+        const tree = buildTree(SEATING, 1);
+        const resourceId = this.helpers.generateResourceId();
         const res = await this.apis.contextApi.groupCreate({
             contextId: testData.contextId,
+            resourceId: resourceId,
             groupPubKey: epochKey(1),
             users: [alice, bob, carol],
             managers: [testData.userId],
@@ -291,6 +296,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             privateMeta: "group-private-meta" as types.group.GroupData,
             keyId: keyIdAt(1),
             tree: tree,
+            commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey: epochKey(1), users: [alice, bob, carol], managers: [testData.userId]}),
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         this.groupId = res.groupId;
@@ -318,7 +324,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
             edges: group.treeEdges!,
         };
         const newEpoch = this.keyVersion + 1;
-        const transition = withTransitionNodeKeys(removalTransition(view, this.keyVersion, testData.userId, [userId]), nodeKey);
+        const {plan, commit} = commitAgainst(group as unknown as ServedGroup, {kind: "remove", committer: testData.userId, removed: [userId]}, epochKey(newEpoch));
+        assert(plan.after.numLeaves === view.numLeaves, "planned against the served view");
+        const transition = removalOf(plan, this.keyVersion);
         const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
             userIds: [userId],
@@ -326,6 +334,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
             transition: transition,
+            commit: commit,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
@@ -361,9 +370,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     /** Removes a member the way an honest client does: from the state the server just served. */
     private async removeMember(userId: types.cloud.UserId) {
         const groupId = this.requireGroupId();
-        const current = await this.currentTree();
         const newEpoch = this.keyVersion + 1;
-        const transition = withTransitionNodeKeys(removalTransition(current, this.keyVersion, testData.userId, [userId]), nodeKey);
+        const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [userId]}, epochKey(newEpoch));
+        const transition = removalOf(plan, this.keyVersion);
         const res = await this.apis.contextApi.groupRemoveMembers({
             id: groupId,
             userIds: [userId],
@@ -371,6 +380,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
             transition: transition,
+            commit: commit,
             rungs: this.rungsFor(newEpoch),
             // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
             groupKeys: {
@@ -389,13 +399,14 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async addMember(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const current = await this.currentTree();
+        const {plan, commit} = await this.commitFor({kind: "add", committer: testData.userId, members: [userId], positions: [position]});
         const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
             members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
-            transition: withAdditionTransitionNodeKeys(additionTransition(current, this.keyVersion, testData.userId, [userId], [position]), nodeKey),
+            transition: additionOf(plan, this.keyVersion, [position]),
+            commit: commit,
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
         });
@@ -405,16 +416,14 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     private async addMemberByRekeyingThePath(userId: types.cloud.UserId, position: number) {
         const groupId = this.requireGroupId();
-        const current = await this.currentTree();
-        const transition = withAdditionTransitionNodeKeys(
-            additionTransition(current, this.keyVersion, testData.userId, [userId], [position]), nodeKey,
-        );
+        const {plan, commit} = await this.commitFor({kind: "add", committer: testData.userId, members: [userId], positions: [position]});
         const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
             members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
-            transition: transition,
+            transition: additionOf(plan, this.keyVersion, [position]),
+            commit: commit,
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
         });
@@ -433,15 +442,16 @@ export class GroupKeyTreeTests extends BaseTestSet {
             nodes: group.treeNodes!,
             edges: group.treeEdges!,
         };
-        const transition = withAdditionTransitionNodeKeys(
-            additionTransition(view, this.keyVersion, testData.userId, [userId], [position]), nodeKey,
-        );
+        const {plan, commit} = commitAgainst(group as unknown as ServedGroup, {kind: "add", committer: testData.userId, members: [userId], positions: [position]});
+        assert.ok(plan.after.numLeaves >= view.numLeaves, "planned against the served view");
+        const transition = additionOf(plan, this.keyVersion, [position]);
         const res = await this.apis.contextApi.groupAddMembers({
             id: groupId,
             members: [{userId: userId, role: "user"}],
             keyId: keyIdAt(this.keyVersion),
             data: "group-data" as types.group.GroupData,
             transition: transition,
+            commit: commit,
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
         });
@@ -602,13 +612,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const offPath = 5; // a bucket node above the seat being filled: no key may ever sit there
         assert.ok(!TreeMath.keyedPath(0, 4).includes(offPath), "pick a node genuinely off the adder's path");
         await shouldThrowErrorWithCode2(async () => {
-            const current = await this.currentTree();
-            const transition = withAdditionTransitionNodeKeys(
-                additionTransition(current, this.keyVersion, testData.userId, [dave], [BOB_POSITION]), nodeKey,
-            );
+            const {plan, commit} = await this.commitFor({kind: "add", committer: testData.userId, members: [dave], positions: [BOB_POSITION]});
+            const transition = additionOf(plan, this.keyVersion, [BOB_POSITION]);
             transition.seatedNodes.push({
                 nodeIndex: offPath, fromGeneration: 0, generation: 1,
-                publicKey: nodeKey(offPath, 1),
+                publicKey: ECUtils.generateKeyPair().pub58,
             });
             await this.apis.contextApi.groupAddMembers({
                 id: this.requireGroupId(),
@@ -616,6 +624,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 keyId: keyIdAt(this.keyVersion),
                 data: "group-data" as types.group.GroupData,
                 transition: transition,
+                commit: commit,
                 expectedKeyVersion: this.keyVersion,
                 expectedRosterVersion: this.rosterVersion,
             });
@@ -829,11 +838,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async verifyAStaleEpochIsRefused() {
         // Computed against a tree that no longer exists.
         await shouldThrowErrorWithCode2(async () => {
-            const transition = withTransitionNodeKeys(
-                removalTransition(await this.currentTree(), this.keyVersion, testData.userId, [bob]), nodeKey,
-            );
+            const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [bob]}, epochKey(this.keyVersion + 1));
             await this.apis.contextApi.groupRemoveMembers({
-                ...this.removalPayload(bob, transition),
+                ...this.removalPayload(bob, removalOf(plan, this.keyVersion), commit),
                 expectedKeyVersion: this.keyVersion - 1,
                 expectedRosterVersion: this.rosterVersion,
             });
@@ -843,25 +850,21 @@ export class GroupKeyTreeTests extends BaseTestSet {
     private async verifyASkippedRefreshIsRefused() {
         // SECURITY: one unrefreshed node on the path leaves the departing member holding a live key.
         await shouldThrowErrorWithCode2(async () => {
-            const current = await this.currentTree();
-            const transition = withTransitionNodeKeys(
-                removalTransition(current, this.keyVersion, testData.userId, [bob]), nodeKey,
-            );
+            const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [bob]}, epochKey(this.keyVersion + 1));
+            const transition = removalOf(plan, this.keyVersion);
             // Drop the root from the refresh set: the tree of four has its root at index 3.
             assert(transition.refreshedNodes.some(node => node.nodeIndex === 3), "the root is on the path");
             transition.refreshedNodes = transition.refreshedNodes.filter(node => node.nodeIndex !== 3);
-            await this.apis.contextApi.groupRemoveMembers(this.removalPayload(bob, transition));
+            await this.apis.contextApi.groupRemoveMembers(this.removalPayload(bob, transition, commit));
         }, "GROUP_TREE_INVALID");
     }
     
     private async verifyAnUpwardRungIsRefused() {
         // SECURITY: an upward rung hands the departing member everything written after their removal.
         await shouldThrowErrorWithCode2(async () => {
-            const transition = withTransitionNodeKeys(
-                removalTransition(await this.currentTree(), this.keyVersion, testData.userId, [bob]), nodeKey,
-            );
+            const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [bob]}, epochKey(this.keyVersion + 1));
             await this.apis.contextApi.groupRemoveMembers({
-                ...this.removalPayload(bob, transition),
+                ...this.removalPayload(bob, removalOf(plan, this.keyVersion), commit),
                 rungs: [
                     ...this.rungsFor(this.keyVersion + 1),
                     {
@@ -894,7 +897,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             "no edge was re-wrapped to a generation or an epoch that never came to exist");
     }
     
-    private removalPayload(userId: types.cloud.UserId, transition: types.cloud.GroupTreeTransition) {
+    private removalPayload(userId: types.cloud.UserId, transition: types.cloud.GroupTreeTransition, commit: types.cloud.GroupTreeCommitStatement) {
         const newEpoch = this.keyVersion + 1;
         return {
             id: this.requireGroupId(),
@@ -903,10 +906,17 @@ export class GroupKeyTreeTests extends BaseTestSet {
             keyId: keyIdAt(newEpoch),
             data: "group-data" as types.group.GroupData,
             transition: transition,
+            commit: commit,
             rungs: this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
         };
+    }
+    
+    /** Plans `op` against what the bridge serves and signs its statement as the test user. */
+    private async commitFor(op: PlanOp, groupPubKey?: types.cloud.GroupPubKey) {
+        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId(), scope: "full"});
+        return commitAgainst(group as unknown as ServedGroup, op, groupPubKey);
     }
     
     private async verifyDeletingTheGroupEmptiesEveryCollection() {
@@ -921,21 +931,6 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────
-    
-    /**
-     * The tree as the server serves it, edges included, so the fixtures can predict what the bridge will hold.
-     * A real client plans from `scope: "plan"`, which `*ByDelta` exercises.
-     */
-    private async currentTree(): Promise<types.cloud.GroupTreeState> {
-        const {group} = await this.apis.contextApi.groupGet({groupId: this.requireGroupId(), scope: "full"});
-        assert(group.numLeaves !== undefined && group.leafAssignment && group.treeNodes && group.treeEdges, "groupGet served no tree");
-        return {
-            numLeaves: group.numLeaves,
-            leafAssignment: group.leafAssignment,
-            nodes: group.treeNodes,
-            edges: group.treeEdges,
-        };
-    }
     
     private async readGroupDocument(): Promise<Record<string, unknown>> {
         const documents = await this.helpers.readCollection("group", {_id: this.requireGroupId()});

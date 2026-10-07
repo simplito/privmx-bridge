@@ -20,7 +20,7 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
 import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { additionTransition, buildTree, removalTransition, selfUpdateTransition } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, planCommit, PlanOp, signStatement, statementFor, userKeys } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -32,7 +32,6 @@ import { PolicyService } from "../../../service/cloud/PolicyService";
 import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
-import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
@@ -52,14 +51,15 @@ const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "SomeKeyId" as types.core.KeyId;
 const newKeyId = "AnotherKeyId" as types.core.KeyId;
+/** What a creator names the group by in its first statement, before the bridge assigns an id. */
+const RESOURCE_ID = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f" as types.core.ClientResourceId;
 /** What the winner of a CAS race committed, so a loser can tell an honest winner from a bridge inventing one. */
 const WINNER_TAG = "d29ubmVyLXRhZw==" as types.core.Base64;
 const data = "SomeGroupData" as types.group.GroupData;
 
-const janekKeys = ECUtils.generateKeyPair();
-const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
-const aliceKeys = ECUtils.generateKeyPair();
-const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
+// The keys the fixtures sign statements with, so the service's signature check sees the members' context keys.
+const janekPub = userKeys("janek").pub58;
+const alicePub = userKeys("alice").pub58;
 const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const nextGroupPubKey = alicePub as unknown as types.cloud.GroupPubKey;
 
@@ -132,6 +132,8 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
         keyHistory: [],
         eraFloor: 1,
         treeVersion: TreeMath.TREE_VERSION,
+        // Every record of a `buildTree` tree was set by statement 1; the fixtures sign the next commit as 2.
+        treeCommitSeq: Math.max(1, ...tree.nodes.map(node => node.setBy ?? 0)),
         numLeaves: tree.numLeaves,
         leafAssignment: tree.leafAssignment,
         ...overrides,
@@ -194,6 +196,8 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     mock(groupRepository, "selfUpdateWithTransition", (async () => !options.casMiss) as never);
     // A commit is checked against every node record of the group.
     mock(groupRepository, "getNodes", (async () => group.tree.nodes) as never);
+    mock(groupRepository, "getTreeCommitRange", (async (_id: types.group.GroupId, from: number, to: number) =>
+        Array.from({length: to - from}, (_, i) => ({seq: from + i + 1}))) as never);
     // Where each metadata entry sits. Cutting or pruning above either would strand it, so the service reads
     // both first.
     mock(groupRepository, "getMetaHeadKeyVersions", (async () => ({
@@ -227,6 +231,44 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         getHistoryAskedFrom: () => historyAskedFrom};
 }
 
+/** The commit an honest `committer` plans for `op`, with its signed statement; the roster after it is derived. */
+function honestCommit(group: TreeGroup, op: PlanOp, overrides: {groupPubKey?: types.cloud.GroupPubKey, addedManagers?: string[]} = {}) {
+    const plan = planCommit(group.tree, group.keyVersion, op);
+    const leaving = new Set(op.kind === "remove" ? op.removed : []);
+    const added = op.kind === "add" ? op.members : [];
+    const addedManagers = overrides.addedManagers ?? [];
+    const commit = statementFor(plan, op, {
+        groupId: group.id,
+        groupPubKey: overrides.groupPubKey ?? group.groupPubKey,
+        rosterVersion: group.rosterVersion + (op.kind === "selfUpdate" ? 0 : 1),
+        users: [...group.users.filter(u => !leaving.has(u)), ...added.filter(m => !addedManagers.includes(m))],
+        managers: [...group.managers.filter(u => !leaving.has(u)), ...addedManagers],
+        addedManagers,
+    });
+    return {plan, commit};
+}
+
+function additionCommit(group: TreeGroup, members: types.cloud.UserId[], positions: number[]) {
+    const {plan, commit} = honestCommit(group, {kind: "add", committer: janek, members, positions});
+    return {transition: {baseKeyVersion: group.keyVersion, positions, seatedNodes: plan.refreshedNodes, edges: plan.edges}, commit};
+}
+
+function removalCommit(group: TreeGroup, removed: types.cloud.UserId[]) {
+    const {plan, commit} = honestCommit(group, {kind: "remove", committer: janek, removed}, {groupPubKey: nextGroupPubKey});
+    return {transition: {baseKeyVersion: group.keyVersion, blankedPositions: plan.blankedPositions, refreshedNodes: plan.refreshedNodes, edges: plan.edges}, commit};
+}
+
+/** A creation's statement, signed by janek, for the roster the call names. */
+function creation(tree: types.cloud.GroupTreeState, users: types.cloud.UserId[], managers: types.cloud.UserId[], creator = "janek") {
+    return creationStatement(tree, creator, {groupId: RESOURCE_ID, groupPubKey, users, managers});
+}
+
+/** `createGroup` as janek, with the statement an honest creator signs for `tree` unless the test supplies one. */
+function createGroupAs(groupService: GroupService, tree: types.cloud.GroupTreeState, users: types.cloud.UserId[], managers: types.cloud.UserId[],
+    groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">, statement = creation(tree, users, managers)) {
+    return groupService.createGroup(janekCloudUser, RESOURCE_ID, contextId, undefined, groupPubKey, users, managers, data, data, data, keyId, {}, tree, statement, groupKeys);
+}
+
 /** The payload an honest client submits to seat `dave` in a blank at position 1. */
 function additionModel(group: TreeGroup, position = 1, newMember: types.cloud.UserId = dave) {
     return {
@@ -235,7 +277,7 @@ function additionModel(group: TreeGroup, position = 1, newMember: types.cloud.Us
         // An addition does not rotate anything, so it reuses the group's current metadata keyId.
         keyId: keyId,
         data: data,
-        transition: additionTransition(group.tree, group.keyVersion, janek, [newMember], [position]),
+        ...additionCommit(group, [newMember], [position]),
         expectedKeyVersion: group.keyVersion,
         expectedRosterVersion: group.rosterVersion,
     };
@@ -259,9 +301,9 @@ function removalModel(group: TreeGroup, position: number) {
         data: data,
         // Removing yourself cannot be planned — there is no path left to re-key — so such a model carries an
         // empty transition, which the service refuses before reading it.
-        transition: group.leafAssignment[position] === janek
-            ? {baseKeyVersion: group.keyVersion, blankedPositions: [position], refreshedNodes: [], edges: []}
-            : removalTransition(group.tree, group.keyVersion, janek, [group.leafAssignment[position]]),
+        ...(group.leafAssignment[position] === janek
+            ? {transition: {baseKeyVersion: group.keyVersion, blankedPositions: [position], refreshedNodes: [], edges: []}, commit: creation(group.tree, [], [])}
+            : removalCommit(group, [group.leafAssignment[position]])),
         rungs,
         expectedKeyVersion: group.keyVersion,
         expectedRosterVersion: group.rosterVersion,
@@ -287,33 +329,31 @@ it("createGroup accepts a tree-backed group with no per-member key entries", asy
     // Members reach the grant key by climbing, so the creator does not have to produce
     // one ciphertext per member just to hand out the current key.
     const {groupService, groupRepository} = createGroupService();
-    await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await createGroupAs(groupService,
         buildTree(SEATING, 1),
+        [alice, bob, carol], [janek],
     );
     hasOneCall(groupRepository.createGroup);
 });
 
 it("createGroup stores the metadata key as one self-addressed entry", async () => {
     const {groupService, groupRepository} = createGroupService();
-    await groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await createGroupAs(groupService,
         buildTree(SEATING, 1),
-        {groupEpoch: 1, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
+        [alice, bob, carol], [janek], {groupEpoch: 1, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     );
     const call = groupRepository.createGroup.mock.calls[0];
     // One further along again: both metadata envelopes now sit between `data` and `keyId`.
-    const groupKeys = [...call][13] as types.cloud.GroupKeysEntry[];
+    const groupKeys = [...call][14] as types.cloud.GroupKeysEntry[];
     assert.strictEqual(groupKeys.length, 1, "one entry, whatever the group's size");
     assert.strictEqual(groupKeys[0].keys[0].groupEpoch, 1);
 });
 
 it("createGroup refuses a self-addressed entry naming an epoch the group does not start at", async () => {
     const {groupService, groupRepository} = createGroupService();
-    await expectFailure("INVALID_PARAMS", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await expectFailure("INVALID_PARAMS", () => createGroupAs(groupService,
         buildTree(SEATING, 1),
-        {groupEpoch: 2, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
+        [alice, bob, carol], [janek], {groupEpoch: 2, keyId: keyId, data: "self-addressed" as types.core.UserKeyData},
     ));
     hasNoCalls(groupRepository.createGroup);
 });
@@ -321,11 +361,22 @@ it("createGroup refuses a self-addressed entry naming an epoch the group does no
 it("createGroup refuses more members than the configured limit, and says so", async () => {
     const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {maxGroupMembers: 3});
     const tooMany = ["u1", "u2", "u3", "u4"].map(u => u as types.cloud.UserId);
-    const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, tooMany, [janek], data, data, data, keyId, {},
+    const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => createGroupAs(groupService,
         buildTree([...tooMany, janek], 1),
+        tooMany, [janek],
     ));
     assert.deepStrictEqual(error.getData(), {limit: 3, requested: 5}, "the error carries both numbers");
+    hasNoCalls(groupRepository.createGroup);
+});
+
+it("createGroup refuses more seats than the configured limit, blanks and all", async () => {
+    // Two members in a four-seat tree: the roster is inside a limit of 3, the tree is not.
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {maxGroupMembers: 3});
+    const error = await expectFailure("GROUP_MEMBER_LIMIT_EXCEEDED", () => createGroupAs(groupService,
+        buildTree(["janek", "", "bob", ""], 1),
+        [bob], [janek],
+    ));
+    assert.deepStrictEqual(error.getData(), {limit: 3, requested: 4, seats: true}, "the error says it is about seats");
     hasNoCalls(groupRepository.createGroup);
 });
 
@@ -349,9 +400,9 @@ it("addMember refuses to grow the tree past the limit, blanks and all", async ()
 
 it("createGroup rejects a tree that does not seat every member", async () => {
     const {groupService, groupRepository} = createGroupService();
-    await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await expectFailure("GROUP_TREE_INVALID", () => createGroupAs(groupService,
         buildTree(["janek", "alice", "bob", ""], 1),
+        [alice, bob, carol], [janek],
     ));
     hasNoCalls(groupRepository.createGroup);
 });
@@ -363,9 +414,9 @@ it("SECURITY: createGroup rejects a tree minting a node off the creator's path",
     const tree = buildTree(seating, 1);
     tree.nodes.push({nodeIndex: 95, generation: 0, publicKey: "pk:95" as types.core.EccPubKey});
     const {groupService, groupRepository} = createGroupService();
-    const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, seating.slice(1) as types.cloud.UserId[], [janek], data, data, data, keyId, {},
+    const error = await expectFailure("GROUP_TREE_INVALID", () => createGroupAs(groupService,
         tree,
+        seating.slice(1) as types.cloud.UserId[], [janek],
     ));
     assert.ok(JSON.stringify(error.getData()).includes("REFRESH_NOT_THE_PATH"));
     hasNoCalls(groupRepository.createGroup);
@@ -374,19 +425,19 @@ it("SECURITY: createGroup rejects a tree minting a node off the creator's path",
 it("createGroup rejects a tree built by somebody other than the caller", async () => {
     // The re-keyed path must be the committer's, and the committer is whoever is authenticated.
     const {groupService, groupRepository} = createGroupService();
-    await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await expectFailure("GROUP_TREE_INVALID", () => createGroupAs(groupService,
         // carol at seat 35 climbs straight to the root; janek's path runs through 31 first.
         buildTree(Array.from({length: 40}, (_, i) => ({0: "janek", 1: "alice", 2: "bob", 35: "carol"} as Record<number, string>)[i] ?? ""), 1, "carol"),
+        [alice, bob, carol], [janek],
     ));
     hasNoCalls(groupRepository.createGroup);
 });
 
 it("createGroup rejects a tree addressed to an epoch other than the first", async () => {
     const {groupService} = createGroupService();
-    await expectFailure("GROUP_TREE_INVALID", () => groupService.createGroup(
-        janekCloudUser, null, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {},
+    await expectFailure("GROUP_TREE_INVALID", () => createGroupAs(groupService,
         buildTree(SEATING, 4),
+        [alice, bob, carol], [janek],
     ));
 });
 
@@ -560,6 +611,51 @@ it("removeMember refuses a new epoch with no unit rung, which would orphan the g
     const model = removalModel(group, 2);
     model.rungs = model.rungs.filter(r => r.targetKeyVersion !== EPOCH);
     await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, model));
+});
+
+it("removeMember refuses a removal with no rungs at all unless it abandons history", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: []}));
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+});
+
+it("removeMember abandoning history takes no rungs and has storage close the era", async () => {
+    // The removal a member who wrapped garbage to the grant edge cannot block: nobody can recover the old grant
+    // key, so nobody can write a rung down to it.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository, groupNotificationService} = createGroupService(group);
+    await groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true});
+    hasOneCall(groupRepository.removeMembersWithTransition);
+    const params = (groupRepository.removeMembersWithTransition as unknown as {mock: {calls: {abandonHistory?: boolean, rungs: unknown[]}[][]}}).mock.calls[0][0];
+    assert.strictEqual(params.abandonHistory, true);
+    assert.deepStrictEqual(params.rungs, []);
+    // It cuts the era, so members are told so as well as about the removal.
+    const kinds = (groupNotificationService.sendUpdatedGroup as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[2]);
+    assert.deepStrictEqual(kinds, ["memberRemoved", "eraCut"]);
+});
+
+it("removeMember abandoning history needs the right to cut the era as well", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const acl = janekUser.acl;
+    janekUser.acl = ["ALLOW ALL", "DENY context/groupCutEra"].join("\n") as types.cloud.ContextAcl;
+    try {
+        await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
+        hasOneCall(groupRepository.removeMembersWithTransition);
+        await expectFailure("ACCESS_DENIED", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+        hasOneCall(groupRepository.removeMembersWithTransition);
+    }
+    finally {
+        janekUser.acl = acl;
+    }
+});
+
+it("removeMember abandoning history refuses rungs", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), abandonHistory: true}));
+    hasNoCalls(groupRepository.removeMembersWithTransition);
 });
 
 it("removeMember refuses a rung reaching below a cut era", async () => {
@@ -909,7 +1005,7 @@ function batchRemovalModel(group: TreeGroup, positions: number[]) {
         groupPubKey: nextGroupPubKey,
         keyId: newKeyId,
         data: data,
-        transition: removalTransition(group.tree, group.keyVersion, janek, positions.map(position => group.leafAssignment[position])),
+        ...removalCommit(group, positions.map(position => group.leafAssignment[position])),
         rungs: LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
             atKeyVersion: span.at,
             targetKeyVersion: span.target,
@@ -956,7 +1052,7 @@ function batchAdditionModel(group: TreeGroup, seats: number[], members: types.cl
         members: members.map(userId => ({userId, role: "user" as types.cloud.ContainerRole})),
         keyId: keyId,
         data: data,
-        transition: additionTransition(group.tree, group.keyVersion, janek, members, seats),
+        ...additionCommit(group, members, seats),
         expectedKeyVersion: group.keyVersion,
         expectedRosterVersion: group.rosterVersion,
     };
@@ -1040,7 +1136,10 @@ it("a winner written without a tag says so rather than inventing one", async () 
 function selfUpdateModel(group: TreeGroup, member: types.cloud.UserId) {
     return {
         id: groupId,
-        transition: selfUpdateTransition(group.tree, group.keyVersion, member),
+        ...(() => {
+            const {plan, commit} = honestCommit(group, {kind: "selfUpdate", committer: member});
+            return {transition: {baseKeyVersion: group.keyVersion, refreshedNodes: plan.refreshedNodes, edges: plan.edges}, commit};
+        })(),
         expectedKeyVersion: group.keyVersion,
     };
 }
@@ -1107,4 +1206,110 @@ it("no commit is accepted on a group from before tree version 2", async () => {
     await expectFailure("GROUP_TREE_INVALID", () => groupService.addMembers(janekCloudUser, additionModel(treeBackedGroup({treeVersion: undefined}), 4)));
     hasNoCalls(groupRepository.selfUpdateWithTransition);
     hasNoCalls(groupRepository.addMembersWithTransition);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// commit statements
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The statement fields the service reported as wrong, or `["SIGNATURE"]`. */
+async function statementProblems(run: () => Promise<unknown>): Promise<string[]> {
+    const error = await expectFailure("GROUP_TREE_INVALID", run);
+    return (error.getData() as {kind: string, field?: string}[]).map(problem => problem.kind === "BAD_COMMIT_SIGNATURE" ? "SIGNATURE" : problem.field ?? problem.kind);
+}
+
+it("every tree commit hands its statement to storage, at the next seq", async () => {
+    const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    const {groupService, groupRepository} = createGroupService(group);
+    const model = additionModel(group);
+    await groupService.addMembers(janekCloudUser, model);
+    const params = groupRepository.addMembersWithTransition.mock.calls[0][0] as {statement: types.cloud.GroupTreeCommitStatement};
+    assert.strictEqual(params.statement, model.commit);
+    assert.strictEqual(model.commit.seq, group.treeCommitSeq! + 1);
+});
+
+it("SECURITY: a commit whose statement is signed by somebody else is refused, for every operation", async () => {
+    const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    const resign = <T extends {commit: types.cloud.GroupTreeCommitStatement}>(model: T): T => ({...model, commit: signStatement(model.commit, "alice")});
+    const {groupService, groupRepository} = createGroupService(group);
+    assert.deepStrictEqual(await statementProblems(() => groupService.addMembers(janekCloudUser, resign(additionModel(group)))), ["SIGNATURE"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, resign(removalModel(group, 2)))), ["SIGNATURE"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.selfUpdate(janekCloudUser, resign(selfUpdateModel(group, janek)))), ["SIGNATURE"]);
+    hasNoCalls(groupRepository.addMembersWithTransition);
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+    hasNoCalls(groupRepository.selfUpdateWithTransition);
+});
+
+it("SECURITY: a statement must name the caller's current context key, even one validly signed by another key", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const model = removalModel(group, 2);
+    const otherKey = {...model, commit: signStatement({...model.commit, committerPubKey: userKeys("alice").pub58}, "alice")};
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, otherKey)), ["committerPubKey"]);
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+});
+
+it("SECURITY: a statement that does not describe the state the commit leaves behind is refused", async () => {
+    // Signed by the right member, about the wrong state: a client verifying the latest statement against what the
+    // bridge then serves would reject the group, so the bridge must never store it.
+    const group = treeBackedGroup();
+    const {groupService} = createGroupService(group);
+    const model = removalModel(group, 2);
+    const wrong = (patch: Partial<types.cloud.GroupTreeCommitStatement>) => ({...model, commit: signStatement({...model.commit, ...patch}, "janek")});
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({seq: model.commit.seq + 1}))), ["seq"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({treeHash: "00".repeat(32)}))), ["treeHash"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({rosterHash: "00".repeat(32)}))), ["rosterHash"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({groupPubKey: groupPubKey}))), ["groupPubKey"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({removed: []}))), ["removed"]);
+    assert.deepStrictEqual(await statementProblems(() => groupService.removeMembers(janekCloudUser, wrong({op: "rotate"}))), ["op"]);
+});
+
+it("an addition's statement names newcomers by role", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const {plan, commit} = honestCommit(group, {kind: "add", committer: janek, members: [dave], positions: [4]}, {addedManagers: [dave]});
+    assert.deepStrictEqual([commit.addedUsers, commit.addedManagers], [[], [dave]]);
+    await groupService.addMembers(janekCloudUser, {
+        id: groupId, members: [{userId: dave, role: "manager"}], keyId, data,
+        transition: {baseKeyVersion: EPOCH, positions: [4], seatedNodes: plan.refreshedNodes, edges: plan.edges}, commit,
+        expectedKeyVersion: EPOCH, expectedRosterVersion: group.rosterVersion,
+    });
+    hasOneCall(groupRepository.addMembersWithTransition);
+});
+
+it("a creation's statement is seq 1, names the resourceId the creator chose, and carries no roster delta", async () => {
+    const tree = buildTree(SEATING, 1);
+    const resourceId = "6f1c5c86-2f0e-4c8e-9a51-4dfb2b3bd2b0" as types.core.ClientResourceId;
+    const signed = creationStatement(tree, "janek", {groupId: resourceId, groupPubKey, users: [alice, bob, carol], managers: [janek]});
+    const create = (statement: types.cloud.GroupTreeCommitStatement) => createGroupService().groupService.createGroup(
+        janekCloudUser, resourceId, contextId, undefined, groupPubKey, [alice, bob, carol], [janek], data, data, data, keyId, {}, tree, statement);
+    await create(signed);
+    assert.deepStrictEqual(await statementProblems(() => create(creation(tree, [alice, bob, carol], [janek]))), ["groupId"]);
+    assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, seq: 2}, "janek"))), ["seq"]);
+    assert.deepStrictEqual([signed.addedUsers, signed.addedManagers], [[], []]);
+    assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, addedManagers: [janek]}, "janek"))), ["addedManagers"]);
+    assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, addedUsers: [alice, bob, carol]}, "janek"))), ["addedUsers"]);
+});
+
+it("no commit is accepted on a group from before commit statements", async () => {
+    const group = treeBackedGroup({treeCommitSeq: undefined});
+    const {groupService, groupRepository} = createGroupService(group);
+    const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, selfUpdateModel(group, alice)));
+    assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
+    hasNoCalls(groupRepository.selfUpdateWithTransition);
+});
+
+it("getTreeCommits serves a page up to the latest, never past it", async () => {
+    const group = treeBackedGroup({treeCommitSeq: 9});
+    const {groupService} = createGroupService(group);
+    assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 6)).commits.map(c => c.seq), [7, 8, 9]);
+    assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 6, 7)).commits.map(c => c.seq), [7]);
+    assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 6, 99)).commits.map(c => c.seq), [7, 8, 9]);
+    assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 9)).commits, []);
+});
+
+it("getTreeCommits needs read access to the group", async () => {
+    const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    const {groupService} = createGroupService(group);
+    await expectFailure("ACCESS_DENIED", () => groupService.getTreeCommits(aliceCloudUser, groupId, 0));
 });

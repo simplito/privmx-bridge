@@ -79,6 +79,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupSelfUpdate", model);
     }
     
+    groupGetTreeCommits(model: contextApi.GroupGetTreeCommitsModel): Promise<contextApi.GroupGetTreeCommitsResult> {
+        return this.request("context.groupGetTreeCommits", model);
+    }
+    
     groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
         return this.request("context.groupCutEra", model);
     }
