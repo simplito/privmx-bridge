@@ -82,6 +82,7 @@ export class TypesValidator {
     groupTreeTransition: Validator;
     groupTreeSeatedNode: Validator;
     groupTreeAdditionTransition: Validator;
+    groupTreeSelfUpdateTransition: Validator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -316,31 +317,33 @@ export class TypesValidator {
         });
         this.groupTreeRefreshedNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
-            fromGeneration: this.intNonNegative,
-            generation: this.intNonNegative,
-            publicKey: this.eccPub,
-        });
-        // A transition touches the union of the affected leaves' paths: `log2(16384) = 14` nodes each, fewer once
-        // they overlap. `MAX_GROUP_BATCH * 14` bounds the union, and the caps sit above that — still an order of
-        // magnitude below the 32 768 a whole tree needs.
-        this.groupTreeTransition = this.builder.createObject({
-            baseKeyVersion: this.builder.min(this.builder.int, 0),
-            blankedPositions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 2048),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
-        });
-        this.groupTreeSeatedNode = this.builder.createObject({
-            nodeIndex: this.intNonNegative,
-            // Absent when growth mints the node: there is no generation it was read at.
+            // Absent when the node has no record yet: there is no generation it was read at.
             fromGeneration: this.builder.optional(this.intNonNegative),
             generation: this.intNonNegative,
             publicKey: this.eccPub,
         });
+        this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
+        // A commit re-keys one keyed path: at most `log2(16384) = 14` nodes, so 64 is generous. Its edges are
+        // what that path owes, and a node whose sibling subtree is all blank wraps to every member under it — so
+        // the edge cap is the whole-tree one, not `O(log n)`.
+        const maxCommitNodes = 64;
+        const maxCommitEdges = 2 * TypesValidator.MAX_GROUP_MEMBERS;
+        this.groupTreeTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            blankedPositions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
+        });
         this.groupTreeAdditionTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
             positions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 2048),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
+        });
+        this.groupTreeSelfUpdateTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
         });
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),

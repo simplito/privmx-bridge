@@ -232,6 +232,9 @@ export namespace group {
         /** Current epoch. Every group starts at 1 and only a rotation advances it. */
         keyVersion: number;
         keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
+        /** Layout of the hidden key tree (`TreeMath.TREE_VERSION`). Absent on groups written before version 2,
+         *  which are not migrated and on which no tree operation is accepted. */
+        treeVersion?: number;
         /** Size of the hidden key tree. Every group is tree-backed, so this is always present. */
         numLeaves: number;
         /**
@@ -286,18 +289,24 @@ export namespace group {
     export type GroupPrivateMetaEntryId = string&{__groupPrivateMetaEntryId: never};
     export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
     
-    /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
+    /**
+     * Public half of one keyed tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in
+     * place. No `publicKey` means blank — the record stays so that `generation` survives until the node is refilled.
+     */
     export interface GroupTreeNode {
         id: GroupTreeNodeId;
         groupId: types.group.GroupId;
         nodeIndex: number;
         generation: number;
-        publicKey: types.core.EccPubKey;
+        publicKey?: types.core.EccPubKey;
     }
     
     /**
      * One edge of the hidden key tree. `id` is derived from `(groupId, parent, child)`; generations are not part
      * of it, because a refresh replaces the wrap on the same edge rather than making a new one.
+     *
+     * `parentIndex` is stored as a field as well as inside the id: a commit drops every edge out of the nodes it
+     * blanks or re-keys with one indexed `{groupId, parentIndex: {$in}}` delete.
      */
     export interface GroupTreeEdge {
         id: GroupTreeEdgeId;

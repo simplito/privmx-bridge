@@ -12,7 +12,7 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { GroupConverter } from "../../../../api/main/context/GroupConverter";
-import { buildTree } from "../../../testUtils/TreeFixtures";
+import { buildTree, planCommit } from "../../../testUtils/TreeFixtures";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
 
@@ -128,26 +128,47 @@ it("a listing carries the roster and the epoch, and nothing that grows with hist
     assert.strictEqual(summary.keyVersion, 3);
 });
 
+/** 64 seats with alice at seat 1, after u40 filled 95: records 31, 63 and 95. */
+function wideGroup() {
+    const seating = Array.from({length: 64}, (_, i) => ["janek", "alice"][i] ?? `u${i}`);
+    const wide = planCommit(buildTree(seating, 3), 3, {kind: "selfUpdate", committer: "u40"}).after;
+    const groupWide: db.group.Group = {...group, numLeaves: wide.numLeaves, leafAssignment: wide.leafAssignment};
+    return {wide, groupWide};
+}
+
 it("the default view serves the caller's climb, not the whole tree", async () => {
-    // Eight seats: one edge per level plus the grant edge, and public keys for the path and the copath. The
-    // difference is the point — at 16 384 members the full tree is 32 767 edges.
-    const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
-    const big = buildTree(seating, 3);
-    const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
-    const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
+    // The records of alice's keyed path, the one wrap addressed to her, the wrap from 31 to 63, and the grant
+    // edge. The difference is the point — at 16 384 members the full tree is up to 32 767 edges.
+    const {wide, groupWide} = wideGroup();
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide});
     
     assert.strictEqual(converted.treeScope, "path");
     assert.strictEqual(converted.ownLeafPosition, 1);
-    // alice sits at seat 1: three nodes on her path, and two of her three copath entries are internal nodes.
-    // The third is her leaf sibling, whose key comes from the roster — a leaf carries no node keypair at all.
-    assert.strictEqual(converted.treeNodes?.length, 5);
-    assert.ok((converted.treeEdges?.length ?? 0) < big.edges.length, "the view must be smaller than the tree");
+    assert.deepStrictEqual(converted.treeNodes?.map(n => n.nodeIndex), [31, 63]);
+    assert.strictEqual(converted.treeEdges?.length, 3);
     assert.strictEqual(converted.treeEdges?.filter(e => e.isGrantEdge).length, 1, "the grant edge is what the climb ends on");
-    assert.strictEqual(
-        converted.treeEdges?.filter(e => e.childKind === "user").length, 1,
-        "exactly one leaf edge: the caller's own",
-    );
-    assert.strictEqual(converted.treeEdges?.find(e => e.childKind === "user")?.childUserId, alice);
+    assert.deepStrictEqual(converted.treeEdges?.find(e => e.childKind === "user"), wide.edges.find(e => e.childUserId === alice));
+    assert.ok(converted.treeEdges?.some(e => e.parentIndex === 63 && e.childIndex === 31), "the step from 31 to the root");
+});
+
+it("the planning view serves every node record but only the caller's climb", async () => {
+    const {wide, groupWide} = wideGroup();
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide}, "plan");
+    assert.strictEqual(converted.treeScope, "plan");
+    assert.deepStrictEqual(converted.treeNodes?.map(n => n.nodeIndex), [31, 63, 95]);
+    assert.strictEqual(converted.treeEdges?.length, 3);
+});
+
+it("blank records are served without a key, so a client can tell which of its nodes to refill", async () => {
+    const {wide, groupWide} = wideGroup();
+    const removed = planCommit(wide, 3, {kind: "remove", committer: "janek", removed: ["u41"]}).after;
+    const converted = new GroupConverter().convertGroup(alice, {...groupWide, leafAssignment: removed.leafAssignment}, {...state(), tree: removed}, "plan");
+    assert.deepStrictEqual(converted.treeNodes?.find(n => n.nodeIndex === 95), {nodeIndex: 95, generation: 0});
+});
+
+it("serves the tree version, and labels a group from before it", async () => {
+    assert.strictEqual(new GroupConverter().convertGroup(alice, {...group, treeVersion: 2}, state()).treeVersion, 2);
+    assert.strictEqual(new GroupConverter().convertGroup(alice, group, state()).treeVersion, 1);
 });
 
 it("scope full serves the whole tree, for a client that validates it itself", async () => {
@@ -237,21 +258,18 @@ it("forNewMembers allocates blanks lowest-first before appending", async () => {
     assert.deepStrictEqual(converted.nextFreeSeats, [2, 4, 8]);
 });
 
-it("forNewMembers serves the nodes an addition to those seats needs", async () => {
+it("forNewMembers and forUserIds resolve seats without widening the view", async () => {
+    // Planning reads every record from `scope: "plan"`; the seat lists only save the caller reading the roster.
     const {big, group8} = bigGroup(["janek", "alice", "", "carol", "dave", "erin", "frank", ""]);
     const plain = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     const withSeats = new GroupConverter().convertGroup(
-        alice, group8, {...state(), tree: big}, "path", undefined, 2,
+        alice, group8, {...state(), tree: big}, "path", ["frank" as types.cloud.UserId], 2,
     );
     assert.deepStrictEqual(withSeats.nextFreeSeats, [2, 7]);
-    // Still a path view, just a wider one: the caller's climb plus what seating those two needs.
+    assert.deepStrictEqual(withSeats.subjectLeafPositions, [6]);
     assert.strictEqual(withSeats.treeScope, "path");
-    assert.ok(
-        (withSeats.treeNodes?.length ?? 0) > (plain.treeNodes?.length ?? 0),
-        "asking for seats must serve the nodes those seats are planned against",
-    );
-    // No assertion that the window beats the whole tree here: at eight seats two paths plus their copaths cover
-    // nearly all of it. The saving is asymptotic, and `treeScope` staying "path" is what this fixture can show.
+    assert.deepStrictEqual(withSeats.treeNodes, plain.treeNodes);
+    assert.deepStrictEqual(withSeats.treeEdges, plain.treeEdges);
 });
 
 it("no seats are reported when nobody asked for any", async () => {

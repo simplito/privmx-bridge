@@ -240,8 +240,8 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     }
     
     private async removeAliceFromGroup() {
-        // The only way a member leaves: blanking the seat, re-keying the path and advancing the epoch happen in
-        // one call, so alice cannot keep reading through a key the group still hands out.
+        // The only way a member leaves: blanking the seat and its path, re-keying the remover's path and advancing
+        // the epoch happen in one call, so alice cannot keep reading through a key the group still hands out.
         const groupId = this.requireGroupId();
         const {group} = await this.apis.contextApi.groupGet({groupId, scope: "full"});
         const current: types.cloud.GroupTreeState = {
@@ -259,7 +259,7 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             groupPubKey: rotatedGroupPubKey,
             keyId: rotatedGroupKeyId,
             data: "AAAA" as types.group.GroupData,
-            transition: withTransitionNodeKeys(removalTransition(current, alicePosition, group.keyVersion), nodeKey),
+            transition: withTransitionNodeKeys(removalTransition(current, group.keyVersion, testData.userId, [aliceId]), nodeKey),
             rungs: LadderMath.rungSpansFor(newEpoch, 1).map(span => ({
                 atKeyVersion: span.at,
                 targetKeyVersion: span.target,

@@ -111,20 +111,19 @@ export class GroupConverter {
             .filter(seat => seat >= 0);
         const seats = forNewMembers === undefined ? [] : GroupConverter.allocateSeats(tree, forNewMembers);
         // A caller with no seat has no path to serve, so they get the whole structure.
-        const full = scope === "full" || position < 0;
-        const view = full
-            ? tree
-            : GroupConverter.pathView(tree, position, subjects, seats);
+        const served: contextApi.GroupTreeScope = position < 0 ? "full" : scope;
+        const view = served === "full" ? tree : GroupConverter.climbView(tree, position, served === "plan");
         return {
+            // Absent only on groups from before the current layout, which predate the field.
+            treeVersion: group.treeVersion ?? 1,
             numLeaves: tree.numLeaves,
             leafAssignment: tree.leafAssignment,
             eraFloor: group.eraFloor,
             treeNodes: view.nodes,
             treeEdges: view.edges,
-            treeScope: (full ? "full" : "path") as contextApi.GroupTreeScope,
+            treeScope: served,
             ...(position >= 0 ? {ownLeafPosition: position} : {}),
-            // Handed back so the caller does not have to find them in `leafAssignment` itself — the bridge
-            // already resolved them to decide which nodes to serve.
+            // Handed back so the caller does not have to find them in `leafAssignment` itself.
             ...(forUserIds === undefined ? {} : {subjectLeafPositions: subjects}),
             ...(forNewMembers === undefined ? {} : {nextFreeSeats: seats}),
             ...(group.archivePrunedBelow !== undefined ? {archivePrunedBelow: group.archivePrunedBelow} : {}),
@@ -151,48 +150,15 @@ export class GroupConverter {
     }
     
     /**
-     * The part of the tree the caller actually uses: one edge per level of their climb plus the grant edge, and
-     * the public keys of their path and copath. `O(log n)` against 32 767 edges (~10.5 MB) at 16 384 members.
+     * The caller's climb: the edges addressed to them or to a node on their keyed path, and the grant edge. Every
+     * edge's parent is the child's lowest filled keyed ancestor, so these are exactly the edges a climb from the
+     * caller's seat can use — one per filled node on the way up.
      *
-     * A client that wants to validate the whole structure itself asks for `scope: "full"`.
+     * Nodes: the records of the caller's keyed path (filled or blank, so the client can tell which of its own nodes
+     * need a self-update), or with `plan` every record of the group, which planning a commit resolves against.
      */
-    private static pathView(
-        tree: types.cloud.GroupTreeState,
-        position: number,
-        subjectPositions: number[] = [],
-        seatPositions: number[] = [],
-    ): types.cloud.GroupTreeState {
-        const path = TreeMath.directPath(position, tree.numLeaves);
-        const copath = TreeMath.copath(position, tree.numLeaves);
-        const onPath = new Set(path);
-        const needed = new Set([...path, ...copath]);
-        for (const subjectPosition of subjectPositions) {
-            // A removal is planned against the subjects' paths: their nodes get new keys, and each new key is
-            // re-wrapped to the subtrees on their copaths, whose *public* keys are needed for that. A batch needs
-            // every departing member's, because one delta covers the union of them.
-            for (const nodeIndex of TreeMath.directPath(subjectPosition, tree.numLeaves)) {
-                needed.add(nodeIndex);
-            }
-            for (const nodeIndex of TreeMath.copath(subjectPosition, tree.numLeaves)) {
-                needed.add(nodeIndex);
-            }
-        }
-        if (seatPositions.length > 0) {
-            // An addition is planned against seats nobody holds yet, in the geometry seating them would produce:
-            // appending past the last leaf re-parents nodes along the truncated right edge, and the new keys are
-            // wrapped to whatever ends up beside them. Evaluated once for the whole batch, because seating them
-            // one at a time and seating them together do not give the same geometry. Indices outside the tree as
-            // it stands are simply absent from `nodes`, so asking for them costs nothing.
-            const grown = TreeMath.numLeavesToSeatAll(seatPositions, tree.numLeaves);
-            for (const seatPosition of seatPositions) {
-                for (const nodeIndex of TreeMath.directPath(seatPosition, grown)) {
-                    needed.add(nodeIndex);
-                }
-                for (const nodeIndex of TreeMath.copath(seatPosition, grown)) {
-                    needed.add(nodeIndex);
-                }
-            }
-        }
+    private static climbView(tree: types.cloud.GroupTreeState, position: number, plan: boolean): types.cloud.GroupTreeState {
+        const path = new Set(TreeMath.keyedPath(position, tree.numLeaves));
         const holder = tree.leafAssignment[position];
         const edges = tree.edges.filter(edge => {
             if (edge.isGrantEdge) {
@@ -201,12 +167,12 @@ export class GroupConverter {
             if (edge.childKind === "user") {
                 return edge.childUserId === holder;
             }
-            return edge.childIndex !== undefined && onPath.has(edge.childIndex);
+            return edge.childIndex !== undefined && path.has(edge.childIndex);
         });
         return {
             numLeaves: tree.numLeaves,
             leafAssignment: tree.leafAssignment,
-            nodes: tree.nodes.filter(node => needed.has(node.nodeIndex)),
+            nodes: plan ? tree.nodes : tree.nodes.filter(node => path.has(node.nodeIndex)),
             edges: edges,
         };
     }

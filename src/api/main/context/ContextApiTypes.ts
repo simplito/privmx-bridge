@@ -124,7 +124,12 @@ export interface GroupCreateModel {
      */
     groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">;
     policy?: types.cloud.ContainerPolicy;
-    /** The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing. */
+    /**
+     * The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing.
+     *
+     * Written as the creator's first commit: `nodes` is the creator's keyed path at generation 0 and nothing else,
+     * `edges` what those nodes owe plus the grant edge. The creator must be among the members.
+     */
     tree: types.cloud.GroupTreeState;
 }
 
@@ -164,8 +169,9 @@ export interface GroupAddMembersModel {
 
 /**
  * Removes members from a tree-backed group, in a single operation that must do all of it at once: blank the
- * leaves, refresh the union of their direct paths, rotate the grant keypair (advancing the epoch **once**), and
- * supply the rungs that keep the older epochs reachable from the new one.
+ * leaves and their keyed paths, re-key the remover's own keyed path, rotate the grant keypair (advancing the
+ * epoch **once**), and supply the rungs that keep the older epochs reachable from the new one. The caller cannot
+ * be among `userIds`.
  *
  * Removing several in one call is not a convenience: done one at a time, each removal advances the epoch on its
  * own, so every container the group can read goes stale `k` times and the group's rotation budget is charged `k`
@@ -196,6 +202,21 @@ export interface GroupRemoveMembersModel {
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
     confirmationTag?: types.core.Base64;
+}
+
+/**
+ * Re-keys the caller's own keyed path in a tree-backed group, refilling whatever blanks a removal or an addition
+ * left on it.
+ *
+ * Any seated member may call it, for themselves only — the path re-keyed is the caller's, derived by the bridge.
+ * It moves neither the epoch nor the roster version, writes no history entry and sends no event: the grant key
+ * is unchanged, only the route to it. Rate-limited per member.
+ */
+export interface GroupSelfUpdateModel {
+    id: types.group.GroupId;
+    transition: types.cloud.GroupTreeSelfUpdateTransition;
+    /** The epoch the path was planned against; a removal or rotation since then answers `ROTATED_ALREADY`. */
+    expectedKeyVersion: number;
 }
 
 /** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
@@ -319,12 +340,17 @@ export interface GroupDeleteModel {
 /**
  * How much of the tree to serve.
  *
- * `path` — the caller's own climb: their leaf edge, the edges above it, the grant edge, and the public keys of
- * the path and the copath. `O(log n)`, and everything a client needs to reach the group key or plan a removal.
- * `full` — the whole structure, for a client that wants to validate it independently. At 16 384 members that is
- * 32 767 edges, about 10.5 MB.
+ * `path` — the caller's own climb: the records of their keyed path (filled or blank), the edges addressed to
+ * them or to a node on that path, and the grant edge. `O(log n)`; everything a client needs to reach the group
+ * key.
+ * `plan` — every node record of the group (filled and blank, with generations) plus the same climbing edges.
+ * What a client needs to plan a commit: it computes the post state's resolutions locally. Records exist only on
+ * keyed nodes, so this is `O(n / 16)`.
+ * `full` — the whole structure, for a client that wants to validate it independently. Up to `2n - 1` edges.
+ *
+ * A caller holding no seat has no path to serve, and gets `full`.
  */
-export type GroupTreeScope = "path"|"full";
+export type GroupTreeScope = "path"|"plan"|"full";
 
 export interface GroupGetModel {
     groupId: types.group.GroupId;
@@ -332,12 +358,8 @@ export interface GroupGetModel {
     /** Defaults to `path`. */
     scope?: GroupTreeScope;
     /**
-     * Also serve the paths and copaths of these members' seats.
-     *
-     * Planning a removal needs the *subjects'* paths, not the caller's — a manager removing somebody sits
-     * elsewhere in the tree. Without this a manager has no `O(log n)` option and has to ask for `full`, which is
-     * the cost the path view exists to avoid. A list, because a batch removal is planned against the union of
-     * every departing member's path.
+     * Also resolve these members' seats, returned in `subjectLeafPositions` — what a removal names as its blanked
+     * positions. Serves no extra nodes: planning reads them from `scope: "plan"`.
      */
     forUserIds?: types.cloud.UserId[];
     /**
@@ -469,6 +491,9 @@ export interface GroupInfo {
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
+    /** Layout of the tree. 2 for every group the current API creates; anything else is a group from before the
+     *  layout changed, which a client must not climb or commit to. */
+    treeVersion: number;
     numLeaves: number;
     leafAssignment: types.cloud.UserId[];
     /**
@@ -486,7 +511,7 @@ export interface GroupInfo {
     nextFreeSeats?: number[];
     treeNodes: types.cloud.GroupTreeNode[];
     treeEdges: types.cloud.GroupTreeEdge[];
-    /** Which of the two views the tree fields above hold. */
+    /** Which view the tree fields above hold. */
     treeScope: GroupTreeScope;
     /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
     groupKeys: types.cloud.GroupKeysEntry[];
@@ -569,6 +594,7 @@ export interface IContextApi {
     groupList(model: GroupListModel): Promise<GroupListResult>;
     groupAddMembers(model: GroupAddMembersModel): Promise<types.core.OK>;
     groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    groupSelfUpdate(model: GroupSelfUpdateModel): Promise<types.core.OK>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;

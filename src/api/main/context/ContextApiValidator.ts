@@ -102,10 +102,10 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupGet", this.builder.createObject({
             groupId: this.tv.groupId,
             type: this.tv.optResourceType,
-            // Defaults to "path" — the caller's own climb. "full" is `O(n)` and only a client validating the whole
-            // structure for itself needs it.
-            scope: this.builder.optional(this.builder.createEnum(["path", "full"])),
-            // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
+            // Defaults to "path" — the caller's own climb. "plan" adds every node record, which planning a commit
+            // needs. "full" is `O(n)` and only a client validating the whole structure for itself needs it.
+            scope: this.builder.optional(this.builder.createEnum(["path", "plan", "full"])),
+            // Resolves these members' seats, which a removal names.
             forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
             // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
             forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
@@ -144,6 +144,11 @@ export class ContextApiValidator extends BaseValidator {
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
             confirmationTag: this.builder.optional(this.tv.base64),
+        }));
+        this.registerMethod("groupSelfUpdate", this.builder.createObject({
+            id: this.tv.groupId,
+            transition: this.tv.groupTreeSelfUpdateTransition,
+            expectedKeyVersion: this.builder.int,
         }));
         this.registerMethod("groupCutEra", this.builder.createObject({
             id: this.tv.groupId,

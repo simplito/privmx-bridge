@@ -20,7 +20,7 @@ import { GroupStateRepository } from "../../../service/cloud/GroupStateRepositor
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { API_ERROR_CODES, AppException } from "../../../api/AppException";
 import { createFake, createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { additionTransition, buildTree, removalTransition, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
+import { acceptedCommit, buildTree, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { DateUtils } from "../../../utils/DateUtils";
@@ -107,8 +107,7 @@ function createRepository(options: {casMiss?: boolean} = {}) {
     mock(state, "writePublicMetaEntry", async () => {});
     mock(state, "writePrivateMetaEntry", async () => {});
     mock(state, "writeTree", async () => {});
-    mock(state, "applyRemovalTransition", async () => {});
-    mock(state, "applyAdditionTransition", async () => {});
+    mock(state, "applyCommit", async () => {});
     mock(state, "insertRungs", async () => {});
     mock(state, "deleteRungsTargetingBelow", async () => {});
     mock(state, "deleteState", async () => {});
@@ -125,7 +124,7 @@ function removal(oldGroup: db.group.Group) {
         newGroupPubKey: nextGroupPubKey,
         keyId: newKeyId,
         data: data,
-        transition: removalTransition(buildTree(SEATING, EPOCH), 2, EPOCH),
+        commit: acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "remove", committer: "janek", removed: ["bob"]}).commit,
         rungs: [{atKeyVersion: EPOCH + 1, targetKeyVersion: EPOCH, data: "rung" as types.core.UserKeyData}],
     };
 }
@@ -178,7 +177,7 @@ it("a lost race writes nothing at all, in the document or beside it", async () =
     const result = await repository.removeMembersWithTransition(removal(group()));
     assert.strictEqual(result, null);
     hasNoCalls(state.insertHistoryEntry);
-    hasNoCalls(state.applyRemovalTransition);
+    hasNoCalls(state.applyCommit);
     hasNoCalls(state.insertRungs);
 });
 
@@ -186,12 +185,12 @@ it("only the transition is written, never a whole tree", async () => {
     const {repository, state} = createRepository();
     const params = removal(group());
     await repository.removeMembersWithTransition(params);
-    hasOneCall(state.applyRemovalTransition);
+    hasOneCall(state.applyCommit);
     hasNoCalls(state.writeTree);
-    const call = (state.applyRemovalTransition as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
+    const call = (state.applyCommit as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
     assert.strictEqual(call[0], groupId);
-    assert.strictEqual(call[1], params.transition);
-    assert.deepStrictEqual(call[2], [bob]);
+    assert.strictEqual(call[1], params.oldGroup, "applied against the geometry it was checked against");
+    assert.strictEqual(call[2], params.commit);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,7 +221,7 @@ it("an addition advances the roster version without advancing the epoch", async 
     const oldGroup = group();
     const result = await repository.addMembersWithTransition({
         oldGroup: oldGroup,
-        transition: additionTransition(buildTree(SEATING, EPOCH), "dave" as types.cloud.UserId, 4, EPOCH),
+        commit: acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "add", committer: "janek", members: ["dave"], positions: [4]}).commit,
         modifier: janek,
         addedMembers: [{userId: "dave" as types.cloud.UserId, role: "user"}],
         keyId: keyId,
@@ -685,4 +684,25 @@ it("getPage refuses a query naming a field outside the whitelist", async () => {
         () => repository.getPage(contextId, {...LIST_PARAMS, query: {"#groupKeys": {$exists: true}}}, "createDate"),
         (e: unknown) => AppException.is(e, "INVALID_PARAMS"),
     );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// self-update
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("a self-update moves no counter and writes no history, but still lands only on the state it was checked against", async () => {
+    const {repository, state, updates} = createRepository();
+    const oldGroup = group();
+    const {commit} = acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "selfUpdate", committer: "bob"});
+    assert.strictEqual(await repository.selfUpdateWithTransition(oldGroup, commit), true);
+    assert.deepStrictEqual(updates, [{filter: {_id: groupId, keyVersion: EPOCH, rosterVersion: 5}, set: {keyVersion: EPOCH}}]);
+    hasNoCalls(state.insertHistoryEntry);
+    hasOneCall(state.applyCommit);
+});
+
+it("a self-update that lost the race writes nothing", async () => {
+    const {repository, state} = createRepository({casMiss: true});
+    const {commit} = acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "selfUpdate", committer: "bob"});
+    assert.strictEqual(await repository.selfUpdateWithTransition(group(), commit), false);
+    hasNoCalls(state.applyCommit);
 });

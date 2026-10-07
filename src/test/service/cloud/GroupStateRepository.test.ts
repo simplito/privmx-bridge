@@ -19,8 +19,8 @@ import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { MongoQuery } from "../../../db/mongo/MongoQuery";
 import { QueryResult } from "../../../db/ObjectRepository";
 import { createFake } from "../../testUtils/TestUtils";
-import { buildTree, removalTransition } from "../../testUtils/TreeFixtures";
-import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
+import { acceptedCommit, buildTree, PlanOp, planCommit } from "../../testUtils/TreeFixtures";
+import { TreeValidator } from "../../../service/cloud/keytree/TreeValidator";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 
@@ -135,7 +135,7 @@ function nodeDocs(tree: types.cloud.GroupTreeState, id = groupId): db.group.Grou
         groupId: id,
         nodeIndex: node.nodeIndex,
         generation: node.generation,
-        publicKey: node.publicKey,
+        ...(node.publicKey ? {publicKey: node.publicKey} : {}),
     }));
 }
 
@@ -285,40 +285,147 @@ it("a rung is identified by the span it covers and its recipient, so re-submitti
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// applying a removal delta
+// applying a commit
 // ─────────────────────────────────────────────────────────────────────────────
 
-it("a batch removal retires each departing member's own edge, whatever order they were named in", async () => {
-    // The validator only requires `userIds` and `blankedPositions` to agree as sets, and the endpoint sorts the
-    // seats while leaving the names in the caller's order. Pairing the two by index therefore deletes ids nobody
-    // holds and leaves the real edges behind — addressed to members who no longer have a leaf.
-    const tree = buildTree(SEATING, EPOCH);
-    const alice = "alice" as types.cloud.UserId;
-    const dave = "dave" as types.cloud.UserId;
-    const seats = [tree.leafAssignment.indexOf(alice), tree.leafAssignment.indexOf(dave)];
-    const {repository, captured} = createStateRepository({nodes: nodeDocs(tree), edges: edgeDocs(tree)});
-    await repository.applyRemovalTransition(
-        groupId,
-        // Seats ascending, names in the opposite order: exactly what the client sends.
-        removalTransition(tree, seats, EPOCH),
-        [dave, alice],
-        tree.numLeaves,
-        tree.leafAssignment,
-    );
-    const deleted = (captured.edges.operations as unknown as {deleteOne?: {filter: {_id: string}}}[])
-        .filter(op => op.deleteOne)
-        .map(op => op.deleteOne!.filter._id);
-    const edgeIdFor = (userId: types.cloud.UserId) => GroupStateRepository.edgeId(groupId, {
-        parentIndex: TreeMath.parent(TreeMath.leafNode(tree.leafAssignment.indexOf(userId)), tree.numLeaves),
-        parentGeneration: 0,
-        childKind: "user",
-        childUserId: userId,
-        data: "" as types.core.UserKeyData,
-    });
-    assert.deepStrictEqual(deleted.sort(), [edgeIdFor(alice), edgeIdFor(dave)].sort());
-    // And every id deleted is one that actually existed, rather than a mispaired seat/name combination.
-    const stored = new Set(edgeDocs(tree).map(edge => edge.id));
-    for (const id of deleted) {
-        assert.ok(stored.has(id as never), `deleted ${id}, which no edge document ever had`);
+type Doc = Record<string, unknown>&{_id: string};
+
+/**
+ * Plays the captured bulk operations against an in-memory collection — the four shapes `applyCommit` emits and
+ * nothing more — so a test can read back what mongo would hold.
+ */
+function playOperations(docs: Map<string, Doc>, operations: mongodb.AnyBulkWriteOperation[]) {
+    for (const op of operations as Record<string, {filter: Record<string, unknown>, replacement?: Doc, update?: {$unset: Record<string, string>}}>[]) {
+        if (op.deleteMany) {
+            const {groupId: g, parentIndex} = op.deleteMany.filter as {groupId: string, parentIndex: {$in: number[]}};
+            for (const [id, doc] of docs) {
+                if (doc.groupId === g && parentIndex.$in.includes(doc.parentIndex as number)) {
+                    docs.delete(id);
+                }
+            }
+        }
+        else if (op.deleteOne) {
+            docs.delete(op.deleteOne.filter._id as string);
+        }
+        else if (op.replaceOne) {
+            docs.set(op.replaceOne.filter._id as string, {...op.replaceOne.replacement!, _id: op.replaceOne.filter._id as string});
+        }
+        else if (op.updateOne) {
+            const doc = docs.get(op.updateOne.filter._id as string);
+            if (doc) {
+                for (const field of Object.keys(op.updateOne.update!.$unset)) {
+                    delete doc[field];
+                }
+            }
+        }
+        else {
+            throw new Error(`unexpected operation ${JSON.stringify(op)}`);
+        }
+    }
+}
+
+/** What the collections hold for `tree`, keyed by derived id. */
+function storedDocs(tree: types.cloud.GroupTreeState) {
+    return {
+        nodes: new Map<string, Doc>(nodeDocs(tree).map(({id, ...doc}) => [id, {...doc, _id: id}])),
+        edges: new Map<string, Doc>(edgeDocs(tree).map(({id, ...doc}) => [id, {...doc, _id: id}])),
+    };
+}
+
+function readBack(docs: {nodes: Map<string, Doc>, edges: Map<string, Doc>}, numLeaves: number, leafAssignment: types.cloud.UserId[]): types.cloud.GroupTreeState {
+    return {
+        numLeaves,
+        leafAssignment,
+        nodes: [...docs.nodes.values()].map(doc => ({
+            nodeIndex: doc.nodeIndex as number,
+            generation: doc.generation as number,
+            ...(doc.publicKey ? {publicKey: doc.publicKey as types.core.EccPubKey} : {}),
+        })),
+        edges: [...docs.edges.values()].map(({_id, groupId: _g, ...edge}) => edge as unknown as types.cloud.GroupTreeEdge),
+    };
+}
+
+/** Validates `op` on `tree` with the production validator and applies it through the repository. */
+async function commitThroughStorage(tree: types.cloud.GroupTreeState, keyVersion: number, op: PlanOp, docs = storedDocs(tree)) {
+    const {plan, commit} = acceptedCommit(tree, keyVersion, op);
+    const {repository, captured} = createStateRepository();
+    await repository.applyCommit(groupId, tree, commit);
+    playOperations(docs.nodes, captured.nodes.operations);
+    playOperations(docs.edges, captured.edges.operations);
+    return {plan, commit, captured, docs, after: readBack(docs, commit.numLeaves, commit.leafAssignment), keyVersion: commit.keyVersion};
+}
+
+function rosterOf(tree: types.cloud.GroupTreeState) {
+    return {users: tree.leafAssignment.filter(u => u !== ""), managers: [] as types.cloud.UserId[]};
+}
+
+const WIDE = Array.from({length: 64}, (_, i) => `u${i}`);
+
+it("a commit drops the edges out of every node it blanks or re-keys, and the old grant edge, before writing", async () => {
+    const tree = planCommit(buildTree(WIDE, EPOCH), EPOCH, {kind: "selfUpdate", committer: "u40"}).after;
+    const {captured} = await commitThroughStorage(tree, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]});
+    const [dropOut, dropGrant, ...writes] = captured.edges.operations as unknown as Record<string, {filter: Record<string, unknown>}>[];
+    assert.deepStrictEqual(dropOut.deleteMany.filter, {groupId: groupId, parentIndex: {$in: [95, 31, 63]}});
+    assert.deepStrictEqual(dropGrant.deleteOne.filter, {_id: `${groupId}|grant>node:63`});
+    assert.ok(writes.every(op => op.replaceOne), "only writes after the deletes");
+});
+
+it("a blanked node keeps its record and generation and loses only its key", async () => {
+    const tree = planCommit(buildTree(WIDE, EPOCH), EPOCH, {kind: "selfUpdate", committer: "u40"}).after;
+    const {captured, after} = await commitThroughStorage(tree, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]});
+    assert.ok((captured.nodes.operations as unknown as Record<string, unknown>[]).some(op =>
+        JSON.stringify(op) === JSON.stringify({updateOne: {filter: {_id: `${groupId}|95`}, update: {$unset: {publicKey: ""}}}})));
+    assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 0});
+});
+
+it("SECURITY: after a removal the stored edges are exactly what the state owes — nothing a blanked key could open", async () => {
+    const tree = planCommit(buildTree(WIDE, EPOCH), EPOCH, {kind: "selfUpdate", committer: "u40"}).after;
+    const {after, plan} = await commitThroughStorage(tree, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]});
+    assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH + 1), []);
+    assert.deepStrictEqual(after.edges.map(edge => GroupStateRepository.edgeId(groupId, edge)).sort(),
+        plan.after.edges.map(edge => GroupStateRepository.edgeId(groupId, edge)).sort());
+    assert.ok(!after.edges.some(edge => edge.parentIndex === 95), "no wrap out of the blanked node survives");
+});
+
+it("growth that un-keys the old root deletes its record and its edges", async () => {
+    const tree = buildTree(WIDE.slice(0, 16), EPOCH);
+    const {captured, after} = await commitThroughStorage(tree, EPOCH, {kind: "add", committer: "u3", members: ["new"], positions: [16]});
+    assert.ok((captured.nodes.operations as unknown as Record<string, unknown>[]).some(op =>
+        JSON.stringify(op) === JSON.stringify({deleteOne: {filter: {_id: `${groupId}|15`}}})));
+    assert.deepStrictEqual(after.nodes.map(node => node.nodeIndex), [31]);
+    assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
+});
+
+it("growing a one-member group replaces the grant edge addressed to the member", async () => {
+    const tree = buildTree(["janek"], EPOCH);
+    const {captured, after} = await commitThroughStorage(tree, EPOCH, {kind: "add", committer: "janek", members: ["alice"], positions: [1]});
+    const dropGrant = (captured.edges.operations as unknown as Record<string, {filter: Record<string, unknown>}>[])[1];
+    assert.deepStrictEqual(dropGrant.deleteOne.filter, {_id: `${groupId}|grant>user:janek`});
+    assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
+});
+
+it("a long random history applied through storage stays exactly the owed state", async () => {
+    let tree = buildTree(WIDE.slice(0, 40), 1);
+    let keyVersion = 1;
+    let docs = storedDocs(tree);
+    let seed = 7;
+    const random = (bound: number) => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed % bound;
+    };
+    for (let step = 0; step < 60; step++) {
+        const members = tree.leafAssignment.filter(u => u !== "");
+        const committer = members[random(members.length)];
+        const others = members.filter(m => m !== committer);
+        const roll = random(3);
+        const blank = tree.leafAssignment.indexOf("" as types.cloud.UserId);
+        const op: PlanOp = roll === 0 && others.length > 1
+            ? {kind: "remove", committer, removed: [others[random(others.length)]]}
+            : roll === 1
+                ? {kind: "add", committer, members: [`n${step}`], positions: [blank >= 0 ? blank : tree.numLeaves]}
+                : {kind: "selfUpdate", committer};
+        const result = await commitThroughStorage(tree, keyVersion, op, docs);
+        ({after: tree, keyVersion, docs} = result);
+        assert.deepStrictEqual(TreeValidator.validateState(tree, rosterOf(tree), keyVersion), [], `step ${step}: ${JSON.stringify(op)}`);
     }
 });

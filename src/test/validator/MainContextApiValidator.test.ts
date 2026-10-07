@@ -376,6 +376,40 @@ it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
     expect(result.success).toBe(false);
 });
 
+it("ContextApiValidator.groupSelfUpdate valid, with a node minted from no record", () => {
+    const model: contextApi.GroupSelfUpdateModel = {
+        id: groupId,
+        transition: {
+            baseKeyVersion: 1,
+            refreshedNodes: [
+                {nodeIndex: 31, generation: 0, publicKey: nodePubKey},
+                {nodeIndex: 63, fromGeneration: 4, generation: 5, publicKey: nodePubKey},
+            ],
+            edges: [
+                {parentIndex: 63, parentGeneration: 5, childKind: "node", childIndex: 31, childGeneration: 0, data: "w1" as types.core.UserKeyData},
+                {isGrantEdge: true, parentGeneration: 1, childKind: "node", childIndex: 63, childGeneration: 5, data: "w2" as types.core.UserKeyData},
+            ],
+        },
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupSelfUpdate refuses anything but its own fields", () => {
+    // No seats, no rungs, no keys: a self-update moves nothing but the caller's own path.
+    const model = {id: groupId, transition: {...validRemovalTransition()}, expectedKeyVersion: 1};
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupGet accepts the planning scope", () => {
+    const result = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "plan"}));
+    expect(result.success).toBe(true);
+    const unknown = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "everything"}));
+    expect(unknown.success).toBe(false);
+});
+
 it("ContextApiValidator.groupCutEra valid", () => {
     const model: contextApi.GroupCutEraModel = {id: groupId, newFloor: 5, expectedKeyVersion: 9};
     const result = Utils.try(() => validator().validate("groupCutEra", model));

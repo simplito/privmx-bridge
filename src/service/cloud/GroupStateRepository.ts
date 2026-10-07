@@ -14,14 +14,15 @@ import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { TreeMath } from "./keytree/TreeMath";
+import type { TreeCommit } from "./keytree/TreeTransitionValidator";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
  * entries and Epoch Ladder rungs.
  *
  * Ids are derived, not generated — a node is `(groupId, nodeIndex)`, an edge is `(groupId, parent, child)`.
- * Generations are deliberately **not** part of an edge's identity, so refreshing a path updates edges in place
- * instead of deleting and reinserting them.
+ * Generations are deliberately **not** part of an edge's identity, so a re-wrap lands on the id of the edge it
+ * replaces and a re-submitted commit cannot duplicate one.
  *
  * Every mutating method runs in the session the repositories were built with; atomicity is the caller's.
  */
@@ -233,8 +234,8 @@ export class GroupStateRepository {
         );
     }
     
-    /** Writes a group's whole tree. Only creating a group does this — every later change is a transition, which
-     *  costs `O(log n)` documents instead. */
+    /** Writes a group's whole tree. Only creating a group does this — every later change is a commit
+     *  (`applyCommit`). A fresh tree is the creator's keyed path and the edges it owes, nothing blank. */
     async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState): Promise<void> {
         const nodeOperations: mongodb.AnyBulkWriteOperation[] = tree.nodes.map(node => ({
             replaceOne: {
@@ -263,10 +264,7 @@ export class GroupStateRepository {
         ]);
     }
     
-    /**
-     * The nodes a transition is checked against: the path of the affected seat and its copath. `O(log n)` reads
-     * against `{groupId, nodeIndex}` instead of the whole tree.
-     */
+    /** The records at the given indices — a lookup by derived id. A rotation reads the root alone this way. */
     async getNodesAt(groupId: types.group.GroupId, nodeIndices: number[]): Promise<types.cloud.GroupTreeNode[]> {
         if (nodeIndices.length === 0) {
             return [];
@@ -277,174 +275,76 @@ export class GroupStateRepository {
     }
     
     /**
-     * Applies a removal delta: refresh the path, install the edges it owes, drop the departing member's edge.
-     *
-     * Every write is keyed by derived identity, so an edge out of a refreshed node replaces the one it
-     * supersedes rather than duplicating it. The only deletion is the departing member's own edge.
+     * Every node record of the group, filled and blank — what a commit is checked against. Only keyed nodes have
+     * records, so this is at most `numLeaves / 2^BUCKET_LEVEL + 1` documents however the group is seated.
      */
-    async applyRemovalTransition(
-        groupId: types.group.GroupId,
-        transition: types.cloud.GroupTreeTransition,
-        removedUsers: types.cloud.UserId[],
-        numLeaves: number,
-        leafAssignment: types.cloud.UserId[],
-    ): Promise<void> {
-        const nodeOperations: mongodb.AnyBulkWriteOperation[] = transition.refreshedNodes.map(node => ({
-            replaceOne: {
-                filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
-                replacement: {
-                    groupId: groupId,
-                    nodeIndex: node.nodeIndex,
-                    generation: node.generation,
-                    publicKey: node.publicKey,
-                },
-                upsert: true,
-            },
-        }));
-        const edgeOperations: mongodb.AnyBulkWriteOperation[] = transition.edges.map(edge => ({
-            replaceOne: {
-                filter: {_id: GroupStateRepository.edgeId(groupId, edge)},
-                replacement: this.toEdgeDoc(groupId, edge),
-                upsert: true,
-            },
-        }));
-        // Each departing member's edge, addressed by identity: parent seat and child user, which is all the id
-        // is made of — the generations and the blob it carried are irrelevant to finding it.
-        //
-        // The seat comes from the roster, not from `blankedPositions[i]`: the validator only requires the two
-        // lists to agree as sets, so pairing them by index would delete an id nobody holds and leave the real
-        // edge behind — an edge addressed to somebody who no longer has a leaf.
-        for (const removedUser of removedUsers) {
-            const position = leafAssignment.indexOf(removedUser);
-            if (position < 0) {
-                continue; // validated upstream; nothing to delete for somebody who held no seat
-            }
-            edgeOperations.push({
-                deleteOne: {
-                    filter: {_id: GroupStateRepository.edgeId(groupId, {
-                        parentIndex: TreeMath.parent(TreeMath.leafNode(position), numLeaves),
-                        parentGeneration: 0,
-                        childKind: "user",
-                        childUserId: removedUser,
-                        data: "" as types.core.UserKeyData,
-                    })},
-                },
-            });
-        }
-        await Promise.all([
-            GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
-            GroupStateRepository.bulkWrite(this.edges, edgeOperations),
-        ]);
+    async getNodes(groupId: types.group.GroupId): Promise<types.cloud.GroupTreeNode[]> {
+        const docs = await this.nodes.query(q => q.eq("groupId", groupId)).array();
+        return docs.map(doc => this.toTreeNode(doc));
     }
     
     /**
-     * Applies an addition delta: the seated path written in place, the edges it owes installed, the ones the new
-     * geometry supersedes deleted.
-     *
-     * Growth is the only reason anything gets deleted: it re-parents nodes along the truncated right edge, and a
-     * root change leaves the old grant edge beside the new one. Both are found by arithmetic, not by scanning.
+     * The derived id of the grant edge a state holds: to the root, or straight to the sole member of a one-leaf
+     * tree. Both are functions of the geometry, so the edge a commit supersedes is found without a scan.
      */
-    async applyAdditionTransition(
-        groupId: types.group.GroupId,
-        transition: types.cloud.GroupTreeAdditionTransition,
-        addedUsers: types.cloud.UserId[],
-        oldNumLeaves: number,
-        oldLeafAssignment: types.cloud.UserId[],
-    ): Promise<void> {
-        const numLeaves = TreeMath.numLeavesToSeatAll(transition.positions, oldNumLeaves);
-        const nodeOperations: mongodb.AnyBulkWriteOperation[] = transition.seatedNodes.map(node => ({
-            replaceOne: {
-                filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
-                replacement: {
-                    groupId: groupId,
-                    nodeIndex: node.nodeIndex,
-                    generation: node.generation,
-                    publicKey: node.publicKey,
+    static grantEdgeId(groupId: types.group.GroupId, numLeaves: number, leafAssignment: types.cloud.UserId[]) {
+        const rootIndex = TreeMath.root(numLeaves);
+        return GroupStateRepository.edgeId(groupId, TreeMath.isLeaf(rootIndex)
+            ? {isGrantEdge: true, parentGeneration: 0, childKind: "user", childUserId: leafAssignment[0], data: "" as types.core.UserKeyData}
+            : {isGrantEdge: true, parentGeneration: 0, childKind: "node", childIndex: rootIndex, data: "" as types.core.UserKeyData});
+    }
+    
+    /**
+     * Applies an accepted commit (`TreeTransitionValidator.validateCommit`) to a tree whose geometry before it was
+     * `before`.
+     *
+     * Every edge out of a blanked, re-keyed or un-keyed node goes, and so does the old grant edge; then the new
+     * edges go in. That is enough to keep the stored edge set equal to what the state owes: an edge's parent is
+     * its child's lowest filled keyed ancestor, and any change to what a filled node must wrap to — a seat taken
+     * or vacated, a node blanked or re-keyed, the geometry grown — happens below a node that is itself in one of
+     * those three sets. Nothing outside them can be stale, so nothing outside them is touched.
+     *
+     * Deletes run before inserts (one ordered bulk write), because a re-keyed node's new edges land on the ids of
+     * the ones they replace.
+     */
+    async applyCommit(groupId: types.group.GroupId, before: {numLeaves: number, leafAssignment: types.cloud.UserId[]}, commit: TreeCommit): Promise<void> {
+        const parents = [...new Set([...commit.blanked, ...commit.refreshed.map(node => node.nodeIndex), ...commit.unkeyed])];
+        const edgeOperations: mongodb.AnyBulkWriteOperation[] = [
+            {deleteMany: {filter: {groupId: groupId, parentIndex: {$in: parents}}}},
+            {deleteOne: {filter: {_id: GroupStateRepository.grantEdgeId(groupId, before.numLeaves, before.leafAssignment)}}},
+            ...commit.edges.map(edge => ({
+                replaceOne: {
+                    filter: {_id: GroupStateRepository.edgeId(groupId, edge)},
+                    replacement: this.toEdgeDoc(groupId, edge),
+                    upsert: true,
                 },
-                upsert: true,
-            },
-        }));
-        const edgeOperations: mongodb.AnyBulkWriteOperation[] = transition.edges.map(edge => ({
-            replaceOne: {
-                filter: {_id: GroupStateRepository.edgeId(groupId, edge)},
-                replacement: this.toEdgeDoc(groupId, edge),
-                upsert: true,
-            },
-        }));
-        for (const staleId of GroupStateRepository.edgesSupersededBySeating(
-            groupId, transition, addedUsers, oldNumLeaves, numLeaves, oldLeafAssignment,
-        )) {
-            edgeOperations.push({deleteOne: {filter: {_id: staleId}}});
-        }
+            })),
+        ];
+        const nodeOperations: mongodb.AnyBulkWriteOperation[] = [
+            ...commit.refreshed.map(node => ({
+                replaceOne: {
+                    filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
+                    replacement: {groupId: groupId, nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey},
+                    upsert: true,
+                },
+            })),
+            // Blank keeps the record and its generation: whoever refills the node continues from there, so an edge
+            // written under the old key can never name the new one's generation.
+            ...commit.blanked.map(nodeIndex => ({
+                updateOne: {
+                    filter: {_id: GroupStateRepository.nodeId(groupId, nodeIndex)},
+                    update: {$unset: {publicKey: ""}},
+                },
+            })),
+            // Un-keyed for good: the root only ever moves up, so the record can never be needed again.
+            ...commit.unkeyed.map(nodeIndex => ({
+                deleteOne: {filter: {_id: GroupStateRepository.nodeId(groupId, nodeIndex)}},
+            })),
+        ];
         await Promise.all([
             GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
             GroupStateRepository.bulkWrite(this.edges, edgeOperations),
         ]);
-    }
-    
-    /** Ids of the edges the new geometry invalidates: re-parented children, and the grant edge on a root change. */
-    private static edgesSupersededBySeating(
-        groupId: types.group.GroupId,
-        transition: types.cloud.GroupTreeAdditionTransition,
-        addedUsers: types.cloud.UserId[],
-        oldNumLeaves: number,
-        numLeaves: number,
-        oldLeafAssignment: types.cloud.UserId[],
-    ): db.group.GroupTreeEdgeId[] {
-        if (numLeaves === oldNumLeaves) {
-            return []; // filling blanks changes no parent, and the seated paths' edges replace themselves by id
-        }
-        const stale: db.group.GroupTreeEdgeId[] = [];
-        const oldRoot = TreeMath.root(oldNumLeaves);
-        const newRoot = TreeMath.root(numLeaves);
-        if (newRoot !== oldRoot) {
-            stale.push(GroupStateRepository.edgeId(groupId, {
-                isGrantEdge: true,
-                parentGeneration: 0,
-                childKind: "node",
-                childIndex: oldRoot,
-                data: "" as types.core.UserKeyData,
-            }));
-        }
-        const newcomers = new Set(addedUsers);
-        const oldNodeCount = TreeMath.nodeCount(oldNumLeaves);
-        // The union, so a node re-parented on two newcomers' paths is retired once rather than twice.
-        for (const parentIndex of TreeMath.frontier(transition.positions, numLeaves)) {
-            for (const childIndex of TreeMath.children(parentIndex, numLeaves)) {
-                if (childIndex >= oldNodeCount) {
-                    continue; // did not exist before, so nothing can be addressed to it
-                }
-                if (childIndex === oldRoot) {
-                    continue; // the old root had no parent edge; its grant edge is handled above
-                }
-                const oldParent = TreeMath.parent(childIndex, oldNumLeaves);
-                if (oldParent === parentIndex) {
-                    continue; // same parent as before: the plan's edge replaces the old one under the same id
-                }
-                if (TreeMath.isLeaf(childIndex)) {
-                    const holder = oldLeafAssignment[TreeMath.leafPosition(childIndex)];
-                    if (!holder || newcomers.has(holder)) {
-                        continue;
-                    }
-                    stale.push(GroupStateRepository.edgeId(groupId, {
-                        parentIndex: oldParent,
-                        parentGeneration: 0,
-                        childKind: "user",
-                        childUserId: holder,
-                        data: "" as types.core.UserKeyData,
-                    }));
-                    continue;
-                }
-                stale.push(GroupStateRepository.edgeId(groupId, {
-                    parentIndex: oldParent,
-                    parentGeneration: 0,
-                    childKind: "node",
-                    childIndex: childIndex,
-                    data: "" as types.core.UserKeyData,
-                }));
-            }
-        }
-        return stale;
     }
     
     async insertHistoryEntry(entry: db.group.GroupHistoryEntry): Promise<void> {
@@ -484,11 +384,12 @@ export class GroupStateRepository {
     
     // ── mapping ──────────────────────────────────────────────────────────────────────────────────────────────
     
+    /** A blank node is served without `publicKey`, not with an empty one. */
     private toTreeNode(doc: db.group.GroupTreeNode): types.cloud.GroupTreeNode {
         return {
             nodeIndex: doc.nodeIndex,
             generation: doc.generation,
-            publicKey: doc.publicKey,
+            ...(doc.publicKey ? {publicKey: doc.publicKey} : {}),
         };
     }
     

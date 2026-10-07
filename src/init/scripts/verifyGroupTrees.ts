@@ -22,10 +22,12 @@ import { ConfigLoader } from "../../service/config/ConfigLoader";
 import { Callbacks } from "../../service/event/Callbacks";
 import { JobService } from "../../service/job/JobService";
 import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
+import { TreeMath } from "../../service/cloud/keytree/TreeMath";
 import * as util from "util";
 
 /**
- * Checks every group's stored tree against the rules a write has to satisfy.
+ * Checks every group's stored tree against the rules a write has to satisfy — in particular that the stored edges
+ * are exactly the ones the node records and the seating force (see `TreeValidator`).
  *
  * Transitions are validated against stored state rather than replacing it, so the bridge never re-validates the
  * whole tree on a write. That is sound only while every write goes through a validator — a migration or repair
@@ -56,10 +58,17 @@ async function go() {
     
     let checked = 0;
     let broken = 0;
+    let legacy = 0;
     const groups = mongoDbManager.getCollectionByName("group");
     for await (const doc of groups.find({}, {projection: {_id: 1}})) {
         const group = await groupRepository.get(doc._id as never);
         if (!group) {
+            continue;
+        }
+        if (group.treeVersion !== TreeMath.TREE_VERSION) {
+            // Written under the earlier layout; no commit is accepted on it, and the rules here do not apply.
+            legacy++;
+            console.log(`${group.id}: tree version ${group.treeVersion ?? "(none)"}, not checked — recreate it`);
             continue;
         }
         checked++;
@@ -76,7 +85,7 @@ async function go() {
             }
         }
     }
-    console.log(`checked ${checked} group(s), ${broken} broken`);
+    console.log(`checked ${checked} group(s), ${broken} broken, ${legacy} on an unsupported tree version`);
     await mongoDbManager.close();
     if (broken > 0) {
         process.exit(2);
