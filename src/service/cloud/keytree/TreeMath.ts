@@ -26,8 +26,9 @@ limitations under the License.
  */
 export class TreeMath {
     
-    /** Layout of the tree this arithmetic describes. Groups written under any other version are not served. */
-    static readonly TREE_VERSION = 2;
+    /** Layout of the tree and format of its statements. Groups written under any other version are not served.
+     *  3: rung blobs bound to their span, the genesis roster in the seq 1 statement, no confirmation tag. */
+    static readonly TREE_VERSION = 3;
     
     /** Levels `1..BUCKET_LEVEL` carry no node keys. Tied to `TREE_VERSION`: changing it is a new version. */
     static readonly BUCKET_LEVEL = 4;
@@ -262,12 +263,22 @@ export class TreeMath {
     }
     
     /**
-     * The keyed nodes of a seat's direct path, bottom-up — exactly what a commit by that seat re-keys, and the
-     * only nodes whose keys that member may ever hold. Ends at the root whenever `numLeaves > 1`; empty for a
-     * single-leaf tree.
+     * The keyed nodes of a seat's direct path, bottom-up — what every commit by that seat re-keys (a creation and
+     * an addition also fill nodes off it). Ends at the root whenever `numLeaves > 1`; empty for a single-leaf tree.
      */
     static keyedPath(position: number, numLeaves: number): number[] {
         return TreeMath.directPath(position, numLeaves).filter(nodeIndex => TreeMath.isKeyed(nodeIndex, numLeaves));
+    }
+    
+    /** Every keyed node of a tree of `numLeaves`, ascending. */
+    static keyedNodes(numLeaves: number): number[] {
+        const nodes: number[] = [];
+        for (let x = 1; x < TreeMath.nodeCount(numLeaves); x += 2) {
+            if (TreeMath.isKeyed(x, numLeaves)) {
+                nodes.push(x);
+            }
+        }
+        return nodes;
     }
     
     /** Leaves needed to seat every one of `positions`. Order-independent: seating is only ever an append, so

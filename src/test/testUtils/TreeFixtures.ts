@@ -38,6 +38,22 @@ export function userId(name: string): types.cloud.UserId {
 
 let mintCounter = 0;
 
+/** Who minted each public key `planCommit` handed out — the committer of the statement its record's `setBy`
+ *  names. Keys are unique per mint, so this survives cloning a tree. */
+const minters = new Map<string, types.cloud.UserId>();
+
+/** The committer of every statement a filled record of `tree` cites — what `StoredTree.setters` carries. */
+export function settersOf(tree: types.cloud.GroupTreeState): Map<number, types.cloud.UserId> {
+    const setters = new Map<number, types.cloud.UserId>();
+    for (const node of tree.nodes.filter(record => record.publicKey && record.setBy !== undefined)) {
+        const minter = minters.get(node.publicKey!);
+        if (minter !== undefined) {
+            setters.set(node.setBy!, minter);
+        }
+    }
+    return setters;
+}
+
 let realNodeKeys = false;
 
 /** A placeholder public key, unique per call — what `PrivateKey::generateRandom()` gives the endpoint. */
@@ -66,7 +82,7 @@ export type PlanOp =
 
 /** What an honest endpoint submits for one commit, and the state the bridge holds once it is applied. */
 export interface Plan {
-    /** The committer's keyed path `R`, re-keyed. */
+    /** Every node the commit sets (`R`): off-path fills ascending, then the committer's keyed path bottom-up. */
     refreshedNodes: types.cloud.GroupTreeRefreshedNode[];
     /** The edges `R` owes on the post state, plus the grant edge. */
     edges: types.cloud.GroupTreeEdge[];
@@ -116,8 +132,9 @@ function edgesOwed(numLeaves: number, seating: types.cloud.UserId[], records: Ma
 }
 
 /**
- * Plans one commit the way the endpoint does (spec §6): work out the post seating and the blank set, re-key the
- * committer's keyed path with fresh keys, wrap each re-keyed node to its children's resolutions on the post
+ * Plans one commit the way the endpoint does (A-prime): work out the post seating and the blank set, mint fresh
+ * keys for the committer's keyed path plus the off-path fills (every keyed node at creation, the newcomers' paths
+ * on an addition), wrap each re-keyed node to its children's resolutions on the post
  * state, and re-issue the grant edge. Then applies it to `before` with the bridge's storage rule, so a chain of
  * plans yields the states the bridge would hold.
  *
@@ -127,10 +144,12 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
     let numLeaves = before.numLeaves;
     const seating = [...before.leafAssignment];
     const blank = new Set<number>();
+    const fill = new Set<number>();
     const blankedPositions: number[] = [];
     let newKeyVersion = keyVersion;
     if (op.kind === "create") {
         newKeyVersion = 1;
+        TreeMath.keyedNodes(numLeaves).forEach(nodeIndex => fill.add(nodeIndex));
     }
     else if (op.kind === "add") {
         numLeaves = TreeMath.numLeavesToSeatAll(op.positions, numLeaves);
@@ -139,7 +158,7 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
         }
         op.positions.forEach((position, i) => {
             seating[position] = userId(op.members[i]);
-            TreeMath.keyedPath(position, numLeaves).forEach(nodeIndex => blank.add(nodeIndex));
+            TreeMath.keyedPath(position, numLeaves).forEach(nodeIndex => fill.add(nodeIndex));
         });
     }
     else if (op.kind === "remove") {
@@ -149,9 +168,21 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
             seating[position] = "" as types.cloud.UserId;
             TreeMath.keyedPath(position, numLeaves).forEach(nodeIndex => blank.add(nodeIndex));
         }
+        // Know(r): plus every filled node a leaver minted, and every ancestor of it.
+        for (const node of before.nodes) {
+            if (!node.publicKey || !op.removed.includes(minters.get(node.publicKey) ?? "")) {
+                continue;
+            }
+            for (let x = node.nodeIndex; x !== -1; x = x === TreeMath.root(numLeaves) ? -1 : TreeMath.parent(x, numLeaves)) {
+                if (TreeMath.isKeyed(x, numLeaves)) {
+                    blank.add(x);
+                }
+            }
+        }
         newKeyVersion = keyVersion + 1;
     }
-    const path = TreeMath.keyedPath(seating.indexOf(userId(op.committer)), numLeaves);
+    const ownPath = TreeMath.keyedPath(seating.indexOf(userId(op.committer)), numLeaves);
+    const path = [...[...fill].filter(nodeIndex => !ownPath.includes(nodeIndex)).sort((a, b) => a - b), ...ownPath];
     
     const records = new Map<number, types.cloud.GroupTreeNode>();
     const unkeyed: number[] = [];
@@ -172,6 +203,7 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
             publicKey: freshKey(nodeIndex, generation),
         };
         records.set(nodeIndex, {nodeIndex, generation, publicKey: refreshed.publicKey, setBy: seq});
+        minters.set(refreshed.publicKey, userId(op.committer));
         return refreshed;
     });
     
@@ -243,16 +275,20 @@ export interface StatementContext {
     /** For an addition: which of the newcomers join as managers. */
     addedManagers?: string[];
     date?: number;
+    /** The statement this one extends; none at seq 1. */
+    previous?: types.cloud.GroupTreeCommitStatement;
 }
 
 /** The signed statement an honest committer sends with `plan`. */
 export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: string}, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
     const sorted = (values: string[]) => TreeHash.sortedUnique(values.map(userId));
-    // A creation binds its roster through `rosterHash` alone.
+    // A creation has no deltas: its `rosterHash` binds the genesis roster.
     const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : [];
     const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : [];
+    const hashes = TreeHash.childHashes(TreeHash.of(plan.after));
     return signStatement({
         seq: plan.seq,
+        prevDigest: ctx.previous ? CommitStatement.digest(ctx.previous) : "",
         op: op.kind,
         groupId: ctx.groupId,
         treeVersion: TreeMath.TREE_VERSION,
@@ -265,7 +301,8 @@ export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: 
         committer: userId(op.committer),
         committerPubKey: userKeys(op.committer).pub58,
         committerSeat: plan.after.leafAssignment.indexOf(userId(op.committer)),
-        path: plan.refreshedNodes.map(node => ({nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey})),
+        path: plan.refreshedNodes.map(node => ({nodeIndex: node.nodeIndex, generation: node.generation, publicKey: node.publicKey,
+            subtreeHash: hashes.get(node.nodeIndex)!.toString("hex")})),
         addedUsers: sorted(addedUsers),
         addedManagers: sorted(addedManagers),
         removed: sorted(op.kind === "remove" ? op.removed : []),
@@ -300,7 +337,7 @@ export function commitOpFor(op: PlanOp, plan: Plan): CommitOp {
 export function acceptedCommit(tree: types.cloud.GroupTreeState, keyVersion: number, op: PlanOp): {plan: Plan, commit: TreeCommit} {
     const plan = planCommit(tree, keyVersion, op);
     const result = TreeTransitionValidator.validateCommit(
-        {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, keyVersion, nodes: tree.nodes},
+        {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, keyVersion, nodes: tree.nodes, setters: settersOf(tree)},
         commitOpFor(op, plan),
         {baseKeyVersion: keyVersion, refreshedNodes: plan.refreshedNodes, edges: plan.edges},
     );
@@ -382,6 +419,7 @@ export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: typ
         rosterVersion: served.rosterVersion + (op.kind === "selfUpdate" ? 0 : 1),
         users: [...served.users.filter(u => !leaving.has(u)), ...(op.kind === "add" ? op.members : [])],
         managers: served.managers.filter(u => !leaving.has(u)),
+        ...(served.treeCommit ? {previous: served.treeCommit} : {}),
     });
     return {plan, commit};
 }

@@ -19,6 +19,7 @@ import { TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
 import { CommitOp, TreeTransitionValidator } from "../../../../service/cloud/keytree/TreeTransitionValidator";
 import { CommitStatement } from "../../../../service/cloud/keytree/CommitStatement";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
+import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 
 /**
  * Runs the bridge's production validator over tree states produced by the **C++ endpoint**, so a divergence
@@ -77,6 +78,10 @@ interface RemoveCase {
     remaining: string[];
     refreshed: RefreshedEntry[];
     rungs: {at: number, target: number}[];
+    /** Committer of each statement `before`'s filled nodes cite. */
+    setters: Record<string, string>;
+    /** `B \ R`, ascending: the knowledge closure of the removed members minus the remover's path. */
+    blanked: number[];
     before: WireTree;
     after: WireTree;
 }
@@ -90,6 +95,8 @@ interface AddCase {
     members: string[];
     after_members: string[];
     refreshed: RefreshedEntry[];
+    /** Always empty: an addition fills the newcomers' paths instead of blanking them. */
+    blanked: number[];
     before: WireTree;
     after: WireTree;
 }
@@ -107,6 +114,8 @@ interface SelfUpdateCase {
 /** What a fixture regenerated for commit statements adds to every case (addendum spec §6). */
 interface StatementFields {
     commit?: types.cloud.GroupTreeCommitStatement;
+    /** Hex digest of `commit` as the endpoint computes it — what the next statement names as `prevDigest`. */
+    digest?: string;
     /** Hex tree hash of the state the commit leaves behind. */
     treeHash?: string;
     /** The post-commit roster, when the dump states it; otherwise every member is a user. */
@@ -166,6 +175,9 @@ function commitInput(testCase: FixtureCase) {
         leafAssignment: users(before.leafAssignment),
         keyVersion,
         nodes: before.nodes as unknown as types.cloud.GroupTreeNode[],
+        ...(testCase.kind === "remove"
+            ? {setters: new Map(Object.entries(testCase.setters).map(([seq, committer]) => [Number(seq), committer as types.cloud.UserId]))}
+            : {}),
     };
     const op: CommitOp = testCase.kind === "remove"
         ? {kind: "remove", committer: testCase.remover as types.cloud.UserId, removedUsers: users(testCase.removed), blankedPositions: testCase.positions}
@@ -178,8 +190,8 @@ function commitInput(testCase: FixtureCase) {
 const fixture = loadFixture();
 
 describe("tree states produced by the endpoint", () => {
-    it("the fixture is tree version 2 and covers every kind of commit", () => {
-        assert.strictEqual(fixture.treeVersion, 2);
+    it("the fixture is the current tree version and covers every kind of commit", () => {
+        assert.strictEqual(fixture.treeVersion, TreeMath.TREE_VERSION);
         const kinds = new Set(fixture.cases.map(c => c.kind));
         for (const kind of ["create", "remove", "add", "selfUpdate"]) {
             assert.ok(kinds.has(kind as FixtureCase["kind"]), `no ${kind} cases`);
@@ -191,6 +203,10 @@ describe("tree states produced by the endpoint", () => {
         const {stored, op, submitted} = commitInput(testCase);
         const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
         assert.ok(result.ok, `${testCase.kind}: ${result.ok ? "" : JSON.stringify(result.rejections)}`);
+        if (testCase.kind === "remove" || testCase.kind === "add") {
+            // The blank set is the bridge's own derivation; the endpoint planned against the same one.
+            assert.deepStrictEqual(result.commit.blanked, testCase.blanked);
+        }
     });
     
     const creates = fixture.cases.filter((c): c is CreateCase => c.kind === "create");
@@ -369,6 +385,11 @@ describe("commit statements produced by the endpoint", () => {
         assert.ok(CommitStatement.verifySignature(commit), `${testCase.kind}: signature does not verify`);
     });
     
+    each<[FixtureCase]>(signed).it("SECURITY: the digest of %# is the endpoint's, so statements chain across the two", ([testCase]) => {
+        assert.strictEqual(CommitStatement.digest(testCase.commit!), testCase.digest);
+        assert.strictEqual(testCase.commit!.prevDigest === "", testCase.commit!.seq === 1);
+    });
+    
     each<[FixtureCase]>(signed).it("the tree and roster of %# hash to what the statement says", ([testCase]) => {
         const {tree, users, managers} = postOf(testCase);
         const treeHash = TreeHash.treeHash(TreeHash.of(asTree(tree))).toString("hex");
@@ -389,18 +410,20 @@ describe("commit statements produced by the endpoint", () => {
         const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
         assert.ok(result.ok, JSON.stringify(!result.ok && result.rejections));
         const {users, managers} = postOf(testCase);
-        // A creation's deltas are empty: its roster is bound by `rosterHash` alone.
+        // A creation has no deltas: its `rosterHash` binds the genesis roster.
         const added = testCase.kind === "add" ? testCase.added : [];
         const problems = CommitStatement.validate(commit, {
             seq: commit.seq,
+            prevDigest: commit.prevDigest,
+            notBefore: 0,
             op: testCase.kind,
             groupId: commit.groupId,
-            treeVersion: 2,
+            treeVersion: TreeMath.TREE_VERSION,
             keyVersion: testCase.kind === "remove" ? testCase.afterEpoch : testCase.epoch,
             groupPubKey: commit.groupPubKey,
             rosterVersion: commit.rosterVersion,
             rosterHash: TreeHash.rosterHash(users, managers),
-            treeHash: TreeHash.treeHash(TreeHash.afterCommit(stored.nodes, result.commit, commit.seq)),
+            tree: TreeHash.afterCommit(stored.nodes, result.commit, commit.seq),
             committer: committerOf(testCase) as types.cloud.UserId,
             committerPubKey: fixture.userPubKeys![commit.committer] as types.cloud.UserPubKey,
             committerSeat: result.commit.leafAssignment.indexOf(committerOf(testCase) as types.cloud.UserId),

@@ -50,13 +50,17 @@ const group: db.group.Group = {
     privateMetaVersion: 11 as types.group.GroupVersion,
     rosterVersion: 4,
     keyVersion: 3,
-    keyHistory: [],
     policy: {},
     numLeaves: tree.numLeaves,
     leafAssignment: tree.leafAssignment,
     eraFloor: 2,
-    groupKeys: [{group: groupId, keys: [{keyId: keyId, data: "self" as types.core.UserKeyData, groupEpoch: 3}]}],
 };
+
+const selfKey = {keyId: keyId, data: "self" as types.core.UserKeyData, groupEpoch: 3};
+const epochKeys: db.group.GroupEpochKey[] = [
+    {id: `${groupId}|2` as db.group.GroupEpochKeyId, groupId, keyVersion: 2, groupPubKey: "Pub2" as unknown as types.cloud.GroupPubKey},
+    {id: `${groupId}|3` as db.group.GroupEpochKeyId, groupId, keyVersion: 3, groupPubKey: groupPubKey, groupKey: selfKey},
+];
 
 function state(): db.group.GroupState {
     const history: db.group.GroupHistoryEntry[] = [1, 2, 3, 4].map(version => ({
@@ -96,7 +100,7 @@ function state(): db.group.GroupState {
         created: 160 as types.core.Timestamp,
         author: janek,
     };
-    return {tree, history, publicMeta, privateMeta, treeCommit: null};
+    return {tree, history, publicMeta, privateMeta, treeCommit: null, epochKeys};
 }
 
 it("convertGroup serves the state it was handed, and each plane's own counter", async () => {
@@ -118,16 +122,21 @@ it("convertGroup serves the state it was handed, and each plane's own counter", 
     assert.strictEqual(converted.ownLeafPosition, 1);
 });
 
-it("a listing carries the roster and the epoch, and nothing that grows with history", async () => {
+it("keyHistory and groupKeys come from the epoch rows: the past epochs' grant keys, every row's own key", async () => {
+    const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
+    assert.deepStrictEqual(converted.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}], "the current epoch's key is `groupPubKey`, not history");
+    assert.deepStrictEqual(converted.groupKeys, [{group: groupId, keys: [selfKey]}]);
+    assert.deepStrictEqual(new GroupConverter().convertKeyArchive(group, [], epochKeys).keyHistory, converted.keyHistory);
+});
+
+it("a listing carries the epoch and the counters, and nothing that grows with membership or history", async () => {
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
-    // Still no `publicMeta`/`privateMeta`: a listing must not carry two envelopes per group.
+    // No `publicMeta`/`privateMeta` (two envelopes per group), no roster and no statement (both grow with members).
     assert.deepStrictEqual(Object.keys(summary).sort(), [
         "contextId", "createDate", "creator", "groupPubKey", "id", "keyVersion",
-        "lastModificationDate", "lastModifier", "managers", "policy", "privateMetaVersion", "publicMetaVersion",
-        "rosterVersion", "type", "users",
+        "lastModificationDate", "lastModifier", "policy", "privateMetaVersion", "publicMetaVersion",
+        "rosterVersion", "type",
     ]);
-    const latest = {seq: 4} as types.cloud.GroupTreeCommitStatement;
-    assert.strictEqual(new GroupConverter().convertGroupSummary(group, latest).treeCommit, latest, "plus the latest statement, when there is one");
     assert.strictEqual(summary.publicMetaVersion, 7);
     assert.strictEqual(summary.privateMetaVersion, 11);
     assert.strictEqual(summary.rosterVersion, 4);
@@ -169,7 +178,7 @@ it("blank records are served without a key, so a client can tell which of its no
     const {wide, groupWide} = wideGroup();
     const removed = planCommit(wide, 3, {kind: "remove", committer: "janek", removed: ["u41"]}).after;
     const converted = new GroupConverter().convertGroup(alice, {...groupWide, leafAssignment: removed.leafAssignment}, {...state(), tree: removed}, "plan");
-    assert.deepStrictEqual(converted.treeNodes?.find(n => n.nodeIndex === 95), {nodeIndex: 95, generation: 0});
+    assert.deepStrictEqual(converted.treeNodes?.find(n => n.nodeIndex === 95), {nodeIndex: 95, generation: 1});
 });
 
 it("serves the tree version, and labels a group from before it", async () => {
@@ -321,6 +330,38 @@ it("the hashes behind a path view are computed once per commit, and a commit mov
     const after = new GroupConverter().convertGroup(alice, {...atSeq2, treeCommitSeq: 3}, {...state(), tree: next});
     assert.deepStrictEqual(after.copathHashes, hex(TreeHash.copathHashes(TreeHash.of(next), 1)));
     assert.notDeepStrictEqual(after.copathHashes, before.copathHashes);
+});
+
+it("the hash cache keeps one entry per group, its latest seq, and only the nodes at bucket level and above", async () => {
+    const {wide, groupWide} = wideGroup();
+    const cache = (GroupConverter as unknown as {hashCache: Map<types.group.GroupId, {seq: number, hashes: Map<number, Buffer>}>}).hashCache;
+    const id = "OneEntryGroupId" as types.group.GroupId;
+    const next = planCommit(wide, 3, {kind: "selfUpdate", committer: "u41"}).after;
+    new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 2}, {...state(), tree: wide});
+    new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 3}, {...state(), tree: next});
+    assert.strictEqual(cache.get(id)?.seq, 3, "a newer seq replaces the entry instead of adding one");
+    const late = new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 2}, {...state(), tree: wide});
+    assert.deepStrictEqual(late.copathHashes, TreeHash.copathHashes(TreeHash.of(wide), 1).map(hash => hash.toString("hex")), "an older read is still answered right");
+    assert.strictEqual(cache.get(id)?.seq, 3, "but does not displace the newer entry");
+    assert([...cache.get(id)!.hashes.keys()].every(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL));
+});
+
+it("the hash cache stays within its byte bound", async () => {
+    const {wide, groupWide} = wideGroup();
+    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_BYTES: number, hashCacheBytes: number, hashCache: Map<string, unknown>};
+    const saved = limits.HASH_CACHE_MAX_BYTES;
+    // Room for exactly one 64-seat tree's entry.
+    const one = [...TreeHash.childHashes(TreeHash.of(wide)).keys()].filter(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL).length * GroupConverter.HASH_ENTRY_BYTES;
+    limits.HASH_CACHE_MAX_BYTES = one;
+    try {
+        new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundA" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
+        new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundB" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
+        assert(limits.hashCacheBytes <= limits.HASH_CACHE_MAX_BYTES);
+        assert(limits.hashCache.has("BoundB") && !limits.hashCache.has("BoundA"), "the least recently used goes first");
+    }
+    finally {
+        limits.HASH_CACHE_MAX_BYTES = saved;
+    }
 });
 
 it("plan and full views carry every record instead, and no copath hashes", async () => {

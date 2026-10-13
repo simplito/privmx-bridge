@@ -49,6 +49,8 @@ export interface StoredTree {
     keyVersion: number;
     /** All records, filled and blank. A group has at most `numLeaves / 2^BUCKET_LEVEL + 1` of them. */
     nodes: types.cloud.GroupTreeNode[];
+    /** Committer of each statement a filled record's `setBy` names. Needed by a removal only. */
+    setters?: Map<number, types.cloud.UserId>;
 }
 
 /**
@@ -80,7 +82,7 @@ export interface TreeCommit {
     keyVersion: number;
     /** Nodes left blank: `B \ R`. Their records keep `generation` and lose `publicKey`. */
     blanked: number[];
-    /** The committer's keyed path `R`, as submitted and checked. */
+    /** Every node the commit set (`R`), as submitted and checked. */
     refreshed: types.cloud.GroupTreeRefreshedNode[];
     /** Records on nodes the new geometry no longer keys — only ever the old root, when growth moves it out of
      *  the buckets' levels. Dropped together with their edges. */
@@ -96,6 +98,9 @@ interface Derived {
     numLeaves: number;
     leafAssignment: types.cloud.UserId[];
     blanked: Set<number>;
+    /** Keyed nodes minted besides the committer's path: every other one at creation, the newcomers' paths on
+     *  an addition. */
+    filled: number[];
     keyVersion: number;
 }
 
@@ -112,11 +117,12 @@ export class TreeTransitionValidator {
      * The one check every tree-changing operation goes through.
      *
      * The bridge derives everything that decides who can read what — the post seating `A'`, the size `n'`, the
-     * blank set `B` and the re-keyed set `R = keyedPath(committer, n')` — from the stored state and the caller,
-     * and only checks the client's keys and wraps against them:
+     * blank set `B` and the set-by-this-commit set `R` — from the stored state and the caller, and only checks
+     * the client's keys and wraps against them:
      *
-     * - `R` is the committer's own path and nothing else. Re-keying anybody else's path means minting a key for a
-     *   subtree the committer is not in — the key a removed member would keep. (`REFRESH_NOT_THE_PATH`)
+     * - `R` is exactly `keyedPath(committer, n')` plus the off-path fills `derive` allows: every keyed node at
+     *   creation, the newcomers' paths on an addition. Every node of `R` is set by the committer (`setBy` is this
+     *   statement's seq), so a removal of the committer blanks it again. (`REFRESH_NOT_THE_PATH`)
      * - every node of `R` continues from the stored generation with a key it has never had. (`STALE_BASE_*`,
      *   `NODE_*`)
      * - the edges are exactly what `R` owes on the post state — every child resolution, nothing outside the
@@ -141,7 +147,7 @@ export class TreeTransitionValidator {
             // Only reachable for a creation whose seating leaves the creator out.
             return TreeTransitionValidator.reject([{kind: "MEMBER_HAS_NO_LEAF", userId: op.committer}]);
         }
-        const path = TreeMath.keyedPath(seat, derived.numLeaves);
+        const path = [...new Set([...TreeMath.keyedPath(seat, derived.numLeaves), ...derived.filled])];
         const records = new Map(stored.nodes.map(node => [node.nodeIndex, node]));
         const nodeProblems = TreeTransitionValidator.checkRefreshedNodes(path, derived.numLeaves, records, submitted.refreshedNodes);
         if (nodeProblems.length > 0) {
@@ -190,10 +196,11 @@ export class TreeTransitionValidator {
         const unchanged = {numLeaves: stored.numLeaves, leafAssignment: stored.leafAssignment};
         switch (op.kind) {
             case "create":
-                // Nothing to blank: no keyed node has a record yet. The epoch is the group's first.
-                return {...unchanged, blanked: new Set(), keyVersion: 1};
+                // The creator fills every keyed node, so every later commit finds its path filled. Nothing to
+                // blank: no keyed node has a record yet. The epoch is the group's first.
+                return {...unchanged, blanked: new Set(), filled: TreeMath.keyedNodes(stored.numLeaves), keyVersion: 1};
             case "selfUpdate":
-                return {...unchanged, blanked: new Set(), keyVersion: stored.keyVersion};
+                return {...unchanged, blanked: new Set(), filled: [], keyVersion: stored.keyVersion};
             case "add":
                 return TreeTransitionValidator.deriveAddition(stored, op);
             case "remove":
@@ -202,13 +209,13 @@ export class TreeTransitionValidator {
     }
     
     /**
-     * A removal blanks every keyed node the departing members sat under, and the epoch advances once for the
-     * whole batch.
+     * A removal blanks everything a departing member may know, and the epoch advances once for the whole batch.
      *
-     * Blanking rather than re-keying is the point: the remover cannot mint keys for the departing members' paths
-     * without knowing keys for subtrees it is not in, and a key the remover knows outside its own subtree is one
-     * the next remover's target might know too. The remover re-keys only its own path, which covers the root and
-     * so the new grant key; the blanks are refilled later by self-updates of members who belong under them.
+     * `Know(r)` is `r`'s keyed path plus every filled node `r` set, closed upwards: an ancestor of a node `r`
+     * knows wraps (directly or through blanks) to it, so `r` can open it too. A self-update above a node `r` set
+     * re-keys the ancestor but still wraps it to that node, which is why `setBy` alone is not enough. The remover
+     * re-keys its own path, which covers the root and so the new grant key; the rest of `Know` is left blank and
+     * refilled by self-updates of members seated under it.
      */
     private static deriveRemoval(stored: StoredTree, op: Extract<CommitOp, {kind: "remove"}>): Derived|TransitionRejection[] {
         if (op.removedUsers.length === 0) {
@@ -242,20 +249,40 @@ export class TreeTransitionValidator {
         }
         const leafAssignment = [...stored.leafAssignment];
         const blanked = new Set<number>();
+        const n = stored.numLeaves;
         for (const position of positions) {
             leafAssignment[position] = "" as types.cloud.UserId;
-            TreeMath.keyedPath(position, stored.numLeaves).forEach(nodeIndex => blanked.add(nodeIndex));
+            TreeMath.keyedPath(position, n).forEach(nodeIndex => blanked.add(nodeIndex));
         }
-        return {numLeaves: stored.numLeaves, leafAssignment, blanked, keyVersion: stored.keyVersion + 1};
+        for (const node of stored.nodes.filter(record => record.publicKey)) {
+            const setter = node.setBy === undefined ? undefined : stored.setters?.get(node.setBy);
+            if (setter === undefined) {
+                // Statements are never deleted while the group lives: only corrupt storage gets here. Fail closed.
+                throw new Error(`node ${node.nodeIndex} names no stored statement (setBy ${node.setBy ?? "none"})`);
+            }
+            if (!op.removedUsers.includes(setter)) {
+                continue;
+            }
+            for (let x = node.nodeIndex; ; x = TreeMath.parent(x, n)) {
+                if (TreeMath.isKeyed(x, n)) {
+                    blanked.add(x);
+                }
+                if (x === TreeMath.root(n)) {
+                    break;
+                }
+            }
+        }
+        return {numLeaves: n, leafAssignment, blanked, filled: [], keyVersion: stored.keyVersion + 1};
     }
     
     /**
-     * An addition seats the newcomers and blanks their keyed paths in the grown geometry, except where the adder's
-     * own path — re-keyed anyway — overlaps. The epoch does not move: a newcomer learns the current grant key by
-     * climbing, which is the whole reason an addition is cheap.
+     * An addition seats the newcomers and has the adder mint their keyed paths in the grown geometry. The epoch
+     * does not move: a newcomer learns the current grant key by climbing, which is the whole reason an addition is
+     * cheap.
      *
-     * Blanking matters here too: a node above a newcomer that kept its old key would hand the newcomer every
-     * earlier wrap made under it, and re-keying it would need a key for a subtree the adder is not in.
+     * Re-keying matters: a node above a newcomer that kept its old key would hand the newcomer every earlier wrap
+     * made under it. The adder knows these new keys outside its own subtree, but it is a member anyway, and its
+     * removal blanks every node it set.
      */
     private static deriveAddition(stored: StoredTree, op: Extract<CommitOp, {kind: "add"}>): Derived|TransitionRejection[] {
         if (op.addedUsers.length === 0) {
@@ -301,18 +328,16 @@ export class TreeTransitionValidator {
         while (leafAssignment.length < grown) {
             leafAssignment.push("" as types.cloud.UserId);
         }
-        const blanked = new Set<number>();
+        const filled = new Set<number>();
         op.positions.forEach((position, i) => {
             leafAssignment[position] = op.addedUsers[i];
-            TreeMath.keyedPath(position, grown).forEach(nodeIndex => blanked.add(nodeIndex));
+            TreeMath.keyedPath(position, grown).forEach(nodeIndex => filled.add(nodeIndex));
         });
-        // `B` here still includes where the newcomers' paths meet the adder's; the adder re-keys those, which
-        // supersedes the blank (`validateCommit` subtracts its path).
-        return {numLeaves: grown, leafAssignment, blanked, keyVersion: stored.keyVersion};
+        return {numLeaves: grown, leafAssignment, blanked: new Set(), filled: [...filled], keyVersion: stored.keyVersion};
     }
     
     /**
-     * Exactly the committer's keyed path, each node advancing one generation from the stored record (or minted at
+     * Exactly `R` (`path`), each node advancing one generation from the stored record (or minted at
      * 0 where there is none) with a key it never had.
      */
     private static checkRefreshedNodes(

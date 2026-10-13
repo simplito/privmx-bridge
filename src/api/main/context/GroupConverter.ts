@@ -17,34 +17,63 @@ import { TreeHash } from "../../../service/cloud/keytree/TreeHash";
 
 export class GroupConverter {
     
-    /** How many groups' `TreeHash.childHashes` `servedHashes` keeps. */
-    static readonly HASH_CACHE_SIZE = 128;
+    /** Upper bound on what `servedHashes` keeps, counted as `HASH_ENTRY_BYTES` per cached hash. */
+    static readonly HASH_CACHE_MAX_BYTES = 64 * 1024 * 1024;
     
-    /** Keyed by `groupId|treeCommitSeq`; a Map iterates in insertion order, so the first key is the oldest. */
-    private static readonly hashCache = new Map<string, Map<number, Buffer>>();
+    /** A 32-byte hash as a Buffer in a Map entry, with V8's object and Map overhead — an estimate, deliberately high. */
+    static readonly HASH_ENTRY_BYTES = 160;
+    
+    /** One entry per group, for its latest seen `treeCommitSeq`; a Map iterates in insertion order, so the first key
+     *  is the least recently used. */
+    private static readonly hashCache = new Map<types.group.GroupId, {seq: number, hashes: Map<number, Buffer>}>();
+    private static hashCacheBytes = 0;
     
     /**
-     * The hashes of every node of a served tree, computed once per commit rather than once per read: the whole tree
-     * is hashed to serve any seat's copath, and every member reads the same tree after each commit. Read path only —
-     * `tree` must be the state `group.treeCommitSeq` names, which `GroupRepository.getFullState` guarantees.
+     * The hashes of a served tree's nodes at bucket level and above, computed once per commit rather than once per
+     * read: the whole tree is hashed to serve any seat's copath, and every member reads the same tree after each
+     * commit. Read path only — `tree` must be the state `group.treeCommitSeq` names, which
+     * `GroupRepository.getFullState` guarantees.
      *
-     * Every tree commit moves `treeCommitSeq`, so a key never outlives the tree it was computed for — nothing to
-     * invalidate. A group without a statement chain has no such key and is not cached.
+     * Keyed by group, so a run of commits to one group replaces its entry instead of filling the cache with its
+     * superseded trees; a read of an older seq than the cached one (a race between two reads) is answered but not
+     * cached. Only nodes at `BUCKET_LEVEL` and above are kept — about `2n / 2^BUCKET_LEVEL` hashes rather than
+     * `2n` — because the copath entries below a bucket are a handful of hashes inside the caller's own bucket,
+     * which `TreeHash.copathHashes` recomputes. A group without a statement chain has no seq and is not cached.
      */
     private static servedHashes(group: db.group.Group, tree: types.cloud.GroupTreeState): Map<number, Buffer>|undefined {
         if (group.treeCommitSeq === undefined) {
             return undefined;
         }
-        const key = `${group.id}|${group.treeCommitSeq}`;
-        let hashes = GroupConverter.hashCache.get(key);
-        if (!hashes) {
-            hashes = TreeHash.childHashes(TreeHash.of(tree));
-            if (GroupConverter.hashCache.size >= GroupConverter.HASH_CACHE_SIZE) {
-                GroupConverter.hashCache.delete(GroupConverter.hashCache.keys().next().value!);
-            }
-            GroupConverter.hashCache.set(key, hashes);
+        const cache = GroupConverter.hashCache;
+        const cached = cache.get(group.id);
+        if (cached && cached.seq === group.treeCommitSeq) {
+            cache.delete(group.id);
+            cache.set(group.id, cached);
+            return cached.hashes;
         }
+        const hashes = new Map([...TreeHash.childHashes(TreeHash.of(tree))].filter(([nodeIndex]) => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL));
+        if (cached && cached.seq > group.treeCommitSeq) {
+            return hashes;
+        }
+        GroupConverter.evictHashes(group.id);
+        const bytes = hashes.size * GroupConverter.HASH_ENTRY_BYTES;
+        if (bytes > GroupConverter.HASH_CACHE_MAX_BYTES) {
+            return hashes;
+        }
+        while (GroupConverter.hashCacheBytes + bytes > GroupConverter.HASH_CACHE_MAX_BYTES) {
+            GroupConverter.evictHashes(cache.keys().next().value!);
+        }
+        cache.set(group.id, {seq: group.treeCommitSeq, hashes});
+        GroupConverter.hashCacheBytes += bytes;
         return hashes;
+    }
+    
+    private static evictHashes(groupId: types.group.GroupId) {
+        const entry = GroupConverter.hashCache.get(groupId);
+        if (entry) {
+            GroupConverter.hashCache.delete(groupId);
+            GroupConverter.hashCacheBytes -= entry.hashes.size * GroupConverter.HASH_ENTRY_BYTES;
+        }
     }
     
     /** The whole group: document plus state. `state` is passed in, not fetched, so a caller that does not need
@@ -89,10 +118,10 @@ export class GroupConverter {
             privateMetaVersion: group.privateMetaVersion,
             rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
-            keyHistory: group.keyHistory ?? [],
+            keyHistory: GroupConverter.keyHistory(group, state.epochKeys),
             policy: group.policy || {},
             history: state.history.map(x => this.convertHistoryEntry(x)),
-            groupKeys: group.groupKeys ?? [],
+            groupKeys: state.epochKeys.filter(row => row.groupKey).map(row => ({group: group.id, keys: [row.groupKey!]})),
             ...this.treeState(group, state.tree, state.treeCommit, user, scope, forUserIds, forNewMembers),
         };
         if (group.clientResourceId) {
@@ -101,9 +130,9 @@ export class GroupConverter {
         return res;
     }
     
-    /** What a listing serves: identity, roster, epoch and the latest statement. A client that wants state asks for
-     *  one group. */
-    convertGroupSummary(group: db.group.GroupSummaryFields, treeCommit?: types.cloud.GroupTreeCommitStatement): contextApi.GroupSummary {
+    /** What a listing serves: identity, counters and epoch, all of constant size. A client that wants the roster,
+     *  the tree or the latest statement asks for one group. */
+    convertGroupSummary(group: db.group.GroupSummaryFields): contextApi.GroupSummary {
         const res: contextApi.GroupSummary = {
             id: group.id,
             groupPubKey: group.groupPubKey,
@@ -113,8 +142,6 @@ export class GroupConverter {
             creator: group.creator,
             lastModificationDate: group.lastModificationDate,
             lastModifier: group.lastModifier,
-            users: group.users,
-            managers: group.managers,
             publicMetaVersion: group.publicMetaVersion,
             privateMetaVersion: group.privateMetaVersion,
             rosterVersion: group.rosterVersion,
@@ -123,9 +150,6 @@ export class GroupConverter {
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
-        }
-        if (treeCommit) {
-            res.treeCommit = treeCommit;
         }
         return res;
     }
@@ -227,11 +251,18 @@ export class GroupConverter {
         return [...new Set(seqs)].sort((a, b) => a - b);
     }
     
-    convertKeyArchive(group: db.group.Group, rungs: types.cloud.GroupArchiveRung[]): contextApi.GroupGetKeyArchiveResult {
+    /** The grant public keys of the epochs behind the current one, ascending. */
+    private static keyHistory(group: db.group.Group, epochKeys: db.group.GroupEpochKey[]): types.cloud.GroupPubKeyAtEpoch[] {
+        return epochKeys
+            .filter(row => row.keyVersion < group.keyVersion && row.groupPubKey)
+            .map(row => ({keyVersion: row.keyVersion, groupPubKey: row.groupPubKey!}));
+    }
+    
+    convertKeyArchive(group: db.group.Group, rungs: types.cloud.GroupArchiveRung[], epochKeys: db.group.GroupEpochKey[]): contextApi.GroupGetKeyArchiveResult {
         const res: contextApi.GroupGetKeyArchiveResult = {
             keyVersion: group.keyVersion,
             eraFloor: group.eraFloor,
-            keyHistory: group.keyHistory ?? [],
+            keyHistory: GroupConverter.keyHistory(group, epochKeys),
             rungs: rungs,
         };
         if (group.archivePrunedBelow !== undefined) {
@@ -241,7 +272,7 @@ export class GroupConverter {
     }
     
     private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupHistoryEntryInfo {
-        const res: contextApi.GroupHistoryEntryInfo = {
+        return {
             keyId: entry.keyId,
             groupPubKey: entry.groupPubKey,
             created: entry.created,
@@ -249,9 +280,5 @@ export class GroupConverter {
             version: entry.version,
             keyVersion: entry.keyVersion,
         };
-        if (entry.confirmationTag !== undefined) {
-            res.confirmationTag = entry.confirmationTag;
-        }
-        return res;
     }
 }

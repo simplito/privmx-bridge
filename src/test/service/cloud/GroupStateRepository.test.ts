@@ -40,6 +40,8 @@ interface Captured {
     gets: string[];
     /** Documents inserted one at a time — how a commit statement is stored. */
     inserted: unknown[];
+    /** The last `limit` a query was given. */
+    limit?: number;
 }
 
 function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
@@ -58,7 +60,10 @@ function fakeRepository<K extends string, V>(docs: V[], captured: Captured) {
     // than as the assertion the test is actually making.
     const chain = {
         sort: () => chain,
-        limit: () => chain,
+        limit: (n: number) => {
+            captured.limit = n;
+            return chain;
+        },
         props: () => chain,
         array: async () => docs,
     };
@@ -95,9 +100,11 @@ function createStateRepository(docs: {
     privateMetaEntries?: db.group.GroupPrivateMetaEntry[],
     rungs?: db.group.GroupArchiveRung[],
     commits?: db.group.GroupTreeCommit[],
+    epochKeys?: db.group.GroupEpochKey[],
+    tombstones?: db.group.GroupTombstone[],
 } = {}) {
     const empty = (): Captured => ({filter: null, operations: [], gets: [], inserted: []});
-    const captured: Record<"nodes"|"edges"|"history"|"publicMetaEntries"|"privateMetaEntries"|"rungs"|"commits", Captured> = {
+    const captured: Record<"nodes"|"edges"|"history"|"publicMetaEntries"|"privateMetaEntries"|"rungs"|"commits"|"epochKeys"|"tombstones", Captured> = {
         nodes: empty(),
         edges: empty(),
         history: empty(),
@@ -105,6 +112,8 @@ function createStateRepository(docs: {
         privateMetaEntries: empty(),
         rungs: empty(),
         commits: empty(),
+        epochKeys: empty(),
+        tombstones: empty(),
     };
     const repository = new GroupStateRepository(
         fakeRepository(docs.nodes ?? [], captured.nodes),
@@ -114,6 +123,8 @@ function createStateRepository(docs: {
         fakeRepository(docs.privateMetaEntries ?? [], captured.privateMetaEntries),
         fakeRepository(docs.rungs ?? [], captured.rungs),
         fakeRepository(docs.commits ?? [], captured.commits),
+        fakeRepository(docs.epochKeys ?? [], captured.epochKeys),
+        fakeRepository(docs.tombstones ?? [], captured.tombstones),
     );
     return {repository, captured};
 }
@@ -165,13 +176,13 @@ function edgeDocs(tree: types.cloud.GroupTreeState, id = groupId): db.group.Grou
 it("a group being created writes its whole tree", async () => {
     const tree = buildTree(SEATING, 1);
     const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, tree, statement(1));
+    await repository.writeTree(groupId, tree, statement(1), {users: ["alice" as types.cloud.UserId], managers: []});
     assert.strictEqual(captured.nodes.operations.length, tree.nodes.length);
     assert.strictEqual(captured.edges.operations.length, tree.edges.length);
     // Every record of a fresh tree is vouched for by the creation statement, which is stored beside it.
     const written = captured.nodes.operations as unknown as {replaceOne: {replacement: {setBy: number}}}[];
     assert.ok(written.every(op => op.replaceOne.replacement.setBy === 1));
-    assert.deepStrictEqual(captured.commits.inserted, [{id: `${groupId}|1`, groupId, seq: 1, statement: statement(1)}]);
+    assert.deepStrictEqual(captured.commits.inserted, [{id: `${groupId}|1`, groupId, seq: 1, statement: statement(1), genesis: {users: ["alice" as types.cloud.UserId], managers: []}}]);
 });
 
 it("a one-member group is created even though it has no internal node", async () => {
@@ -180,7 +191,7 @@ it("a one-member group is created even though it has no internal node", async ()
     const tree = buildTree(["janek"], 1);
     assert.strictEqual(tree.nodes.length, 0, "a one-leaf tree has no internal node");
     const {repository, captured} = createStateRepository();
-    await repository.writeTree(groupId, tree, statement(1));
+    await repository.writeTree(groupId, tree, statement(1), {users: ["janek" as types.cloud.UserId], managers: []});
     assert.strictEqual(captured.nodes.operations.length, 0);
     assert.strictEqual(captured.edges.operations.length, tree.edges.length);
 });
@@ -268,6 +279,24 @@ it("deleting a group's state leaves neither metadata plane behind", async () => 
     await repository.deleteState(groupId);
     assert.deepStrictEqual(captured.publicMetaEntries.filter, {groupId: groupId});
     assert.deepStrictEqual(captured.privateMetaEntries.filter, {groupId: groupId});
+});
+
+it("epoch rows: one per (group, epoch), read in order, cut as a range below the floor, deleted with the group", async () => {
+    const {repository, captured} = createStateRepository({epochKeys: []});
+    await repository.getEpochKeys(groupId);
+    assert.deepStrictEqual(captured.epochKeys.filter, {groupId: groupId});
+    await repository.deleteEpochKeysBelow(groupId, 4);
+    assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$lt: 4}}]});
+    await repository.deleteState(groupId);
+    assert.deepStrictEqual(captured.epochKeys.filter, {groupId: groupId});
+});
+
+it("SECURITY: the roster trail is served a bounded page at a time, oldest first", async () => {
+    // Entries carry up to 1 MB each; an unbounded read of a long-lived group's trail ran a worker out of memory.
+    const {repository, captured} = createStateRepository({history: [{version: 3} as unknown as db.group.GroupHistoryEntry]});
+    await repository.getHistory(groupId, 1);
+    assert.deepStrictEqual(captured.history.filter, {$and: [{groupId: groupId}, {version: {$gte: 1}}]});
+    assert.strictEqual(captured.history.limit, GroupStateRepository.MAX_HISTORY_PAGE);
 });
 
 it("an unwindowed archive read asks only for the group", async () => {
@@ -374,7 +403,7 @@ async function commitThroughStorage(tree: types.cloud.GroupTreeState, keyVersion
 /** A stored statement; its content is the service's business, the repository only files it. */
 function statement(seq: number): types.cloud.GroupTreeCommitStatement {
     return {
-        seq, op: seq === 1 ? "create" : "selfUpdate", groupId, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: "pk" as types.cloud.GroupPubKey,
+        seq, prevDigest: "", op: seq === 1 ? "create" : "selfUpdate", groupId, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: "pk" as types.cloud.GroupPubKey,
         rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: "janek" as types.cloud.UserId,
         committerPubKey: "pub" as types.cloud.UserPubKey, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], signature: "sig" as types.core.EccSignature,
     };
@@ -400,7 +429,7 @@ it("a blanked node keeps its record and generation and loses its key and its seq
     const {captured, after} = await commitThroughStorage(tree, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]});
     assert.ok((captured.nodes.operations as unknown as Record<string, unknown>[]).some(op =>
         JSON.stringify(op) === JSON.stringify({updateOne: {filter: {_id: `${groupId}|95`}, update: {$unset: {publicKey: "", setBy: ""}}}})));
-    assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 0});
+    assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 1});
 });
 
 it("SECURITY: after a removal the stored edges are exactly what the state owes — nothing a blanked key could open", async () => {
@@ -463,7 +492,7 @@ it("a commit files its statement and stamps the re-keyed records with its seq; a
     assert.strictEqual(plan.seq, 3);
     assert.deepStrictEqual(captured.commits.inserted, [{id: `${groupId}|3`, groupId, seq: 3, statement: statement(3)}]);
     assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 63)?.setBy, 3);
-    assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 0});
+    assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 1});
 });
 
 it("statements are read by derived id, or as one seq range over the group's index", async () => {
@@ -476,12 +505,3 @@ it("statements are read by derived id, or as one seq range over the group's inde
     assert.deepStrictEqual(captured.commits.filter, {$and: [{groupId: groupId}, {seq: {$gt: 1}}, {seq: {$lte: 3}}]});
 });
 
-it("a page's latest statements are one lookup by derived id, skipping groups without a chain", async () => {
-    const other = "OtherGroupId" as types.group.GroupId;
-    const docs = [{id: GroupStateRepository.treeCommitId(groupId, 3), groupId, seq: 3, statement: statement(3)},
-        {id: GroupStateRepository.treeCommitId(other, 1), groupId: other, seq: 1, statement: statement(1)}];
-    const {repository, captured} = createStateRepository({commits: docs});
-    const latest = await repository.getLatestTreeCommits([{id: groupId, treeCommitSeq: 3}, {id: other, treeCommitSeq: 1}, {id: "Legacy" as types.group.GroupId}]);
-    assert.deepStrictEqual(captured.commits.gets, [`${groupId}|3`, `${other}|1`]);
-    assert.deepStrictEqual([latest.get(groupId)?.seq, latest.get(other)?.seq, latest.size], [3, 1, 2]);
-});

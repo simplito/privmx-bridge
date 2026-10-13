@@ -81,18 +81,19 @@ export class TreeHash {
         return memo;
     }
     
-    static treeHash(tree: HashableTree): Buffer {
+    static treeHash(tree: HashableTree, memo?: Map<number, Buffer>): Buffer {
         return Crypto.sha256(new ByteWriter()
             .tag("pmx-tree")
             .u32(tree.numLeaves)
-            .raw(TreeHash.childHash(tree, TreeMath.root(tree.numLeaves)))
+            .raw(TreeHash.childHash(tree, TreeMath.root(tree.numLeaves), memo))
             .bytes());
     }
     
     /** `CH(c)` for each `c` on the seat's copath, aligned with `TreeMath.copath` — what a client holding only its
-     *  own path needs to recompute the tree hash. `hashes` (`childHashes`) saves recomputing them. */
+     *  own path needs to recompute the tree hash. `hashes` (`childHashes`, or any subset of it) saves recomputing
+     *  them; it is only read, never added to, so a cache can hand over a map it keeps bounded. */
     static copathHashes(tree: HashableTree, position: number, hashes?: Map<number, Buffer>): Buffer[] {
-        return TreeMath.copath(position, tree.numLeaves).map(nodeIndex => TreeHash.childHash(tree, nodeIndex, hashes));
+        return TreeMath.copath(position, tree.numLeaves).map(nodeIndex => hashes?.get(nodeIndex) ?? TreeHash.childHash(tree, nodeIndex));
     }
     
     /** Each list deduplicated and sorted bytewise (as UTF-8), so both sides agree whatever order they hold it in. */

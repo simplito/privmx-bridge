@@ -131,9 +131,9 @@ export class GroupApiTests extends BaseTestSet {
         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
         assert(res.groups[0].publicMetaVersion === 1, `listed publicMetaVersion should be 1, got ${res.groups[0].publicMetaVersion}`);
         assert(res.groups[0].privateMetaVersion === 1, `listed privateMetaVersion should be 1, got ${res.groups[0].privateMetaVersion}`);
-        // A listing must grow as `groups × roster`, not `groups × state`.
+        // A listing must grow as `groups`, not `groups × roster` or `groups × state`.
         const served = res.groups[0] as unknown as Record<string, unknown>;
-        for (const field of ["data", "publicMeta", "privateMeta", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
+        for (const field of ["data", "publicMeta", "privateMeta", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs", "users", "managers", "treeCommit"]) {
             assert(!(field in served), `groupList must not serve '${field}'`);
         }
     }

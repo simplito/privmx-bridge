@@ -568,11 +568,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(edgesAfter.length === edgesBefore.length + 1, "one new edge, and only one");
         const before = new Map(edgesBefore.map(edge => [edge._id, JSON.stringify(edge)]));
         const changed = edgesAfter.filter(edge => before.get(edge._id) !== JSON.stringify(edge));
-        // An addition re-keys the adder's own keyed path and blanks the newcomer's. So the edges it touches are
-        // dave's own, the ones out of the adder's path, and the grant edge. Nothing else may move: an addition
+        // An addition re-keys the adder's own keyed path and the newcomer's. So the edges it touches are dave's
+        // own, the ones out of those paths, and the grant edge. Nothing else may move: an addition
         // does not advance the epoch, so any other change would be a re-key nobody accounts for.
         assert(changed.some(edge => edge._id.includes("user:dave")), "dave's own edge was written");
-        const path = TreeMath.keyedPath(0, document.numLeaves as number);
+        const path = [...TreeMath.keyedPath(0, document.numLeaves as number), ...TreeMath.keyedPath(BOB_POSITION, document.numLeaves as number)];
         for (const edge of changed) {
             const parent = edge.parentIndex;
             assert(
@@ -586,8 +586,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const document = await this.readGroupDocument();
         assert.ok(document.keyVersion === epochBefore, "an addition must not advance the epoch, even when it re-keys");
         assert.ok((document.leafAssignment as string[])[BOB_POSITION] === dave, "dave took the blank seat");
-        // The adder (seat 0) re-keys its keyed path; the newcomer's path is blanked, never minted.
-        const expected = TreeMath.keyedPath(0, document.numLeaves as number).sort((a, b) => a - b);
+        // The adder (seat 0) re-keys its keyed path and the newcomer's.
+        const expected = [...new Set([...TreeMath.keyedPath(0, document.numLeaves as number),
+            ...TreeMath.keyedPath(BOB_POSITION, document.numLeaves as number)])].sort((a, b) => a - b);
         const before = new Map(nodesBefore.map(node => [node.nodeIndex, node]));
         const moved: number[] = [];
         for (const node of await this.readNodes()) {
@@ -743,7 +744,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(rungs.every(rung => rung.targetKeyVersion >= 2), "rungs below the watermark are deleted, not filtered on read");
         const document = await this.readGroupDocument();
         assert(document.archivePrunedBelow === 2, "the watermark tells a client it was pruned, not tampered with");
-        assert(Array.isArray(document.keyHistory) && (document.keyHistory as unknown[]).length === 3,
+        const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId});
+        assert(epochRows.filter(row => row.keyVersion < this.keyVersion).length === 3,
             "pruning is housekeeping: it leaves the epoch registry alone for a member still holding an old key");
     }
     
@@ -758,12 +760,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
         // Key material for the closed epochs goes with them: the registry entry has no rung to verify against
         // any more, and the wrapped key is addressed to a grant key nobody can climb to. These are the two
         // fields that otherwise grow with every rotation for the life of the group.
-        const keyHistory = document.keyHistory as {keyVersion: number}[];
-        assert(keyHistory.every(entry => entry.keyVersion >= 3),
-            `the epoch registry must drop entries below the floor, got ${JSON.stringify(keyHistory.map(e => e.keyVersion))}`);
-        const groupKeys = (document.groupKeys ?? []) as {keys: {groupEpoch?: number}[]}[];
-        assert(groupKeys.every(entry => entry.keys.every(key => (key.groupEpoch ?? 0) >= 3)),
-            "the group's own key entries below the floor must go too");
+        // They live one row per epoch in `groupEpochKey`, never on the document.
+        assert(!("keyHistory" in document) && !("groupKeys" in document), "per-epoch key material stays off the group document");
+        const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId});
+        assert(epochRows.every(row => row.keyVersion >= 3),
+            `the epoch rows below the floor must go, got ${JSON.stringify(epochRows.map(row => row.keyVersion))}`);
     }
     
     private async verifyTheDefaultViewIsThePath() {
@@ -825,7 +826,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         const res = await this.apis.contextApi.groupList({contextId: testData.contextId, limit: 10, skip: 0, sortOrder: "asc"});
         assert(res.groups.length === 1, `expected 1 group, got ${res.groups.length}`);
         const listed = res.groups[0] as unknown as Record<string, unknown>;
-        for (const field of ["treeNodes", "treeEdges", "leafAssignment", "numLeaves", "history", "data", "keys", "groupKeys"]) {
+        for (const field of ["treeNodes", "treeEdges", "leafAssignment", "numLeaves", "history", "data", "keys", "groupKeys", "users", "managers", "treeCommit"]) {
             assert(!(field in listed), `groupList must not serve '${field}' — a page of these is the payload problem, not the fix`);
         }
         assert(listed.keyVersion === 1 && listed.publicMetaVersion === 1 && listed.privateMetaVersion === 1,

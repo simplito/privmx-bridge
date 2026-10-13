@@ -21,6 +21,7 @@ import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { GroupStateRepository } from "./GroupStateRepository";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
 import { TreeMath } from "./keytree/TreeMath";
+import { CommitStatement } from "./keytree/CommitStatement";
 
 export class GroupRepository {
     
@@ -37,14 +38,11 @@ export class GroupRepository {
         creator: 1,
         lastModificationDate: 1,
         lastModifier: 1,
-        users: 1,
-        managers: 1,
         publicMetaVersion: 1,
         privateMetaVersion: 1,
         rosterVersion: 1,
         keyVersion: 1,
         policy: 1,
-        treeCommitSeq: 1,
     };
     
     /** Mirrors `db.group.GroupEpochFields`; see there for why this read is kept this narrow. */
@@ -95,9 +93,10 @@ export class GroupRepository {
         );
     }
     
-    /** Groups in the given context the user belongs to (member or manager) — used by Phase 2 grantee resolution. */
+    /** Ids of the groups in the given context the user belongs to (member or manager) — used by Phase 2 grantee
+     *  resolution on every container call, so projected to the id: the whole documents carry every roster. */
     async getGroupsOfUser(contextId: types.context.ContextId, userId: types.cloud.UserId) {
-        return this.repository.query(q => q.and(q.eq("contextId", contextId), q.or(q.includes("users", userId), q.includes("managers", userId)))).array();
+        return this.repository.query(q => q.and(q.eq("contextId", contextId), q.or(q.includes("users", userId), q.includes("managers", userId)))).props("id").array();
     }
     
     /**
@@ -108,9 +107,8 @@ export class GroupRepository {
      * - `groupEpochs` — each group's current epoch, for the `staleGroups` a `*Get` would serve.
      *
      * Wider than `getKeyVersions`, but still projected: expanding grantees needs the membership lists, and those
-     * are all it needs. `leafAssignment` is an entry per seat, `groupKeys` and `keyHistory` an entry per
-     * rotation — none of them readable from the result, all of them dragged along by a whole-document read on the
-     * path that runs per item write.
+     * are all it needs. `leafAssignment` is an entry per seat — not readable from the result, and dragged along by
+     * a whole-document read on the path that runs per item write.
      */
     async getGranteeView(groupIds: types.group.GroupId[]): Promise<{groupsByUser: Map<types.cloud.UserId, types.group.GroupId[]>, groupEpochs: Map<types.group.GroupId, number>}> {
         const groupsByUser = new Map<types.cloud.UserId, types.group.GroupId[]>();
@@ -182,6 +180,15 @@ export class GroupRepository {
         return this.state.getHistoryKeyIds(groupId);
     }
     
+    /** Every epoch row of the group, ascending (see `db.group.GroupEpochKey`). */
+    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
+        return this.state.getEpochKeys(groupId);
+    }
+    
+    async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
+        return this.state.hasEpochWithGroupPubKey(groupId, groupPubKey);
+    }
+    
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<types.cloud.GroupArchiveRung[]> {
         return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion);
     }
@@ -217,12 +224,13 @@ export class GroupRepository {
     }
     
     private async readFullState(group: db.group.Group, fromRosterVersion?: number): Promise<db.group.GroupState> {
-        const [tree, history, publicMeta, privateMeta, [treeCommit]] = await Promise.all([
+        const [tree, history, publicMeta, privateMeta, [treeCommit], epochKeys] = await Promise.all([
             this.state.getTree(group),
             this.state.getHistory(group.id, fromRosterVersion),
             this.state.getPublicMetaHead(group.id),
             this.state.getPrivateMetaHead(group.id),
             group.treeCommitSeq === undefined ? Promise.resolve([]) : this.state.getTreeCommitsAt(group.id, [group.treeCommitSeq]),
+            this.state.getEpochKeys(group.id),
         ]);
         // An invariant, not a client error: `createGroup` writes the document and both entries in one
         // transaction, so only a group left over from an older build of this branch can be missing either.
@@ -237,7 +245,7 @@ export class GroupRepository {
         if (!privateMeta) {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no private metadata entry; it predates the metadata planes and must be recreated`);
         }
-        return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null};
+        return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null, epochKeys};
     }
     
     /** The statements at the given seqs — what vouches for the node records a response serves. */
@@ -245,13 +253,8 @@ export class GroupRepository {
         return this.state.getTreeCommitsAt(groupId, seqs);
     }
     
-    /** Each listed group's latest statement by group id, out of one lookup; a group without a chain is absent. */
-    async getLatestTreeCommits(groups: Pick<db.group.Group, "id"|"treeCommitSeq">[]): Promise<Map<types.group.GroupId, types.cloud.GroupTreeCommitStatement>> {
-        return this.state.getLatestTreeCommits(groups);
-    }
-    
     /** Statements with `fromSeq < seq <= toSeq`, ascending, one page. */
-    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<types.cloud.GroupTreeCommitStatement[]> {
+    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<db.group.GroupTreeCommit[]> {
         return this.state.getTreeCommitRange(groupId, fromSeq, toSeq);
     }
     
@@ -261,10 +264,11 @@ export class GroupRepository {
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.group.GroupData, publicMeta: types.group.GroupData, privateMeta: types.group.GroupData,
         keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
-        tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement, groupKeys: Omit<types.cloud.GroupKeysEntry, "group">[] = []) {
+        tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement, groupKey?: types.cloud.GroupKeyEntry) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
-        const id = this.repository.generateId() as types.group.GroupId;
+        // Derived, not generated: the genesis statement signs only the resourceId, and clients check the id against it.
+        const id = CommitStatement.groupId(contextId, resourceId);
         const group: db.group.Group = {
             id: id,
             contextId: contextId,
@@ -290,10 +294,11 @@ export class GroupRepository {
             leafAssignment: tree.leafAssignment,
             keyVersion: 1,
             eraFloor: 1,
-            // The client cannot name the group it is creating, so the entry is filed against the id generated
-            // here. Nothing inside the ciphertext depends on it — it binds contextId and resourceId.
-            ...(groupKeys.length > 0 ? {groupKeys: groupKeys.map(entry => ({...entry, group: id}))} : {}),
         };
+        // A deleted group's id stays taken: a new group under it would pass for the old one.
+        if (await this.state.wasDeleted(id)) {
+            throw new DbDuplicateError();
+        }
         // The document first: a duplicate resourceId is the one failure that is its own, and failing before any
         // state is written keeps that case clean.
         await this.repository.insert(group);
@@ -329,7 +334,10 @@ export class GroupRepository {
             created: now,
             author: creator,
         });
-        await this.state.writeTree(group.id, tree, statement);
+        await this.state.writeTree(group.id, tree, statement, {users, managers});
+        // The client cannot name the group it is creating, so the entry is filed against the id derived here.
+        // Nothing inside the ciphertext depends on it — it binds contextId and resourceId.
+        await this.state.writeEpochKey(id, 1, groupPubKey, groupKey);
         return group;
     }
     
@@ -362,8 +370,7 @@ export class GroupRepository {
         keyId: types.core.KeyId,
         data: types.group.GroupData,
         rungs: types.cloud.GroupArchiveRung[],
-        groupKeys?: types.cloud.GroupKeysEntry[],
-        confirmationTag?: types.core.Base64,
+        groupKey?: types.cloud.GroupKeyEntry,
         /** Close the era at the new epoch in the same write, as `cutEra` would. */
         abandonHistory?: boolean,
     }): Promise<db.group.Group|null> {
@@ -384,14 +391,10 @@ export class GroupRepository {
             managers: managers,
             rosterVersion: version,
             keyVersion: expectedKeyVersion + 1,
-            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
             leafAssignment: commit.leafAssignment,
             treeCommitSeq: params.statement.seq,
-            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
+            ...(params.abandonHistory ? {eraFloor: expectedKeyVersion + 1} : {}),
         };
-        if (params.abandonHistory) {
-            Object.assign(changes, GroupRepository.eraCut({...oldGroup, ...changes}, expectedKeyVersion + 1));
-        }
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
             return null;
         }
@@ -405,12 +408,13 @@ export class GroupRepository {
             groupPubKey: params.newGroupPubKey,
             created: now,
             author: modifier,
-            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
         });
         await this.state.applyCommit(oldGroup.id, oldGroup, commit, params.statement);
         await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         if (params.abandonHistory) {
             await this.state.deleteRungsTargetingBelow(oldGroup.id, expectedKeyVersion + 1);
+            await this.state.deleteEpochKeysBelow(oldGroup.id, expectedKeyVersion + 1);
         }
         return {...oldGroup, ...changes};
     }
@@ -486,9 +490,8 @@ export class GroupRepository {
     }
     
     /**
-     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do `keyHistory` and
-     * `groupKeys` entries below it — nothing can verify or open them once nobody can climb there, and keeping
-     * them leaves two fields growing with every rotation for the life of the group.
+     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do the epoch rows below it —
+     * nothing can verify or open them once nobody can climb there.
      *
      * `pruneArchive` deliberately does **not** drop those: a member still holding an old epoch key locally has
      * to keep being able to verify it. Cutting an era is what says those epochs are gone for good.
@@ -496,27 +499,15 @@ export class GroupRepository {
     async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
         const expectedKeyVersion = oldGroup.keyVersion;
         const changes: Partial<db.group.Group> = {
-            ...GroupRepository.eraCut(oldGroup, newFloor),
+            eraFloor: newFloor,
             lastModificationDate: DateUtils.now(),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
             return null;
         }
         await this.state.deleteRungsTargetingBelow(oldGroup.id, newFloor);
+        await this.state.deleteEpochKeysBelow(oldGroup.id, newFloor);
         return {...oldGroup, ...changes};
-    }
-    
-    /** The document side of closing an era at `newFloor` — shared by `cutEra` and a removal that abandons history.
-     *  The rungs below the floor are the caller's to delete. */
-    private static eraCut(group: Pick<db.group.Group, "keyHistory"|"groupKeys">, newFloor: number): Partial<db.group.Group> {
-        return {
-            eraFloor: newFloor,
-            keyHistory: (group.keyHistory ?? []).filter(entry => entry.keyVersion >= newFloor),
-            groupKeys: (group.groupKeys ?? []).map(entry => ({
-                ...entry,
-                keys: entry.keys.filter(key => (key.groupEpoch ?? 0) >= newFloor),
-            })).filter(entry => entry.keys.length > 0),
-        };
     }
     
     /** Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
@@ -661,13 +652,14 @@ export class GroupRepository {
     async deleteGroup(id: types.group.GroupId) {
         await this.repository.delete(id);
         await this.state.deleteState(id);
+        await this.state.markDeleted(id);
     }
     
     /**
      * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
      *
      * Projected, because this runs on every container read and every item write into a group-granted container.
-     * Reading whole documents would drag `groupKeys` and `leafAssignment` along to answer one comparison.
+     * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
      */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
@@ -727,8 +719,7 @@ export class GroupRepository {
         grantEdge: types.cloud.GroupTreeEdge,
         statement: types.cloud.GroupTreeCommitStatement,
         rungs: types.cloud.GroupArchiveRung[],
-        groupKeys?: types.cloud.GroupKeysEntry[],
-        confirmationTag?: types.core.Base64,
+        groupKey?: types.cloud.GroupKeyEntry,
     }): Promise<db.group.Group | null> {
         const {oldGroup, modifier} = params;
         const now = DateUtils.now();
@@ -742,9 +733,7 @@ export class GroupRepository {
             keyId: params.keyId,
             rosterVersion: version,
             keyVersion: expectedKeyVersion + 1,
-            keyHistory: [...(oldGroup.keyHistory ?? []), {keyVersion: expectedKeyVersion, groupPubKey: oldGroup.groupPubKey}],
             treeCommitSeq: params.statement.seq,
-            ...(params.groupKeys ? {groupKeys: params.groupKeys} : {}),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
             return null;
@@ -759,11 +748,11 @@ export class GroupRepository {
             groupPubKey: params.newGroupPubKey,
             created: now,
             author: modifier,
-            ...(params.confirmationTag ? {confirmationTag: params.confirmationTag} : {}),
         });
         await this.state.replaceGrantEdge(oldGroup.id, params.grantEdge);
         await this.state.insertTreeCommit(oldGroup.id, params.statement);
         await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         return {...oldGroup, ...changes};
     }
     

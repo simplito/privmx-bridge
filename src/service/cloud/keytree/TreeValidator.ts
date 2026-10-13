@@ -22,7 +22,8 @@ export type EdgeProblem =
     | {kind: "UNEXPECTED_EDGE", parent: string, child: string}
     | {kind: "STALE_PARENT_GENERATION", parent: string, child: string, expected: number, got: number}
     | {kind: "STALE_CHILD_GENERATION", parent: string, child: string, expected: number, got: number}
-    | {kind: "EMPTY_EDGE_DATA", parent: string, child: string};
+    | {kind: "EMPTY_EDGE_DATA", parent: string, child: string}
+    | {kind: "MALFORMED_EDGE", parent: string, child: string};
 
 /** Why a stored or submitted tree state was rejected. */
 export type TreeProblem =
@@ -248,6 +249,9 @@ export class TreeValidator {
             if (!edge.data) {
                 problems.push({kind: "EMPTY_EDGE_DATA", ...describe});
             }
+            if (TreeValidator.isMalformed(edge)) {
+                problems.push({kind: "MALFORMED_EDGE", ...describe});
+            }
             if (edge.isGrantEdge) {
                 grantEdges++;
                 problems.push(...TreeValidator.checkGrantEdge(edge, grant));
@@ -302,6 +306,18 @@ export class TreeValidator {
             });
         }
         return problems;
+    }
+    
+    /**
+     * Whether the edge carries a field its kind does not have (T4-23): a `parentIndex` on the grant edge (whose parent
+     * is the grant keypair) or missing on any other, a user id on an edge to a node, a node on an edge to a user.
+     * Stored as sent, such an edge would be served back to clients saying something it does not mean.
+     */
+    static isMalformed(edge: types.cloud.GroupTreeEdge): boolean {
+        return (edge.isGrantEdge ? edge.parentIndex !== undefined : edge.parentIndex === undefined) ||
+            (edge.childKind === "user" ?
+                edge.childUserId === undefined || edge.childIndex !== undefined || edge.childGeneration !== undefined :
+                edge.childUserId !== undefined || edge.childIndex === undefined);
     }
     
     private static edgeId(edge: types.cloud.GroupTreeEdge): string {

@@ -209,7 +209,6 @@ export interface GroupRemoveMembersModel {
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
-    confirmationTag?: types.core.Base64;
     /**
      * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
      * `rungs` must be empty, and the era is cut at the new epoch in the same write, as `groupCutEra` would — so
@@ -252,6 +251,10 @@ export interface GroupGetTreeCommitsModel {
 export interface GroupGetTreeCommitsResult {
     /** Ascending by seq, at most 256; ask again from the last one for more. */
     commits: types.cloud.GroupTreeCommitStatement[];
+    /** With seq 1: the roster the group was created with, which seq 1 binds by `rosterHash` only. */
+    genesisUsers?: types.cloud.UserId[];
+    /** With seq 1: see `genesisUsers`. */
+    genesisManagers?: types.cloud.UserId[];
 }
 
 /** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
@@ -354,20 +357,12 @@ export interface GroupGenerateNewKeyModel {
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
-    confirmationTag?: types.core.Base64;
 }
 
+/** Where the group's epoch is now. Informational: the loser re-reads and re-verifies before planning again. */
 export interface RotatedAlreadyData {
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
-    winnerKeyEntry: types.core.KeyEntry;
-    /**
-     * `HMAC(winner's metadata key, ...)` from the winning version's history entry — what lets the loser tell an
-     * honest winner from a bridge steering it onto an epoch of the bridge's choosing. Only a member could have
-     * produced it. Absent when the winner was written without one, and a loser that cannot check it must refuse
-     * to adopt rather than trust the rest of this payload.
-     */
-    confirmationTag?: types.core.Base64;
 }
 
 export interface GroupDeleteModel {
@@ -419,6 +414,9 @@ export interface GroupGetModel {
      *
      * The default is deliberately the smallest useful answer rather than everything: a group's history holds one
      * full metadata envelope per version, so serving it all would make every read grow with the group's age.
+     *
+     * Served a page at a time — at most 8 entries, oldest first. Ask again from one past the last version served;
+     * the trail ends at `rosterVersion`.
      */
     fromRosterVersion?: number;
 }
@@ -438,9 +436,12 @@ export interface GroupListResult {
 }
 
 /**
- * A group as a listing serves it: identity, roster, epoch, policy. No `data`, `history`, `keys`, `groupKeys` or
- * tree state — those grow with membership and with every change, so a page of them grows as `groups × state`.
- * Use `groupGet` for one group's state.
+ * A group as a listing serves it: identity, counters, epoch, policy — every field of constant size, so a page is
+ * `O(limit)` whatever the groups' membership and age. No roster (`users`/`managers`), tree, `data`, `history`,
+ * `groupKeys` or commit statement: those grow with membership or with every change. Use `groupGet` for them.
+ *
+ * `groupPubKey` is served as stored and vouched for by nothing here; a client checks it against the signed latest
+ * statement `groupGet` serves.
  */
 export interface GroupSummary {
     id: types.group.GroupId;
@@ -452,16 +453,11 @@ export interface GroupSummary {
     creator: types.cloud.UserId;
     lastModificationDate: types.core.Timestamp;
     lastModifier: types.cloud.UserId;
-    users: types.cloud.UserId[];
-    managers: types.cloud.UserId[];
     publicMetaVersion: types.group.GroupVersion;
     privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
     keyVersion: number;
     policy: types.cloud.ContainerPolicy;
-    /** The group's latest commit statement, as `GroupInfo.treeCommit`. Absent only on a group without a statement
-     *  chain. */
-    treeCommit?: types.cloud.GroupTreeCommitStatement;
 }
 
 export interface GroupDataEntry {
@@ -483,7 +479,6 @@ export interface GroupHistoryEntryInfo {
     groupPubKey: types.cloud.GroupPubKey;
     created: types.core.Timestamp;
     author: types.cloud.UserId;
-    confirmationTag?: types.core.Base64;
     /** The roster version this entry landed at, and the epoch its tag is keyed at. Always both. */
     version: types.group.GroupVersion;
     keyVersion: number;

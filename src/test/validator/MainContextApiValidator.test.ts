@@ -27,10 +27,10 @@ const resourceId = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f" as types.core.ClientRe
 /** A well-shaped statement — the validator checks shape only; what it says is the service's to check. */
 function validStatement(op: types.cloud.GroupTreeCommitOp = "add"): types.cloud.GroupTreeCommitStatement {
     return signStatement({
-        seq: 2, op, groupId: groupId, treeVersion: 2, date: 1760000000000, keyVersion: 1, groupPubKey: groupPubKey, rosterVersion: 2,
+        seq: 2, prevDigest: "12".repeat(32), op, groupId: groupId, treeVersion: 2, date: 1760000000000, keyVersion: 1, groupPubKey: groupPubKey, rosterVersion: 2,
         rosterHash: "ab".repeat(32), treeHash: "cd".repeat(32), committer: "janek" as types.cloud.UserId,
         committerPubKey: userKeys("janek").pub58, committerSeat: 0,
-        path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey}],
+        path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey, subtreeHash: "ef".repeat(32)}],
         addedUsers: ["nowy" as types.cloud.UserId], addedManagers: [], removed: [],
     });
 }
@@ -455,7 +455,10 @@ it("ContextApiValidator refuses a tree commit without its statement, or with a m
         {signature: "AAAA" as types.core.EccSignature},
         {op: "merge" as types.cloud.GroupTreeCommitOp},
         {seq: 0},
+        {prevDigest: "AB".repeat(32)},
+        {prevDigest: "ab"},
         {committerSeat: -1},
+        {path: [{...validStatement().path[0], subtreeHash: "ab"}]},
     ];
     for (const patch of malformed) {
         const model = {...validGroupCreate(), commit: {...validStatement("create"), ...patch}};

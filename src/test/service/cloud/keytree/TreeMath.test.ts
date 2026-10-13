@@ -396,7 +396,7 @@ describe("TreeMath.isKeyed / keyedPath — shared expectations with the endpoint
     });
     
     it("version constants", () => {
-        assert.strictEqual(TreeMath.TREE_VERSION, 2);
+        assert.strictEqual(TreeMath.TREE_VERSION, 3);
         assert.strictEqual(TreeMath.BUCKET_LEVEL, 4);
     });
 });

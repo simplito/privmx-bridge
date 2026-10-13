@@ -104,8 +104,8 @@ export interface GroupKeyEntrySet {
 /**
  * Public half of one keyed tree node (see `TreeMath.isKeyed`).
  *
- * `publicKey` absent means the node is **blank**: a removal or an addition dropped its key rather than re-keying
- * somebody else's path, and `generation` is kept so that whoever refills it continues from there. A keyed node
+ * `publicKey` absent means the node is **blank**: a removal dropped its key because a departing member may know
+ * it, and `generation` is kept so that whoever refills it continues from there. A keyed node
  * with no record at all has never been filled.
  */
 export interface GroupTreeNode {
@@ -142,10 +142,10 @@ export interface GroupTreeEdge {
 /**
  * A removal expressed as what it changes, `O(log n)` nodes.
  *
- * Every commit re-keys **only the committer's own keyed path** — for a removal, the remover's. The departing
- * members' paths are blanked, not re-keyed: a key minted for somebody else's path is a key the committer keeps
- * knowing after it should have stopped working for them, which is exactly how a removed member used to keep the
- * new epoch. The bridge derives the blanked set itself from the roster; the client sends only what it minted.
+ * A removal re-keys **only the remover's own keyed path**. Everything a departing member may know — its path,
+ * every node it set, and every ancestor of those — is blanked, not re-keyed: a key minted for somebody else's
+ * subtree is one more key that the departing member's knowledge could reach. The bridge derives the blanked set
+ * itself from the stored records and the statements that set them; the client sends only what it minted.
  *
  * Every refreshed node states the generation it was read at. That precondition is what makes the delta safe: a
  * transition computed against a state that has since moved is refused rather than applied to a base it never
@@ -173,15 +173,16 @@ export interface GroupTreeRefreshedNode {
     publicKey: types.core.EccPubKey;
 }
 
-/** An addition expressed as a delta: the adder's keyed path re-keyed, the newcomers' paths blanked, at the same
- *  epoch. */
+/** An addition expressed as a delta: the adder's and the newcomers' keyed paths re-keyed by the adder, at the
+ *  same epoch. */
 export interface GroupTreeAdditionTransition {
     /** The epoch the client planned against; must still be the group's current one, and does not advance. */
     baseKeyVersion: number;
     /** Seats being taken, one per newcomer and index-aligned with them: a blank, or the next position when the
      *  tree grows. Appends must be contiguous — a skipped seat is one nothing can reuse. */
     positions: number[];
-    /** The adder's keyed path, in the geometry seating every newcomer produces. */
+    /** Every node the adder sets: the newcomers' keyed paths ascending where they leave the adder's, then the
+     *  adder's keyed path bottom-up, in the geometry seating every newcomer produces. */
     seatedNodes: GroupTreeSeatedNode[];
     /** Edges to install: the ones out of the seated nodes, plus the grant edge re-issued to the new root. */
     edges: GroupTreeEdge[];
@@ -192,7 +193,8 @@ export type GroupTreeSeatedNode = GroupTreeRefreshedNode;
 
 /**
  * A member re-keying its own keyed path, nothing else: no seat, no epoch and no roster moves. This is how the
- * blanks a removal or an addition leaves behind get filled again, by somebody entitled to know those keys.
+ * blanks a removal leaves behind get filled again, and nodes set from outside their subtree (by a creator or an
+ * adder) taken over, by somebody entitled to know those keys.
  */
 export interface GroupTreeSelfUpdateTransition {
     /** The epoch the client planned against; must still be the group's current one, and does not advance. */
@@ -210,6 +212,8 @@ export interface GroupTreeCommitPathEntry {
     nodeIndex: number;
     generation: number;
     publicKey: types.core.EccPubKey;
+    /** Hex `CH` of the node in the tree after the commit: pins the subtree the key was minted over. */
+    subtreeHash: string;
 }
 
 /**
@@ -222,6 +226,8 @@ export interface GroupTreeCommitPathEntry {
 export interface GroupTreeCommitStatement {
     /** 1 at creation, then exactly one more for every tree commit of the group, rotations included. */
     seq: number;
+    /** Hex SHA-256 of the statement at `seq - 1` (its signed bytes and signature), "" at seq 1: chains the history. */
+    prevDigest: string;
     op: GroupTreeCommitOp;
     /** The group's id; at creation, which happens before the bridge assigns one, the client's `resourceId`. */
     groupId: string;
@@ -239,7 +245,7 @@ export interface GroupTreeCommitStatement {
     /** The committer's context public key when it signed — what the signature verifies against. */
     committerPubKey: UserPubKey;
     committerSeat: number;
-    /** The re-keyed nodes, bottom-up, as submitted. */
+    /** Every node the commit set, as submitted: off-path fills ascending, then the committer's path bottom-up. */
     path: GroupTreeCommitPathEntry[];
     addedUsers: UserId[];
     addedManagers: UserId[];

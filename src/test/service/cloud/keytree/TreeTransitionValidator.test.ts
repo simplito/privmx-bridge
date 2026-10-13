@@ -14,7 +14,7 @@ import * as assert from "assert";
 import { CommitOp, CommitResult, StoredTree, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "../../../../service/cloud/keytree/TreeTransitionValidator";
 import { TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
-import { buildTree, commitOpFor, Plan, PlanOp, planCommit, userId } from "../../../testUtils/TreeFixtures";
+import { buildTree, commitOpFor, Plan, PlanOp, planCommit, settersOf, userId } from "../../../testUtils/TreeFixtures";
 import * as types from "../../../../types";
 
 /**
@@ -35,7 +35,7 @@ function seats(n: number, blanks: number[] = []): string[] {
 }
 
 function storedOf(tree: types.cloud.GroupTreeState, keyVersion = EPOCH): StoredTree {
-    return {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, keyVersion, nodes: tree.nodes};
+    return {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, keyVersion, nodes: tree.nodes, setters: settersOf(tree)};
 }
 
 interface Case {
@@ -93,7 +93,7 @@ function rosterOf(tree: types.cloud.GroupTreeState) {
     return {users: tree.leafAssignment.filter(u => u !== ""), managers: [] as types.cloud.UserId[]};
 }
 
-/** The 64-seat group most tests use, created by u0: records 31 and 63 filled, 95 never filled. */
+/** The 64-seat group most tests use, created by u0: every keyed node (31, 63, 95) filled by u0 at seq 1. */
 const BASE = buildTree(seats(64), EPOCH);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,22 +104,24 @@ describe("validateCommit accepts honest commits", () => {
     each<[number]>([[1], [2], [3], [16], [17], [33], [64], [100]]).it("create, N=%s", ([n]) => {
         const c = honestCreate(seats(n));
         const commit = accepted(c);
-        assert.deepStrictEqual(commit.refreshed.map(node => node.nodeIndex), TreeMath.keyedPath(0, n));
+        const path = TreeMath.keyedPath(0, n);
+        const keyed = TreeMath.keyedNodes(n);
+        assert.deepStrictEqual(commit.refreshed.map(node => node.nodeIndex), [...keyed.filter(x => !path.includes(x)), ...path]);
         assert.strictEqual(commit.keyVersion, 1);
     });
     
-    it("create by somebody other than the first seat re-keys that member's path", () => {
+    it("create by somebody other than the first seat fills the rest first, then its own path", () => {
         const c = honestCreate(seats(64), "u50");
-        assert.deepStrictEqual(accepted(c).refreshed.map(node => node.nodeIndex), [95, 63]);
+        assert.deepStrictEqual(accepted(c).refreshed.map(node => node.nodeIndex), [31, 95, 63]);
     });
     
-    it("add into a blank: the adder's path re-keyed, the newcomer's blanked, the epoch unchanged", () => {
+    it("add into a blank: the adder fills the newcomer's path and its own, blanks nothing, keeps the epoch", () => {
         const tree = planCommit(BASE, EPOCH, {kind: "selfUpdate", committer: "u40"}).after;
         const removed = planCommit(tree, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]});
         const c = honest(removed.after, {kind: "add", committer: "u1", members: ["new"], positions: [41]}, EPOCH + 1);
         const commit = accepted(c);
-        assert.deepStrictEqual(commit.refreshed.map(node => node.nodeIndex), [31, 63]);
-        assert.deepStrictEqual(commit.blanked, [95]);
+        assert.deepStrictEqual(commit.refreshed.map(node => node.nodeIndex), [95, 31, 63]);
+        assert.deepStrictEqual(commit.blanked, []);
         assert.strictEqual(commit.keyVersion, EPOCH + 1);
         assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), EPOCH + 1), []);
     });
@@ -166,9 +168,9 @@ describe("validateCommit accepts honest commits", () => {
         assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), EPOCH + 1), []);
     });
     
-    it("remove by the departing member's bucket neighbour blanks nothing it does not re-key", () => {
+    it("SECURITY: remove of the creator by its bucket neighbour still blanks what the creator set", () => {
         const c = honest(BASE, {kind: "remove", committer: "u1", removed: ["u0"]});
-        assert.deepStrictEqual(accepted(c).blanked, []);
+        assert.deepStrictEqual(accepted(c).blanked, [95]);
     });
     
     it("remove of the creator, by a member in the other half", () => {
@@ -187,7 +189,7 @@ describe("validateCommit accepts honest commits", () => {
     it("selfUpdate re-keys the caller's path and nothing else", () => {
         const c = honest(BASE, {kind: "selfUpdate", committer: "u40"});
         const commit = accepted(c);
-        assert.deepStrictEqual(commit.refreshed.map(node => [node.nodeIndex, node.fromGeneration, node.generation]), [[95, undefined, 0], [63, 0, 1]]);
+        assert.deepStrictEqual(commit.refreshed.map(node => [node.nodeIndex, node.fromGeneration, node.generation]), [[95, 0, 1], [63, 0, 1]]);
         assert.deepStrictEqual(commit.blanked, []);
         assert.strictEqual(commit.keyVersion, EPOCH);
         assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), EPOCH), []);
@@ -205,7 +207,7 @@ describe("validateCommit accepts honest commits", () => {
             {kind: "remove", committer: "u0", removed: ["u41"]}).after;
         const c = honest(tree, {kind: "selfUpdate", committer: "u40"}, EPOCH + 1);
         const node95 = accepted(c).refreshed.find(node => node.nodeIndex === 95)!;
-        assert.deepStrictEqual([node95.fromGeneration, node95.generation], [0, 1]);
+        assert.deepStrictEqual([node95.fromGeneration, node95.generation], [1, 2]);
     });
 });
 
@@ -279,6 +281,15 @@ describe("validateCommit over random histories", () => {
             const c = honest(tree, op, epoch);
             const commit = accepted(c);
             assert.deepStrictEqual(commit.blanked, c.plan.blanked, "the bridge derives the same blank set as the planner");
+            if (op.kind === "remove") {
+                // SECURITY: whatever the leavers ever knew, closed over the old edges, is blank or re-keyed now.
+                for (const removed of op.removed) {
+                    const known = closure(knowledge.get(removed)!, c.stored.nodes.length > 0 ? tree.edges : []);
+                    for (const node of c.plan.after.nodes.filter(record => record.publicKey)) {
+                        assert.ok(!known.has(`node:${node.nodeIndex}@${node.generation}`), `step ${step}: ${removed} keeps node ${node.nodeIndex}`);
+                    }
+                }
+            }
             tree = c.plan.after;
             epoch = c.plan.keyVersion;
             assert.deepStrictEqual(TreeValidator.validateState(tree, rosterOf(tree), epoch), [], `step ${step}: ${JSON.stringify(op)}`);
@@ -300,12 +311,17 @@ describe("validateCommit over random histories", () => {
         }
     });
     
-    it("SECURITY: the C1 scenario — a member who minted a node outside its path keeps the epoch", () => {
-        // Under the old rules the creator minted every node, so after being removed it still held 95@0, and the
-        // new root was wrapped to 95@0. Here that creation is refused outright, so the state cannot arise.
+    it("SECURITY: a self-update minting a node outside the committer's path", () => {
+        // A key minted outside one's own subtree without an addition is one nobody asked for; refused outright.
+        const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
+        c.submitted.refreshedNodes.push({nodeIndex: 95, fromGeneration: 0, generation: 1, publicKey: "pk:95" as types.core.EccPubKey});
+        assert.deepStrictEqual(run(c), {ok: false, rejections: [{kind: "REFRESH_NOT_THE_PATH", missing: [], unexpected: [95]}]});
+    });
+    
+    it("a creation filling only the creator's path", () => {
         const c = honestCreate(seats(64));
-        c.submitted.refreshedNodes.push({nodeIndex: 95, generation: 0, publicKey: "pk:95" as types.core.EccPubKey});
-        assertRejected(c, "REFRESH_NOT_THE_PATH");
+        c.submitted.refreshedNodes = c.submitted.refreshedNodes.filter(node => node.nodeIndex !== 95);
+        assert.deepStrictEqual(run(c), {ok: false, rejections: [{kind: "REFRESH_NOT_THE_PATH", missing: [95], unexpected: []}]});
     });
 });
 
@@ -435,14 +451,16 @@ describe("validateCommit refuses a wrong re-keyed set", () => {
     });
     
     it("claiming a base generation for a node that has no record", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u40"});
-        c.submitted.refreshedNodes[0] = {...c.submitted.refreshedNodes[0], fromGeneration: 0, generation: 1};
+        // Growth to 65 seats creates the root 127, which has no record yet.
+        const c = honest(BASE, {kind: "add", committer: "u0", members: ["a"], positions: [64]});
+        const root = c.submitted.refreshedNodes.findIndex(node => node.nodeIndex === 127);
+        c.submitted.refreshedNodes[root] = {...c.submitted.refreshedNodes[root], fromGeneration: 0, generation: 1};
         assertRejected(c, "NODE_NOT_NEW");
     });
     
     it("minting a node at a generation other than 0", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u40"});
-        c.submitted.refreshedNodes[0] = {...c.submitted.refreshedNodes[0], generation: 3};
+        const c = honest(BASE, {kind: "add", committer: "u0", members: ["a"], positions: [64]});
+        c.submitted.refreshedNodes.find(node => node.nodeIndex === 127)!.generation = 3;
         assertRejected(c, "MINTED_NODE_NOT_AT_ZERO");
     });
     
@@ -558,5 +576,81 @@ describe("validateCommit refuses a wrong edge set", () => {
         const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
         c.submitted.edges.find(edge => edge.isGrantEdge)!.childGeneration = 0;
         assertRejected(c, "STALE_CHILD_GENERATION");
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A-prime: dense fill, knowledge-closure blanking (spec §8 vectors)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("validateCommit derives Know of the removed members", () => {
+    const B64 = BASE;
+    const B128 = buildTree(seats(128), EPOCH);
+    const after = (tree: types.cloud.GroupTreeState, op: PlanOp, keyVersion = EPOCH) => planCommit(tree, keyVersion, op).after;
+    const selfUpdates = (tree: types.cloud.GroupTreeState, ...members: string[]) =>
+        members.reduce((t, m) => after(t, {kind: "selfUpdate", committer: m}), tree);
+    const removalBlanks = (c: Case) => {
+        const commit = accepted(c);
+        assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), commit.keyVersion), []);
+        return commit.blanked;
+    };
+    
+    it("V3: a healed path makes the creator's removal blank nothing", () => {
+        assert.deepStrictEqual(removalBlanks(honest(selfUpdates(B64, "u40"), {kind: "remove", committer: "u5", removed: ["u0"]})), []);
+    });
+    
+    it("V4: the leaver's own path, minus the remover's", () => {
+        assert.deepStrictEqual(removalBlanks(honest(B64, {kind: "remove", committer: "u5", removed: ["u40"]})), [95]);
+    });
+    
+    it("SECURITY V5: an ancestor re-keyed by somebody else is blanked when it wraps to a node the leaver set", () => {
+        // u40 re-keyed 63, but 63 still wraps to 31 (set by u0): u0 can open 63, so it is in Know(u0).
+        assert.deepStrictEqual(removalBlanks(honest(selfUpdates(B128, "u40"), {kind: "remove", committer: "u100", removed: ["u0"]})), [31, 63, 159]);
+    });
+    
+    it("V6: a batch blanks the union", () => {
+        const tree = selfUpdates(B128, "u40", "u70", "u100");
+        assert.deepStrictEqual(removalBlanks(honest(tree, {kind: "remove", committer: "u40", removed: ["u0", "u70"]})), [31, 159, 191]);
+    });
+    
+    it("V7/V8: the adder's fills are blanked at the adder's removal", () => {
+        const v7 = honest(after(B64, {kind: "remove", committer: "u40", removed: ["u5"]}), {kind: "add", committer: "u40", members: ["n5"], positions: [5]}, EPOCH + 1);
+        const added = accepted(v7);
+        assert.deepStrictEqual(added.refreshed.map(node => [node.nodeIndex, node.fromGeneration, node.generation]), [[31, 0, 1], [95, 1, 2], [63, 1, 2]]);
+        assert.deepStrictEqual(added.blanked, []);
+        assert.deepStrictEqual(removalBlanks(honest(v7.plan.after, {kind: "remove", committer: "u0", removed: ["u40"]}, EPOCH + 1)), [95]);
+    });
+    
+    it("V9: a creator that also added is blanked for both", () => {
+        let tree = after(selfUpdates(B64, "u40"), {kind: "remove", committer: "u5", removed: ["u41"]});
+        tree = after(tree, {kind: "add", committer: "u0", members: ["n41"], positions: [41]}, EPOCH + 1);
+        assert.deepStrictEqual(removalBlanks(honest(tree, {kind: "remove", committer: "u40", removed: ["u0"]}, EPOCH + 1)), [31]);
+    });
+    
+    it("V10: a batch of the creator and another", () => {
+        assert.deepStrictEqual(removalBlanks(honest(B64, {kind: "remove", committer: "u40", removed: ["u0", "u63"]})), [31]);
+    });
+    
+    it("SECURITY: a removal leaving a node of Know filled is refused", () => {
+        // V5 with path-only blanking: 159 (set by u0) kept, 191 wrapping to it instead of to the seats below it.
+        const c = honest(selfUpdates(B128, "u40"), {kind: "remove", committer: "u100", removed: ["u0"]});
+        const node159 = c.stored.nodes.find(node => node.nodeIndex === 159)!;
+        const generation191 = c.submitted.refreshedNodes.find(node => node.nodeIndex === 191)!.generation;
+        c.submitted.edges = c.submitted.edges.filter(edge => !(edge.parentIndex === 191 && edge.childKind === "user"));
+        c.submitted.edges.push({parentIndex: 191, parentGeneration: generation191, childKind: "node", childIndex: 159, childGeneration: node159.generation, data: "x" as types.core.UserKeyData});
+        const kinds = rejectionKinds(c);
+        assert.ok(kinds.includes("UNEXPECTED_EDGE") && kinds.includes("MISSING_EDGE"), JSON.stringify(kinds));
+    });
+    
+    it("an addition leaving a newcomer's node unfilled is refused", () => {
+        const c = honest(after(B64, {kind: "remove", committer: "u40", removed: ["u5"]}), {kind: "add", committer: "u40", members: ["n5"], positions: [5]}, EPOCH + 1);
+        c.submitted.refreshedNodes = c.submitted.refreshedNodes.filter(node => node.nodeIndex !== 31);
+        assert.deepStrictEqual(run(c), {ok: false, rejections: [{kind: "REFRESH_NOT_THE_PATH", missing: [31], unexpected: []}]});
+    });
+    
+    it("a removal over a node whose statement is missing fails closed", () => {
+        const c = honest(B64, {kind: "remove", committer: "u40", removed: ["u0"]});
+        c.stored.setters!.delete(1);
+        assert.throws(() => run(c), /names no stored statement/);
     });
 });

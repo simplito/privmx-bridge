@@ -14,9 +14,10 @@ import * as assert from "assert";
 import * as types from "../../../../types";
 import { CommitStatement, ExpectedStatement } from "../../../../service/cloud/keytree/CommitStatement";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
+import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import { ECUtils } from "../../../../utils/crypto/ECUtils";
 import { Crypto } from "../../../../utils/crypto/Crypto";
-import { buildTree, planCommit, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, planCommit, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
 
 /**
  * The bridge's check of a commit statement: every field against what the bridge derived, then the signature.
@@ -33,18 +34,21 @@ const BASE = buildTree(SEATS, 5);
 function honest() {
     const plan = planCommit(BASE, 5, {kind: "remove", committer: "u0", removed: ["u40"]});
     const users = SEATS.filter(u => u !== "u40");
+    const previous = creationStatement(BASE, "u0", {groupId: "res", groupPubKey: GROUP_PUB, users: SEATS, managers: [], date: NOW - 1});
     const statement = statementFor(plan, {kind: "remove", committer: "u0", removed: ["u40"]},
-        {groupId: "grp", groupPubKey: NEXT_GROUP_PUB, rosterVersion: 8, users, managers: [], date: NOW});
+        {groupId: "grp", groupPubKey: NEXT_GROUP_PUB, rosterVersion: 8, users, managers: [], date: NOW, previous});
     const expected: ExpectedStatement = {
         seq: 2,
+        prevDigest: CommitStatement.digest(previous),
+        notBefore: previous.date,
         op: "remove",
         groupId: "grp",
-        treeVersion: 2,
+        treeVersion: TreeMath.TREE_VERSION,
         keyVersion: 6,
         groupPubKey: NEXT_GROUP_PUB,
         rosterVersion: 8,
         rosterHash: TreeHash.rosterHash(users, []),
-        treeHash: TreeHash.treeHash(TreeHash.of(plan.after)),
+        tree: TreeHash.of(plan.after),
         committer: "u0" as types.cloud.UserId,
         committerPubKey: userKeys("u0").pub58,
         committerSeat: 0,
@@ -91,6 +95,16 @@ describe("CommitStatement signature", () => {
     });
 });
 
+describe("CommitStatement.groupId", () => {
+    it("SECURITY: a group's id follows from its context and the resourceId its creator signs, byte for byte as the endpoint computes it", () => {
+        // The same vector is in the endpoint's TreeCommitsTest: a client accepts a genesis statement only for this id.
+        assert.strictEqual(
+            CommitStatement.groupId("ctx" as types.context.ContextId, "res" as types.core.ClientResourceId),
+            "c05bb98afb4dd712d19bfc4c42f84cf213274a8345b6c2d55d3cf941c2fea17f",
+        );
+    });
+});
+
 describe("CommitStatement.validate", () => {
     it("accepts an honest statement", () => {
         const {statement, expected} = honest();
@@ -105,6 +119,13 @@ describe("CommitStatement.validate", () => {
         assert.deepStrictEqual(check(forged, expected), [{kind: "BAD_COMMIT_SIGNATURE"}]);
     });
     
+    it("never hashes the tree for a statement its committer did not sign", () => {
+        // Hashing the tree is the expensive part; a tree that cannot be hashed shows it was never reached.
+        const {statement, expected} = honest();
+        const unhashable = {...expected, tree: undefined as unknown as ExpectedStatement["tree"]};
+        assert.deepStrictEqual(check(signStatement({...statement}, "u1"), unhashable), [{kind: "BAD_COMMIT_SIGNATURE"}]);
+    });
+    
     it("SECURITY: refuses a statement altered after signing", () => {
         const {statement, expected} = honest();
         // Same fields the bridge expects, but not the ones that were signed.
@@ -114,6 +135,8 @@ describe("CommitStatement.validate", () => {
     
     const mutations: [string, (cs: types.cloud.GroupTreeCommitStatement) => types.cloud.GroupTreeCommitStatement][] = [
         ["seq", cs => ({...cs, seq: cs.seq + 1})],
+        ["prevDigest", cs => ({...cs, prevDigest: "00".repeat(32)})],
+        ["prevDigest", cs => ({...cs, prevDigest: ""})],
         ["op", cs => ({...cs, op: "selfUpdate"})],
         ["groupId", cs => ({...cs, groupId: "other"})],
         ["treeVersion", cs => ({...cs, treeVersion: 1})],
@@ -130,12 +153,14 @@ describe("CommitStatement.validate", () => {
         ["path", cs => ({...cs, path: [...cs.path].reverse()})],
         ["path", cs => ({...cs, path: cs.path.map((e, i) => i === 0 ? {...e, generation: e.generation + 1} : e)})],
         ["path", cs => ({...cs, path: cs.path.map((e, i) => i === 0 ? {...e, publicKey: GROUP_PUB as unknown as types.core.EccPubKey} : e)})],
+        ["path", cs => ({...cs, path: cs.path.map((e, i) => i === 0 ? {...e, subtreeHash: cs.path[1].subtreeHash} : e)})],
         ["addedUsers", cs => ({...cs, addedUsers: ["u40" as types.cloud.UserId]})],
         ["addedManagers", cs => ({...cs, addedManagers: ["u40" as types.cloud.UserId]})],
         ["removed", cs => ({...cs, removed: []})],
         ["removed", cs => ({...cs, removed: ["u40", "u40"] as types.cloud.UserId[]})],
         ["date", cs => ({...cs, date: NOW - CommitStatement.DATE_TOLERANCE_MS - 1})],
         ["date", cs => ({...cs, date: NOW + CommitStatement.DATE_TOLERANCE_MS + 1})],
+        ["date", cs => ({...cs, date: NOW - 2})], // inside the tolerance, but before the statement it extends
     ];
     each<[string, (cs: types.cloud.GroupTreeCommitStatement) => types.cloud.GroupTreeCommitStatement]>(mutations).it("refuses a wrong %s", ([field, mutate]) => {
         const {statement, expected} = honest();
@@ -200,5 +225,26 @@ describe("CommitStatement.checkStoredState", () => {
         const {group, tree, statements} = stored();
         assert.deepStrictEqual(CommitStatement.checkStoredState({...group, treeCommitSeq: 3}, tree, statements), ["no statement at treeCommitSeq 3"]);
         assert.ok(CommitStatement.checkStoredState({...group, users: [...SEATS, "outsider"]}, tree, statements).some(p => p.includes("rosterHash")));
+    });
+    
+    it("SECURITY: finds a filled node still vouched for by a former member", () => {
+        // A removal blanks every node its departing members set; one that survived is a key a former member has.
+        const {group, tree, statements} = stored();
+        const problems = CommitStatement.checkStoredState({...group, users: SEATS.filter(u => u !== "u0")}, tree, statements);
+        assert.ok(problems.includes("node 31 was set by u0, who is not a member"), JSON.stringify(problems));
+    });
+    
+    it("SECURITY: finds a node whose subtree was rolled back to an older, genuinely vouched generation", () => {
+        // u35 heals node 95 over u40's; u0, colluding, signs a state with 95 back at u40's generation (AM-1). 95
+        // itself still matches statement 2 (nothing keyed below it), but the root u35 minted sits over another subtree.
+        const {group, tree, statements} = stored();
+        const healed = planCommit(tree, 1, {kind: "selfUpdate", committer: "u35"}, 3);
+        const old = tree.nodes.find(n => n.nodeIndex === 95)!;
+        const rolledBack = {...healed.after, nodes: healed.after.nodes.map(n => n.nodeIndex === 95 ? old : n)};
+        const ctx = {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, ...roster};
+        statements.set(3, statementFor(healed, {kind: "selfUpdate", committer: "u35"}, ctx));
+        statements.set(4, statementFor({...healed, after: rolledBack, refreshedNodes: [], seq: 4}, {kind: "selfUpdate", committer: "u0"}, ctx));
+        const problems = CommitStatement.checkStoredState({...group, treeCommitSeq: 4}, rolledBack, statements);
+        assert.deepStrictEqual(problems, ["node 63 is not vouched for by statement 3"]);
     });
 });

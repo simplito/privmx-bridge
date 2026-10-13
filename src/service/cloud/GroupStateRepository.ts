@@ -18,7 +18,7 @@ import type { TreeCommit } from "./keytree/TreeTransitionValidator";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
- * entries and Epoch Ladder rungs.
+ * entries, Epoch Ladder rungs and per-epoch keys.
  *
  * Ids are derived, not generated — a node is `(groupId, nodeIndex)`, an edge is `(groupId, parent, child)`.
  * Generations are deliberately **not** part of an edge's identity, so a re-wrap lands on the id of the edge it
@@ -38,7 +38,11 @@ export class GroupStateRepository {
     static readonly PRIVATE_META_ENTRY_COLLECTION_NAME = "groupPrivateMetaEntry";
     static readonly ARCHIVE_RUNG_COLLECTION_NAME = "groupArchiveRung";
     static readonly TREE_COMMIT_COLLECTION_NAME = "groupTreeCommit";
+    static readonly EPOCH_KEY_COLLECTION_NAME = "groupEpochKey";
+    static readonly TOMBSTONE_COLLECTION_NAME = "groupTombstone";
     static readonly COLLECTION_ID_PROP = "id";
+    /** At most 8 MB of entry `data` per `getHistory` page. */
+    static readonly MAX_HISTORY_PAGE = 8;
     /** At most this many statements per `getTreeCommits` page. */
     static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
     
@@ -50,6 +54,8 @@ export class GroupStateRepository {
         private privateMetaEntries: MongoObjectRepository<db.group.GroupPrivateMetaEntryId, db.group.GroupPrivateMetaEntry>,
         private rungs: MongoObjectRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>,
         private commits: MongoObjectRepository<db.group.GroupTreeCommitId, db.group.GroupTreeCommit>,
+        private epochKeys: MongoObjectRepository<db.group.GroupEpochKeyId, db.group.GroupEpochKey>,
+        private tombstones: MongoObjectRepository<types.group.GroupId, db.group.GroupTombstone>,
     ) {
     }
     
@@ -68,6 +74,10 @@ export class GroupStateRepository {
     
     static treeCommitId(groupId: types.group.GroupId, seq: number) {
         return `${groupId}|${seq}` as db.group.GroupTreeCommitId;
+    }
+    
+    static epochKeyId(groupId: types.group.GroupId, keyVersion: number) {
+        return `${groupId}|${keyVersion}` as db.group.GroupEpochKeyId;
     }
     
     static historyEntryId(groupId: types.group.GroupId, version: types.group.GroupVersion) {
@@ -138,6 +148,10 @@ export class GroupStateRepository {
      * Since the planes were split these entries carry no metadata at all, so the old cost this comment warned
      * about — the group's whole metadata re-sent once per membership change — is gone by construction. The
      * default is still the head alone: a read has no use for rosters it has already left behind.
+     *
+     * The trail comes a page at a time, `MAX_HISTORY_PAGE` entries from `fromRosterVersion` up: each entry may
+     * carry up to 1 MB of `data`, so a whole long-lived group's trail would not fit in a worker's memory. The next
+     * page starts one past the last version served; the trail ends at the group's `rosterVersion`.
      */
     async getHistory(groupId: types.group.GroupId, fromRosterVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
         if (fromRosterVersion === undefined) {
@@ -145,7 +159,7 @@ export class GroupStateRepository {
         }
         const entries = await this.history.query(
             q => q.and(q.eq("groupId", groupId), q.gte("version", fromRosterVersion as types.group.GroupVersion)),
-        ).sort("version", true).array();
+        ).sort("version", true).limit(GroupStateRepository.MAX_HISTORY_PAGE).array();
         if (entries.length > 0) {
             return entries;
         }
@@ -226,6 +240,26 @@ export class GroupStateRepository {
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
+    /** Every epoch row of the group, ascending — what `groupGet` and the key archive serve. */
+    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
+        return this.epochKeys.query(q => q.eq("groupId", groupId)).sort("keyVersion", true).array();
+    }
+    
+    /** Whether an epoch of the group still on record was born with `groupPubKey` (T4-24). */
+    async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
+        return await this.epochKeys.count(q => q.and(q.eq("groupId", groupId), q.eq("groupPubKey", groupPubKey))) > 0;
+    }
+    
+    /** Writes the row of an epoch being started. An upsert, so a migration re-run lands on the same row. */
+    async writeEpochKey(groupId: types.group.GroupId, keyVersion: number, groupPubKey: types.cloud.GroupPubKey, groupKey?: types.cloud.GroupKeyEntry): Promise<void> {
+        await this.epochKeys.update({id: GroupStateRepository.epochKeyId(groupId, keyVersion), groupId, keyVersion, groupPubKey, ...(groupKey ? {groupKey} : {})});
+    }
+    
+    /** Drops the rows of the epochs below `floor` — what closing an era does to them. */
+    async deleteEpochKeysBelow(groupId: types.group.GroupId, floor: number): Promise<void> {
+        await this.epochKeys.deleteMany(q => q.and(q.eq("groupId", groupId), q.lt("keyVersion", floor)));
+    }
+    
     // ── write ────────────────────────────────────────────────────────────────────────────────────────────────
     
     /**
@@ -244,7 +278,7 @@ export class GroupStateRepository {
     
     /** Writes a group's whole tree and its first statement. Only creating a group does this — every later change
      *  is a commit (`applyCommit`). A fresh tree is the creator's keyed path and the edges it owes, nothing blank. */
-    async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement): Promise<void> {
+    async writeTree(groupId: types.group.GroupId, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement, genesis: db.group.GroupTreeCommit["genesis"]): Promise<void> {
         const nodeOperations: mongodb.AnyBulkWriteOperation[] = tree.nodes.map(node => ({
             replaceOne: {
                 filter: {_id: GroupStateRepository.nodeId(groupId, node.nodeIndex)},
@@ -264,7 +298,7 @@ export class GroupStateRepository {
         await Promise.all([
             GroupStateRepository.bulkWrite(this.nodes, nodeOperations),
             GroupStateRepository.bulkWrite(this.edges, edgeOperations),
-            this.insertTreeCommit(groupId, statement),
+            this.insertTreeCommit(groupId, statement, genesis),
         ]);
     }
     
@@ -356,12 +390,13 @@ export class GroupStateRepository {
      * Stores a commit statement exactly as signed. An insert, not an upsert: `seq` is part of the commit's CAS, so
      * a second statement at the same seq can only be a bug, and should fail loudly rather than overwrite.
      */
-    async insertTreeCommit(groupId: types.group.GroupId, statement: types.cloud.GroupTreeCommitStatement): Promise<void> {
+    async insertTreeCommit(groupId: types.group.GroupId, statement: types.cloud.GroupTreeCommitStatement, genesis?: db.group.GroupTreeCommit["genesis"]): Promise<void> {
         await this.commits.insert({
             id: GroupStateRepository.treeCommitId(groupId, statement.seq),
             groupId: groupId,
             seq: statement.seq,
             statement: statement,
+            ...(genesis ? {genesis} : {}),
         });
     }
     
@@ -374,22 +409,13 @@ export class GroupStateRepository {
         return docs.sort((a, b) => a.seq - b.seq).map(doc => doc.statement);
     }
     
-    /** The latest statement of each group by group id — one lookup by derived id for all of them. A group without
-     *  a chain is absent. */
-    async getLatestTreeCommits(groups: {id: types.group.GroupId, treeCommitSeq?: number}[]): Promise<Map<types.group.GroupId, types.cloud.GroupTreeCommitStatement>> {
-        const ids = groups.filter(group => group.treeCommitSeq !== undefined).map(group => GroupStateRepository.treeCommitId(group.id, group.treeCommitSeq!));
-        const docs = ids.length === 0 ? [] : await this.commits.getMulti(ids);
-        return new Map(docs.map(doc => [doc.groupId, doc.statement]));
-    }
-    
     /** Statements with `fromSeq < seq <= toSeq`, ascending, at most `MAX_TREE_COMMITS_PER_PAGE` — one range read
      *  over the `{groupId, seq}` index. */
-    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<types.cloud.GroupTreeCommitStatement[]> {
-        const docs = await this.commits.query(q => q.and(q.eq("groupId", groupId), q.gt("seq", fromSeq), q.lte("seq", toSeq)))
+    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<db.group.GroupTreeCommit[]> {
+        return this.commits.query(q => q.and(q.eq("groupId", groupId), q.gt("seq", fromSeq), q.lte("seq", toSeq)))
             .sort("seq", true)
             .limit(GroupStateRepository.MAX_TREE_COMMITS_PER_PAGE)
             .array();
-        return docs.map(doc => doc.statement);
     }
     
     async insertHistoryEntry(entry: db.group.GroupHistoryEntry): Promise<void> {
@@ -425,7 +451,17 @@ export class GroupStateRepository {
             this.privateMetaEntries.deleteMany(q => q.eq("groupId", groupId)),
             this.rungs.deleteMany(q => q.eq("groupId", groupId)),
             this.commits.deleteMany(q => q.eq("groupId", groupId)),
+            this.epochKeys.deleteMany(q => q.eq("groupId", groupId)),
         ]);
+    }
+    
+    // ponytail: one row per deleted group, never pruned; prune with the context if that ever matters.
+    async markDeleted(groupId: types.group.GroupId): Promise<void> {
+        await this.tombstones.insert({id: groupId});
+    }
+    
+    async wasDeleted(groupId: types.group.GroupId): Promise<boolean> {
+        return !!await this.tombstones.get(groupId);
     }
     
     // ── mapping ──────────────────────────────────────────────────────────────────────────────────────────────

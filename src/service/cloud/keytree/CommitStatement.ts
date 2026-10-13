@@ -13,7 +13,7 @@ import * as types from "../../../types";
 import { Crypto } from "../../../utils/crypto/Crypto";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ByteWriter } from "./ByteWriter";
-import { TreeHash } from "./TreeHash";
+import { HashableTree, TreeHash } from "./TreeHash";
 
 export type StatementProblem =
     | {kind: "BAD_COMMIT_STATEMENT", field: string}
@@ -23,6 +23,10 @@ export type StatementProblem =
  *  statement itself. */
 export interface ExpectedStatement {
     seq: number;
+    /** `digest` of the stored latest statement, "" for a creation: a statement extends exactly the history stored. */
+    prevDigest: string;
+    /** The stored latest statement's date: a chain's dates never go back. */
+    notBefore: number;
     op: types.cloud.GroupTreeCommitOp;
     groupId: string;
     treeVersion: number;
@@ -30,7 +34,8 @@ export interface ExpectedStatement {
     groupPubKey: types.cloud.GroupPubKey;
     rosterVersion: number;
     rosterHash: Buffer;
-    treeHash: Buffer;
+    /** The tree after the commit: the statement's `treeHash` and each path entry's `subtreeHash` are read off it. */
+    tree: HashableTree;
     committer: types.cloud.UserId;
     /** The caller's current context key: the statement must name it, and is checked against it. */
     committerPubKey: types.cloud.UserPubKey;
@@ -56,13 +61,25 @@ export class CommitStatement {
     
     static readonly OP_CODES: Record<types.cloud.GroupTreeCommitOp, number> = {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5};
     
+    /**
+     * A group's id, derived rather than generated: lowercase hex of `H("pmx-group-id\0" || lp(contextId) || lp(resourceId))`.
+     * The creator signs only the resourceId at seq 1, so this is what ties that statement to one group id — clients
+     * recompute it, and a genesis statement cannot be served as another group's.
+     */
+    static groupId(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId): types.group.GroupId {
+        return Crypto.sha256(new ByteWriter().tag("pmx-group-id").lp(contextId).lp(resourceId).bytes()).toString("hex") as types.group.GroupId;
+    }
+    
     /** `SB` — the bytes the committer signs (the signature is over their SHA-256). */
     static signedBytes(cs: Omit<types.cloud.GroupTreeCommitStatement, "signature">): Buffer {
+        const prevDigest = Buffer.from(cs.prevDigest, "hex");
         const writer = new ByteWriter()
             .tag("pmx-tree-commit")
             .lp(cs.groupId)
             .u32(cs.treeVersion)
             .u64(cs.seq)
+            .u32(prevDigest.length)
+            .raw(prevDigest)
             .u8(CommitStatement.OP_CODES[cs.op])
             .u64(cs.date)
             .u64(cs.keyVersion)
@@ -75,13 +92,18 @@ export class CommitStatement {
             .u32(cs.committerSeat)
             .u32(cs.path.length);
         for (const entry of cs.path) {
-            writer.u32(entry.nodeIndex).u32(entry.generation).lp(entry.publicKey);
+            writer.u32(entry.nodeIndex).u32(entry.generation).lp(entry.publicKey).raw(Buffer.from(entry.subtreeHash, "hex"));
         }
         for (const list of [cs.addedUsers, cs.addedManagers, cs.removed]) {
             writer.u32(list.length);
             list.forEach(userId => writer.lp(userId));
         }
         return writer.bytes();
+    }
+    
+    /** Identity of a statement as signed — what the next one names as `prevDigest`. Hex. */
+    static digest(cs: types.cloud.GroupTreeCommitStatement): string {
+        return Crypto.sha256(Buffer.concat([CommitStatement.signedBytes(cs), Buffer.from(cs.signature, "base64")])).toString("hex");
     }
     
     /** Against the key the statement names itself; whether that is the committer's key is the reader's check. */
@@ -95,9 +117,10 @@ export class CommitStatement {
     }
     
     /**
-     * Compares a submitted statement with what the bridge expects — `committerPubKey` included — then checks its
-     * signature against that key. Field problems are all reported; the signature is checked only when the fields agree, since a
-     * signature over the wrong statement is beside the point.
+     * Compares a submitted statement with what the bridge expects — `committerPubKey` included — and checks its
+     * signature against that key. Cheapest first: the plain fields, then the signature, and only then the tree,
+     * which costs a hash of every node — so a statement nobody signed never gets that far. Problems within a
+     * stage are all reported; a later stage runs only when the earlier ones agree.
      */
     static validate(
         cs: types.cloud.GroupTreeCommitStatement,
@@ -106,7 +129,7 @@ export class CommitStatement {
     ): StatementProblem[] {
         const problems: StatementProblem[] = [];
         const bad = (field: string) => problems.push({kind: "BAD_COMMIT_STATEMENT", field});
-        const scalars = ["seq", "op", "groupId", "treeVersion", "keyVersion", "groupPubKey", "rosterVersion", "committer", "committerPubKey", "committerSeat"] as const;
+        const scalars = ["seq", "prevDigest", "op", "groupId", "treeVersion", "keyVersion", "groupPubKey", "rosterVersion", "committer", "committerPubKey", "committerSeat"] as const;
         for (const field of scalars) {
             if (cs[field] !== expected[field]) {
                 bad(field);
@@ -115,34 +138,39 @@ export class CommitStatement {
         if (!CommitStatement.isHash(cs.rosterHash) || cs.rosterHash !== expected.rosterHash.toString("hex")) {
             bad("rosterHash");
         }
-        if (!CommitStatement.isHash(cs.treeHash) || cs.treeHash !== expected.treeHash.toString("hex")) {
-            bad("treeHash");
-        }
-        const samePath = cs.path.length === expected.path.length && cs.path.every((entry, i) =>
-            entry.nodeIndex === expected.path[i].nodeIndex
-            && entry.generation === expected.path[i].generation
-            && entry.publicKey === expected.path[i].publicKey);
-        if (!samePath) {
-            bad("path");
-        }
         for (const field of ["addedUsers", "addedManagers", "removed"] as const) {
             if (!CommitStatement.sameList(cs[field], TreeHash.sortedUnique(expected[field]))) {
                 bad(field);
             }
         }
-        if (!Number.isSafeInteger(cs.date) || Math.abs(cs.date - now) > CommitStatement.DATE_TOLERANCE_MS) {
+        if (!Number.isSafeInteger(cs.date) || Math.abs(cs.date - now) > CommitStatement.DATE_TOLERANCE_MS || cs.date < expected.notBefore) {
             bad("date");
         }
         if (problems.length > 0) {
             return problems;
         }
-        return CommitStatement.verifySignature(cs) ? [] : [{kind: "BAD_COMMIT_SIGNATURE"}];
+        if (!CommitStatement.verifySignature(cs)) {
+            return [{kind: "BAD_COMMIT_SIGNATURE"}];
+        }
+        const hashes = new Map<number, Buffer>();
+        if (!CommitStatement.isHash(cs.treeHash) || cs.treeHash !== TreeHash.treeHash(expected.tree, hashes).toString("hex")) {
+            bad("treeHash");
+        }
+        const samePath = cs.path.length === expected.path.length && cs.path.every((entry, i) =>
+            entry.nodeIndex === expected.path[i].nodeIndex
+            && entry.generation === expected.path[i].generation
+            && entry.publicKey === expected.path[i].publicKey
+            && entry.subtreeHash === hashes.get(entry.nodeIndex)?.toString("hex"));
+        if (!samePath) {
+            bad("path");
+        }
+        return problems;
     }
     
     /**
      * The stored-state half of the statement invariant, for `verifyGroupTrees.ts` and the tests: the latest
      * statement describes the stored group exactly, every statement given is signed by the key it names, and every
-     * filled record names a statement that lists its key.
+     * filled record names a statement that lists its key over its current subtree and was signed by a current member.
      */
     static checkStoredState(
         group: {treeCommitSeq?: number, keyVersion: number, groupPubKey: types.cloud.GroupPubKey, rosterVersion: number,
@@ -155,7 +183,8 @@ export class CommitStatement {
         if (!latest) {
             return [`no statement at treeCommitSeq ${group.treeCommitSeq ?? "(none)"}`];
         }
-        if (latest.treeHash !== TreeHash.treeHash(TreeHash.of(tree)).toString("hex")) {
+        const hashes = new Map<number, Buffer>();
+        if (latest.treeHash !== TreeHash.treeHash(TreeHash.of(tree), hashes).toString("hex")) {
             problems.push("the tree does not hash to the latest statement's treeHash");
         }
         if (latest.rosterHash !== TreeHash.rosterHash(group.users, group.managers).toString("hex")) {
@@ -171,10 +200,16 @@ export class CommitStatement {
         }
         for (const node of tree.nodes.filter(record => record.publicKey)) {
             const vouching = node.setBy === undefined ? undefined : statements.get(node.setBy);
+            // Over the subtree it was minted over, too: a child re-keyed since without re-keying it is a rollback.
             const listed = vouching?.path.some(entry =>
-                entry.nodeIndex === node.nodeIndex && entry.generation === node.generation && entry.publicKey === node.publicKey);
+                entry.nodeIndex === node.nodeIndex && entry.generation === node.generation && entry.publicKey === node.publicKey
+                && entry.subtreeHash === hashes.get(node.nodeIndex)?.toString("hex"));
             if (!listed || node.setBy! > latest.seq) {
                 problems.push(`node ${node.nodeIndex} is not vouched for by statement ${node.setBy ?? "(none)"}`);
+            }
+            // A removal blanks every node its departing members set, so a filled node's setter is still a member.
+            else if (!group.users.includes(vouching!.committer) && !group.managers.includes(vouching!.committer)) {
+                problems.push(`node ${node.nodeIndex} was set by ${vouching!.committer}, who is not a member`);
             }
         }
         return problems;

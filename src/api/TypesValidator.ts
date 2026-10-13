@@ -17,6 +17,7 @@ import * as types from "../types";
 import { StringChecker } from "../utils/StringChecker";
 import * as ByteBuffer from "bytebuffer";
 import { Crypto } from "../utils/crypto/Crypto";
+import { TreeMath } from "../service/cloud/keytree/TreeMath";
 
 export interface CustomValidatorWithLength extends AdvValidator.Types.CustomValidator, AdvValidator.Types.WithLengthValidator {
 }
@@ -327,10 +328,10 @@ export class TypesValidator {
             publicKey: this.eccPub,
         });
         this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
-        // A commit re-keys one keyed path: at most `log2(16384) = 14` nodes, so 64 is generous. Its edges are
-        // what that path owes, and a node whose sibling subtree is all blank wraps to every member under it — so
-        // the edge cap is the whole-tree one, not `O(log n)`.
-        const maxCommitNodes = 64;
+        // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
+        // newcomers' paths. Its edges are what those nodes owe, and a node whose sibling subtree is all blank wraps
+        // to every member under it — so the edge cap is the whole-tree one, not `O(log n)`.
+        const maxCommitNodes = TypesValidator.MAX_GROUP_MEMBERS / 2 ** TreeMath.BUCKET_LEVEL;
         const maxCommitEdges = 2 * TypesValidator.MAX_GROUP_MEMBERS;
         this.groupTreeTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
@@ -358,6 +359,11 @@ export class TypesValidator {
         // Shape only. Whether each field says what it must is `CommitStatement.validate`'s job.
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
+            prevDigest: this.builder.createCustom(value => {
+                if (typeof value !== "string" || !/^([0-9a-f]{64})?$/.test(value)) {
+                    throw new Error("Expected \"\" or 64 lowercase hex characters");
+                }
+            }),
             op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,
@@ -374,6 +380,7 @@ export class TypesValidator {
                 nodeIndex: this.intNonNegative,
                 generation: this.intNonNegative,
                 publicKey: this.eccPub,
+                subtreeHash: sha256Hex,
             }), maxCommitNodes),
             addedUsers: memberList,
             addedManagers: memberList,

@@ -97,7 +97,6 @@ export class ContextApiValidator extends BaseValidator {
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
-            confirmationTag: this.builder.optional(this.tv.base64),
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
             groupId: this.tv.groupId,
@@ -148,7 +147,6 @@ export class ContextApiValidator extends BaseValidator {
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
-            confirmationTag: this.builder.optional(this.tv.base64),
             abandonHistory: this.builder.optional(this.builder.bool),
         }));
         this.registerMethod("groupSelfUpdate", this.builder.createObject({

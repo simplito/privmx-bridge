@@ -74,8 +74,11 @@ export interface Config {
     maximumChannelsPerSession: number,
     /** Largest group an operator allows, capped by `TypesValidator.MAX_GROUP_MEMBERS`. */
     maxGroupMembers: number,
-    /** Epoch advances allowed per group per hour. Removals are charged against it too, so a floor of 1 keeps a
-     *  misconfiguration from making revocation impossible. */
+    /** `PMX_MAX_GROUP_ROTATIONS_PER_HOUR`: how many times an hour one member may do each of these in one group,
+     *  each from its own budget (limiter keys `<budget>|<groupId>|<userId>`): rotate the grant key (`rotate`),
+     *  remove members (`remove`), re-key their own path (`selfUpdate`), and have a commit refused (`refused`; ten
+     *  times as many lost races, `stale`). Separate so that spending one never blocks another — above all, nothing
+     *  but `remove` ever blocks a removal. A floor of 1 keeps a misconfiguration from making revocation impossible. */
     maxGroupRotationsPerHour: number,
     streams: {
         enabled: boolean;
@@ -189,7 +192,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             parseInt(process.env.PMX_MAX_GROUP_MEMBERS || "", 10) || TypesValidator.MAX_GROUP_MEMBERS,
             TypesValidator.MAX_GROUP_MEMBERS,
         ),
-        maxGroupRotationsPerHour: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_HOUR || "", 10) || 10, 1),
+        maxGroupRotationsPerHour: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_HOUR || "", 10) || 60, 1),
         streams: {
             enabled: Boolean(process.env.PMX_STREAM_ENABLED === "true"),
             mediaServer: {

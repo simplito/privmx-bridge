@@ -13,6 +13,7 @@ limitations under the License.
 
 import "q2-test";
 import { ErrorCode, AppException } from "../../api/AppException";
+import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 
 export type Mocked<T> = T&{ [K in keyof T]: T[K] & Mock };
 export const ANY = {any: true};
@@ -49,6 +50,26 @@ export function mock<T, K extends keyof T>(obj: Mocked<T>, prop: K, func?: T[K])
 
 export function createMock<T>(props: {[K in keyof T]?: Mock}) {
     return <Mocked<T>>props;
+}
+
+/** A rate limiter granting what `allow` lets through; `kept` lists the units reserved and never handed back. */
+export function fakeRateLimiter(allow: (key: string) => boolean = () => true) {
+    const limiter = createMock<GroupRotationRateLimiter>({});
+    const fake = Object.assign(limiter, {kept: [] as {key: string}[], allow});
+    mock(limiter, "reserve", async (model: {key: string}) => {
+        if (!fake.allow(model.key)) {
+            return {allowed: false};
+        }
+        fake.kept.push({key: model.key});
+        return {allowed: true};
+    });
+    mock(limiter, "release", async (model: {key: string}) => {
+        const index = fake.kept.findIndex(unit => unit.key === model.key);
+        if (index >= 0) {
+            fake.kept.splice(index, 1);
+        }
+    });
+    return fake;
 }
 
 export function createFake<T>(props: {[K in keyof T]?: T[K]}) {

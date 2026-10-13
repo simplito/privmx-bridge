@@ -132,9 +132,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {groups, treeCommits} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
+        const {groups} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
-        return {groups: groups.list.map(x => this.groupConverter.convertGroupSummary(x, treeCommits.get(x.id))), count: groups.count};
+        return {groups: groups.list.map(x => this.groupConverter.convertGroupSummary(x)), count: groups.count};
     }
     
     @ApiMethod({})
@@ -164,9 +164,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGetTreeCommits(model: contextApi.GroupGetTreeCommitsModel): Promise<contextApi.GroupGetTreeCommitsResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {group, commits} = await this.groupService.getTreeCommits(cloudUser, model.groupId, model.fromSeq, model.toSeq);
+        const {group, commits, genesis} = await this.groupService.getTreeCommits(cloudUser, model.groupId, model.fromSeq, model.toSeq);
         this.requestLogger.setContextId(group.contextId);
-        return {commits};
+        return {commits, ...(genesis ? {genesisUsers: genesis.users, genesisManagers: genesis.managers} : {})};
     }
     
     @ApiMethod({})
@@ -188,9 +188,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {group, rungs} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion);
+        const {group, rungs, epochKeys} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion);
         this.requestLogger.setContextId(group.contextId);
-        return this.groupConverter.convertKeyArchive(group, rungs);
+        return this.groupConverter.convertKeyArchive(group, rungs, epochKeys);
     }
     
     @ApiMethod({})

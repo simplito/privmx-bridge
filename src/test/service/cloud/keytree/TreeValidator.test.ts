@@ -116,11 +116,11 @@ describe("TreeValidator.validateState accepts well-formed trees", () => {
         assert.deepStrictEqual(problems, [], JSON.stringify(problems));
     });
     
-    it("a fresh tree holds only the creator's keyed path — everybody else is wrapped to from it", () => {
+    it("a fresh tree has every keyed node filled by the creator", () => {
         const tree = buildTree(seats(64));
-        assert.deepStrictEqual(tree.nodes.map(node => node.nodeIndex), [31, 63]);
-        // 31 wraps to each of its 32 members; 63 to 31 and to each of the 32 members under the unfilled 95.
-        assert.strictEqual(tree.edges.length, 32 + 1 + 32 + 1);
+        assert.deepStrictEqual(tree.nodes.map(node => node.nodeIndex), [31, 63, 95]);
+        // 31 and 95 wrap to their 32 members each, 63 to 31 and 95, plus the grant edge.
+        assert.strictEqual(tree.edges.length, 32 + 32 + 2 + 1);
     });
     
     it("accepts blanks left by removals", () => {
@@ -137,7 +137,7 @@ describe("TreeValidator.validateState accepts well-formed trees", () => {
         const after = planCommit(filled, EPOCH, {kind: "remove", committer: "u0", removed: ["u41"]}).after;
         assignment[41] = "";
         assert.deepStrictEqual(TreeValidator.validateState(after, roster(assignment), EPOCH + 1), []);
-        assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 0}, "blank, generation kept");
+        assert.deepStrictEqual(after.nodes.find(node => node.nodeIndex === 95), {nodeIndex: 95, generation: 1}, "blank, generation kept");
     });
 });
 
@@ -319,6 +319,21 @@ describe("TreeValidator.validateState grant edge", () => {
     it("SECURITY: rejects a grant edge addressed to another epoch", () => {
         const tree = buildTree(seats(4));
         assertHas(TreeValidator.validateState(tree, roster(seats(4)), EPOCH + 1), "GRANT_EDGE_WRONG_EPOCH");
+    });
+    
+    it("SECURITY: rejects an edge carrying a field its kind does not have", () => {
+        // T4-23: stored as sent, a grant edge with a parent node or a user id beside its root would be served back.
+        for (const malform of [
+            (e: types.cloud.GroupTreeEdge) => Object.assign(e, {parentIndex: 0}),
+            (e: types.cloud.GroupTreeEdge) => Object.assign(e, {childUserId: user("u1")}),
+        ]) {
+            const tree = buildTree(seats(4));
+            malform(tree.edges.find(e => e.isGrantEdge)!);
+            assertHas(TreeValidator.validateState(tree, roster(seats(4)), EPOCH), "MALFORMED_EDGE");
+        }
+        const tree = buildTree(seats(4));
+        tree.edges.find(e => !e.isGrantEdge && e.childKind === "user")!.childIndex = 0;
+        assertHas(TreeValidator.validateState(tree, roster(seats(4)), EPOCH), "MALFORMED_EDGE");
     });
     
     it("rejects a grant edge pointing below the root", () => {
