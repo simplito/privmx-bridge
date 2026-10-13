@@ -209,7 +209,7 @@ it("only the transition is written, never a whole tree", async () => {
     await repository.removeMembersWithTransition(params);
     hasOneCall(state.applyCommit);
     hasNoCalls(state.writeTree);
-    const call = (state.applyCommit as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
+    const call = state.applyCommit.mock.calls[0];
     assert.strictEqual(call[0], groupId);
     assert.strictEqual(call[1], params.oldGroup, "applied against the geometry it was checked against");
     assert.strictEqual(call[2], params.commit);
@@ -222,9 +222,9 @@ it("a removal abandoning history closes the era at the new epoch, in the same wr
     await repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
     assert.strictEqual(updates.length, 1);
     assert.strictEqual(updates[0].set.eraFloor, EPOCH + 1);
-    const calls = (state.deleteRungsTargetingBelow as unknown as {mock: {calls: unknown[][]}}).mock.calls;
+    const calls = state.deleteRungsTargetingBelow.mock.calls;
     assert.deepStrictEqual(calls.map(call => [...call]), [[groupId, EPOCH + 1]]);
-    const keyCalls = (state.deleteEpochKeysBelow as unknown as {mock: {calls: unknown[][]}}).mock.calls;
+    const keyCalls = state.deleteEpochKeysBelow.mock.calls;
     assert.deepStrictEqual(keyCalls.map(call => [...call]), [[groupId, EPOCH + 1]], "every epoch row below the new one goes, the one just left included");
 });
 
@@ -245,7 +245,7 @@ it("a new epoch's key material is a row of its own, never an array on the docume
             });
         }
         assert(!("keyHistory" in updates[0].set) && !("groupKeys" in updates[0].set), write);
-        const calls = (state.writeEpochKey as unknown as {mock: {calls: unknown[][]}}).mock.calls;
+        const calls = state.writeEpochKey.mock.calls;
         assert.deepStrictEqual(calls.map(call => [...call]), [[groupId, EPOCH + 1, nextGroupPubKey, groupKey]], write);
     }
 });
@@ -395,7 +395,7 @@ it("SECURITY: a commit landing during a read restarts it, so new nodes never pai
     const {group: read, state: full} = await repository.getFullState(group());
     assert.strictEqual(read.treeCommitSeq, 4, "the document the state was read against");
     assert.strictEqual(full.treeCommit?.seq, 4);
-    const asked = (state.getTreeCommitsAt as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[1]);
+    const asked = state.getTreeCommitsAt.mock.calls.map(call => call[1]);
     assert.deepStrictEqual(asked, [[3], [4]]);
 });
 
@@ -443,7 +443,7 @@ it("pruning the archive is a range delete and leaves the document's key material
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["archivePrunedBelow", "lastModificationDate"]);
     assert.strictEqual(result?.archivePrunedBelow, 4);
     hasOneCall(state.deleteRungsTargetingBelow);
-    const call = (state.deleteRungsTargetingBelow as unknown as {mock: {calls: unknown[][]}}).mock.calls[0];
+    const call = state.deleteRungsTargetingBelow.mock.calls[0];
     assert.deepStrictEqual([...call], [groupId, 4]);
 });
 
@@ -459,7 +459,7 @@ it("cutting an era drops the key material for the epochs it closes", async () =>
     const {repository, state, updates} = createRepository();
     await repository.cutEra(group(), 4);
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["eraFloor", "lastModificationDate"]);
-    const calls = (state.deleteEpochKeysBelow as unknown as {mock: {calls: unknown[][]}}).mock.calls;
+    const calls = state.deleteEpochKeysBelow.mock.calls;
     assert.deepStrictEqual(calls.map(call => [...call]), [[groupId, 4]]);
     hasOneCall(state.deleteRungsTargetingBelow);
 });
@@ -503,7 +503,7 @@ it("a new tree-backed group keeps its seating and writes the rest beside the doc
     assert.strictEqual(privateMetaEntry(state).version, 1);
     assert.strictEqual(privateMetaEntry(state).keyVersion, 1);
     // Epoch 1 gets its row like every later epoch, so `keyHistory` has its grant key once the group rotates.
-    const epochRows = (state.writeEpochKey as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => [...call]);
+    const epochRows = state.writeEpochKey.mock.calls.map(call => [...call]);
     assert.deepStrictEqual(epochRows, [[created.id, 1, groupPubKey, undefined]]);
     assert.strictEqual("groupKeys" in inserted[0], false);
 });

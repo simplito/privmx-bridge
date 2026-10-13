@@ -550,7 +550,7 @@ it("removeMember accepts an honest removal and charges the rotation budget", asy
     const {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter} = createGroupService(group);
     await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
     hasOneCall(groupRepository.removeMembersWithTransition);
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `remove|${groupId}|${janek}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`remove|${groupId}|${janek}`]);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
 });
 
@@ -792,7 +792,7 @@ it("SECURITY: removeMember is charged to the remover's own removal budget, never
     // And to nothing else: `remove` and the remover's own lost races are the only budgets a removal checks.
     assert.deepStrictEqual(groupRotationRateLimiter.reserve.mock.calls.map(call => call[0]),
         [{key: `remove|${groupId}|${janek}`}, {key: `stale|${groupId}|${janek}`, limit: 600}]);
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `remove|${groupId}|${janek}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`remove|${groupId}|${janek}`]);
 });
 
 it("removeMember requires a manager", async () => {
@@ -1147,7 +1147,7 @@ it("selfUpdate re-keys the caller's path quietly: no epoch, no history, no event
         {key: `selfUpdate|${groupId}|${alice}`}, {key: `selfUpdate|${groupId}`, limit: 240},
         {key: `refused|${groupId}|${alice}`}, {key: `stale|${groupId}|${alice}`, limit: 600},
     ]);
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `selfUpdate|${groupId}|${alice}`}, {key: `selfUpdate|${groupId}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`selfUpdate|${groupId}|${alice}`, `selfUpdate|${groupId}`]);
 });
 
 it("the group's self-update budget scales with its keyed nodes, so a blanked 16k tree can heal", async () => {
@@ -1169,7 +1169,7 @@ it("a self-update losing a race (only STALE_BASE_*) is charged to the member's `
         refreshedNodes: model.transition.refreshedNodes.map(node => ({...node, fromGeneration: (node.fromGeneration ?? 0) + 7}))}};
     const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, stale));
     assert((error.getData() as {kind: string}[]).every(problem => problem.kind.startsWith("STALE_BASE_")), JSON.stringify(error.getData()));
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `stale|${groupId}|${alice}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`stale|${groupId}|${alice}`]);
 });
 
 it("SECURITY: a removal losing a race (only STALE_BASE_*) is charged to the remover's own lost races, not its removals", async () => {
@@ -1182,7 +1182,7 @@ it("SECURITY: a removal losing a race (only STALE_BASE_*) is charged to the remo
         ({...node, fromGeneration: (node.fromGeneration ?? 0) + 7}));
     const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.removeMembers(janekCloudUser, model));
     assert((error.getData() as {kind: string}[]).every(problem => problem.kind.startsWith("STALE_BASE_")), JSON.stringify(error.getData()));
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `stale|${groupId}|${janek}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`stale|${groupId}|${janek}`]);
 });
 
 it("the group's self-update budget refuses once spent", async () => {
@@ -1219,7 +1219,7 @@ it("a refused selfUpdate or addition is charged to the caller's refusals, a remo
     await expectFailure("GROUP_TREE_INVALID", () => groupService.addMembers(janekCloudUser, unsigned(additionModel(group))));
     await expectFailure("GROUP_TREE_INVALID", () => groupService.removeMembers(janekCloudUser, unsigned(removalModel(group, 2))));
     assert.deepStrictEqual(groupRotationRateLimiter.kept,
-        [{key: `refused|${groupId}|${janek}`}, {key: `refused|${groupId}|${janek}`}, {key: `remove|${groupId}|${janek}`}]);
+        [`refused|${groupId}|${janek}`, `refused|${groupId}|${janek}`, `remove|${groupId}|${janek}`]);
 });
 
 it("SECURITY: a version mismatch hands the group's key state only to somebody who may read the group", async () => {

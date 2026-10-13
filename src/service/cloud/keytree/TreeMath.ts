@@ -272,13 +272,8 @@ export class TreeMath {
     
     /** Every keyed node of a tree of `numLeaves`, ascending. */
     static keyedNodes(numLeaves: number): number[] {
-        const nodes: number[] = [];
-        for (let x = 1; x < TreeMath.nodeCount(numLeaves); x += 2) {
-            if (TreeMath.isKeyed(x, numLeaves)) {
-                nodes.push(x);
-            }
-        }
-        return nodes;
+        return Array.from({length: Math.floor(TreeMath.nodeCount(numLeaves) / 2)}, (_, i) => 2 * i + 1)
+            .filter(x => TreeMath.isKeyed(x, numLeaves));
     }
     
     /** Leaves needed to seat every one of `positions`. Order-independent: seating is only ever an append, so

@@ -350,20 +350,17 @@ export class TypesValidator {
             refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
             edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
         });
-        const sha256Hex = this.builder.createCustom(value => {
-            if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
-                throw new Error("Expected 64 lowercase hex characters");
+        const hexValidator = (re: RegExp, message: string) => this.builder.createCustom(value => {
+            if (typeof value !== "string" || !re.test(value)) {
+                throw new Error(message);
             }
         });
+        const sha256Hex = hexValidator(/^[0-9a-f]{64}$/, "Expected 64 lowercase hex characters");
         const memberList = this.builder.createListWithMaxLength(this.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS);
         // Shape only. Whether each field says what it must is `CommitStatement.validate`'s job.
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
-            prevDigest: this.builder.createCustom(value => {
-                if (typeof value !== "string" || !/^([0-9a-f]{64})?$/.test(value)) {
-                    throw new Error("Expected \"\" or 64 lowercase hex characters");
-                }
-            }),
+            prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
             op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,

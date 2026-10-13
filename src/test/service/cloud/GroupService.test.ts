@@ -470,7 +470,7 @@ it("SECURITY: a rotation whose statement is wrong or signed by somebody else is 
     }
     hasNoCalls(groupRepository.generateNewGroupKey);
     // Checking each one hashed the whole tree.
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, Array(4).fill({key: `refused|${groupId}|janek`}));
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, Array(4).fill(`refused|${groupId}|janek`));
 });
 
 it("Should reject generateNewGroupKey with a stale expectedKeyVersion (ROTATED_ALREADY)", async () => {
@@ -504,7 +504,7 @@ it("Should return ROTATED_ALREADY when the rotation CAS loses mid-write", async 
 it("a rotation is charged to the rotating member's own budget, which no removal shares", async () => {
     const {groupService, groupRotationRateLimiter} = createGroupService();
     await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
-    assert.deepStrictEqual(groupRotationRateLimiter.kept, [{key: `rotate|${groupId}|${janek}`}]);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`rotate|${groupId}|${janek}`]);
 });
 
 it("Should reject a rotation when the (IPC) rate limiter denies it", async () => {

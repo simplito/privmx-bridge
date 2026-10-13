@@ -384,10 +384,10 @@ export class GroupService extends BaseContainerService {
                 const winner = await groupRepository.get(model.id);
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData(winner!));
             }
-            return {group: result};
+            return result;
         }));
-        this.groupNotificationService.sendUpdatedGroup(rotated.group, [], "keyRotated");
-        return rotated.group;
+        this.groupNotificationService.sendUpdatedGroup(rotated, [], "keyRotated");
+        return rotated;
     }
     
     // ── Tree-backed membership ──────────────────────────────────────────────────────────────────────────────
@@ -881,7 +881,7 @@ export class GroupService extends BaseContainerService {
             leafAssignment: group.leafAssignment,
             keyVersion: group.keyVersion,
             nodes: nodes,
-            ...(setters ? {setters} : {}),
+            setters,
         }, op, submitted);
         if (!result.ok) {
             throw new AppException("GROUP_TREE_INVALID", result.rejections.map(problem => ({...problem})));
