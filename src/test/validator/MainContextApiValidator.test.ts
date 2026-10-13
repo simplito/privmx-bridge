@@ -16,12 +16,24 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
-import { buildTree, rotationGrantEdge, rungsFor } from "../testUtils/TreeFixtures";
+import { buildTree, rotationGrantEdge, rungsFor, signStatement, userKeys } from "../testUtils/TreeFixtures";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "MyKeyId" as types.core.KeyId;
+const resourceId = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f" as types.core.ClientResourceId;
+
+/** A well-shaped statement — the validator checks shape only; what it says is the service's to check. */
+function validStatement(op: types.cloud.GroupTreeCommitOp = "add"): types.cloud.GroupTreeCommitStatement {
+    return signStatement({
+        seq: 2, prevDigest: "12".repeat(32), op, groupId: groupId, treeVersion: 2, date: 1760000000000, keyVersion: 1, groupPubKey: groupPubKey, rosterVersion: 2,
+        rosterHash: "ab".repeat(32), treeHash: "cd".repeat(32), committer: "janek" as types.cloud.UserId,
+        committerPubKey: userKeys("janek").pub58, committerSeat: 0,
+        path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey, subtreeHash: "ef".repeat(32)}],
+        addedUsers: ["nowy" as types.cloud.UserId], addedManagers: [], removed: [],
+    });
+}
 
 function validator() {
     return new ContextApiValidator(new TypesValidator());
@@ -30,6 +42,7 @@ function validator() {
 function validGroupCreate(): contextApi.GroupCreateModel {
     return {
         contextId: contextId,
+        resourceId: resourceId,
         groupPubKey: groupPubKey,
         users: ["janek"] as types.cloud.UserId[],
         managers: ["janek"] as types.cloud.UserId[],
@@ -38,12 +51,20 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         privateMeta: "somePrivateMeta" as types.group.GroupData,
         keyId: keyId,
         tree: buildTree(["janek"], 1),
+        commit: validStatement("create"),
     };
 }
 
 it("ContextApiValidator.groupCreate valid", () => {
     const result = Utils.try(() => validator().validate("groupCreate", validGroupCreate()));
     expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCreate requires a resourceId, which the first statement names the group by", () => {
+    const model: Partial<contextApi.GroupCreateModel> = validGroupCreate();
+    delete model.resourceId;
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(false);
 });
 
 it("ContextApiValidator.groupCreate accepts the data a group of sixteen thousand needs", () => {
@@ -210,6 +231,7 @@ it("ContextApiValidator.groupGenerateNewKey valid", () => {
         data: "someData" as types.group.GroupData,
         keyId: keyId,
         grantEdge: rotationGrantEdge(tree, 2),
+        commit: validStatement("rotate"),
         rungs: rungsFor(2, 1),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
@@ -307,6 +329,7 @@ it("ContextApiValidator.groupAddMembers valid", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
+        commit: validStatement("add"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
@@ -321,6 +344,7 @@ it("ContextApiValidator.groupAddMembers rejects an unknown role", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
+        commit: validStatement("add"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
@@ -336,6 +360,7 @@ it("ContextApiValidator.groupRemoveMembers valid", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
@@ -352,6 +377,7 @@ it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () =
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
@@ -369,11 +395,75 @@ it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupSelfUpdate valid, with a node minted from no record", () => {
+    const model: contextApi.GroupSelfUpdateModel = {
+        id: groupId,
+        commit: validStatement("selfUpdate"),
+        transition: {
+            baseKeyVersion: 1,
+            refreshedNodes: [
+                {nodeIndex: 31, generation: 0, publicKey: nodePubKey},
+                {nodeIndex: 63, fromGeneration: 4, generation: 5, publicKey: nodePubKey},
+            ],
+            edges: [
+                {parentIndex: 63, parentGeneration: 5, childKind: "node", childIndex: 31, childGeneration: 0, data: "w1" as types.core.UserKeyData},
+                {isGrantEdge: true, parentGeneration: 1, childKind: "node", childIndex: 63, childGeneration: 5, data: "w2" as types.core.UserKeyData},
+            ],
+        },
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupSelfUpdate refuses anything but its own fields", () => {
+    // No seats, no rungs, no keys: a self-update moves nothing but the caller's own path.
+    const model = {id: groupId, transition: {...validRemovalTransition()}, expectedKeyVersion: 1};
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupGet accepts the planning scope", () => {
+    const result = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "plan"}));
+    expect(result.success).toBe(true);
+    const unknown = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "everything"}));
+    expect(unknown.success).toBe(false);
+});
+
+it("ContextApiValidator.groupGetTreeCommits valid, with and without an upper bound", () => {
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 0})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 4, toSeq: 9})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: -1})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 0, toSeq: 0})).success).toBe(false);
+});
+
+it("ContextApiValidator refuses a tree commit without its statement, or with a malformed one", () => {
+    const withoutCommit: Partial<contextApi.GroupCreateModel> = validGroupCreate();
+    delete withoutCommit.commit;
+    expect(Utils.try(() => validator().validate("groupCreate", withoutCommit)).success).toBe(false);
+    const malformed: Partial<types.cloud.GroupTreeCommitStatement>[] = [
+        {treeHash: "AB".repeat(32)},
+        {rosterHash: "ab".repeat(31)},
+        {signature: "AAAA" as types.core.EccSignature},
+        {op: "merge" as types.cloud.GroupTreeCommitOp},
+        {seq: 0},
+        {prevDigest: "AB".repeat(32)},
+        {prevDigest: "ab"},
+        {committerSeat: -1},
+        {path: [{...validStatement().path[0], subtreeHash: "ab"}]},
+    ];
+    for (const patch of malformed) {
+        const model = {...validGroupCreate(), commit: {...validStatement("create"), ...patch}};
+        expect(Utils.try(() => validator().validate("groupCreate", model)).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupCutEra valid", () => {

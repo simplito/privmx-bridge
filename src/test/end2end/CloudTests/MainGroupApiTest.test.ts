@@ -12,7 +12,7 @@ limitations under the License.
 import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
-import { buildTree } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, registerUserKey } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 
@@ -89,8 +89,12 @@ export class GroupApiTests extends BaseTestSet {
     private async createGroupIn(contextId: types.context.ContextId): Promise<types.group.GroupId> {
         const users = [testData.userId];
         const managers = [testData.userId];
+        const tree = buildTree(users, 1);
+        registerUserKey(testData.userId, testData.userPrivKey as types.core.EccWif);
+        const resourceId = this.helpers.generateResourceId();
         const res = await this.apis.contextApi.groupCreate({
             contextId: contextId,
+            resourceId: resourceId,
             groupPubKey: groupPubKey,
             users: users,
             managers: managers,
@@ -98,7 +102,8 @@ export class GroupApiTests extends BaseTestSet {
             publicMeta: "PUB" as types.group.GroupData,
             privateMeta: "PRIV" as types.group.GroupData,
             keyId: testData.keyId,
-            tree: buildTree(users, 1),
+            tree: tree,
+            commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey, users, managers}),
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         return res.groupId;
@@ -126,9 +131,9 @@ export class GroupApiTests extends BaseTestSet {
         assert(res.groups[0].id === this.requireGroupId(), "listed groupId mismatch");
         assert(res.groups[0].publicMetaVersion === 1, `listed publicMetaVersion should be 1, got ${res.groups[0].publicMetaVersion}`);
         assert(res.groups[0].privateMetaVersion === 1, `listed privateMetaVersion should be 1, got ${res.groups[0].privateMetaVersion}`);
-        // A listing must grow as `groups × roster`, not `groups × state`.
+        // A listing must grow as `groups`, not `groups × roster` or `groups × state`.
         const served = res.groups[0] as unknown as Record<string, unknown>;
-        for (const field of ["data", "publicMeta", "privateMeta", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs"]) {
+        for (const field of ["data", "publicMeta", "privateMeta", "history", "keys", "groupKeys", "treeNodes", "treeEdges", "leafAssignment", "numLeaves", "archiveRungs", "users", "managers", "treeCommit"]) {
             assert(!(field in served), `groupList must not serve '${field}'`);
         }
     }

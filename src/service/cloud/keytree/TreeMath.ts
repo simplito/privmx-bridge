@@ -18,8 +18,20 @@ limitations under the License.
  * **Left-balanced means the right edge may be incomplete.** With `N = 3` the root is at index 3, but index 5
  * does not exist, so node 3's right child is node 4 (found by walking down) and node 4's parent is node 3
  * (found by walking up). Both walks are implemented here; callers must always use the size-aware variants.
+ *
+ * **Keyed nodes (tree version 2).** Only internal nodes above the lowest `BUCKET_LEVEL` levels carry a keypair,
+ * plus the root whatever its level. A bucket is the `2^BUCKET_LEVEL` seats under one lowest keyed node; inside it
+ * there are no node keys at all, and the keyed node above wraps straight to each seated member. Both sides of the
+ * protocol derive "keyed" from this arithmetic alone — it is not stored anywhere and not chosen per group.
  */
 export class TreeMath {
+    
+    /** Layout of the tree and format of its statements. Groups written under any other version are not served.
+     *  3: rung blobs bound to their span, the genesis roster in the seq 1 statement, no confirmation tag. */
+    static readonly TREE_VERSION = 3;
+    
+    /** Levels `1..BUCKET_LEVEL` carry no node keys. Tied to `TREE_VERSION`: changing it is a new version. */
+    static readonly BUCKET_LEVEL = 4;
     
     /** Total number of nodes in a tree with `numLeaves` leaves. */
     static nodeCount(numLeaves: number): number {
@@ -203,10 +215,8 @@ export class TreeMath {
     // ── Paths ────────────────────────────────────────────────────────────────
     
     /**
-     * Nodes from the leaf's parent up to and including the root, bottom-up.
-     *
-     * Exactly the set of nodes a removal must refresh — no less (a hole in post-removal confidentiality) and
-     * no more (an unrequested epoch change). Empty for a single-leaf tree, where the leaf is itself the root.
+     * Nodes from the leaf's parent up to and including the root, bottom-up. Empty for a single-leaf tree, where
+     * the leaf is itself the root. Keyed and unkeyed alike — `keyedPath` is the subset that carries keys.
      */
     static directPath(position: number, numLeaves: number): number[] {
         const leaf = TreeMath.leafNode(position);
@@ -222,9 +232,8 @@ export class TreeMath {
     }
     
     /**
-     * Siblings alongside the leaf's direct path — the nodes a refresh wraps to.
-     *
-     * `copath[i]` is the sibling encountered when stepping to `directPath[i]`, so the two are index-aligned.
+     * Siblings alongside the leaf's direct path. `copath[i]` is the sibling encountered when stepping to
+     * `directPath[i]`, so the two are index-aligned.
      */
     static copath(position: number, numLeaves: number): number[] {
         const leaf = TreeMath.leafNode(position);
@@ -239,47 +248,32 @@ export class TreeMath {
         return co;
     }
     
-    /** All leaf positions under a node, ascending. Used to decide whether a subtree is entirely blank. */
-    static leavesUnder(nodeIndex: number, numLeaves: number): number[] {
-        if (TreeMath.isLeaf(nodeIndex)) {
-            return [TreeMath.leafPosition(nodeIndex)];
+    /**
+     * Whether the node carries a keypair: it exists, is internal, and sits above the buckets or is the root.
+     *
+     * A leaf is never keyed — a member's own long-term key *is* the leaf. The root is keyed even inside a bucket
+     * (`numLeaves <= 2^BUCKET_LEVEL`), because the grant key has to be wrapped to *some* node key. Growth can
+     * therefore un-key the old root, never the other way round: a new root is a fresh index.
+     */
+    static isKeyed(nodeIndex: number, numLeaves: number): boolean {
+        if (!TreeMath.exists(nodeIndex, numLeaves) || TreeMath.isLeaf(nodeIndex)) {
+            return false;
         }
-        return [
-            ...TreeMath.leavesUnder(TreeMath.left(nodeIndex, numLeaves), numLeaves),
-            ...TreeMath.leavesUnder(TreeMath.right(nodeIndex, numLeaves), numLeaves),
-        ];
-    }
-    
-    /** Number of leaves needed to seat `position`. Seats are filled lowest-blank-first and only ever appended,
-     *  so growth is the only structural change and it never moves an existing member. */
-    static numLeavesToSeat(position: number, currentNumLeaves: number): number {
-        if (position < currentNumLeaves) {
-            return currentNumLeaves;
-        }
-        return position + 1;
-    }
-    
-    /** Whether seating `position` changes the root index, i.e. whether the grant edge must be re-linked. */
-    static growthChangesRoot(position: number, currentNumLeaves: number): boolean {
-        const next = TreeMath.numLeavesToSeat(position, currentNumLeaves);
-        return TreeMath.root(next) !== TreeMath.root(currentNumLeaves);
+        return TreeMath.level(nodeIndex) > TreeMath.BUCKET_LEVEL || nodeIndex === TreeMath.root(numLeaves);
     }
     
     /**
-     * Union of several leaves' direct paths, ascending — the node set a batch operation must refresh.
-     *
-     * Nearby leaves share ancestors, so this is strictly smaller than the paths concatenated, and that is the
-     * whole point: a shared ancestor has to be refreshed **once**. Refreshing it once per leaf would mean two
-     * keys claiming the same node and generation, and whichever landed last would orphan the other's edges.
+     * The keyed nodes of a seat's direct path, bottom-up — what every commit by that seat re-keys (a creation and
+     * an addition also fill nodes off it). Ends at the root whenever `numLeaves > 1`; empty for a single-leaf tree.
      */
-    static frontier(positions: number[], numLeaves: number): number[] {
-        const nodes = new Set<number>();
-        for (const position of positions) {
-            for (const nodeIndex of TreeMath.directPath(position, numLeaves)) {
-                nodes.add(nodeIndex);
-            }
-        }
-        return [...nodes].sort((a, b) => a - b);
+    static keyedPath(position: number, numLeaves: number): number[] {
+        return TreeMath.directPath(position, numLeaves).filter(nodeIndex => TreeMath.isKeyed(nodeIndex, numLeaves));
+    }
+    
+    /** Every keyed node of a tree of `numLeaves`, ascending. */
+    static keyedNodes(numLeaves: number): number[] {
+        return Array.from({length: Math.floor(TreeMath.nodeCount(numLeaves) / 2)}, (_, i) => 2 * i + 1)
+            .filter(x => TreeMath.isKeyed(x, numLeaves));
     }
     
     /** Leaves needed to seat every one of `positions`. Order-independent: seating is only ever an append, so

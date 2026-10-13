@@ -107,7 +107,8 @@ export interface ContextUsersStatusChangeData {
 
 export interface GroupCreateModel {
     contextId: types.context.ContextId;
-    resourceId?: types.core.ClientResourceId;
+    /** Required: the first commit statement names the group by it (see `commit`). */
+    resourceId: types.core.ClientResourceId;
     type?: types.group.GroupType;
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
@@ -124,8 +125,16 @@ export interface GroupCreateModel {
      */
     groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">;
     policy?: types.cloud.ContainerPolicy;
-    /** The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing. */
+    /**
+     * The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing.
+     *
+     * Written as the creator's first commit: `nodes` is the creator's keyed path at generation 0 and nothing else,
+     * `edges` what those nodes owe plus the grant edge. The creator must be among the members.
+     */
     tree: types.cloud.GroupTreeState;
+    /** The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
+     *  the bridge assigns the group's id only once the statement is already signed. */
+    commit: types.cloud.GroupTreeCommitStatement;
 }
 
 export interface GroupAddMemberEntry {
@@ -147,6 +156,8 @@ export interface GroupAddMembersModel {
     /** The delta: the new leaves' paths re-keyed, `O(k log n)` to build, send and check — and less than that
      *  when the seats are neighbours, because the shared ancestors are re-keyed once. */
     transition: types.cloud.GroupTreeAdditionTransition;
+    /** The commit statement for this change, signed by the caller (see `types.cloud.GroupTreeCommitStatement`). */
+    commit: types.cloud.GroupTreeCommitStatement;
     /** Guards against computing the tree against a state a concurrent removal has already replaced. */
     expectedKeyVersion: number;
     /**
@@ -164,8 +175,9 @@ export interface GroupAddMembersModel {
 
 /**
  * Removes members from a tree-backed group, in a single operation that must do all of it at once: blank the
- * leaves, refresh the union of their direct paths, rotate the grant keypair (advancing the epoch **once**), and
- * supply the rungs that keep the older epochs reachable from the new one.
+ * leaves and their keyed paths, re-key the remover's own keyed path, rotate the grant keypair (advancing the
+ * epoch **once**), and supply the rungs that keep the older epochs reachable from the new one. The caller cannot
+ * be among `userIds`.
  *
  * Removing several in one call is not a convenience: done one at a time, each removal advances the epoch on its
  * own, so every container the group can read goes stale `k` times and the group's rotation budget is charged `k`
@@ -183,6 +195,8 @@ export interface GroupRemoveMembersModel {
      * against. `O(log n)` instead of the whole tree, which at 16 384 members is ~13 MB in each direction.
      */
     transition: types.cloud.GroupTreeTransition;
+    /** The commit statement for this change, signed by the caller (see `types.cloud.GroupTreeCommitStatement`). */
+    commit: types.cloud.GroupTreeCommitStatement;
     rungs: types.cloud.GroupArchiveRung[];
     /**
      * The new metadata key wrapped once to the group's own grant public key at the epoch being created.
@@ -195,7 +209,52 @@ export interface GroupRemoveMembersModel {
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
-    confirmationTag?: types.core.Base64;
+    /**
+     * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
+     * `rungs` must be empty, and the era is cut at the new epoch in the same write, as `groupCutEra` would — so
+     * the caller needs `context/groupCutEra` as well, and members get an `eraCut` notification besides
+     * `memberRemoved`. Both metadata planes stay at the epoch they were written under, so they become unreadable
+     * until a manager rewrites them (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
+     */
+    abandonHistory?: boolean;
+}
+
+/**
+ * Re-keys the caller's own keyed path in a tree-backed group, refilling whatever blanks a removal or an addition
+ * left on it.
+ *
+ * Any seated member may call it, for themselves only — the path re-keyed is the caller's, derived by the bridge.
+ * It moves neither the epoch nor the roster version, writes no history entry and sends no event: the grant key
+ * is unchanged, only the route to it. Rate-limited per member.
+ */
+export interface GroupSelfUpdateModel {
+    id: types.group.GroupId;
+    transition: types.cloud.GroupTreeSelfUpdateTransition;
+    /** The commit statement for this change, signed by the caller (see `types.cloud.GroupTreeCommitStatement`). */
+    commit: types.cloud.GroupTreeCommitStatement;
+    /** The epoch the path was planned against; a removal or rotation since then answers `ROTATED_ALREADY`. */
+    expectedKeyVersion: number;
+}
+
+/**
+ * Pages through a group's commit statements — what a client that pinned an older statement fetches to check every
+ * step between it and the latest: each signature, contiguous seqs, each committer a member of the roster before it.
+ */
+export interface GroupGetTreeCommitsModel {
+    groupId: types.group.GroupId;
+    /** Exclusive: statements with `seq > fromSeq`. */
+    fromSeq: number;
+    /** Inclusive; defaults to the latest. */
+    toSeq?: number;
+}
+
+export interface GroupGetTreeCommitsResult {
+    /** Ascending by seq, at most 256; ask again from the last one for more. */
+    commits: types.cloud.GroupTreeCommitStatement[];
+    /** With seq 1: the roster the group was created with, which seq 1 binds by `rosterHash` only. */
+    genesisUsers?: types.cloud.UserId[];
+    /** With seq 1: see `genesisUsers`. */
+    genesisManagers?: types.cloud.UserId[];
 }
 
 /** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
@@ -289,6 +348,8 @@ export interface GroupGenerateNewKeyModel {
     keyId: types.core.KeyId;
     /** The new grant edge: the new grant key wrapped to the root node, at the epoch being created. */
     grantEdge: types.cloud.GroupTreeEdge;
+    /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
+    commit: types.cloud.GroupTreeCommitStatement;
     /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. */
     rungs: types.cloud.GroupArchiveRung[];
     /** The new metadata key wrapped once to the new grant public key. */
@@ -296,20 +357,12 @@ export interface GroupGenerateNewKeyModel {
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
-    confirmationTag?: types.core.Base64;
 }
 
+/** Where the group's epoch is now. Informational: the loser re-reads and re-verifies before planning again. */
 export interface RotatedAlreadyData {
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
-    winnerKeyEntry: types.core.KeyEntry;
-    /**
-     * `HMAC(winner's metadata key, ...)` from the winning version's history entry — what lets the loser tell an
-     * honest winner from a bridge steering it onto an epoch of the bridge's choosing. Only a member could have
-     * produced it. Absent when the winner was written without one, and a loser that cannot check it must refuse
-     * to adopt rather than trust the rest of this payload.
-     */
-    confirmationTag?: types.core.Base64;
 }
 
 export interface GroupDeleteModel {
@@ -319,12 +372,17 @@ export interface GroupDeleteModel {
 /**
  * How much of the tree to serve.
  *
- * `path` — the caller's own climb: their leaf edge, the edges above it, the grant edge, and the public keys of
- * the path and the copath. `O(log n)`, and everything a client needs to reach the group key or plan a removal.
- * `full` — the whole structure, for a client that wants to validate it independently. At 16 384 members that is
- * 32 767 edges, about 10.5 MB.
+ * `path` — the caller's own climb: the records of their keyed path (filled or blank), the edges addressed to
+ * them or to a node on that path, and the grant edge. `O(log n)`; everything a client needs to reach the group
+ * key.
+ * `plan` — every node record of the group (filled and blank, with generations) plus the same climbing edges.
+ * What a client needs to plan a commit: it computes the post state's resolutions locally. Records exist only on
+ * keyed nodes, so this is `O(n / 16)`.
+ * `full` — the whole structure, for a client that wants to validate it independently. Up to `2n - 1` edges.
+ *
+ * A caller holding no seat has no path to serve, and gets `full`.
  */
-export type GroupTreeScope = "path"|"full";
+export type GroupTreeScope = "path"|"plan"|"full";
 
 export interface GroupGetModel {
     groupId: types.group.GroupId;
@@ -332,12 +390,8 @@ export interface GroupGetModel {
     /** Defaults to `path`. */
     scope?: GroupTreeScope;
     /**
-     * Also serve the paths and copaths of these members' seats.
-     *
-     * Planning a removal needs the *subjects'* paths, not the caller's — a manager removing somebody sits
-     * elsewhere in the tree. Without this a manager has no `O(log n)` option and has to ask for `full`, which is
-     * the cost the path view exists to avoid. A list, because a batch removal is planned against the union of
-     * every departing member's path.
+     * Also resolve these members' seats, returned in `subjectLeafPositions` — what a removal names as its blanked
+     * positions. Serves no extra nodes: planning reads them from `scope: "plan"`.
      */
     forUserIds?: types.cloud.UserId[];
     /**
@@ -360,6 +414,9 @@ export interface GroupGetModel {
      *
      * The default is deliberately the smallest useful answer rather than everything: a group's history holds one
      * full metadata envelope per version, so serving it all would make every read grow with the group's age.
+     *
+     * Served a page at a time — at most 8 entries, oldest first. Ask again from one past the last version served;
+     * the trail ends at `rosterVersion`.
      */
     fromRosterVersion?: number;
 }
@@ -379,9 +436,12 @@ export interface GroupListResult {
 }
 
 /**
- * A group as a listing serves it: identity, roster, epoch, policy. No `data`, `history`, `keys`, `groupKeys` or
- * tree state — those grow with membership and with every change, so a page of them grows as `groups × state`.
- * Use `groupGet` for one group's state.
+ * A group as a listing serves it: identity, counters, epoch, policy — every field of constant size, so a page is
+ * `O(limit)` whatever the groups' membership and age. No roster (`users`/`managers`), tree, `data`, `history`,
+ * `groupKeys` or commit statement: those grow with membership or with every change. Use `groupGet` for them.
+ *
+ * `groupPubKey` is served as stored and vouched for by nothing here; a client checks it against the signed latest
+ * statement `groupGet` serves.
  */
 export interface GroupSummary {
     id: types.group.GroupId;
@@ -393,8 +453,6 @@ export interface GroupSummary {
     creator: types.cloud.UserId;
     lastModificationDate: types.core.Timestamp;
     lastModifier: types.cloud.UserId;
-    users: types.cloud.UserId[];
-    managers: types.cloud.UserId[];
     publicMetaVersion: types.group.GroupVersion;
     privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
@@ -421,7 +479,6 @@ export interface GroupHistoryEntryInfo {
     groupPubKey: types.cloud.GroupPubKey;
     created: types.core.Timestamp;
     author: types.cloud.UserId;
-    confirmationTag?: types.core.Base64;
     /** The roster version this entry landed at, and the epoch its tag is keyed at. Always both. */
     version: types.group.GroupVersion;
     keyVersion: number;
@@ -469,6 +526,9 @@ export interface GroupInfo {
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
+    /** Layout of the tree. 2 for every group the current API creates; anything else is a group from before the
+     *  layout changed, which a client must not climb or commit to. */
+    treeVersion: number;
     numLeaves: number;
     leafAssignment: types.cloud.UserId[];
     /**
@@ -486,8 +546,20 @@ export interface GroupInfo {
     nextFreeSeats?: number[];
     treeNodes: types.cloud.GroupTreeNode[];
     treeEdges: types.cloud.GroupTreeEdge[];
-    /** Which of the two views the tree fields above hold. */
+    /** Which view the tree fields above hold. */
     treeScope: GroupTreeScope;
+    /** The group's latest commit statement: what the served state must hash to. Absent only on a group from before
+     *  statements existed, which a client must not use. */
+    treeCommit?: types.cloud.GroupTreeCommitStatement;
+    /** The statements named by `setBy` of the filled nodes in `treeNodes`, ascending and deduplicated — what vouches
+     *  for each served key. */
+    treeCommits: types.cloud.GroupTreeCommitStatement[];
+    /**
+     * Scope `"path"` with a seated caller only: hex `CH(c)` for each node of the caller's copath, aligned with
+     * `TreeMath.copath(ownLeafPosition, numLeaves)` — with the caller's own path that is enough to recompute the
+     * tree hash without the rest of the tree.
+     */
+    copathHashes?: string[];
     /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
     groupKeys: types.cloud.GroupKeysEntry[];
     eraFloor: number;
@@ -569,6 +641,8 @@ export interface IContextApi {
     groupList(model: GroupListModel): Promise<GroupListResult>;
     groupAddMembers(model: GroupAddMembersModel): Promise<types.core.OK>;
     groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    groupSelfUpdate(model: GroupSelfUpdateModel): Promise<types.core.OK>;
+    groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;

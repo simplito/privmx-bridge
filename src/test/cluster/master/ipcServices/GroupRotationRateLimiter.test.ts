@@ -15,34 +15,37 @@ import { CacheWithTTL } from "../../../../utils/CacheWithTTL";
 
 const key = "g1";
 
-it("allows up to 10 recorded rotations then denies (sliding window) for the same key", async () => {
+it("reserves up to 10 units then denies (sliding window) for the same key", async () => {
     const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
     for (let i = 0; i < 10; i++) {
-        expect((await limiter.check({key})).allowed).toBe(true);
-        await limiter.record({key});
+        expect((await limiter.reserve({key})).allowed).toBe(true);
     }
-    expect((await limiter.check({key})).allowed).toBe(false);
+    expect((await limiter.reserve({key})).allowed).toBe(false);
 });
 
-it("check() is a peek and does not consume quota", async () => {
+it("SECURITY: concurrent reservations cannot overshoot the budget", async () => {
+    // A peek let every request racing on the last unit pass before any of them was charged.
     const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
-    // Peeking many times without recording must never exhaust the budget.
-    for (let i = 0; i < 100; i++) {
-        expect((await limiter.check({key})).allowed).toBe(true);
-    }
-    // Only recorded rotations count toward the limit.
+    const results = await Promise.all(Array.from({length: 50}, () => limiter.reserve({key})));
+    expect(results.filter(r => r.allowed).length).toBe(10);
+});
+
+it("a released unit can be reserved again", async () => {
+    const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
     for (let i = 0; i < 10; i++) {
-        await limiter.record({key});
+        await limiter.reserve({key});
     }
-    expect((await limiter.check({key})).allowed).toBe(false);
+    await limiter.release({key});
+    expect((await limiter.reserve({key})).allowed).toBe(true);
+    expect((await limiter.reserve({key})).allowed).toBe(false);
 });
 
 it("rate-limits each group independently", async () => {
     const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
     for (let i = 0; i < 10; i++) {
-        await limiter.record({key});
+        await limiter.reserve({key});
     }
-    expect((await limiter.check({key})).allowed).toBe(false);
+    expect((await limiter.reserve({key})).allowed).toBe(false);
     // a different group is unaffected
-    expect((await limiter.check({key: "g2"})).allowed).toBe(true);
+    expect((await limiter.reserve({key: "g2"})).allowed).toBe(true);
 });

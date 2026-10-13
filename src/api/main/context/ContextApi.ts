@@ -71,7 +71,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId || null, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.policy || {}, model.tree, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.policy || {}, model.tree, model.commit, model.groupKeys);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
@@ -121,9 +121,12 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const {group, state} = await this.groupService.getGroupWithState(cloudUser, model.groupId, model.type, model.fromRosterVersion);
         this.requestLogger.setContextId(group.contextId);
-        return {group: this.groupConverter.convertGroup(
+        const info = this.groupConverter.convertGroup(
             cloudUser.getUser(group.contextId), group, state, model.scope ?? "path", model.forUserIds, model.forNewMembers,
-        )};
+        );
+        // Only the statements vouching for what this response serves — a path view needs a handful, not the chain.
+        info.treeCommits = await this.groupService.getTreeCommitsAt(group, GroupConverter.vouchingSeqs(info.treeNodes));
+        return {group: info};
     }
     
     @ApiMethod({})
@@ -151,6 +154,22 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     @ApiMethod({})
+    async groupSelfUpdate(model: contextApi.GroupSelfUpdateModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.selfUpdate(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupGetTreeCommits(model: contextApi.GroupGetTreeCommitsModel): Promise<contextApi.GroupGetTreeCommitsResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {group, commits, genesis} = await this.groupService.getTreeCommits(cloudUser, model.groupId, model.fromSeq, model.toSeq);
+        this.requestLogger.setContextId(group.contextId);
+        return {commits, ...(genesis ? {genesisUsers: genesis.users, genesisManagers: genesis.managers} : {})};
+    }
+    
+    @ApiMethod({})
     async groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const group = await this.groupService.cutEra(cloudUser, model);
@@ -169,9 +188,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {group, rungs} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion);
+        const {group, rungs, epochKeys} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion);
         this.requestLogger.setContextId(group.contextId);
-        return this.groupConverter.convertKeyArchive(group, rungs);
+        return this.groupConverter.convertKeyArchive(group, rungs, epochKeys);
     }
     
     @ApiMethod({})

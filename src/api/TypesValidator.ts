@@ -17,6 +17,7 @@ import * as types from "../types";
 import { StringChecker } from "../utils/StringChecker";
 import * as ByteBuffer from "bytebuffer";
 import { Crypto } from "../utils/crypto/Crypto";
+import { TreeMath } from "../service/cloud/keytree/TreeMath";
 
 export interface CustomValidatorWithLength extends AdvValidator.Types.CustomValidator, AdvValidator.Types.WithLengthValidator {
 }
@@ -82,6 +83,8 @@ export class TypesValidator {
     groupTreeTransition: Validator;
     groupTreeSeatedNode: Validator;
     groupTreeAdditionTransition: Validator;
+    groupTreeSelfUpdateTransition: Validator;
+    groupTreeCommitStatement: Validator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -276,6 +279,9 @@ export class TypesValidator {
             nodeIndex: this.intNonNegative,
             generation: this.intNonNegative,
             publicKey: this.eccPub,
+            // Accepted for symmetry with what `groupGet` serves, and ignored: the bridge sets it to the seq of the
+            // statement the node arrives with.
+            setBy: this.builder.optional(this.intNonNegative),
         });
         this.groupTreeEdge = this.builder.createObject({
             isGrantEdge: this.builder.optional(this.builder.bool),
@@ -316,31 +322,67 @@ export class TypesValidator {
         });
         this.groupTreeRefreshedNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
-            fromGeneration: this.intNonNegative,
-            generation: this.intNonNegative,
-            publicKey: this.eccPub,
-        });
-        // A transition touches the union of the affected leaves' paths: `log2(16384) = 14` nodes each, fewer once
-        // they overlap. `MAX_GROUP_BATCH * 14` bounds the union, and the caps sit above that — still an order of
-        // magnitude below the 32 768 a whole tree needs.
-        this.groupTreeTransition = this.builder.createObject({
-            baseKeyVersion: this.builder.min(this.builder.int, 0),
-            blankedPositions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, 2048),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
-        });
-        this.groupTreeSeatedNode = this.builder.createObject({
-            nodeIndex: this.intNonNegative,
-            // Absent when growth mints the node: there is no generation it was read at.
+            // Absent when the node has no record yet: there is no generation it was read at.
             fromGeneration: this.builder.optional(this.intNonNegative),
             generation: this.intNonNegative,
             publicKey: this.eccPub,
         });
+        this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
+        // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
+        // newcomers' paths. Its edges are what those nodes owe, and a node whose sibling subtree is all blank wraps
+        // to every member under it — so the edge cap is the whole-tree one, not `O(log n)`.
+        const maxCommitNodes = TypesValidator.MAX_GROUP_MEMBERS / 2 ** TreeMath.BUCKET_LEVEL;
+        const maxCommitEdges = 2 * TypesValidator.MAX_GROUP_MEMBERS;
+        this.groupTreeTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            blankedPositions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
+        });
         this.groupTreeAdditionTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
             positions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, 2048),
-            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, 4096),
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
+        });
+        this.groupTreeSelfUpdateTransition = this.builder.createObject({
+            baseKeyVersion: this.builder.min(this.builder.int, 0),
+            refreshedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
+            edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
+        });
+        const hexValidator = (re: RegExp, message: string) => this.builder.createCustom(value => {
+            if (typeof value !== "string" || !re.test(value)) {
+                throw new Error(message);
+            }
+        });
+        const sha256Hex = hexValidator(/^[0-9a-f]{64}$/, "Expected 64 lowercase hex characters");
+        const memberList = this.builder.createListWithMaxLength(this.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS);
+        // Shape only. Whether each field says what it must is `CommitStatement.validate`'s job.
+        this.groupTreeCommitStatement = this.builder.createObject({
+            seq: this.builder.min(this.builder.int, 1),
+            prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
+            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate"]),
+            groupId: this.builder.maxLength(this.builder.string, 128),
+            treeVersion: this.intNonNegative,
+            date: this.intNonNegative,
+            keyVersion: this.builder.min(this.builder.int, 1),
+            groupPubKey: this.groupPubKey,
+            rosterVersion: this.builder.min(this.builder.int, 1),
+            rosterHash: sha256Hex,
+            treeHash: sha256Hex,
+            committer: this.cloudUserId,
+            committerPubKey: this.cloudUserPubKey,
+            committerSeat: this.intNonNegative,
+            path: this.builder.createListWithMaxLength(this.builder.createObject({
+                nodeIndex: this.intNonNegative,
+                generation: this.intNonNegative,
+                publicKey: this.eccPub,
+                subtreeHash: sha256Hex,
+            }), maxCommitNodes),
+            addedUsers: memberList,
+            addedManagers: memberList,
+            removed: memberList,
+            signature: this.eccSignature,
         });
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),

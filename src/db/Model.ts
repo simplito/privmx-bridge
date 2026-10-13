@@ -203,7 +203,7 @@ export namespace group {
     
     /**
      * The group document. Everything that grows with the group's lifetime lives in its own collection instead —
-     * see `GroupTreeNode`, `GroupTreeEdge`, `GroupHistoryEntry`, `GroupArchiveRung` below.
+     * see `GroupTreeNode`, `GroupTreeEdge`, `GroupHistoryEntry`, `GroupArchiveRung`, `GroupEpochKey` below.
      */
     export interface Group {
         id: types.group.GroupId;
@@ -231,7 +231,12 @@ export namespace group {
         rosterVersion: number;
         /** Current epoch. Every group starts at 1 and only a rotation advances it. */
         keyVersion: number;
-        keyHistory?: types.cloud.GroupPubKeyAtEpoch[];
+        /** Layout of the hidden key tree (`TreeMath.TREE_VERSION`). Absent on groups written before version 2,
+         *  which are not migrated and on which no tree operation is accepted. */
+        treeVersion?: number;
+        /** `seq` of the group's latest commit statement. Moves with every tree commit, and is part of each one's
+         *  compare-and-swap. Absent on a group written before commit statements existed. */
+        treeCommitSeq?: number;
         /** Size of the hidden key tree. Every group is tree-backed, so this is always present. */
         numLeaves: number;
         /**
@@ -239,14 +244,6 @@ export namespace group {
          * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
          */
         leafAssignment: types.cloud.UserId[];
-        /**
-         * The group's own metadata key, wrapped **once** to the group's grant public key per epoch: the group is
-         * a grantee of itself, and members open it by climbing.
-         *
-         * One entry per epoch that rotated the key, so it grows with rotations, never with members. `cutEra`
-         * drops the entries below its floor.
-         */
-        groupKeys?: types.cloud.GroupKeysEntry[];
         /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
         eraFloor: number;
         /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
@@ -256,10 +253,13 @@ export namespace group {
     /**
      * The fields a listing needs. Named so the projection in `GroupRepository.getPage` and what
      * `convertGroupSummary` serves cannot drift apart: widening one without the other stops compiling.
+     *
+     * Only fields of constant size: no roster, no seats, no statement (a create or an addition names its members),
+     * so a page stays `O(limit)` whatever the groups' size and age. Those are `groupGet`'s.
      */
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
-        |"lastModificationDate"|"lastModifier"|"users"|"managers"|"publicMetaVersion"|"privateMetaVersion"
+        |"lastModificationDate"|"lastModifier"|"publicMetaVersion"|"privateMetaVersion"
         |"rosterVersion"|"keyVersion"|"policy">;
     
     /**
@@ -285,19 +285,42 @@ export namespace group {
     export type GroupPublicMetaEntryId = string&{__groupPublicMetaEntryId: never};
     export type GroupPrivateMetaEntryId = string&{__groupPrivateMetaEntryId: never};
     export type GroupArchiveRungId = string&{__groupArchiveRungId: never};
+    export type GroupTreeCommitId = string&{__groupTreeCommitId: never};
+    export type GroupEpochKeyId = string&{__groupEpochKeyId: never};
     
-    /** Public half of one tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in place. */
+    /**
+     * One commit statement, `id` derived from `(groupId, seq)`. The statement is kept as a nested document exactly
+     * as signed: at seq 1 its own `groupId` is the client's resourceId, so the owning group needs a field of its own.
+     */
+    export interface GroupTreeCommit {
+        id: GroupTreeCommitId;
+        groupId: types.group.GroupId;
+        seq: number;
+        statement: types.cloud.GroupTreeCommitStatement;
+        /** At seq 1 only: the roster the group was created with, unsigned. The statement binds it by `rosterHash`. */
+        genesis?: {users: types.cloud.UserId[], managers: types.cloud.UserId[]};
+    }
+    
+    /**
+     * Public half of one keyed tree node. `id` is derived from `(groupId, nodeIndex)`: a refresh updates it in
+     * place. No `publicKey` means blank — the record stays so that `generation` survives until the node is refilled.
+     */
     export interface GroupTreeNode {
         id: GroupTreeNodeId;
         groupId: types.group.GroupId;
         nodeIndex: number;
         generation: number;
-        publicKey: types.core.EccPubKey;
+        publicKey?: types.core.EccPubKey;
+        /** `seq` of the commit statement that set `publicKey`. Absent on a blank node. */
+        setBy?: number;
     }
     
     /**
      * One edge of the hidden key tree. `id` is derived from `(groupId, parent, child)`; generations are not part
      * of it, because a refresh replaces the wrap on the same edge rather than making a new one.
+     *
+     * `parentIndex` is stored as a field as well as inside the id: a commit drops every edge out of the nodes it
+     * blanks or re-keys with one indexed `{groupId, parentIndex: {$in}}` delete.
      */
     export interface GroupTreeEdge {
         id: GroupTreeEdgeId;
@@ -324,7 +347,6 @@ export namespace group {
         groupPubKey: types.cloud.GroupPubKey;
         created: types.core.Timestamp;
         author: types.cloud.UserId;
-        confirmationTag?: types.core.Base64;
     }
     
     /**
@@ -371,6 +393,33 @@ export namespace group {
         author?: types.cloud.UserId;
     }
     
+    /**
+     * One epoch's key material, `id` derived from `(groupId, keyVersion)`, written by the commit that starts the
+     * epoch: the grant public key it was born with (what `keyHistory` serves for the epochs behind the current one)
+     * and, when that commit carried one, the group's own metadata key wrapped **once** to that grant key (what
+     * `groupKeys` serves). A row per epoch rather than two arrays on the group document, which grew with every
+     * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. `cutEra` drops the rows
+     * below its floor; `pruneArchive` leaves them.
+     *
+     * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch its
+     * `keyHistory` no longer had.
+     */
+    export interface GroupEpochKey {
+        id: GroupEpochKeyId;
+        groupId: types.group.GroupId;
+        keyVersion: number;
+        groupPubKey?: types.cloud.GroupPubKey;
+        groupKey?: types.cloud.GroupKeyEntry;
+    }
+    
+    /**
+     * Left behind by a deleted group. Ids are derived from `(contextId, resourceId)`, so without it anybody could
+     * create a new group under a deleted one's id, and readers who knew the old group would take it for that one.
+     */
+    export interface GroupTombstone {
+        id: types.group.GroupId;
+    }
+    
     /** A group's out-of-document state, assembled for the read path. */
     export interface GroupState {
         tree: types.cloud.GroupTreeState;
@@ -379,6 +428,10 @@ export namespace group {
          *  entries, never O(versions). */
         publicMeta: GroupPublicMetaEntry;
         privateMeta: GroupPrivateMetaEntry;
+        /** The latest commit statement; `null` only for a group from before statements existed. */
+        treeCommit: types.cloud.GroupTreeCommitStatement|null;
+        /** Every epoch row the group still has, ascending. */
+        epochKeys: GroupEpochKey[];
     }
 }
 

@@ -15,7 +15,7 @@ import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
-import { buildTree, removalTransition, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
+import { buildTree, commitAgainst, creationStatement, registerUserKey, removalOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
 const groupIdentity = ECUtils.generateKeyPair();
@@ -39,18 +39,9 @@ const threadKeyId = "thread-key" as types.core.KeyId;
 const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
 const rotatedGroupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
 
-/** Real ECC keys, memoized per `(nodeIndex, generation)`: the validator refuses placeholder public keys. */
-const nodeKeys = new Map<string, types.core.EccPubKey>();
-function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
-    const cacheKey = `${nodeIndex}/${generation}`;
-    const existing = nodeKeys.get(cacheKey);
-    if (existing) {
-        return existing;
-    }
-    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
-    nodeKeys.set(cacheKey, generated);
-    return generated;
-}
+// Real ECC node keys — the validator refuses placeholders — and statements signed with the test user's key.
+useRealNodeKeys();
+registerUserKey(testData.userId, testData.userPrivKey as types.core.EccWif);
 
 export class ThreadGroupGranteeTests extends BaseTestSet {
     
@@ -112,8 +103,11 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     private async createGroupWithAlice() {
         const users = [testData.userId, aliceId];
         const managers = [testData.userId];
+        const tree = buildTree(users, 1);
+        const resourceId = this.helpers.generateResourceId();
         const res = await this.apis.contextApi.groupCreate({
             contextId: testData.contextId,
+            resourceId: resourceId,
             groupPubKey: groupPubKey,
             users: users,
             managers: managers,
@@ -121,7 +115,8 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             publicMeta: "BBBB" as types.group.GroupData,
             privateMeta: "CCCC" as types.group.GroupData,
             keyId: groupKeyId,
-            tree: withNodeKeys(buildTree(users, 1), nodeKey),
+            tree: tree,
+            commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey, users, managers}),
         });
         this.groupId = res.groupId;
     }
@@ -240,16 +235,11 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
     }
     
     private async removeAliceFromGroup() {
-        // The only way a member leaves: blanking the seat, re-keying the path and advancing the epoch happen in
-        // one call, so alice cannot keep reading through a key the group still hands out.
+        // The only way a member leaves: blanking the seat and its path, re-keying the remover's path and advancing
+        // the epoch happen in one call, so alice cannot keep reading through a key the group still hands out.
         const groupId = this.requireGroupId();
         const {group} = await this.apis.contextApi.groupGet({groupId, scope: "full"});
-        const current: types.cloud.GroupTreeState = {
-            numLeaves: group.numLeaves,
-            leafAssignment: group.leafAssignment,
-            nodes: group.treeNodes,
-            edges: group.treeEdges,
-        };
+        const {plan, commit} = commitAgainst(group as unknown as ServedGroup, {kind: "remove", committer: testData.userId, removed: [aliceId]}, rotatedGroupPubKey);
         const alicePosition = group.leafAssignment.indexOf(aliceId);
         assert(alicePosition >= 0, "alice should hold a seat before she is removed");
         const newEpoch = group.keyVersion + 1;
@@ -259,7 +249,8 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             groupPubKey: rotatedGroupPubKey,
             keyId: rotatedGroupKeyId,
             data: "AAAA" as types.group.GroupData,
-            transition: withTransitionNodeKeys(removalTransition(current, alicePosition, group.keyVersion), nodeKey),
+            transition: removalOf(plan, group.keyVersion),
+            commit: commit,
             rungs: LadderMath.rungSpansFor(newEpoch, 1).map(span => ({
                 atKeyVersion: span.at,
                 targetKeyVersion: span.target,
