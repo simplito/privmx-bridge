@@ -173,15 +173,21 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     mock(groupRepository, "getTree", async () => group.tree);
     mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
     mock(groupRepository, "getHistory", (async () => []) as never);
-    mock(groupRepository, "getEpochKeys", (async () => []) as never);
+    let epochKeyWindow: {from?: number, to?: number}|null = null;
+    mock(groupRepository, "getEpochKeys", (async (_id: types.group.GroupId, from?: number, to?: number) => {
+        epochKeyWindow = {from, to};
+        return [];
+    }) as never);
     mock(groupRepository, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === group.groupPubKey) as never);
     mock(groupRepository, "getRootNode", (async () =>
         group.tree.nodes.find(n => n.nodeIndex === TreeMath.root(group.numLeaves))) as never);
-    mock(groupRepository, "getArchiveRungs", (async (_id: types.group.GroupId, from?: number, to?: number) => {
+    let rungFloor: number|undefined;
+    mock(groupRepository, "getArchiveRungs", (async (_id: types.group.GroupId, from?: number, to?: number, minTarget?: number) => {
         // Stands in for the indexed range read — the window itself is the repository's business, so what these
         // tests check is that the service hands it over untouched.
         archiveWindow = {from, to};
-        return options.rungs ?? [];
+        rungFloor = minTarget;
+        return (options.rungs ?? []).filter(rung => minTarget === undefined || rung.targetKeyVersion >= minTarget);
     }) as never);
     const applied = options.casMiss ? (async () => null) : (async () => group as db.group.Group);
     mock(groupRepository, "addMembersWithTransition", applied as never);
@@ -226,7 +232,8 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         return context;
     });
     
-    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow};
+    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow,
+        getEpochKeyWindow: () => epochKeyWindow, getRungFloor: () => rungFloor};
 }
 
 /** What storage holds at the group's `treeCommitSeq`, as far as the next statement reads it: its digest and date. */
@@ -1001,6 +1008,30 @@ it("getKeyArchive windows by epoch, so a client fetches only what it is descendi
     const {groupService, getArchiveWindow} = createGroupService(treeBackedGroup(), {rungs: ladder});
     await groupService.getKeyArchive(janekCloudUser, groupId, 3, 4);
     assert.deepStrictEqual(getArchiveWindow(), {from: 3, to: 4});
+});
+
+it("getKeyArchive windows keyHistory in the query", async () => {
+    // The epoch rows are read off the index for the window only, never all of them to be filtered afterwards.
+    const group = treeBackedGroup();
+    const {groupService, getEpochKeyWindow} = createGroupService(group, {rungs: ladder});
+    await groupService.getKeyArchive(janekCloudUser, groupId, 2, 3);
+    assert.deepStrictEqual(getEpochKeyWindow(), {from: 2, to: 3});
+    // Past the current epoch: only the epochs behind it are history.
+    await groupService.getKeyArchive(janekCloudUser, groupId, 1, group.keyVersion + 5);
+    assert.deepStrictEqual(getEpochKeyWindow(), {from: 1, to: group.keyVersion - 1});
+    await groupService.getKeyArchive(janekCloudUser, groupId);
+    assert.deepStrictEqual(getEpochKeyWindow(), {from: undefined, to: group.keyVersion - 1});
+});
+
+it("SECURITY: getKeyArchive never serves a rung below the floor", async () => {
+    // A row left below a cut era or a prune watermark (a repair that raced the cut, a future bug) stays unserved.
+    const below: types.cloud.GroupArchiveRung = {atKeyVersion: 4, targetKeyVersion: 1, data: "stale" as types.core.UserKeyData};
+    for (const floors of [{eraFloor: 3}, {eraFloor: 1, archivePrunedBelow: 3}]) {
+        const {groupService, getRungFloor} = createGroupService({...treeBackedGroup(), ...floors}, {rungs: [...ladder, below]});
+        const result = await groupService.getKeyArchive(janekCloudUser, groupId);
+        assert.strictEqual(getRungFloor(), 3);
+        assert(result.rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor");
+    }
 });
 
 it("getKeyArchive is readable by an ordinary member", async () => {

@@ -180,17 +180,17 @@ export class GroupRepository {
         return this.state.getHistoryKeyIds(groupId);
     }
     
-    /** Every epoch row of the group, ascending (see `db.group.GroupEpochKey`). */
-    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
-        return this.state.getEpochKeys(groupId);
+    /** Epoch rows of the group, ascending, optionally only those in `[from, to]` (see `db.group.GroupEpochKey`). */
+    async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
+        return this.state.getEpochKeys(groupId, fromKeyVersion, toKeyVersion);
     }
     
     async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
         return this.state.hasEpochWithGroupPubKey(groupId, groupPubKey);
     }
     
-    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion);
+    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
+        return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, minTarget);
     }
     
     /** At most this many reads of a group's state while commits keep landing under it (`getFullState`). */

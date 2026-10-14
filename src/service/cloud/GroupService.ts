@@ -660,10 +660,13 @@ export class GroupService extends BaseContainerService {
         const group = await this.getGroup(executor, groupId, undefined);
         // The window is applied by the query, not to a loaded array: a client descending twenty epochs reads
         // twenty documents off the index, whatever the size of the group's archive.
+        // `keyHistory` is windowed the same way, in the epoch-key query, and only ever reaches the epochs behind the
+        // current one. Rungs pointing below the floor are never served, even if one were stored.
         const groupRepository = this.repositoryFactory.createGroupRepository();
+        const lastPast = group.keyVersion - 1;
         const [rungs, epochKeys] = await Promise.all([
-            groupRepository.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion),
-            groupRepository.getEpochKeys(groupId),
+            groupRepository.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, GroupService.rungFloor(group)),
+            groupRepository.getEpochKeys(groupId, fromKeyVersion, Math.min(toKeyVersion ?? lastPast, lastPast)),
         ]);
         return {group, rungs, epochKeys};
     }
@@ -1062,6 +1065,11 @@ export class GroupService extends BaseContainerService {
     private static isOnlyStaleBase(problems: unknown): boolean {
         return Array.isArray(problems) && problems.length > 0
             && problems.every(problem => typeof problem?.kind === "string" && problem.kind.startsWith("STALE_BASE_"));
+    }
+    
+    /** The lowest target a rung may have: nothing below the era floor or the prune watermark is stored or served. */
+    private static rungFloor(group: db.group.Group): number {
+        return Math.max(group.eraFloor, group.archivePrunedBelow ?? 0);
     }
     
     /** Where the winner of a CAS race left the epoch. The loser re-reads and re-verifies before planning again, so

@@ -227,9 +227,12 @@ export class GroupStateRepository {
         );
     }
     
-    /** Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
-     *  client descending twenty epochs reads twenty documents, not the whole archive. */
-    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<types.cloud.GroupArchiveRung[]> {
+    /**
+     * Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
+     * client descending twenty epochs reads twenty documents, not the whole archive. `minTarget` leaves out rungs
+     * pointing below a floor: none should be stored, and none is served even if one were.
+     */
+    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
         const rungs = await this.rungs.query(q => {
             const conditions = [q.eq("groupId", groupId)];
             if (fromKeyVersion !== undefined) {
@@ -238,14 +241,36 @@ export class GroupStateRepository {
             if (toKeyVersion !== undefined) {
                 conditions.push(q.lte("atKeyVersion", toKeyVersion));
             }
+            if (minTarget !== undefined) {
+                conditions.push(q.gte("targetKeyVersion", minTarget));
+            }
             return q.andList(conditions);
         }).sort("atKeyVersion", true).array();
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
-    /** Every epoch row of the group, ascending — what `groupGet` and the key archive serve. */
-    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
-        return this.epochKeys.query(q => q.eq("groupId", groupId)).sort("keyVersion", true).array();
+    /** The rungs stored for one span, at most `LadderMath.MAX_RUNGS_PER_SPAN` of them. */
+    async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
+        const rungs = await this.rungs.query(q => q.and(q.eq("groupId", groupId), q.eq("atKeyVersion", atKeyVersion), q.eq("targetKeyVersion", targetKeyVersion))).array();
+        return rungs.map(rung => this.toArchiveRung(rung));
+    }
+    
+    /**
+     * Epoch rows of the group, ascending — what `groupGet` and the key archive serve. With bounds, only the rows in
+     * `[fromKeyVersion, toKeyVersion]`, read off the `{groupId, keyVersion}` index: a windowed archive read costs
+     * O(window), not O(epochs).
+     */
+    async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
+        return this.epochKeys.query(q => {
+            const conditions = [q.eq("groupId", groupId)];
+            if (fromKeyVersion !== undefined) {
+                conditions.push(q.gte("keyVersion", fromKeyVersion));
+            }
+            if (toKeyVersion !== undefined) {
+                conditions.push(q.lte("keyVersion", toKeyVersion));
+            }
+            return q.andList(conditions);
+        }).sort("keyVersion", true).array();
     }
     
     /** Whether any statement of the group carries `groupPubKey` (T4-24) — every epoch it ever had, below the era floor

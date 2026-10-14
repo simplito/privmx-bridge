@@ -328,6 +328,14 @@ it("an unwindowed archive read asks only for the group", async () => {
     assert.deepStrictEqual(captured.rungs.filter, {groupId: groupId});
 });
 
+it("a windowed archive read puts the window and the floor into the query", async () => {
+    const {repository, captured} = createStateRepository({rungs: [], epochKeys: []});
+    await repository.getArchiveRungs(groupId, 2, 5, 3);
+    assert.deepStrictEqual(captured.rungs.filter, {$and: [{groupId: groupId}, {atKeyVersion: {$gte: 2}}, {atKeyVersion: {$lte: 5}}, {targetKeyVersion: {$gte: 3}}]});
+    await repository.getEpochKeys(groupId, 2, 5);
+    assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$gte: 2}}, {keyVersion: {$lte: 5}}]});
+});
+
 it("pruning is a range delete over the epoch a rung points at", async () => {
     const {repository, captured} = createStateRepository();
     await repository.deleteRungsTargetingBelow(groupId, 4);
