@@ -238,7 +238,8 @@ function storedLatest(group: TreeGroup): types.cloud.GroupTreeCommitStatement {
 }
 
 /** The commit an honest `committer` plans for `op`, with its signed statement; the roster after it is derived. */
-function honestCommit(group: TreeGroup, op: PlanOp, overrides: {groupPubKey?: types.cloud.GroupPubKey, addedManagers?: string[]} = {}) {
+function honestCommit(group: TreeGroup, op: PlanOp, overrides: {groupPubKey?: types.cloud.GroupPubKey, addedManagers?: string[], previous?: types.cloud.GroupTreeCommitStatement} = {}) {
+    const previous = overrides.previous ?? storedLatest(group);
     const plan = planCommit(group.tree, group.keyVersion, op);
     const leaving = new Set(op.kind === "remove" ? op.removed : []);
     const added = op.kind === "add" ? op.members : [];
@@ -250,7 +251,9 @@ function honestCommit(group: TreeGroup, op: PlanOp, overrides: {groupPubKey?: ty
         users: [...group.users.filter(u => !leaving.has(u)), ...added.filter(m => !addedManagers.includes(m))],
         managers: [...group.managers.filter(u => !leaving.has(u)), ...addedManagers],
         addedManagers,
-        previous: storedLatest(group),
+        previous,
+        // As the endpoint's chainTo: a chain's dates never go back.
+        date: Math.max(DateUtils.now(), previous.date),
     });
     return {plan, commit};
 }
@@ -260,8 +263,8 @@ function additionCommit(group: TreeGroup, members: types.cloud.UserId[], positio
     return {transition: {baseKeyVersion: group.keyVersion, positions, seatedNodes: plan.refreshedNodes, edges: plan.edges}, commit};
 }
 
-function removalCommit(group: TreeGroup, removed: types.cloud.UserId[]) {
-    const {plan, commit} = honestCommit(group, {kind: "remove", committer: janek, removed}, {groupPubKey: nextGroupPubKey});
+function removalCommit(group: TreeGroup, removed: types.cloud.UserId[], previous?: types.cloud.GroupTreeCommitStatement) {
+    const {plan, commit} = honestCommit(group, {kind: "remove", committer: janek, removed}, {groupPubKey: nextGroupPubKey, previous});
     return {transition: {baseKeyVersion: group.keyVersion, blankedPositions: plan.blankedPositions, refreshedNodes: plan.refreshedNodes, edges: plan.edges}, commit};
 }
 
@@ -552,6 +555,21 @@ it("removeMember accepts an honest removal and charges the rotation budget", asy
     hasOneCall(groupRepository.removeMembersWithTransition);
     assert.deepStrictEqual(groupRotationRateLimiter.kept, [`remove|${groupId}|${janek}`]);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("SECURITY: removeMember accepts an honest removal after a statement dated ahead of the bridge's clock (N-1)", async () => {
+    // The stored latest is dated past the tolerance (collusion, or a bridge clock stepped back). The honest
+    // remover signs that same date; refusing it would freeze every commit, the forward-dater's removal included.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const datedLatest = {...storedLatest(group), date: DateUtils.now() + 15 * 60_000};
+    mock(groupRepository, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs
+        .map(seq => seq === group.treeCommitSeq ? datedLatest : {seq, committer: settersOf(group.tree).get(seq)})
+        .filter(statement => statement.committer)) as never);
+    const {transition, commit} = removalCommit(group, [group.leafAssignment[2]], datedLatest);
+    assert.strictEqual(commit.date, datedLatest.date);
+    await groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), transition, commit});
+    hasOneCall(groupRepository.removeMembersWithTransition);
 });
 
 it("SECURITY: removeMember refuses a new epoch under the grant key of an earlier one", async () => {

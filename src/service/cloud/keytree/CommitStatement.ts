@@ -25,7 +25,8 @@ export interface ExpectedStatement {
     seq: number;
     /** `digest` of the stored latest statement, "" for a creation: a statement extends exactly the history stored. */
     prevDigest: string;
-    /** The stored latest statement's date: a chain's dates never go back. */
+    /** The stored latest statement's date: a chain's dates never go back; past the tolerance only a date equal to
+     *  this one is taken (see `CommitStatement.dateProblem`). */
     notBefore: number;
     op: types.cloud.GroupTreeCommitOp;
     groupId: string;
@@ -56,8 +57,18 @@ export interface ExpectedStatement {
  */
 export class CommitStatement {
     
-    /** Clock skew a statement's `date` may have against the bridge. */
+    /** Clock skew a statement's `date` may have against the bridge; past it ahead only a date equal to the extended
+     *  statement's is taken (see `dateProblem`). */
     static readonly DATE_TOLERANCE_MS = 10 * 60 * 1000;
+    
+    /** Whether `date` is unacceptable for a statement extending one dated `notBefore`, at bridge time `now`.
+     *  Dates never go back (T4-04) and are at most T behind the clock. Past `now + T` only a date equal to
+     *  `notBefore` is taken, so a forward-dated statement cannot freeze the honest commits after it (N-1)
+     *  nor be moved further ahead. Shared by every chained statement (group commits; container statements, 05). */
+    static dateProblem(date: number, notBefore: number, now: number): boolean {
+        const tolerance = CommitStatement.DATE_TOLERANCE_MS;
+        return !Number.isSafeInteger(date) || date < notBefore || date < now - tolerance || date > Math.max(now + tolerance, notBefore);
+    }
     
     static readonly OP_CODES: Record<types.cloud.GroupTreeCommitOp, number> = {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5};
     
@@ -143,7 +154,7 @@ export class CommitStatement {
                 bad(field);
             }
         }
-        if (!Number.isSafeInteger(cs.date) || Math.abs(cs.date - now) > CommitStatement.DATE_TOLERANCE_MS || cs.date < expected.notBefore) {
+        if (CommitStatement.dateProblem(cs.date, expected.notBefore, now)) {
             bad("date");
         }
         if (problems.length > 0) {

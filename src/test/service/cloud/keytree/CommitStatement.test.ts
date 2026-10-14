@@ -174,6 +174,21 @@ describe("CommitStatement.validate", () => {
         assert.deepStrictEqual(check(statement, expected, NOW - CommitStatement.DATE_TOLERANCE_MS), []);
     });
     
+    it("SECURITY: a statement dated as the one it extends is accepted however far ahead of the clock that one is (N-1)", () => {
+        // A forward-dated statement already stored (collusion, or a bridge clock stepped back) must not freeze every
+        // honest commit after it: the honest client signs max(its clock, previous.date), i.e. exactly that date.
+        const {statement, expected} = honest();
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        assert.deepStrictEqual(check(signStatement({...statement, date: ahead}, "u0"), {...expected, notBefore: ahead}), []);
+    });
+    
+    it("SECURITY: past the tolerance a date may match the one it extends but not move beyond it", () => {
+        const {statement, expected} = honest();
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        assert.deepStrictEqual(check(signStatement({...statement, date: ahead + 1}, "u0"), {...expected, notBefore: ahead}),
+            [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+    });
+    
     it("roster lists must arrive sorted, as signed", () => {
         const {expected} = honest();
         const plan = planCommit(BASE, 5, {kind: "add", committer: "u0", members: ["zed", "amy"], positions: [64, 65]});
