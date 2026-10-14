@@ -189,6 +189,13 @@ describe("CommitStatement.validate", () => {
             [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
     });
     
+    it("m2: an exact resend is refused once the bridge's clock is past its date plus the tolerance", () => {
+        // The endpoint resends an unresolved statement byte for byte for 2 x DATE_TOLERANCE_MS of its date, and only
+        // then signs a different one at the same prevDigest. This lower bound is what makes that window finite.
+        const {statement, expected} = honest();
+        assert.deepStrictEqual(check(statement, expected, NOW + CommitStatement.DATE_TOLERANCE_MS + 1), [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+    });
+    
     it("roster lists must arrive sorted, as signed", () => {
         const {expected} = honest();
         const plan = planCommit(BASE, 5, {kind: "add", committer: "u0", members: ["zed", "amy"], positions: [64, 65]});
