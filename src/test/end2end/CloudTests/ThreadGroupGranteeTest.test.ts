@@ -254,7 +254,6 @@ export class ThreadGroupGranteeTests extends BaseTestSet {
             rungs: LadderMath.rungSpansFor(newEpoch, 1).map(span => ({
                 atKeyVersion: span.at,
                 targetKeyVersion: span.target,
-                recipientKind: "epoch" as const,
                 data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
             })),
             groupKeys: {

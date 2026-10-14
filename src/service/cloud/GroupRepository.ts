@@ -369,7 +369,7 @@ export class GroupRepository {
         newGroupPubKey: types.cloud.GroupPubKey,
         keyId: types.core.KeyId,
         data: types.group.GroupData,
-        rungs: types.cloud.GroupArchiveRung[],
+        rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
         /** Close the era at the new epoch in the same write, as `cutEra` would. */
         abandonHistory?: boolean,
@@ -410,7 +410,7 @@ export class GroupRepository {
             author: modifier,
         });
         await this.state.applyCommit(oldGroup.id, oldGroup, commit, params.statement);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         if (params.abandonHistory) {
             await this.state.deleteRungsTargetingBelow(oldGroup.id, expectedKeyVersion + 1);
@@ -722,7 +722,7 @@ export class GroupRepository {
         keyId: types.core.KeyId,
         grantEdge: types.cloud.GroupTreeEdge,
         statement: types.cloud.GroupTreeCommitStatement,
-        rungs: types.cloud.GroupArchiveRung[],
+        rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
     }): Promise<db.group.Group | null> {
         const {oldGroup, modifier} = params;
@@ -755,7 +755,7 @@ export class GroupRepository {
         });
         await this.state.replaceGrantEdge(oldGroup.id, params.grantEdge);
         await this.state.insertTreeCommit(oldGroup.id, params.statement);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         return {...oldGroup, ...changes};
     }

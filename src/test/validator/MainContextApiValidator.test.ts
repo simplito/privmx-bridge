@@ -444,6 +444,43 @@ it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () =
     expect(result.success).toBe(false);
 });
 
+it("SECURITY: groupRemoveMembers refuses a rung naming a recipientKind", () => {
+    // L-2: an era link `{recipientKind: "user", recipient}` sealed to anybody's key used to pass as the unit rung,
+    // which clients never open, so the epoch was born unreachable from below. Every rung is an epoch rung now.
+    const model = {
+        id: groupId,
+        userIds: ["ola" as types.cloud.UserId],
+        groupPubKey: groupPubKey,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        transition: validRemovalTransition(),
+        commit: validStatement("remove"),
+        rungs: [{atKeyVersion: 2, targetKeyVersion: 1, recipientKind: "user", recipient: "ola", data: "rung" as types.core.UserKeyData}],
+        expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
+    expect(result.success).toBe(false);
+});
+
+it("SECURITY: groupGenerateNewKey refuses a rung naming an author", () => {
+    // The author of a stored rung is whoever stored it, set by the bridge; a client cannot name somebody else.
+    const tree = buildTree(["janek"], 1);
+    const model = {
+        id: groupId,
+        groupPubKey: groupPubKey,
+        data: "someData" as types.group.GroupData,
+        keyId: keyId,
+        grantEdge: rotationGrantEdge(tree, 2),
+        commit: validStatement("rotate"),
+        rungs: rungsFor(2, 1).map(rung => ({...rung, author: "ola"})),
+        expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
+    expect(result.success).toBe(false);
+});
+
 it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
     // The rungs are not optional: a new epoch without them orphans the group's own history.
     const model = {

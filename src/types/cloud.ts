@@ -265,17 +265,25 @@ export interface GroupTreeState {
 // ── Epoch Ladder ────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * One rung: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
+ * One rung as a client submits it: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
  *
  * `targetKeyVersion < atKeyVersion` always — an upward rung would hand a removed member a key from after their
- * removal. Enforced on every write.
+ * removal. Enforced on every write. Every rung is sealed to the grant key of `atKeyVersion`: there is no other
+ * kind of recipient, so an era-crossing link sealed to somebody's own key cannot pass as the unit rung (L-2).
  */
-export interface GroupArchiveRung {
+export interface GroupArchiveRungSubmission {
     atKeyVersion: number;
     targetKeyVersion: number;
-    recipientKind?: "epoch"|"user"|"group";
-    recipient?: string;
     data: types.core.UserKeyData;
+}
+
+/**
+ * One rung as the bridge serves it: the submission plus who stored it. `author` is set by the bridge to the caller
+ * of the operation that stored the rung (a commit or `groupRepairRung`), never taken from the client. It is the
+ * bridge's word, so clients use it as a label only; blame comes from the signed statement that opened the epoch.
+ * Rows stored before the field was server-set may lack it.
+ */
+export interface GroupArchiveRung extends GroupArchiveRungSubmission {
     author?: UserId;
 }
 

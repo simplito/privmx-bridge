@@ -975,7 +975,7 @@ export class GroupService extends BaseContainerService {
      * Validates the rungs submitted with a new epoch. `target < at` is the load-bearing check: an upward rung
      * would encrypt a later epoch's key under an earlier one, handing anyone with an old key everything after.
      */
-    private assertRungsAreValid(rungs: types.cloud.GroupArchiveRung[], newKeyVersion: number, group: db.group.Group) {
+    private assertRungsAreValid(rungs: types.cloud.GroupArchiveRungSubmission[], newKeyVersion: number, group: db.group.Group) {
         const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
         const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor, group.archivePrunedBelow);
         if (!result.ok) {
@@ -984,19 +984,6 @@ export class GroupService extends BaseContainerService {
         for (const rung of rungs) {
             if (!rung.data) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: rung.atKeyVersion, target: rung.targetKeyVersion});
-            }
-            // `recipientKind`/`recipient` go into the rung's derived id, so a pairing that does not match the
-            // kind is a coordinate the next submission of the same span would not land on. An `epoch` rung is
-            // addressed to the grant key at `atKeyVersion` and names nobody — that is what makes it one
-            // ciphertext for the whole group; the two era-crossing kinds must name who they are for.
-            const namesRecipient = rung.recipientKind === "user" || rung.recipientKind === "group";
-            if (namesRecipient !== (rung.recipient !== undefined)) {
-                throw new AppException("GROUP_ARCHIVE_INVALID", {
-                    kind: "RECIPIENT_MISMATCH",
-                    at: rung.atKeyVersion,
-                    target: rung.targetKeyVersion,
-                    recipientKind: rung.recipientKind ?? null,
-                });
             }
         }
     }

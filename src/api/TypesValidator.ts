@@ -400,10 +400,7 @@ export class TypesValidator {
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),
             targetKeyVersion: this.builder.min(this.builder.int, 1),
-            recipientKind: this.builder.optional(this.builder.createEnum(["epoch", "user", "group"])),
-            recipient: this.builder.optional(this.builder.maxLength(this.builder.string, 128)),
             data: this.userKeyData,
-            author: this.builder.optional(this.cloudUserId),
         });
         this.groupGrant = this.builder.createObject({
             groupId: this.groupId,

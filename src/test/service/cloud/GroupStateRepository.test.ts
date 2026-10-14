@@ -336,19 +336,29 @@ it("pruning is a range delete over the epoch a rung points at", async () => {
     });
 });
 
-it("a rung is identified by the span it covers and its recipient, so re-submitting one cannot duplicate it", async () => {
-    const rung: types.cloud.GroupArchiveRung = {
+it("a rung is identified by the span it covers and its author, so re-submitting one cannot duplicate it", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {
         atKeyVersion: 6,
         targetKeyVersion: 5,
-        recipientKind: "epoch",
         data: "rung" as types.core.UserKeyData,
     };
     const {repository, captured} = createStateRepository();
-    await repository.insertRungs(groupId, [rung, {...rung, data: "resubmitted" as types.core.UserKeyData}]);
-    const ids = (captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}, upsert: boolean}}[])
-        .map(op => op.replaceOne.filter._id);
+    await repository.insertRungs(groupId, "alice" as types.cloud.UserId, [rung, {...rung, data: "resubmitted" as types.core.UserKeyData}]);
+    const operations = captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}, replacement: db.group.GroupArchiveRung, upsert: boolean}}[];
+    const ids = operations.map(op => op.replaceOne.filter._id);
     assert.strictEqual(ids[0], ids[1]);
-    assert.strictEqual(ids[0], `${groupId}|6|5|epoch|`);
+    assert.strictEqual(ids[0], `${groupId}|6|5|alice`);
+    // The author is the bridge's: whoever the caller of the commit was, never a field the client sent.
+    assert.strictEqual(operations[0].replaceOne.replacement.author, "alice");
+});
+
+it("rungs of one span from two authors are two rows", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {atKeyVersion: 6, targetKeyVersion: 5, data: "rung" as types.core.UserKeyData};
+    const {repository, captured} = createStateRepository();
+    await repository.insertRungs(groupId, "alice" as types.cloud.UserId, [rung]);
+    await repository.insertRungs(groupId, "bob" as types.cloud.UserId, [rung]);
+    const ids = (captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}}}[]).map(op => op.replaceOne.filter._id);
+    assert.deepStrictEqual(ids, [`${groupId}|6|5|alice`, `${groupId}|6|5|bob`]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

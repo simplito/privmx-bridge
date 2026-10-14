@@ -197,7 +197,7 @@ export interface GroupRemoveMembersModel {
     transition: types.cloud.GroupTreeTransition;
     /** The commit statement for this change, signed by the caller (see `types.cloud.GroupTreeCommitStatement`). */
     commit: types.cloud.GroupTreeCommitStatement;
-    rungs: types.cloud.GroupArchiveRung[];
+    rungs: types.cloud.GroupArchiveRungSubmission[];
     /**
      * The new metadata key wrapped once to the group's own grant public key at the epoch being created.
      *
@@ -352,7 +352,7 @@ export interface GroupGenerateNewKeyModel {
     /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
     commit: types.cloud.GroupTreeCommitStatement;
     /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. */
-    rungs: types.cloud.GroupArchiveRung[];
+    rungs: types.cloud.GroupArchiveRungSubmission[];
     /** The new metadata key wrapped once to the new grant public key. */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;

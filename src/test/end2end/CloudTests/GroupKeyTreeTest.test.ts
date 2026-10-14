@@ -513,13 +513,11 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     /** One epoch's worth of rungs: the mandatory unit rung down to the previous epoch, plus the skips. */
-    private rungsFor(newEpoch: number, floor = 1): types.cloud.GroupArchiveRung[] {
+    private rungsFor(newEpoch: number, floor = 1): types.cloud.GroupArchiveRungSubmission[] {
         return LadderMath.rungSpansFor(newEpoch, floor).map(span => ({
             atKeyVersion: span.at,
             targetKeyVersion: span.target,
-            recipientKind: "epoch" as const,
             data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
-            author: testData.userId,
         }));
     }
     

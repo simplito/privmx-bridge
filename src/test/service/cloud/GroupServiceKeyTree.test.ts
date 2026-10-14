@@ -297,12 +297,10 @@ function additionModel(group: TreeGroup, position = 1, newMember: types.cloud.Us
 /** The payload an honest client submits to remove the member at `position`, rungs included. */
 function removalModel(group: TreeGroup, position: number) {
     const newEpoch = group.keyVersion + 1;
-    const rungs: types.cloud.GroupArchiveRung[] = LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
+    const rungs: types.cloud.GroupArchiveRungSubmission[] = LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
         atKeyVersion: span.at,
         targetKeyVersion: span.target,
-        recipientKind: "epoch" as const,
         data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
-        author: janek,
     }));
     return {
         id: groupId,
@@ -721,21 +719,6 @@ it("removeMember refuses a rung carrying no ciphertext", async () => {
     await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, model));
 });
 
-it("removeMember refuses a rung whose recipient does not match its kind", async () => {
-    // `recipientKind`/`recipient` are part of a rung's derived id. An `epoch` rung names nobody — that is what
-    // makes it one ciphertext for the whole group — and the era-crossing kinds have to name who they are for;
-    // either one filled in wrong is a coordinate the next submission of the same span would not land on.
-    const group = treeBackedGroup();
-    const {groupService} = createGroupService(group);
-    const namedEpochRung = removalModel(group, 2);
-    namedEpochRung.rungs[0] = {...namedEpochRung.rungs[0], recipientKind: "epoch", recipient: "dave"};
-    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, namedEpochRung));
-    
-    const anonymousUserRung = removalModel(group, 2);
-    anonymousUserRung.rungs[0] = {...anonymousUserRung.rungs[0], recipientKind: "user", recipient: undefined};
-    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, anonymousUserRung));
-});
-
 it("removeMember refuses to remove somebody who is not a member", async () => {
     const group = treeBackedGroup();
     const {groupService} = createGroupService(group);
@@ -1045,9 +1028,7 @@ function batchRemovalModel(group: TreeGroup, positions: number[]) {
         rungs: LadderMath.rungSpansFor(newEpoch, group.eraFloor ?? 1).map(span => ({
             atKeyVersion: span.at,
             targetKeyVersion: span.target,
-            recipientKind: "epoch" as const,
             data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
-            author: janek,
         })),
         expectedKeyVersion: group.keyVersion,
         expectedRosterVersion: group.rosterVersion,

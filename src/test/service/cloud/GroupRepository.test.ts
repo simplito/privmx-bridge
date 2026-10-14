@@ -20,7 +20,7 @@ import { GroupStateRepository } from "../../../service/cloud/GroupStateRepositor
 import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { API_ERROR_CODES, AppException } from "../../../api/AppException";
-import { createFake, createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { createFake, createMock, hasNoCalls, hasOneCall, hasOneCallWithArguments, mock } from "../../testUtils/TestUtils";
 import { acceptedCommit, buildTree, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
@@ -567,6 +567,21 @@ it("a rotation advances the epoch and writes exactly one edge", async () => {
     hasOneCall(state.replaceGrantEdge);
     hasOneCall(state.insertRungs);
     hasNoCalls(state.writeTree);
+});
+
+it("commit rungs are stored with the committer as author", async () => {
+    // The author of a stored rung is the bridge's word, never a field the client sent: whoever made the commit.
+    const {repository, state} = createRepository();
+    const removed = removal(group());
+    await repository.removeMembersWithTransition(removed);
+    hasOneCallWithArguments(state.insertRungs, [groupId, janek, removed.rungs]);
+    const rotation = createRepository();
+    const rungs = rungsFor(EPOCH + 1, 1);
+    await rotation.repository.generateNewGroupKey({
+        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
+        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs,
+    });
+    hasOneCallWithArguments(rotation.state.insertRungs, [groupId, janek, rungs]);
 });
 
 it("a rotation that loses the race writes nothing beside the document either", async () => {

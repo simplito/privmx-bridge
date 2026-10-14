@@ -99,9 +99,12 @@ export class GroupStateRepository {
         return `${groupId}|privateMeta` as db.group.GroupPrivateMetaEntryId;
     }
     
-    /** Identified by the span it covers and its recipient, which makes re-submitting a rung idempotent. */
-    static rungId(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRung) {
-        return `${groupId}|${rung.atKeyVersion}|${rung.targetKeyVersion}|${rung.recipientKind ?? ""}|${rung.recipient ?? ""}` as db.group.GroupArchiveRungId;
+    /**
+     * Identified by the span it covers and its author: one rung per span per author. A commit re-submitted after a
+     * lost race lands on the same id; a repair by another member lands beside the original instead of over it.
+     */
+    static rungId(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRungSubmission, author: types.cloud.UserId) {
+        return `${groupId}|${rung.atKeyVersion}|${rung.targetKeyVersion}|${author}` as db.group.GroupArchiveRungId;
     }
     
     /** `bulkWrite`, minus mongo's refusal to accept an empty batch. */
@@ -428,15 +431,16 @@ export class GroupStateRepository {
         await this.history.insert(entry);
     }
     
-    /** Keyed by coordinate, so a rung re-submitted after a lost race replaces itself instead of duplicating. */
-    async insertRungs(groupId: types.group.GroupId, rungs: types.cloud.GroupArchiveRung[]): Promise<void> {
+    /** A commit's rungs, all by its committer. Keyed by span and author, so a rung re-submitted after a lost race
+     *  (the transaction retried) replaces itself instead of duplicating. */
+    async insertRungs(groupId: types.group.GroupId, author: types.cloud.UserId, rungs: types.cloud.GroupArchiveRungSubmission[]): Promise<void> {
         if (rungs.length === 0) {
             return;
         }
         await this.rungs.collection.bulkWrite(rungs.map(rung => ({
             replaceOne: {
-                filter: {_id: GroupStateRepository.rungId(groupId, rung)},
-                replacement: this.toRungDoc(groupId, rung),
+                filter: {_id: GroupStateRepository.rungId(groupId, rung, author)},
+                replacement: this.toRungDoc(groupId, rung, author),
                 upsert: true,
             },
         })), this.rungs.getOptions());
@@ -524,12 +528,6 @@ export class GroupStateRepository {
             targetKeyVersion: doc.targetKeyVersion,
             data: doc.data,
         };
-        if (doc.recipientKind !== undefined) {
-            rung.recipientKind = doc.recipientKind;
-        }
-        if (doc.recipient !== undefined) {
-            rung.recipient = doc.recipient;
-        }
         if (doc.author !== undefined) {
             rung.author = doc.author;
         }
@@ -561,22 +559,13 @@ export class GroupStateRepository {
         return doc;
     }
     
-    private toRungDoc(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRung): Omit<db.group.GroupArchiveRung, "id"> {
-        const doc: Omit<db.group.GroupArchiveRung, "id"> = {
+    private toRungDoc(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRungSubmission, author: types.cloud.UserId): Omit<db.group.GroupArchiveRung, "id"> {
+        return {
             groupId: groupId,
             atKeyVersion: rung.atKeyVersion,
             targetKeyVersion: rung.targetKeyVersion,
             data: rung.data,
+            author: author,
         };
-        if (rung.recipientKind !== undefined) {
-            doc.recipientKind = rung.recipientKind;
-        }
-        if (rung.recipient !== undefined) {
-            doc.recipient = rung.recipient;
-        }
-        if (rung.author !== undefined) {
-            doc.author = rung.author;
-        }
-        return doc;
     }
 }
