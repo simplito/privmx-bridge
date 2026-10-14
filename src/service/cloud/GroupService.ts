@@ -24,7 +24,7 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeValidator, type TreeView } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
@@ -652,6 +652,63 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
+     * Appends a repair rung: one more rung for a span an epoch already published, by a seated member holding both
+     * keys. It is what makes a broken rung (a client bug, or a member who may rotate and wrote garbage) repairable
+     * rather than a permanent cut through history (L-1).
+     *
+     * The bridge cannot tell a good rung from a bad one, and does not need to: readers check every rung against
+     * the member-signed chain. What it enforces is the shape: a canonical downward span at an existing epoch, never
+     * below a floor, one rung per span per member and at most `MAX_RUNGS_PER_SPAN` per span, a budget per member.
+     * The budget unit is spent on every call that reaches it, accepted or refused, so probing costs budget.
+     *
+     * The write to the group document (`touchLadder`) is what keeps the rules exact under concurrency: every floor
+     * change and every other repair writes the same document, so a racing one is a write conflict and the
+     * transaction re-runs against the state that won. Without it a repair could land below a floor set
+     * concurrently, or a fifth rung could slip into a span.
+     */
+    async repairRung(cloudUser: CloudUser, model: GroupRepairRungModel) {
+        const budget = new Reservations(this.groupRotationRateLimiter);
+        return this.repositoryFactory.withTransaction(async session => {
+            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+            const group = await groupRepository.get(model.id);
+            if (!group) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupRepairRung", ["groupId=" + model.id]);
+            if (!group.leafAssignment.includes(user.userId)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            this.assertTreeCommitsSupported(group);
+            // Never handed back: not under `unlessCommitted`. A retried transaction re-reserves nothing.
+            await budget.reserve(this.rateLimitKey("repair", model.id, user.userId));
+            const {rung} = model;
+            const span = {at: rung.atKeyVersion, target: rung.targetKeyVersion};
+            const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor, group.archivePrunedBelow);
+            if (!result.ok) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {...result.problem, at: span.at, target: span.target});
+            }
+            if (!rung.data) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: span.at, target: span.target});
+            }
+            const stored = await groupRepository.getRungsAt(model.id, span.at, span.target);
+            // ponytail: a row stored before authors were server-set has none; it counts towards the cap but is
+            // nobody's, so its opener may add one more. No such row is live (clients always sent `author`).
+            if (stored.some(existing => existing.author === user.userId)) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "AUTHOR_HAS_RUNG", at: span.at, target: span.target});
+            }
+            if (stored.length >= LadderMath.MAX_RUNGS_PER_SPAN) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "SPAN_FULL", at: span.at, target: span.target, max: LadderMath.MAX_RUNGS_PER_SPAN});
+            }
+            if (!await groupRepository.touchLadder(group)) {
+                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
+            }
+            await groupRepository.insertRepairRung(model.id, user.userId, rung);
+            return group;
+        });
+    }
+    
+    /**
      * Serves the Epoch Ladder, optionally windowed.
      *
      * Read access is enough: every rung is a ciphertext only a holder of the epoch key above it can open.
@@ -998,9 +1055,10 @@ export class GroupService extends BaseContainerService {
      * number of members allowed to cause it rather than by the group; the policy decides who those are.
      *
      * `rotate` and `remove` advance the epoch and stale every container granted to the group; `selfUpdate`
-     * moves no epoch but writes the tree; `refused` counts commits the bridge refused after hashing the tree.
+     * moves no epoch but writes the tree; `repair` counts `groupRepairRung` calls, accepted or refused; `refused`
+     * counts commits the bridge refused after hashing the tree.
      */
-    private rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
+    private rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
     }
     

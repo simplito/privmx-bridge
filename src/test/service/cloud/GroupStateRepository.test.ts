@@ -22,6 +22,8 @@ import { TreeValidator } from "../../../service/cloud/keytree/TreeValidator";
 import { TreeHash } from "../../../service/cloud/keytree/TreeHash";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
+import { AppException } from "../../../api/AppException";
+import { DbDuplicateError } from "../../../error/DbDuplicateError";
 
 /**
  * Moving the state out of the document is only worth anything if a change costs writes proportional to what
@@ -334,6 +336,27 @@ it("a windowed archive read puts the window and the floor into the query", async
     assert.deepStrictEqual(captured.rungs.filter, {$and: [{groupId: groupId}, {atKeyVersion: {$gte: 2}}, {atKeyVersion: {$lte: 5}}, {targetKeyVersion: {$gte: 3}}]});
     await repository.getEpochKeys(groupId, 2, 5);
     assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$gte: 2}}, {keyVersion: {$lte: 5}}]});
+});
+
+it("a repair rung is one insert under its author's id, and a second one by that author is AUTHOR_HAS_RUNG", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {atKeyVersion: 6, targetKeyVersion: 5, data: "repair" as types.core.UserKeyData};
+    const {repository, captured} = createStateRepository();
+    await repository.insertRung(groupId, "bob" as types.cloud.UserId, rung);
+    assert.deepStrictEqual(captured.rungs.inserted, [{id: `${groupId}|6|5|bob`, groupId, atKeyVersion: 6, targetKeyVersion: 5, data: "repair", author: "bob"}]);
+    assert.deepStrictEqual(captured.rungs.operations, [], "never an upsert: nothing stored is replaced");
+    
+    const duplicate = createStateRepository();
+    (duplicate.repository as unknown as {rungs: {insert: () => Promise<void>}}).rungs.insert = async () => {
+        throw new DbDuplicateError();
+    };
+    await assert.rejects(() => duplicate.repository.insertRung(groupId, "bob" as types.cloud.UserId, rung),
+        (e: unknown) => AppException.is(e, "GROUP_ARCHIVE_INVALID") && (e as AppException).getData()?.kind === "AUTHOR_HAS_RUNG");
+});
+
+it("the rungs of one span are read by span", async () => {
+    const {repository, captured} = createStateRepository({rungs: []});
+    await repository.getRungsAt(groupId, 6, 5);
+    assert.deepStrictEqual(captured.rungs.filter, {$and: [{groupId: groupId}, {atKeyVersion: 6}, {targetKeyVersion: 5}]});
 });
 
 it("pruning is a range delete over the epoch a rung points at", async () => {

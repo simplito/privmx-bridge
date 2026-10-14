@@ -193,6 +193,34 @@ export class GroupRepository {
         return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, minTarget);
     }
     
+    /** The rungs stored for one span (see `GroupStateRepository.getRungsAt`). */
+    async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
+        return this.state.getRungsAt(groupId, atKeyVersion, targetKeyVersion);
+    }
+    
+    /**
+     * Serialises a repair on the group document: bumps `ladderRev` only while the floors are still those `oldGroup`
+     * was read with. Every floor change and every commit writes the same document, so inside a transaction a
+     * concurrent one is a write conflict and the repair is re-run against the state that won. The epoch is
+     * deliberately not in the filter: a new epoch does not invalidate a repair at an older one.
+     *
+     * @returns false when the floors moved (nothing written)
+     */
+    async touchLadder(oldGroup: db.group.Group): Promise<boolean> {
+        const filter = {
+            _id: oldGroup.id,
+            eraFloor: oldGroup.eraFloor,
+            archivePrunedBelow: oldGroup.archivePrunedBelow ?? {$exists: false},
+        };
+        const result = await this.repository.collection.updateOne(filter, {$inc: {ladderRev: 1}}, this.repository.getOptions());
+        return result.matchedCount > 0;
+    }
+    
+    /** Appends one repair rung by `author`; never replaces a stored one (see `GroupStateRepository.insertRung`). */
+    async insertRepairRung(groupId: types.group.GroupId, author: types.cloud.UserId, rung: types.cloud.GroupArchiveRungSubmission): Promise<void> {
+        await this.state.insertRung(groupId, author, rung);
+    }
+    
     /** At most this many reads of a group's state while commits keep landing under it (`getFullState`). */
     static readonly FULL_STATE_ATTEMPTS = 3;
     

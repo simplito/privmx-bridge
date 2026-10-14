@@ -15,6 +15,8 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { TreeMath } from "./keytree/TreeMath";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
+import { AppException } from "../../api/AppException";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
@@ -469,6 +471,23 @@ export class GroupStateRepository {
                 upsert: true,
             },
         })), this.rungs.getOptions());
+    }
+    
+    /**
+     * One repair rung: an insert, never an upsert, so nothing a member submits can replace or delete a stored rung
+     * (an opener cannot swap its good rung for a bad one after others checked it). A second rung for the span by
+     * the same author is a duplicate id, reported as `AUTHOR_HAS_RUNG`.
+     */
+    async insertRung(groupId: types.group.GroupId, author: types.cloud.UserId, rung: types.cloud.GroupArchiveRungSubmission): Promise<void> {
+        try {
+            await this.rungs.insert({id: GroupStateRepository.rungId(groupId, rung, author), ...this.toRungDoc(groupId, rung, author)});
+        }
+        catch (e) {
+            if (e instanceof DbDuplicateError) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "AUTHOR_HAS_RUNG", at: rung.atKeyVersion, target: rung.targetKeyVersion});
+            }
+            throw e;
+        }
     }
     
     /** Drops the rungs that point below `belowEpoch` — one range delete over the target-epoch index. */

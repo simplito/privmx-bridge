@@ -37,7 +37,7 @@ import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement"
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
-import type { RotatedAlreadyData } from "../../../api/main/context/ContextApiTypes";
+import type { GroupRepairRungModel, RotatedAlreadyData } from "../../../api/main/context/ContextApiTypes";
 
 /**
  * Service-level tests for tree-backed group membership — the bridge's half of the contract, which is entirely
@@ -232,7 +232,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         return context;
     });
     
-    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, getArchiveWindow: () => archiveWindow,
+    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, repositoryFactory, cloudAccessValidator, getArchiveWindow: () => archiveWindow,
         getEpochKeyWindow: () => epochKeyWindow, getRungFloor: () => rungFloor};
 }
 
@@ -1569,4 +1569,255 @@ it("a rotation of a group whose stored root carries no public key is refused as 
     mock(groupRepository, "getRootNode", (async () => ({...root, publicKey: undefined})) as never);
     await expectFailure("GROUP_HAS_NO_TREE", () => groupService.generateNewGroupKey(janekCloudUser, rotationModel(group)));
     hasNoCalls(groupRepository.generateNewGroupKey);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// repair rungs
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REPAIR_SEATING = ["janek", "alice", "bob", "carol", "erin", "frank"];
+const cloudUserOf = (name: string) => new CloudUser(userKeys(name).pub58);
+const repairOf = (at: number, target: number, payload = "repair"): GroupRepairRungModel => ({
+    id: groupId,
+    rung: {atKeyVersion: at, targetKeyVersion: target, data: `${payload}:${at}->${target}` as types.core.UserKeyData},
+});
+
+/** Thrown by a write that conflicts with another transaction's; the fake transaction runner retries on it. */
+const WRITE_CONFLICT = new Error("write conflict");
+
+/**
+ * The group document and its rungs as storage holds them, behind transactions that conflict the way Mongo's do:
+ * each attempt reads a snapshot, a write to the group document conflicts when another transaction has written it
+ * since the snapshot or holds an uncommitted write to it, and a conflicting attempt is re-run from the start.
+ * `pauseAfterRead` is the hook the race tests use to stop a repair between its reads (step 5) and its write.
+ */
+function createRepairStore(overrides: Partial<TreeGroup> = {}, stored: types.cloud.GroupArchiveRung[] = [
+    {atKeyVersion: EPOCH, targetKeyVersion: EPOCH - 1, data: "opener" as types.core.UserKeyData, author: janek},
+]) {
+    const group = treeBackedGroup({leafAssignment: REPAIR_SEATING as types.cloud.UserId[], ...overrides});
+    const service = createGroupService(group);
+    type State = {group: db.group.Group, rungs: types.cloud.GroupArchiveRung[]};
+    type Tx = {snapshot: State, rev: number, writes: ((state: State) => void)[]};
+    const clone = (state: State): State => ({group: {...state.group}, rungs: state.rungs.map(rung => ({...rung}))});
+    let committed: State = {group, rungs: stored};
+    let rev = 0;
+    let writer: Tx|null = null;
+    let pause: {reached: () => void, resume: Promise<void>}|null = null;
+    const writeGroup = (tx: Tx, write: (state: State) => void) => {
+        if (rev !== tx.rev || (writer && writer !== tx)) {
+            throw WRITE_CONFLICT;
+        }
+        writer = tx;
+        tx.writes.push(write);
+    };
+    const repositoryFor = (tx: Tx|undefined) => {
+        const view = () => tx?.snapshot ?? committed;
+        const repository = createMock<GroupRepository>({});
+        mock(repository, "get", async () => ({...view().group}));
+        mock(repository, "getMetaHeadKeyVersions", (async () => ({publicMeta: group.keyVersion, privateMeta: group.keyVersion})) as never);
+        mock(repository, "getRungsAt", async (_id, at, target) => {
+            const rungs = view().rungs.filter(rung => rung.atKeyVersion === at && rung.targetKeyVersion === target);
+            if (pause) {
+                const {reached, resume} = pause;
+                pause = null;
+                reached();
+                await resume;
+            }
+            return rungs;
+        });
+        mock(repository, "touchLadder", async () => {
+            writeGroup(tx!, state => {
+                state.group.ladderRev = (state.group.ladderRev ?? 0) + 1;
+            });
+            return true;
+        });
+        mock(repository, "insertRepairRung", async (_id, author, rung) => {
+            tx!.writes.push(state => state.rungs.push({...rung, author}));
+        });
+        mock(repository, "cutEra", (async (g: db.group.Group, floor: number) => {
+            writeGroup(tx!, state => {
+                state.group.eraFloor = floor;
+                state.rungs = state.rungs.filter(rung => rung.targetKeyVersion >= floor);
+            });
+            return {...g, eraFloor: floor};
+        }) as never);
+        mock(repository, "pruneArchive", (async (g: db.group.Group, below: number) => {
+            writeGroup(tx!, state => {
+                state.group.archivePrunedBelow = below;
+                state.rungs = state.rungs.filter(rung => rung.targetKeyVersion >= below);
+            });
+            return {...g, archivePrunedBelow: below};
+        }) as never);
+        mock(repository, "getArchiveRungs", (async (_id: types.group.GroupId, _from?: number, _to?: number, minTarget?: number) =>
+            view().rungs.filter(rung => rung.targetKeyVersion >= (minTarget ?? 0))) as never);
+        mock(repository, "getEpochKeys", (async () => []) as never);
+        return repository;
+    };
+    mock(service.repositoryFactory, "createGroupRepository", ((tx?: Tx) => repositoryFor(tx)) as never);
+    mock(service.repositoryFactory, "withTransaction", (async (run: (session: mongodb.ClientSession) => Promise<unknown>) => {
+        for (;;) {
+            const tx: Tx = {snapshot: clone(committed), rev, writes: []};
+            try {
+                const result = await run(tx as unknown as mongodb.ClientSession);
+                if (tx.writes.length > 0) {
+                    const next = clone(committed);
+                    tx.writes.forEach(write => write(next));
+                    committed = next;
+                    rev++;
+                }
+                return result;
+            }
+            catch (e) {
+                if (e !== WRITE_CONFLICT) {
+                    throw e;
+                }
+                await new Promise(resolve => setImmediate(resolve));
+            }
+            finally {
+                if (writer === tx) {
+                    writer = null;
+                }
+            }
+        }
+    }) as never);
+    mock(service.cloudAccessValidator, "getUserFromContext", async cloudUser => {
+        const name = [...REPAIR_SEATING, "dave"].find(candidate => userKeys(candidate).pub58 === cloudUser.pub);
+        if (!name) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        const user = contextUser(name as types.cloud.UserId, userKeys(name).pub58 as unknown as types.cloud.UserPubKey);
+        return {user, context: myContext};
+    });
+    return {
+        ...service,
+        rungs: () => committed.rungs,
+        storedGroup: () => committed.group,
+        /** Stops the next repair right after it read the stored rungs; resolves once it got there. */
+        pauseAfterRead: () => {
+            let resume!: () => void;
+            const reached = new Promise<void>(resolve => {
+                pause = {reached: resolve, resume: new Promise<void>(r => {
+                    resume = r;
+                })};
+            });
+            return {reached, resume: () => resume()};
+        },
+    };
+}
+
+const repairKey = (name: string) => `repair|${groupId}|${name}`;
+
+it("repairRung appends a second rung for a span from another member", async () => {
+    const store = createRepairStore();
+    await store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1));
+    assert.deepStrictEqual(store.rungs().map(rung => rung.author), [janek, alice]);
+    // The opener's rung is untouched: a repair adds beside it, it never replaces.
+    assert.strictEqual(store.rungs()[0].data, "opener");
+    assert.strictEqual(store.storedGroup().ladderRev, 1, "serialised on the group document");
+});
+
+it("SECURITY: repairRung refuses a fifth rung for one span", async () => {
+    const store = createRepairStore();
+    for (const name of ["alice", "bob", "carol"]) {
+        await store.groupService.repairRung(cloudUserOf(name), repairOf(EPOCH, EPOCH - 1));
+    }
+    const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf("erin"), repairOf(EPOCH, EPOCH - 1)));
+    assert.strictEqual((error.getData() as {kind: string}).kind, "SPAN_FULL");
+    assert.strictEqual(store.rungs().length, LadderMath.MAX_RUNGS_PER_SPAN);
+});
+
+it("repairRung refuses a second rung for a span from the same member, the opener included", async () => {
+    const store = createRepairStore();
+    await store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1));
+    for (const name of ["alice", "janek"]) {
+        const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf(name), repairOf(EPOCH, EPOCH - 1, "other")));
+        assert.strictEqual((error.getData() as {kind: string}).kind, "AUTHOR_HAS_RUNG");
+    }
+    assert.strictEqual(store.rungs().length, 2);
+});
+
+it("SECURITY: repairRung refuses a caller without a seat", async () => {
+    // dave is in the context but holds no seat: no grant key, nothing it could seal honestly.
+    const store = createRepairStore();
+    await expectFailure("ACCESS_DENIED", () => store.groupService.repairRung(cloudUserOf("dave"), repairOf(EPOCH, EPOCH - 1)));
+    assert.strictEqual(store.rungs().length, 1);
+    assert.strictEqual(store.groupRotationRateLimiter.kept.length, 0, "refused before the budget");
+});
+
+it("SECURITY: repairRung refuses a span above the current epoch, not owed, below the floor or below the watermark", async () => {
+    const cases: [Partial<TreeGroup>, number, number, string][] = [
+        [{}, EPOCH + 1, EPOCH, "FUTURE_EPOCH"],
+        [{keyVersion: 8}, 8, 5, "NOT_CANONICAL"],
+        [{keyVersion: 8}, 8, 9, "DIRECTION"],
+        [{keyVersion: 8, eraFloor: 6}, 8, 4, "BELOW_ERA_FLOOR"],
+        [{keyVersion: 8, eraFloor: 1, archivePrunedBelow: 6}, 8, 4, "BELOW_PRUNE_WATERMARK"],
+    ];
+    for (const [overrides, at, target, kind] of cases) {
+        const store = createRepairStore(overrides, []);
+        const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(at, target)));
+        assert.strictEqual((error.getData() as {kind: string}).kind, kind);
+        assert.strictEqual(store.rungs().length, 0);
+    }
+});
+
+it("repairRung refuses an empty rung", async () => {
+    const store = createRepairStore();
+    const model = repairOf(EPOCH, EPOCH - 1);
+    model.rung.data = "" as types.core.UserKeyData;
+    const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), model));
+    assert.strictEqual((error.getData() as {kind: string}).kind, "EMPTY_RUNG_DATA");
+});
+
+it("repairRung spends its own budget on every call, accepted or refused", async () => {
+    const store = createRepairStore();
+    await store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1));
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1)));
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH + 3, EPOCH)));
+    assert.deepStrictEqual(store.groupRotationRateLimiter.kept, [repairKey("alice"), repairKey("alice"), repairKey("alice")]);
+    // Its own: nobody else's repair budget, nor the removal or rotation budgets.
+    store.groupRotationRateLimiter.allow = key => key !== repairKey("alice");
+    await expectFailure("GROUP_ROTATION_RATE_LIMIT", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1)));
+    await store.groupService.repairRung(cloudUserOf("bob"), repairOf(EPOCH, EPOCH - 1));
+});
+
+it("repairRung refuses a group of an unsupported tree version", async () => {
+    const store = createRepairStore({treeVersion: 2});
+    const error = await expectFailure("GROUP_TREE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1)));
+    assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
+});
+
+for (const floorChange of ["cutEra", "pruneArchive"] as const) {
+    it(`SECURITY: a repair racing ${floorChange} leaves no rung below the new floor`, async () => {
+        // Without the write to the group document the repair, validated against the old floor, would land its
+        // rung after the floor change deleted everything below it: a rung below the floor, served forever.
+        const store = createRepairStore({keyVersion: 8}, [{atKeyVersion: 8, targetKeyVersion: 6, data: "opener" as types.core.UserKeyData, author: janek}]);
+        const paused = store.pauseAfterRead();
+        const repair = store.groupService.repairRung(cloudUserOf("alice"), repairOf(8, 6));
+        repair.catch(() => {});
+        await paused.reached;
+        const manager = cloudUserOf("janek");
+        if (floorChange === "cutEra") {
+            await store.groupService.cutEra(manager, {id: groupId, newFloor: 7, expectedKeyVersion: 8});
+        }
+        else {
+            await store.groupService.pruneArchive(manager, {id: groupId, belowEpoch: 7, expectedKeyVersion: 8});
+        }
+        paused.resume();
+        const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => repair);
+        assert.strictEqual((error.getData() as {kind: string}).kind, floorChange === "cutEra" ? "BELOW_ERA_FLOOR" : "BELOW_PRUNE_WATERMARK");
+        assert.deepStrictEqual(store.rungs(), []);
+        const served = await store.groupService.getKeyArchive(manager, groupId);
+        assert.deepStrictEqual(served.rungs, []);
+    });
+}
+
+it("SECURITY: five concurrent repairs of one span store at most four rungs", async () => {
+    const store = createRepairStore();
+    const results = await Promise.allSettled(["alice", "bob", "carol", "erin", "frank"].map(name =>
+        store.groupService.repairRung(cloudUserOf(name), repairOf(EPOCH, EPOCH - 1, name))));
+    assert.strictEqual(store.rungs().length, LadderMath.MAX_RUNGS_PER_SPAN);
+    assert.strictEqual(results.filter(result => result.status === "fulfilled").length, LadderMath.MAX_RUNGS_PER_SPAN - 1);
+    for (const result of results.filter(r => r.status === "rejected")) {
+        assert.ok(AppException.is((result as PromiseRejectedResult).reason, "GROUP_ARCHIVE_INVALID"));
+    }
 });

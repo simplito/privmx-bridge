@@ -272,6 +272,17 @@ export interface GroupPruneArchiveModel {
 }
 
 /**
+ * Appends one repair rung to a span an epoch already published: `rung` seals the key of `targetKeyVersion` to the
+ * grant key of `atKeyVersion`. Any seated member may call it; the bridge records the caller as the rung's author.
+ * Only canonical downward spans at or below the current epoch and at or above the floor are accepted, one rung per
+ * span per member, at most four per span; every call is charged to the caller's own repair budget.
+ */
+export interface GroupRepairRungModel {
+    id: types.group.GroupId;
+    rung: types.cloud.GroupArchiveRungSubmission;
+}
+
+/**
  * Fetches the Epoch Ladder. Kept out of `groupGet` because the archive grows with the group's whole history,
  * while a client needs it only when it is actually reaching for an older epoch.
  */
@@ -646,6 +657,7 @@ export interface IContextApi {
     groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
+    groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
 }

@@ -481,6 +481,13 @@ it("SECURITY: groupGenerateNewKey refuses a rung naming an author", () => {
     expect(result.success).toBe(false);
 });
 
+it("ContextApiValidator.groupRepairRung valid", () => {
+    const model: contextApi.GroupRepairRungModel = {id: groupId, rung: {atKeyVersion: 8, targetKeyVersion: 6, data: "rung" as types.core.UserKeyData}};
+    expect(Utils.try(() => validator().validate("groupRepairRung", model)).success).toBe(true);
+    // The author is the caller, derived by the bridge; a rung naming one is refused like any unknown field.
+    expect(Utils.try(() => validator().validate("groupRepairRung", {...model, rung: {...model.rung, author: "ola"}})).success).toBe(false);
+});
+
 it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
     // The rungs are not optional: a new epoch without them orphans the group's own history.
     const model = {
