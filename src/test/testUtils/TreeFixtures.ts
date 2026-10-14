@@ -425,13 +425,19 @@ export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: typ
 }
 
 /**
- * The one edge a rotation writes: the new grant key wrapped to the root, which the rotation does not move.
+ * The one edge a rotation writes: the new grant key wrapped to the root, which the rotation does not move — or,
+ * in a one-leaf tree whose root is the member's leaf, straight to the sole member (`TreeValidator.grantExpectation`).
+ * Shared with Track F (03/04/09/11 extend the statement, not this edge).
  *
  * `childGeneration` is taken from the tree rather than assumed, so a fixture built against a refreshed root
  * stays honest — that is exactly the staleness the bridge checks for.
  */
 export function rotationGrantEdge(tree: types.cloud.GroupTreeState, newKeyVersion: number): types.cloud.GroupTreeEdge {
     const rootIndex = TreeMath.root(tree.numLeaves);
+    if (TreeMath.isLeaf(rootIndex)) {
+        return {isGrantEdge: true, parentGeneration: newKeyVersion, childKind: "user", childUserId: tree.leafAssignment[0],
+            data: "wrap:grant->user" as types.core.UserKeyData};
+    }
     const root = tree.nodes.find(node => node.nodeIndex === rootIndex);
     return {
         isGrantEdge: true,

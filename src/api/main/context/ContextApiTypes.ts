@@ -339,14 +339,15 @@ export interface GroupUpdatePolicyModel {
  * the removal.
  *
  * Node keys are untouched, so this is `O(1)`: one new grant edge wrapping the new grant key to the unchanged
- * root, the rungs that keep the old epochs reachable, and the metadata key re-wrapped once to the new grant key.
+ * root, or to the sole member of a one-leaf tree, the rungs that keep the old epochs reachable, and the metadata key re-wrapped once to the new grant key.
  */
 export interface GroupGenerateNewKeyModel {
     id: types.group.GroupId;
     groupPubKey: types.cloud.GroupPubKey;
     data: types.group.GroupData;
     keyId: types.core.KeyId;
-    /** The new grant edge: the new grant key wrapped to the root node, at the epoch being created. */
+    /** The new grant edge: the new grant key wrapped to the root node, or to the sole member of a one-leaf tree
+     *  (whose root is that member's leaf), at the epoch being created. */
     grantEdge: types.cloud.GroupTreeEdge;
     /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
     commit: types.cloud.GroupTreeCommitStatement;

@@ -26,7 +26,7 @@ import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
 import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
-import { TreeValidator } from "./keytree/TreeValidator";
+import { TreeValidator, type TreeView } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
 import { CommitStatement, ExpectedStatement } from "./keytree/CommitStatement";
@@ -338,7 +338,8 @@ export class GroupService extends BaseContainerService {
     }
     
     /** Rotates the grant keypair without removing anybody: the epoch advances, the new grant key is wrapped to
-     *  the unchanged root, the rungs keep the old epochs reachable. One edge, whatever the group's size. */
+     *  the unchanged root, or to the sole member of a one-leaf tree, the rungs keep the old epochs reachable.
+     *  One edge, whatever the group's size. */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const rotated = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
@@ -743,11 +744,12 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Checks the one edge a rotation is allowed to write: the grant edge, at the epoch being created, addressed
-     * to the current root.
+     * Checks the one edge a rotation writes: the grant edge at the epoch being created, addressed as every other
+     * commit addresses it (`TreeValidator.grantExpectation`) — to the current root, or in a one-leaf tree straight
+     * to the sole member, whose leaf *is* the root (T3-27).
      *
-     * `childGeneration` is the load-bearing check — an edge planned against a superseded root would wrap the new
-     * grant key to a node key nobody can reach, locking every member out of the epoch.
+     * `childGeneration` is the load-bearing check for n ≥ 2 — an edge planned against a superseded root would wrap
+     * the new grant key to a node key nobody can reach, locking every member out of the epoch.
      */
     private async assertRotationGrantEdgeIsValid(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
@@ -755,34 +757,15 @@ export class GroupService extends BaseContainerService {
         edge: types.cloud.GroupTreeEdge,
         newKeyVersion: number,
     ) {
-        const problems: {kind: string, expected?: string|number, got?: string|number}[] = [];
-        if (!edge.isGrantEdge) {
-            problems.push({kind: "NOT_A_GRANT_EDGE"});
-        }
-        if (TreeValidator.isMalformed(edge)) {
-            problems.push({kind: "MALFORMED_EDGE"});
-        }
-        if (edge.parentGeneration !== newKeyVersion) {
-            problems.push({kind: "GRANT_EDGE_WRONG_EPOCH", expected: newKeyVersion, got: edge.parentGeneration});
-        }
         const rootIndex = TreeMath.root(group.numLeaves);
-        if (edge.childKind !== "node" || edge.childIndex !== rootIndex) {
-            problems.push({kind: "GRANT_EDGE_WRONG_CHILD", expected: `node:${rootIndex}`, got: `${edge.childKind}:${edge.childUserId ?? edge.childIndex}`});
+        const root = TreeMath.isLeaf(rootIndex) ? undefined : await groupRepository.getRootNode(group);
+        if (!TreeMath.isLeaf(rootIndex) && !root?.publicKey) {
+            throw new AppException("GROUP_HAS_NO_TREE");
         }
-        else {
-            const root = await groupRepository.getRootNode(group);
-            if (!root) {
-                throw new AppException("GROUP_HAS_NO_TREE");
-            }
-            if (edge.childGeneration !== root.generation) {
-                problems.push({kind: "STALE_CHILD_GENERATION", expected: root.generation, got: edge.childGeneration ?? -1});
-            }
-        }
-        if (!edge.data) {
-            problems.push({kind: "EMPTY_EDGE_DATA"});
-        }
+        const view: TreeView = {numLeaves: group.numLeaves, leafAssignment: group.leafAssignment, nodes: new Map(root ? [[rootIndex, root]] : [])};
+        const problems = TreeValidator.checkEdges([edge], new Map(), TreeValidator.grantExpectation(view, newKeyVersion));
         if (problems.length > 0) {
-            throw new AppException("GROUP_TREE_INVALID", problems);
+            throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));
         }
     }
     

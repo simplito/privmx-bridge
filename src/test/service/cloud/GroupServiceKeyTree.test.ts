@@ -20,7 +20,7 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
 import { createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
-import { buildTree, creationStatement, planCommit, PlanOp, settersOf, signStatement, statementFor, userKeys } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, planCommit, PlanOp, rotationGrantEdge, rotationStatement, rungsFor, settersOf, signStatement, statementFor, userKeys } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -187,6 +187,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     mock(groupRepository, "addMembersWithTransition", applied as never);
     mock(groupRepository, "removeMembersWithTransition", applied as never);
     mock(groupRepository, "selfUpdateWithTransition", (async () => !options.casMiss) as never);
+    mock(groupRepository, "generateNewGroupKey", (async () => ({...group, keyVersion: group.keyVersion + 1})) as never);
     // A commit is checked against every node record of the group.
     mock(groupRepository, "getNodes", (async () => group.tree.nodes) as never);
     mock(groupRepository, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs
@@ -1437,4 +1438,123 @@ it("getTreeCommits needs read access to the group", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService} = createGroupService(group);
     await expectFailure("ACCESS_DENIED", () => groupService.getTreeCommits(aliceCloudUser, groupId, 0));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rotation's grant edge (T3-27)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** janek alone: a one-leaf tree, whose root is janek's own leaf. */
+function oneMemberGroup() {
+    return treeBackedGroup({tree: buildTree(["janek"], EPOCH), users: [], managers: [janek]});
+}
+
+/** What an honest client submits to rotate `group`'s grant key, with `edge` changing the grant edge it sends. */
+function rotationModel(group: TreeGroup, edge: (honest: types.cloud.GroupTreeEdge) => types.cloud.GroupTreeEdge = honest => honest) {
+    const newKeyVersion = group.keyVersion + 1;
+    return {
+        id: groupId,
+        groupPubKey: nextGroupPubKey,
+        data: data,
+        keyId: newKeyId,
+        grantEdge: edge(rotationGrantEdge(group.tree, newKeyVersion)),
+        rungs: rungsFor(newKeyVersion, group.eraFloor ?? 1),
+        commit: rotationStatement(group.tree, (group.treeCommitSeq ?? 0) + 1, newKeyVersion, "janek", {
+            groupId: group.id, groupPubKey: nextGroupPubKey, rosterVersion: group.rosterVersion + 1,
+            users: group.users, managers: group.managers, previous: storedLatest(group),
+        }),
+        expectedKeyVersion: group.keyVersion,
+        expectedRosterVersion: group.rosterVersion,
+    };
+}
+
+/** The edge problems a rotation with `edge` is refused with, after checking nothing was stored. */
+async function rotationEdgeProblems(group: TreeGroup, edge: (honest: types.cloud.GroupTreeEdge) => types.cloud.GroupTreeEdge) {
+    const {groupService, groupRepository} = createGroupService(group);
+    const problems = await statementProblems(() => groupService.generateNewGroupKey(janekCloudUser, rotationModel(group, edge)));
+    hasNoCalls(groupRepository.generateNewGroupKey);
+    return problems;
+}
+
+it("generateNewGroupKey rotates a one-member group with the grant edge to its sole member", async () => {
+    const group = oneMemberGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    await groupService.generateNewGroupKey(janekCloudUser, rotationModel(group));
+    hasOneCall(groupRepository.generateNewGroupKey);
+    const params = groupRepository.generateNewGroupKey.mock.calls[0][0] as {grantEdge: types.cloud.GroupTreeEdge};
+    assert.deepStrictEqual([params.grantEdge.childKind, params.grantEdge.childUserId, params.grantEdge.parentGeneration], ["user", janek, EPOCH + 1]);
+});
+
+it("SECURITY: a one-member rotation refuses a grant edge to anybody but the sole member", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, childUserId: alice})), ["GRANT_EDGE_WRONG_CHILD"]);
+});
+
+it("SECURITY: a one-member rotation refuses a grant edge to the leaf as a node", async () => {
+    // The leaf has no node key: nobody could open such an edge, and the member would be locked out of the epoch.
+    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({
+        isGrantEdge: true, parentGeneration: honest.parentGeneration, childKind: "node", childIndex: 0, childGeneration: 0, data: honest.data,
+    })), ["GRANT_EDGE_WRONG_CHILD"]);
+});
+
+it("a one-member rotation refuses a user grant edge carrying a child generation", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, childGeneration: 1})), ["MALFORMED_EDGE"]);
+});
+
+it("a one-member rotation refuses a grant edge at an epoch other than the next", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, parentGeneration: EPOCH})), ["GRANT_EDGE_WRONG_EPOCH"]);
+});
+
+it("SECURITY: a rotation of a group of two or more refuses a grant edge addressed to a member", async () => {
+    // Guards the n ≥ 2 rule against the one-member case widening it: the edge must go to the root node.
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({
+        isGrantEdge: true, parentGeneration: honest.parentGeneration, childKind: "user", childUserId: janek, data: honest.data,
+    })), ["GRANT_EDGE_WRONG_CHILD"]);
+});
+
+it("a one-member rotation whose statement is signed by somebody else is refused and charged as a refusal", async () => {
+    const group = oneMemberGroup();
+    const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService(group);
+    const model = rotationModel(group);
+    assert.deepStrictEqual(await statementProblems(() => groupService.generateNewGroupKey(janekCloudUser, {...model, commit: signStatement(model.commit, "alice")})), ["SIGNATURE"]);
+    hasNoCalls(groupRepository.generateNewGroupKey);
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`refused|${groupId}|janek`]);
+});
+
+it("SECURITY: a rotation of a group of two or more refuses a grant edge planned against a superseded root", async () => {
+    // The load-bearing n ≥ 2 check: the new grant key wrapped to a root key nobody holds any more locks the epoch.
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, childGeneration: honest.childGeneration! - 1})), ["STALE_CHILD_GENERATION"]);
+});
+
+it("a rotation of a group of two or more refuses a grant edge at the current epoch", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, parentGeneration: EPOCH})), ["GRANT_EDGE_WRONG_EPOCH"]);
+});
+
+it("a rotation refuses an edge that is not a grant edge", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, isGrantEdge: false})),
+        ["MALFORMED_EDGE", "UNEXPECTED_EDGE", "GRANT_EDGE_COUNT"]);
+});
+
+it("a rotation refuses a grant edge that names a parent node", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, parentIndex: 0})), ["MALFORMED_EDGE"]);
+});
+
+it("a rotation refuses a grant edge carrying no data", async () => {
+    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, data: "" as types.core.UserKeyData})), ["EMPTY_EDGE_DATA"]);
+});
+
+it("a rotation of a group whose stored root is missing is refused as having no tree", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    mock(groupRepository, "getRootNode", (async () => undefined) as never);
+    await expectFailure("GROUP_HAS_NO_TREE", () => groupService.generateNewGroupKey(janekCloudUser, rotationModel(group)));
+    hasNoCalls(groupRepository.generateNewGroupKey);
+});
+
+it("a rotation of a group whose stored root carries no public key is refused as having no tree", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const root = group.tree.nodes.find(n => n.nodeIndex === TreeMath.root(group.numLeaves))!;
+    mock(groupRepository, "getRootNode", (async () => ({...root, publicKey: undefined})) as never);
+    await expectFailure("GROUP_HAS_NO_TREE", () => groupService.generateNewGroupKey(janekCloudUser, rotationModel(group)));
+    hasNoCalls(groupRepository.generateNewGroupKey);
 });
