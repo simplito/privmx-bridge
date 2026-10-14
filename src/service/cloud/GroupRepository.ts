@@ -153,7 +153,7 @@ export class GroupRepository {
                 return;
             }
             for (const group of groups) {
-                await this.deleteGroup(group.id);
+                await this.deleteGroup(group);
                 await func(group);
             }
         }
@@ -649,10 +649,14 @@ export class GroupRepository {
         }
     }
     
-    async deleteGroup(id: types.group.GroupId) {
-        await this.repository.delete(id);
-        await this.state.deleteState(id);
-        await this.state.markDeleted(id);
+    async deleteGroup(group: Pick<db.group.Group, "id"|"contextId">) {
+        await this.repository.delete(group.id);
+        await this.state.deleteState(group.id);
+        await this.state.markDeleted(group.id, group.contextId);
+    }
+    
+    async deleteTombstonesOfContext(contextId: types.context.ContextId) {
+        await this.state.deleteTombstonesOfContext(contextId);
     }
     
     /**

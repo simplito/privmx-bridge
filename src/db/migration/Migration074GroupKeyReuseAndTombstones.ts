@@ -15,7 +15,8 @@ import { GroupStateRepository } from "../../service/cloud/GroupStateRepository";
 
 /**
  * A new epoch's key is checked against every statement of the group (T4-24), not against the epoch rows an era cut
- * drops: the index serves that lookup. Only indexes are built and dropped, so a re-run changes nothing.
+ * drops: the first index serves that lookup. Group tombstones are pruned with their context (T4-14): the second.
+ * Only indexes are built and dropped, so a re-run changes nothing.
  */
 export class Migration074GroupKeyReuseAndTombstones {
     
@@ -34,5 +35,7 @@ export class Migration074GroupKeyReuseAndTombstones {
                 throw e;
             }
         });
+        const tombstones = await dbManager.createOrGetCollection(GroupStateRepository.TOMBSTONE_COLLECTION_NAME);
+        await tombstones.createIndex({contextId: 1});
     }
 }

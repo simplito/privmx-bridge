@@ -419,6 +419,8 @@ export namespace group {
      */
     export interface GroupTombstone {
         id: types.group.GroupId;
+        /** Pruned with its context. Absent only on rows written before migration 074, which are never pruned. */
+        contextId?: types.context.ContextId;
     }
     
     /** A group's out-of-document state, assembled for the read path. */

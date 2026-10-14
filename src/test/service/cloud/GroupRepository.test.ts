@@ -526,9 +526,10 @@ it("a new tree-backed group keeps its seating and writes the rest beside the doc
 it("deleting a group takes its state with it", async () => {
     // Keyed by groupId, so leaving them behind leaks the group's shape and never reclaims the space.
     const {repository, state} = createRepository();
-    await repository.deleteGroup(groupId);
+    await repository.deleteGroup({id: groupId, contextId});
     hasOneCall(state.deleteState);
     hasOneCall(state.markDeleted);
+    assert.deepStrictEqual([...state.markDeleted.mock.calls[0]], [groupId, contextId], "the tombstone is filed under the group's context");
 });
 
 it("SECURITY: a deleted group's id cannot be created again", async () => {

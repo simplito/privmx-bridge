@@ -461,9 +461,15 @@ export class GroupStateRepository {
         ]);
     }
     
-    // ponytail: one row per deleted group, never pruned; prune with the context if that ever matters.
-    async markDeleted(groupId: types.group.GroupId): Promise<void> {
-        await this.tombstones.insert({id: groupId});
+    /** Pruned with its context (`deleteTombstonesOfContext`): context ids are Bridge uuids that never return, so no
+     *  group can be created under a pruned id. */
+    async markDeleted(groupId: types.group.GroupId, contextId: types.context.ContextId): Promise<void> {
+        await this.tombstones.insert({id: groupId, contextId});
+    }
+    
+    /** The tombstones of a deleted context's groups: nobody can create a group there any more, so they guard nothing. */
+    async deleteTombstonesOfContext(contextId: types.context.ContextId): Promise<void> {
+        await this.tombstones.deleteMany(q => q.eq("contextId", contextId));
     }
     
     async wasDeleted(groupId: types.group.GroupId): Promise<boolean> {
