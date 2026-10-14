@@ -473,6 +473,21 @@ it("SECURITY: a rotation whose statement is wrong or signed by somebody else is 
     assert.deepStrictEqual(groupRotationRateLimiter.kept, Array(4).fill(`refused|${groupId}|janek`));
 });
 
+it("SECURITY: a rotation refuses a new epoch under the grant key of an earlier one", async () => {
+    // T4-24, the rotation twin of the removal check: the key republished would reopen the epoch to whoever held it.
+    const {groupService, groupRepository} = createGroupService();
+    mock(groupRepository, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === groupPubKey) as never);
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
+        assert.fail("expected a refusal");
+    }
+    catch (e) {
+        expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
+        assert.strictEqual((e as AppException).data, "groupPubKey of an earlier epoch");
+    }
+    hasNoCalls(groupRepository.generateNewGroupKey);
+});
+
 it("Should reject generateNewGroupKey with a stale expectedKeyVersion (ROTATED_ALREADY)", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {

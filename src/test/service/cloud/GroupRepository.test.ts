@@ -464,6 +464,21 @@ it("cutting an era drops the key material for the epochs it closes", async () =>
     hasOneCall(state.deleteRungsTargetingBelow);
 });
 
+it("SECURITY: cutting an era or abandoning history leaves every statement in place", async () => {
+    // The T4-24 check reads the statements for every key the group ever had; if either of these took statements
+    // with it, the keys below the floor would be forgotten again.
+    const deletes = (state: ReturnType<typeof createRepository>["state"]) => (Object.keys(state) as (keyof typeof state)[])
+        .filter(name => /^delete|^markDeleted$/.test(name) && state[name].mock.calls.length > 0).sort();
+    const cut = createRepository();
+    await cut.repository.cutEra(group(), 4);
+    assert.deepStrictEqual(deletes(cut.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
+    const abandoned = createRepository();
+    await abandoned.repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
+    assert.deepStrictEqual(deletes(abandoned.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
+    hasNoCalls(cut.state.deleteState);
+    hasNoCalls(abandoned.state.deleteState);
+});
+
 it("pruning the archive touches no key material", async () => {
     // The other direction, and deliberately so: pruning is housekeeping, and a member holding an old epoch key
     // locally has to keep being able to verify it and open what it wraps.

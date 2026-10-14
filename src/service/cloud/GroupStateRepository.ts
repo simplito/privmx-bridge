@@ -245,9 +245,15 @@ export class GroupStateRepository {
         return this.epochKeys.query(q => q.eq("groupId", groupId)).sort("keyVersion", true).array();
     }
     
-    /** Whether an epoch of the group still on record was born with `groupPubKey` (T4-24). */
+    /** Whether any statement of the group carries `groupPubKey` (T4-24) — every epoch it ever had, below the era floor
+     *  included: statements are never cut (clients verify the chain from seq 1), epoch rows are. If statements are ever
+     *  pruned, the opener of every epoch must stay, or this check silently weakens again. */
     async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
-        return await this.epochKeys.count(q => q.and(q.eq("groupId", groupId), q.eq("groupPubKey", groupPubKey))) > 0;
+        const hits = await this.commits.query(q => q.and(
+            q.eq("groupId", groupId),
+            q.eq("statement.groupPubKey" as keyof db.group.GroupTreeCommit, groupPubKey as never),
+        )).props("id").limit(1).array();
+        return hits.length > 0;
     }
     
     /** Writes the row of an epoch being started. An upsert, so a migration re-run lands on the same row. */

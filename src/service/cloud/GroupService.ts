@@ -730,8 +730,8 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    /** A new epoch's grant key is not an earlier epoch's: republishing one would reopen the epoch to whoever held it
-     *  then, a member removed since included (T4-24). */
+    /** A new epoch's grant key is not any earlier epoch's, below the era floor included: republishing one would reopen
+     *  the epoch to whoever held it then, a member removed since included (T4-24). */
     private async assertGroupPubKeyIsNew(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group,

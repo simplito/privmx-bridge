@@ -291,6 +291,19 @@ it("epoch rows: one per (group, epoch), read in order, cut as a range below the 
     assert.deepStrictEqual(captured.epochKeys.filter, {groupId: groupId});
 });
 
+it("SECURITY: a new epoch's key is looked up among every statement of the group, which no era cut removes", async () => {
+    // Epoch rows go below the floor (`cutEra`, `abandonHistory`), so a check against them forgot every key down
+    // there — keys every member of those epochs, removed ones included, holds the private half of (T4-24).
+    const key = "EarlierGroupPubKey" as unknown as types.cloud.GroupPubKey;
+    const {repository, captured} = createStateRepository({commits: [{id: GroupStateRepository.treeCommitId(groupId, 1)} as db.group.GroupTreeCommit]});
+    assert.strictEqual(await repository.hasEpochWithGroupPubKey(groupId, key), true);
+    assert.deepStrictEqual(captured.commits.filter, {$and: [{groupId: groupId}, {"statement.groupPubKey": key}]});
+    assert.strictEqual(captured.commits.limit, 1, "the first hit answers it");
+    assert.strictEqual(captured.epochKeys.filter, null, "epoch rows are not consulted");
+    const fresh = createStateRepository();
+    assert.strictEqual(await fresh.repository.hasEpochWithGroupPubKey(groupId, key), false);
+});
+
 it("SECURITY: the roster trail is served a bounded page at a time, oldest first", async () => {
     // Entries carry up to 1 MB each; an unbounded read of a long-lived group's trail ran a worker out of memory.
     const {repository, captured} = createStateRepository({history: [{version: 3} as unknown as db.group.GroupHistoryEntry]});
