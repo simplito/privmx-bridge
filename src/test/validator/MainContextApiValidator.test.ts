@@ -16,6 +16,7 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { Base58 } from "../../utils/crypto/Base58";
 import { buildTree, rotationGrantEdge, rungsFor, signStatement, userKeys } from "../testUtils/TreeFixtures";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
@@ -86,6 +87,47 @@ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
     const model = {...validGroupCreate(), groupPubKey: "not-a-valid-ecc-key!!!" as types.cloud.GroupPubKey};
     const result = Utils.try(() => validator().validate("groupCreate", model));
     expect(result.success).toBe(false);
+});
+
+/** The same point spelled every way but compressed, plus a point off the curve; elliptic decodes them all. */
+function nonCanonicalSpellings(key: types.cloud.GroupPubKey): Record<string, types.cloud.GroupPubKey> {
+    const point = ECUtils.publicFromBase58DER(key as unknown as types.core.EccPubKey)!;
+    const uncompressed = Buffer.from(point.getPublic(false, "hex"), "hex");
+    const hybrid = Buffer.from(uncompressed);
+    hybrid[0] = 0x06 + uncompressed[64] % 2;
+    const offCurve = Buffer.from(uncompressed);
+    offCurve[64] = offCurve[64] % 2 === 0 ? offCurve[64] + 1 : offCurve[64] - 1;
+    const encode = (bytes: Buffer) => Base58.encodeWithChecksum(bytes) as unknown as types.cloud.GroupPubKey;
+    return {uncompressed: encode(uncompressed), hybrid: encode(hybrid), offCurve: encode(offCurve)};
+}
+
+it("SECURITY: a group public key in any encoding but the compressed one is refused", () => {
+    // Keys are compared as strings (T4-24, the statement's key against the model's): the same key re-encoded
+    // would pass for a new one everywhere.
+    const tree = buildTree(["janek"], 1);
+    const calls: [string, (key: types.cloud.GroupPubKey) => unknown][] = [
+        ["groupCreate", key => ({...validGroupCreate(), groupPubKey: key, commit: {...validStatement("create"), groupPubKey: key}})],
+        ["groupGenerateNewKey", key => ({
+            id: groupId, groupPubKey: key, data: "someData", keyId: keyId, grantEdge: rotationGrantEdge(tree, 2),
+            commit: {...validStatement("rotate"), groupPubKey: key}, rungs: rungsFor(2, 1), expectedKeyVersion: 1, expectedRosterVersion: 1,
+        })],
+        ["groupRemoveMembers", key => ({
+            id: groupId, userIds: ["ola"], groupPubKey: key, keyId: keyId, data: "someData", transition: validRemovalTransition(),
+            commit: {...validStatement("remove"), groupPubKey: key}, rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung"}],
+            expectedKeyVersion: 1, expectedRosterVersion: 1,
+        })],
+    ];
+    for (const [method, model] of calls) {
+        expect(Utils.try(() => validator().validate(method, model(groupPubKey))).success).toBe(true);
+        // The models differ from the accepted one in the key alone, so the key is what is refused.
+        for (const key of Object.values(nonCanonicalSpellings(groupPubKey))) {
+            expect(Utils.try(() => validator().validate(method, model(key))).success).toBe(false);
+        }
+        // The statement's own key is checked too, not only the model's.
+        const statementOnly = model(groupPubKey) as {commit: types.cloud.GroupTreeCommitStatement};
+        statementOnly.commit = {...statementOnly.commit, groupPubKey: nonCanonicalSpellings(groupPubKey).uncompressed};
+        expect(Utils.try(() => validator().validate(method, statementOnly)).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupCreate rejects a leftover meta field", () => {

@@ -41,6 +41,8 @@ export class TypesValidator {
     
     byteBuffer: CustomValidatorWithLength;
     eccPub: Validator;
+    /** The canonical public key: one string per point. Use it for every public key the Bridge compares as a string. */
+    eccPubCompressed: Validator;
     base64: CustomValidatorWithLength;
     bi10: Validator;
     bi16: Validator;
@@ -162,6 +164,17 @@ export class TypesValidator {
             }
             return;
         });
+        this.eccPubCompressed = this.builder.createCustom(value => {
+            if (typeof(value) !== "string") {
+                throw new Error("Expected string");
+            }
+            // One string per key: T4-24 compares keys as strings, and a re-encoded key (uncompressed, hybrid) passes
+            // for a new one. A throw from the decode (a compressed x with no point) is a refusal too, as in `eccPub`.
+            const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
+            if (ecc === null || ECUtils.publicToBase58DER(ecc) !== value) {
+                throw new Error("Expected a compressed Ecc public key");
+            }
+        });
         this.base64 = this.builder.createCustom((value, validator, checker) => {
             if (typeof(value) !== "string") {
                 throw new Error("Expected string");
@@ -274,7 +287,7 @@ export class TypesValidator {
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
-        this.groupPubKey = this.eccPub;
+        this.groupPubKey = this.eccPubCompressed;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
             generation: this.intNonNegative,
