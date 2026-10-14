@@ -291,7 +291,7 @@ export class TypesValidator {
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
             generation: this.intNonNegative,
-            publicKey: this.eccPub,
+            publicKey: this.eccPubCompressed,
             // Accepted for symmetry with what `groupGet` serves, and ignored: the bridge sets it to the seq of the
             // statement the node arrives with.
             setBy: this.builder.optional(this.intNonNegative),
@@ -338,7 +338,7 @@ export class TypesValidator {
             // Absent when the node has no record yet: there is no generation it was read at.
             fromGeneration: this.builder.optional(this.intNonNegative),
             generation: this.intNonNegative,
-            publicKey: this.eccPub,
+            publicKey: this.eccPubCompressed,
         });
         this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
         // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
@@ -389,7 +389,7 @@ export class TypesValidator {
             path: this.builder.createListWithMaxLength(this.builder.createObject({
                 nodeIndex: this.intNonNegative,
                 generation: this.intNonNegative,
-                publicKey: this.eccPub,
+                publicKey: this.eccPubCompressed,
                 subtreeHash: sha256Hex,
             }), maxCommitNodes),
             addedUsers: memberList,

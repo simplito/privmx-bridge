@@ -411,6 +411,22 @@ it("ContextApiValidator.groupRemoveMembers valid", () => {
     expect(result.success).toBe(true);
 });
 
+it("SECURITY: a tree node public key in any encoding but the compressed one is refused", () => {
+    // NODE_NOT_NEW compares node keys as strings: a replaced node key re-encoded would pass for a fresh one.
+    const removal = (publicKey: types.core.EccPubKey) => {
+        const transition = validRemovalTransition();
+        transition.refreshedNodes[0].publicKey = publicKey;
+        return {
+            id: groupId, userIds: ["ola"], groupPubKey: groupPubKey, keyId: keyId, data: "someData", transition: transition,
+            commit: validStatement("remove"), rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung"}],
+            expectedKeyVersion: 1, expectedRosterVersion: 1,
+        };
+    };
+    expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(nodePubKey))).success).toBe(true);
+    const uncompressed = ECUtils.publicToBase58DER(ECUtils.publicFromBase58DER(nodePubKey)!, false);
+    expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(uncompressed))).success).toBe(false);
+});
+
 it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () => {
     const model = {
         id: groupId,
