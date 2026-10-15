@@ -630,37 +630,30 @@ export class GroupRepository {
     }
     
     /**
-     * The policy alone, and no CAS.
+     * A policy commit: the new policy and its statement, under the same CAS on epoch, roster version and
+     * `treeCommitSeq` as every other commit, so it lands only on the state its statement extends (T4-10).
      *
-     * The policy lives outside the client's signed envelope, so there is no version a client could send and
-     * nothing to compare — `_id` alone, last write wins. It appends **no** entry in either plane: that is the
-     * load-bearing part, because moving a counter a client's envelope pins without writing the entry that
-     * commits it would leave the group unreadable.
+     * It moves neither metadata counter and appends no entry in either plane: moving a counter a client's envelope
+     * pins without writing the entry that commits it would leave the group unreadable. The policy's history is the
+     * statements themselves (create and policy ops carry it).
      *
-     * `null` means the group was deleted between the caller's read and here, not a lost race.
+     * @returns null on a CAS miss, in which case nothing has been written
      */
-    async updatePolicy(oldGroup: db.group.Group, modifier: types.cloud.UserId,
-        policy: types.cloud.ContainerPolicy): Promise<db.group.Group|null> {
+    async updatePolicyWithStatement(oldGroup: db.group.Group, modifier: types.cloud.UserId,
+        policy: types.cloud.ContainerPolicy, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
         const changes: Partial<db.group.Group> = {
             policy: policy,
+            treeCommitSeq: statement.seq,
             lastModifier: modifier,
             lastModificationDate: DateUtils.now(),
         };
-        const result = await this.repository.collection.updateOne(
-            {_id: oldGroup.id},
-            {$set: this.toDbChanges(changes)},
-            this.repository.getOptions(),
-        );
-        return result.matchedCount === 0 ? null : {...oldGroup, ...changes};
+        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
+            return null;
+        }
+        await this.state.insertTreeCommit(oldGroup.id, statement);
+        return {...oldGroup, ...changes};
     }
     
-    /**
-     * `updateOne` through the raw driver, with 11000 mapped to `DbDuplicateError`.
-     *
-     * `MongoObjectRepository` wraps duplicates only for `insert`/`update`, and these writes need a filter it
-     * cannot express — so without this the service's `DbDuplicateError` catch would be decorative and a
-     * duplicate `clientResourceId` would surface as a raw driver error.
-     */
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
         try {
             return await this.repository.collection.updateOne(

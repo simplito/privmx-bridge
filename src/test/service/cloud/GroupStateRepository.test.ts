@@ -468,7 +468,7 @@ async function commitThroughStorage(tree: types.cloud.GroupTreeState, keyVersion
 function statement(seq: number): types.cloud.GroupTreeCommitStatement {
     return {
         seq, prevDigest: "", op: seq === 1 ? "create" : "selfUpdate", groupId, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: "pk" as types.cloud.GroupPubKey,
-        rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: "janek" as types.cloud.UserId,
+        rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: "janek" as types.cloud.UserId,
         committerPubKey: "pub" as types.cloud.UserPubKey, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], signature: "sig" as types.core.EccSignature,
     };
 }

@@ -277,15 +277,29 @@ export interface StatementContext {
     date?: number;
     /** The statement this one extends; none at seq 1. */
     previous?: types.cloud.GroupTreeCommitStatement;
+    /** The group's policy after a creation (default `{}`). A policy commit carries its op's. */
+    policy?: types.cloud.ContainerPolicy;
+    /** The group's creator, for `policyHash` (default: the committer at creation, else the committer). */
+    creator?: string;
+    /** Overrides the derived `policyHash` (default: a creation's or policy op's own policy, else the extended
+     *  statement's, else `{}` with the creator). */
+    policyHash?: string;
 }
 
+/** Every op a statement can name: the planned ones, plus those that move no node. */
+export type StatementOp = PlanOp|{kind: "rotate", committer: string}|{kind: "policy", committer: string, policy: types.cloud.ContainerPolicy};
+
 /** The signed statement an honest committer sends with `plan`. */
-export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: string}, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
+export function statementFor(plan: Plan, op: StatementOp, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
     const sorted = (values: string[]) => TreeHash.sortedUnique(values.map(userId));
     // A creation has no deltas: its `rosterHash` binds the genesis roster.
     const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : [];
     const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : [];
     const hashes = TreeHash.childHashes(TreeHash.of(plan.after));
+    const creator = userId(ctx.creator ?? op.committer);
+    const policy = op.kind === "create" ? (ctx.policy ?? {}) : op.kind === "policy" ? op.policy : undefined;
+    const policyHash = ctx.policyHash
+        ?? (policy !== undefined || !ctx.previous ? CommitStatement.policyHash(policy ?? {}, creator).toString("hex") : ctx.previous.policyHash);
     return signStatement({
         seq: plan.seq,
         prevDigest: ctx.previous ? CommitStatement.digest(ctx.previous) : "",
@@ -298,6 +312,7 @@ export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: 
         rosterVersion: ctx.rosterVersion,
         rosterHash: TreeHash.rosterHash(ctx.users, ctx.managers).toString("hex"),
         treeHash: TreeHash.treeHash(TreeHash.of(plan.after)).toString("hex"),
+        policyHash,
         committer: userId(op.committer),
         committerPubKey: userKeys(op.committer).pub58,
         committerSeat: plan.after.leafAssignment.indexOf(userId(op.committer)),
@@ -306,6 +321,7 @@ export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: 
         addedUsers: sorted(addedUsers),
         addedManagers: sorted(addedManagers),
         removed: sorted(op.kind === "remove" ? op.removed : []),
+        ...(policy !== undefined ? {policy} : {}),
     });
 }
 
@@ -320,6 +336,12 @@ export function creationStatement(tree: types.cloud.GroupTreeState, creator: str
 /** A rotation's statement: the tree as it stands, an empty path, the next seq and epoch. */
 export function rotationStatement(tree: types.cloud.GroupTreeState, seq: number, newKeyVersion: number, committer: string, ctx: StatementContext) {
     return statementFor({refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion: newKeyVersion, seq}, {kind: "rotate", committer}, ctx);
+}
+
+/** A policy commit's statement: the tree, epoch and roster as they stand, an empty path, the next seq. `ctx.creator`
+ *  is the group's creator, which the new `policyHash` names. */
+export function policyStatement(tree: types.cloud.GroupTreeState, seq: number, keyVersion: number, committer: string, policy: types.cloud.ContainerPolicy, ctx: StatementContext) {
+    return statementFor({refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion, seq}, {kind: "policy", committer, policy}, ctx);
 }
 
 /** The bridge's description of `op` — the caller and the subjects, nothing the client computed. */
@@ -402,6 +424,7 @@ export interface ServedGroup {
     rosterVersion: number;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
+    creator?: types.cloud.UserId;
     treeCommit?: types.cloud.GroupTreeCommitStatement;
 }
 
@@ -422,6 +445,21 @@ export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: typ
         ...(served.treeCommit ? {previous: served.treeCommit} : {}),
     });
     return {plan, commit};
+}
+
+/** The `groupUpdatePolicy` request `committer` sends to set `policy` on a served group (scope `"plan"` or `"full"`). */
+export function policyCommitAgainst(served: ServedGroup, committer: string, policy: types.cloud.ContainerPolicy) {
+    const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+    const commit = policyStatement(tree, (served.treeCommit?.seq ?? 0) + 1, served.keyVersion, committer, policy, {
+        groupId: served.id,
+        groupPubKey: served.groupPubKey,
+        rosterVersion: served.rosterVersion,
+        users: served.users,
+        managers: served.managers,
+        ...(served.creator ? {creator: served.creator} : {}),
+        ...(served.treeCommit ? {previous: served.treeCommit, date: Math.max(DateUtils.now(), served.treeCommit.date)} : {}),
+    });
+    return {id: served.id as types.group.GroupId, commit, expectedKeyVersion: served.keyVersion, expectedRosterVersion: served.rosterVersion};
 }
 
 /**

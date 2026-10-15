@@ -35,6 +35,9 @@ export interface ExpectedStatement {
     groupPubKey: types.cloud.GroupPubKey;
     rosterVersion: number;
     rosterHash: Buffer;
+    /** `CommitStatement.policyHash` of the group's policy after the commit: the stored one, or the one a creation or
+     *  a policy commit carries. */
+    policyHash: Buffer;
     /** The tree after the commit: the statement's `treeHash` and each path entry's `subtreeHash` are read off it. */
     tree: HashableTree;
     committer: types.cloud.UserId;
@@ -70,7 +73,35 @@ export class CommitStatement {
         return !Number.isSafeInteger(date) || date < notBefore || date < now - tolerance || date > Math.max(now + tolerance, notBefore);
     }
     
-    static readonly OP_CODES: Record<types.cloud.GroupTreeCommitOp, number> = {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5};
+    static readonly OP_CODES: Record<types.cloud.GroupTreeCommitOp, number> = {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5, policy: 6};
+    
+    /** The rules a v3 group's statements sign, and what an absent, `inherit` or `default` value means for them.
+     *  Frozen with the format and deliberately NOT `DefaultContextPolicy`: the context only holds a veto (T4-10). */
+    static readonly V3_POLICY_DEFAULTS = {
+        update: "manager",
+        rotateKeys: "manager",
+        updatePolicy: "manager",
+        ownerCanBeRemovedFromManagers: "yes",
+    } as const satisfies Record<string, types.cloud.PolicyEntry>;
+    
+    /** A signed rule of `policy`, verbatim, or its v3 default. */
+    static resolve(policy: types.cloud.ContainerPolicy|undefined, field: keyof typeof CommitStatement.V3_POLICY_DEFAULTS): types.cloud.PolicyEntry {
+        const value = policy?.[field];
+        return value === undefined || value === "inherit" || value === "default" ? CommitStatement.V3_POLICY_DEFAULTS[field] : value;
+    }
+    
+    /**
+     * `PH`: what every statement signs of the group's policy, the four rules that govern commits and the creator the
+     * `owner` atom names. `H("pmx-group-policy\0" || lp(creator) || lp(update) || lp(rotateKeys) || lp(updatePolicy)
+     * || lp(ownerCanBeRemovedFromManagers))`. The rest of the policy is the bridge's alone and is not hashed.
+     */
+    static policyHash(policy: types.cloud.ContainerPolicy|undefined, creator: types.cloud.UserId): Buffer {
+        const writer = new ByteWriter().tag("pmx-group-policy").lp(creator);
+        for (const field of ["update", "rotateKeys", "updatePolicy", "ownerCanBeRemovedFromManagers"] as const) {
+            writer.lp(CommitStatement.resolve(policy, field));
+        }
+        return Crypto.sha256(writer.bytes());
+    }
     
     /**
      * A group's id, derived rather than generated: lowercase hex of `H("pmx-group-id\0" || lp(contextId) || lp(resourceId))`.
@@ -98,6 +129,7 @@ export class CommitStatement {
             .u64(cs.rosterVersion)
             .raw(Buffer.from(cs.rosterHash, "hex"))
             .raw(Buffer.from(cs.treeHash, "hex"))
+            .raw(Buffer.from(cs.policyHash, "hex"))
             .lp(cs.committer)
             .lp(cs.committerPubKey)
             .u32(cs.committerSeat)
@@ -149,6 +181,13 @@ export class CommitStatement {
         if (!CommitStatement.isHash(cs.rosterHash) || cs.rosterHash !== expected.rosterHash.toString("hex")) {
             bad("rosterHash");
         }
+        if (!CommitStatement.isHash(cs.policyHash) || cs.policyHash !== expected.policyHash.toString("hex")) {
+            bad("policyHash");
+        }
+        // The policy object travels with exactly the ops that set it; anywhere else it would be served as if signed.
+        if ((cs.policy !== undefined) !== (expected.op === "create" || expected.op === "policy")) {
+            bad("policy");
+        }
         for (const field of ["addedUsers", "addedManagers", "removed"] as const) {
             if (!CommitStatement.sameList(cs[field], TreeHash.sortedUnique(expected[field]))) {
                 bad(field);
@@ -185,7 +224,7 @@ export class CommitStatement {
      */
     static checkStoredState(
         group: {treeCommitSeq?: number, keyVersion: number, groupPubKey: types.cloud.GroupPubKey, rosterVersion: number,
-            users: string[], managers: string[]},
+            users: string[], managers: string[], creator: types.cloud.UserId, policy?: types.cloud.ContainerPolicy},
         tree: types.cloud.GroupTreeState,
         statements: Map<number, types.cloud.GroupTreeCommitStatement>,
     ): string[] {
@@ -200,6 +239,9 @@ export class CommitStatement {
         }
         if (latest.rosterHash !== TreeHash.rosterHash(group.users, group.managers).toString("hex")) {
             problems.push("the roster does not hash to the latest statement's rosterHash");
+        }
+        if (latest.policyHash !== CommitStatement.policyHash(group.policy ?? {}, group.creator).toString("hex")) {
+            problems.push("the stored policy does not hash to the latest statement's policyHash");
         }
         if (latest.keyVersion !== group.keyVersion || latest.groupPubKey !== group.groupPubKey || latest.rosterVersion !== group.rosterVersion) {
             problems.push("the latest statement names another epoch, grant key or roster version");

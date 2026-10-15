@@ -205,7 +205,7 @@ export interface GroupTreeSelfUpdateTransition {
     edges: GroupTreeEdge[];
 }
 
-export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate";
+export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy";
 
 /** One node a commit re-keyed, as the committer signed it. */
 export interface GroupTreeCommitPathEntry {
@@ -241,6 +241,8 @@ export interface GroupTreeCommitStatement {
     rosterHash: string;
     /** Hex SHA-256 of the tree after the commit. */
     treeHash: string;
+    /** Hex `CommitStatement.policyHash` of the group's policy after the commit: the four commit rules and the creator. */
+    policyHash: string;
     committer: UserId;
     /** The committer's context public key when it signed — what the signature verifies against. */
     committerPubKey: UserPubKey;
@@ -250,6 +252,9 @@ export interface GroupTreeCommitStatement {
     addedUsers: UserId[];
     addedManagers: UserId[];
     removed: UserId[];
+    /** The group's whole policy after the commit, present exactly on `create` and `policy`. Not signed itself: bound
+     *  by `policyHash`, which covers the rules that govern commits. */
+    policy?: ContainerPolicy;
     /** Base64 compact ECDSA (65 bytes) over SHA-256 of the signed bytes. */
     signature: types.core.EccSignature;
 }

@@ -11,7 +11,8 @@ limitations under the License.
 
 import "q2-test";
 import { BasePolicy } from "../../../service/cloud/BasePolicy";
-import { PolicyService } from "../../../service/cloud/PolicyService";
+import { DefaultContextPolicy, PolicyService } from "../../../service/cloud/PolicyService";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import * as db from "../../../db/Model";
 import * as types from "../../../types";
 import { AppException } from "../../../api/AppException";
@@ -115,4 +116,15 @@ it("a context may set a group policy at all", async () => {
     // The field was declared and validated but missing from the request validator, so every attempt to configure
     // it was refused and these defaults could not be overridden.
     new PolicyService().validateContextPolicy({group: {listAll: "all", get: "manager"}});
+});
+
+it("group: inherit and default resolve to the frozen v3 rules, which are today's context defaults", async () => {
+    // T4-10: a group's commit rules are signed, so `inherit`/`default` resolve against a table frozen with the v3
+    // format, never against the context. Pinned to the shipped context defaults so a change to either is deliberate.
+    for (const field of ["update", "rotateKeys", "updatePolicy", "ownerCanBeRemovedFromManagers"] as const) {
+        for (const value of [undefined, "inherit", "default"] as const) {
+            expect(CommitStatement.resolve({[field]: value}, field)).toBe(CommitStatement.V3_POLICY_DEFAULTS[field]);
+        }
+        expect(CommitStatement.V3_POLICY_DEFAULTS[field]).toBe(DefaultContextPolicy.group![field]!);
+    }
 });

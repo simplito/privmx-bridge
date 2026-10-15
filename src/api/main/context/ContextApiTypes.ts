@@ -124,7 +124,6 @@ export interface GroupCreateModel {
      * exist yet, and the server files the entry against the group it is creating.
      */
     groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">;
-    policy?: types.cloud.ContainerPolicy;
     /**
      * The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing.
      *
@@ -333,16 +332,20 @@ export interface GroupUpdatePrivateMetaModel {
 }
 
 /**
- * Sets the group's container policy.
+ * Sets the group's container policy, as a signed commit (op `policy`): the rules that govern commits are part of the
+ * signed group state, so a policy change is chained, CAS-ed and checked like any other commit (T4-10).
  *
- * No version and no CAS: the policy lives outside the client's signed envelope, so there is no counter a client
- * could know and nothing for it to re-verify. Last write wins, and neither metadata plane moves — deliberately,
- * or a policy change would strand the epoch of a plane it did not rewrite.
+ * Neither metadata plane moves and no epoch advances; the tree and roster stay as they are.
  */
 export interface GroupUpdatePolicyModel {
     id: types.group.GroupId;
-    /** Required. `{}` clears to the context defaults; absent would be a request that asks for nothing. */
-    policy: types.cloud.ContainerPolicy;
+    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new policy in
+     *  `commit.policy` (`{}` resets every rule to the v3 defaults the statements sign). */
+    commit: types.cloud.GroupTreeCommitStatement;
+    /** Current epoch (CAS). */
+    expectedKeyVersion: number;
+    /** Current roster version (CAS). */
+    expectedRosterVersion: number;
 }
 
 /**

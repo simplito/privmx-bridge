@@ -129,7 +129,7 @@ function createRepository(options: {casMiss?: boolean, rereads?: db.group.Group[
 function statement(seq: number, op: types.cloud.GroupTreeCommitOp = "remove"): types.cloud.GroupTreeCommitStatement {
     return {
         seq, prevDigest: "", op, groupId: groupId, treeVersion: 2, date: 0, keyVersion: EPOCH + 1, groupPubKey: nextGroupPubKey, rosterVersion: 6,
-        rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: janek,
+        rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: janek,
         committerPubKey: "pub" as types.cloud.UserPubKey, committerSeat: 0, path: [],
         addedUsers: [], addedManagers: [], removed: [], signature: "sig" as types.core.EccSignature,
     };
@@ -408,29 +408,31 @@ it("a group that keeps moving is refused after a bounded number of reads", async
     assert.strictEqual((state.getTree as unknown as {mock: {calls: unknown[]}}).mock.calls.length, GroupRepository.FULL_STATE_ATTEMPTS);
 });
 
-it("a policy update sets the policy, moves no counter and appends no entry", async () => {
+it("a policy commit stores the policy and its statement under the commit CAS, and moves no other counter", async () => {
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
-    // entry that commits it would leave the group unreadable. So: neither.
+    // entry that commits it would leave the group unreadable. So: neither. The statement chain moves (T4-10).
     const {repository, state, updates, replacements} = createRepository();
-    const result = await repository.updatePolicy(group(), janek, {get: "all"} as types.cloud.ContainerPolicy);
+    const result = await repository.updatePolicyWithStatement(group(), janek, {get: "all"} as types.cloud.ContainerPolicy, statement(4, "policy"));
     assert.ok(result);
     assert.strictEqual(replacements.length, 0);
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
-        "lastModificationDate", "lastModifier", "policy",
+        "lastModificationDate", "lastModifier", "policy", "treeCommitSeq",
     ]);
-    // No CAS: the policy is outside the signed envelope, so there is no version a client could send.
-    assert.deepStrictEqual(updates[0].filter, {_id: groupId});
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5, treeCommitSeq: 3});
     assert.strictEqual(result.publicMetaVersion, 7);
     assert.strictEqual(result.privateMetaVersion, 11);
+    assert.strictEqual(result.treeCommitSeq, 4);
+    hasOneCall(state.insertTreeCommit);
     hasNoCalls(state.writePublicMetaEntry);
     hasNoCalls(state.writePrivateMetaEntry);
     hasNoCalls(state.insertHistoryEntry);
 });
 
-it("a policy update on a group that has gone away reports it", async () => {
-    const {repository} = createRepository({casMiss: true});
-    const result = await repository.updatePolicy(group(), janek, {} as types.cloud.ContainerPolicy);
-    assert.strictEqual(result, null, "the caller turns this into GROUP_DOES_NOT_EXIST");
+it("a policy commit that loses the CAS stores nothing", async () => {
+    const {repository, state} = createRepository({casMiss: true});
+    const result = await repository.updatePolicyWithStatement(group(), janek, {} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    assert.strictEqual(result, null, "the caller turns this into ROTATED_ALREADY");
+    hasNoCalls(state.insertTreeCommit);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

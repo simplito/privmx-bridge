@@ -115,6 +115,7 @@ const STATEMENT: Omit<types.cloud.GroupTreeCommitStatement, "signature"> = {
     rosterVersion: 9,
     rosterHash: TreeHash.rosterHash(ROSTER_USERS, ROSTER_MANAGERS).toString("hex"),
     treeHash: TreeHash.treeHash(TREE_A).toString("hex"),
+    policyHash: "44".repeat(32),
     committer: "alice" as types.cloud.UserId,
     committerPubKey: PK,
     committerSeat: 0,
@@ -127,22 +128,22 @@ const STATEMENT: Omit<types.cloud.GroupTreeCommitStatement, "signature"> = {
 describe("CommitStatement signed bytes", () => {
     it("matches the vector byte for byte", () => {
         const bytes = CommitStatement.signedBytes(STATEMENT);
-        assert.strictEqual(bytes.length, 456);
+        assert.strictEqual(bytes.length, 488);
         assert.strictEqual(bytes.toString("hex"), [
             "706d782d747265652d636f6d6d697400000000056772702d31000000020000000000000007000000203333333333333333333333",
             "3333333333333333333333333333333333333333330300000199c82cc00000000000000000040000000438506e78000000000000",
             "000926b780f567966ff49d9686e9dab347410f825ecf6ece2da2940e510da5ece2839ccf0a6b8e97cb66f4d6d5e9553f93f4c836",
-            "1acff447b97e4701b98f1e141b3d00000005616c69636500000032356a4556766a4554793652316e706e72316d354c386f663868",
+            "1acff447b97e4701b98f1e141b3d" + "44".repeat(32) + "00000005616c69636500000032356a4556766a4554793652316e706e72316d354c386f663868",
             "675a666866546a784d793271516667426d7336647a7976575400000000000000020000001f0000000200000032356a4556766a45",
             "54793652316e706e72316d354c386f663868675a666866546a784d793271516667426d7336647a79765754111111111111111111",
             "11111111111111111111111111111111111111111111110000003f000000060000003236654c4272506534457347656744557234",
             "724d5134524c71666a6a39416862716d706147453358456a65735632584857637522222222222222222222222222222222222222",
             "2222222222222222222222222200000000000000000000000200000003626f62000000046361726c",
         ].join(""));
-        assert.strictEqual(Crypto.sha256(bytes).toString("hex"), "60a82c039ea4b0fc6646a719651f2d856a8aac9796f00bed43272dac583dfd71");
+        assert.strictEqual(Crypto.sha256(bytes).toString("hex"), "32c6eca6e7b91eabbea0d42cc4aa105a87d4fb934539aadcbf982c5edd4125fb");
     });
     
     it("op codes", () => {
-        assert.deepStrictEqual(CommitStatement.OP_CODES, {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5});
+        assert.deepStrictEqual(CommitStatement.OP_CODES, {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5, policy: 6});
     });
 });

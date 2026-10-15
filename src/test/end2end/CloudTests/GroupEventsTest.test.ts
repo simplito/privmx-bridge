@@ -12,7 +12,7 @@ limitations under the License.
 import { BaseTestSet, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
-import { buildTree, creationStatement, registerUserKey } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, policyCommitAgainst, registerUserKey, ServedGroup } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
@@ -134,7 +134,8 @@ export class GroupEventsTest extends BaseTestSet {
         assert(privateEvent.changeKind === "privateMetaUpdated", `changeKind mismatch: ${JSON.stringify(privateEvent.changeKind)}`);
         assert(privateEvent.privateMetaVersion === 2, "the private counter must have advanced");
         
-        await this.apis.contextApi.groupUpdatePolicy({id: groupId, policy: {get: "all" as types.cloud.PolicyEntry}});
+        const {group} = await this.apis.contextApi.groupGet({groupId, scope: "plan"});
+        await this.apis.contextApi.groupUpdatePolicy(policyCommitAgainst(group as unknown as ServedGroup, testData.userId, {get: "all" as types.cloud.PolicyEntry}));
         await this.settle();
         const afterPolicy = this.received.filter(e => e.type === "groupUpdated");
         const policyEvent = afterPolicy[afterPolicy.length - 1].data;

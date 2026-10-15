@@ -29,10 +29,11 @@ const resourceId = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f" as types.core.ClientRe
 function validStatement(op: types.cloud.GroupTreeCommitOp = "add"): types.cloud.GroupTreeCommitStatement {
     return signStatement({
         seq: 2, prevDigest: "12".repeat(32), op, groupId: groupId, treeVersion: 2, date: 1760000000000, keyVersion: 1, groupPubKey: groupPubKey, rosterVersion: 2,
-        rosterHash: "ab".repeat(32), treeHash: "cd".repeat(32), committer: "janek" as types.cloud.UserId,
+        rosterHash: "ab".repeat(32), treeHash: "cd".repeat(32), policyHash: "99".repeat(32), committer: "janek" as types.cloud.UserId,
         committerPubKey: userKeys("janek").pub58, committerSeat: 0,
         path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey, subtreeHash: "ef".repeat(32)}],
         addedUsers: ["nowy" as types.cloud.UserId], addedManagers: [], removed: [],
+        ...(op === "create" || op === "policy" ? {policy: {update: "user"}} : {}),
     });
 }
 
@@ -162,9 +163,22 @@ it("ContextApiValidator.groupUpdatePrivateMeta valid", () => {
 });
 
 it("ContextApiValidator.groupUpdatePolicy valid", () => {
-    const model: contextApi.GroupUpdatePolicyModel = {id: groupId, policy: {}};
+    const model: contextApi.GroupUpdatePolicyModel = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2};
     const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
     expect(result.success).toBe(true);
+});
+
+it("SECURITY: groupUpdatePolicy without a statement, the old {id, policy} shape, is refused (T4-10)", () => {
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, policy: {}})).success).toBe(false);
+    const model = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2, policy: {}};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", model)).success).toBe(false);
+});
+
+it("a statement's policy is shaped like a container policy, and its policyHash is a hash", () => {
+    const badPolicy = {...validStatement("policy"), policy: {update: 5}};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit: badPolicy, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+    const badHash = {...validStatement("policy"), policyHash: "XY"};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit: badHash, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
 });
 
 // These are the load-bearing rejections: each one is why the per-plane ACL entry bounds what a call can *do*
@@ -184,20 +198,25 @@ it("a metadata update structurally cannot carry the other plane, or the policy",
     }
 });
 
-it("groupUpdatePolicy carries neither an envelope nor a version", () => {
-    // No envelope and no CAS on this method: there is nothing to write under a key and no counter to compare.
+it("groupUpdatePolicy carries no envelope and no metadata version", () => {
+    // A policy commit writes neither plane: nothing to write under a key and no metadata counter to compare.
     for (const field of ["data", "keyId", "version"]) {
-        const model = {id: groupId, policy: {}, [field]: "x"};
+        const model = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2, [field]: "x"};
         const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
         expect(result.success).toBe(false);
     }
 });
 
-it("groupUpdatePolicy requires a policy", () => {
-    // It used to be optional, where absent meant "leave the policy alone". On a method that does nothing else,
-    // an absent policy is a request that asks for nothing and has passed a policy gate for it.
-    const result = Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId}));
-    expect(result.success).toBe(false);
+it("groupUpdatePolicy requires its statement and both CAS counters", () => {
+    for (const field of ["commit", "expectedKeyVersion", "expectedRosterVersion"]) {
+        const model: Record<string, unknown> = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2};
+        delete model[field];
+        expect(Utils.try(() => validator().validate("groupUpdatePolicy", model)).success).toBe(false);
+    }
+});
+
+it("groupCreate no longer takes a policy beside its statement", () => {
+    expect(Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), policy: {}})).success).toBe(false);
 });
 
 it("a metadata update cannot omit its version or its keyId", () => {

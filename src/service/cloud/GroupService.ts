@@ -169,6 +169,9 @@ export class GroupService extends BaseContainerService {
             managers: managers,
             tree: TreeHash.afterCommit([], commit, 1),
             path: commit.refreshed,
+            // The policy the group stores is the one the statement carries and signs, with the caller as creator.
+            policy: policy,
+            creator: user.userId,
             // No deltas: `rosterHash` binds the genesis roster, served beside the chain to a client replaying it
             // (I-1) rather than with every read that cites seq 1.
             addedUsers: [],
@@ -314,25 +317,36 @@ export class GroupService extends BaseContainerService {
      * buy nothing a single-document write does not already give and only add a retry surface.
      */
     async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
-        this.policyService.validateContainerPolicyForContainer("policy", model.policy);
-        const groupRepository = this.repositoryFactory.createGroupRepository();
-        const oldGroup = await groupRepository.get(model.id);
-        if (!oldGroup) {
-            throw new AppException("GROUP_DOES_NOT_EXIST");
+        const policy = model.commit.policy;
+        if (policy === undefined) {
+            throw new AppException("INVALID_PARAMS", "commit.policy is required");
         }
-        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-        this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePolicy", ["groupId=" + model.id]);
-        // The `updatePolicy` gate and the context-level veto, and NOT `update`. Follows generateNewGroupKey and
-        // threadRotateKeys: riding on `update` meant an operator who widened `update` handed out policy
-        // rewriting along with it.
-        if (!this.policy.canOverwriteContextPolicy(context) || !this.policy.canUpdateContainerPolicy(user, context, oldGroup)) {
-            throw new AppException("ACCESS_DENIED", "cannot update policy");
-        }
-        const group = await groupRepository.updatePolicy(oldGroup, user.userId, model.policy);
-        if (!group) {
-            // No CAS to lose: the only way the filter misses is the group going away between the read and here.
-            throw new AppException("GROUP_DOES_NOT_EXIST");
-        }
+        this.policyService.validateContainerPolicyForContainer("policy", policy);
+        const budget = new Reservations(this.groupRotationRateLimiter);
+        const group = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
+            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+            const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
+            const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePolicy", ["groupId=" + model.id]);
+            // The `updatePolicy` rule the group's statements sign, narrowed by the context's veto, and NOT `update`.
+            if (!this.policy.canOverwriteContextPolicy(context) || !this.policy.canUpdateContainerPolicy(user, context, oldGroup)) {
+                throw new AppException("ACCESS_DENIED", "cannot update policy");
+            }
+            await budget.reserve(this.rateLimitKey("policy", model.id, user.userId));
+            // A policy commit moves no node, no epoch and no roster: its statement vouches for the tree as it stands.
+            await this.chargingRefusals(budget, "policy", model.id, user.userId, async () => {
+                const nodes = await groupRepository.getNodes(oldGroup);
+                this.assertStatementIsValid(model.commit, user, {
+                    ...await this.unchangedStatement(groupRepository, oldGroup, "policy", TreeHash.of({...oldGroup, nodes}), [], previous),
+                    policy: policy,
+                });
+            });
+            const result = await groupRepository.updatePolicyWithStatement(oldGroup, user.userId, policy, model.commit);
+            if (!result) {
+                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
+            }
+            return result;
+        }));
         this.groupNotificationService.sendUpdatedGroup(group, [], "policyUpdated");
         return group;
     }
@@ -344,7 +358,7 @@ export class GroupService extends BaseContainerService {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const rotated = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
+            const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupRotateKeys", ["groupId=" + model.id]);
             // Gated by the `rotateKeys` policy, same as every other container's rotate endpoint. It defaults to
@@ -364,7 +378,7 @@ export class GroupService extends BaseContainerService {
             await this.chargingRefusals(budget, "rotate", model.id, user.userId, async () => {
                 const nodes = await groupRepository.getNodes(oldGroup);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "rotate", TreeHash.of({...oldGroup, nodes}), []),
+                    ...await this.unchangedStatement(groupRepository, oldGroup, "rotate", TreeHash.of({...oldGroup, nodes}), [], previous),
                     keyVersion: newKeyVersion,
                     groupPubKey: model.groupPubKey,
                     rosterVersion: oldGroup.rosterVersion + 1,
@@ -406,7 +420,7 @@ export class GroupService extends BaseContainerService {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const {group} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
+            const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupAddMembers", ["groupId=" + model.id]);
             // An addition does not rotate the epoch, so it must not rotate the content key either — the roster
@@ -417,10 +431,16 @@ export class GroupService extends BaseContainerService {
             const addedUserIds = model.members.map(member => member.userId);
             const managers = [...oldGroup.managers, ...model.members.filter(member => member.role === "manager").map(member => member.userId)];
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
+            const listed = new Set<types.cloud.UserId>();
             for (const userId of addedUserIds) {
                 if (oldGroup.users.includes(userId) || oldGroup.managers.includes(userId)) {
                     throw new AppException("INVALID_PARAMS", `user '${userId}' is already a member`);
                 }
+                // Twice in one batch would be stored as an addition every client refuses (the op-effect rows).
+                if (listed.has(userId)) {
+                    throw new AppException("INVALID_PARAMS", `user '${userId}' is listed twice`);
+                }
+                listed.add(userId);
             }
             this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, addedUserIds).length);
             this.assertWithinSeatLimit(TreeMath.numLeavesToSeatAll(model.transition.positions, oldGroup.numLeaves));
@@ -432,7 +452,7 @@ export class GroupService extends BaseContainerService {
                 const newUsers = model.members.filter(member => member.role === "user").map(member => member.userId);
                 const newManagers = model.members.filter(member => member.role === "manager").map(member => member.userId);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "add", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed),
+                    ...await this.unchangedStatement(groupRepository, oldGroup, "add", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
                     rosterVersion: oldGroup.rosterVersion + 1,
                     users: [...oldGroup.users, ...newUsers],
                     managers: [...oldGroup.managers, ...newManagers],
@@ -473,7 +493,7 @@ export class GroupService extends BaseContainerService {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const {group, context} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion);
+            const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupRemoveMembers", ["groupId=" + model.id]);
             if (model.abandonHistory) {
@@ -520,7 +540,7 @@ export class GroupService extends BaseContainerService {
                     kind: "remove", committer: user.userId, removedUsers: model.userIds, blankedPositions: model.transition.blankedPositions,
                 }, model.transition);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "remove", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed),
+                    ...await this.unchangedStatement(groupRepository, oldGroup, "remove", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
                     keyVersion: newKeyVersion,
                     groupPubKey: model.groupPubKey,
                     rosterVersion: oldGroup.rosterVersion + 1,
@@ -570,7 +590,7 @@ export class GroupService extends BaseContainerService {
         const budget = new Reservations(this.groupRotationRateLimiter);
         return budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, undefined, model.commit);
             const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupSelfUpdate", ["groupId=" + model.id]);
             if (!oldGroup.leafAssignment.includes(user.userId)) {
@@ -582,7 +602,7 @@ export class GroupService extends BaseContainerService {
             const commit = await this.chargingRefusals(budget, "selfUpdate", model.id, user.userId, async () => {
                 const {commit: accepted, nodes} = await this.assertCommitIsAcceptable(groupRepository, oldGroup, {kind: "selfUpdate", committer: user.userId}, model.transition);
                 this.assertStatementIsValid(model.commit, user, await this.unchangedStatement(
-                    groupRepository, oldGroup, "selfUpdate", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed,
+                    groupRepository, oldGroup, "selfUpdate", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous,
                 ));
                 return accepted;
             });
@@ -597,7 +617,7 @@ export class GroupService extends BaseContainerService {
     async cutEra(cloudUser: CloudUser, model: GroupCutEraModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
@@ -629,7 +649,7 @@ export class GroupService extends BaseContainerService {
     async pruneArchive(cloudUser: CloudUser, model: GroupPruneArchiveModel) {
         const {group} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
+            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupPruneArchive", ["groupId=" + model.id]);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
@@ -761,14 +781,18 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /** Loads a group for a tree operation and rejects a caller working from a superseded epoch. */
+    /**
+     * Loads a group for a tree operation and rejects a caller working from a superseded epoch. A commit (`commit`
+     * given) must also extend the stored latest statement; `previous` is that statement, read once per commit.
+     */
     private async getGroupForTreeOperation(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         cloudUser: CloudUser,
         groupId: types.group.GroupId,
         expectedKeyVersion: number,
         expectedRosterVersion?: number,
-    ) {
+        commit?: types.cloud.GroupTreeCommitStatement,
+    ): Promise<{group: db.group.Group, previous?: types.cloud.GroupTreeCommitStatement}> {
         const group = await groupRepository.get(groupId);
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
@@ -788,7 +812,40 @@ export class GroupService extends BaseContainerService {
             await this.checkCanRead(cloudUser, group);
             throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData(group));
         }
-        return group;
+        const previous = commit === undefined ? undefined : await this.assertStatementExtendsHead(groupRepository, cloudUser, group, commit);
+        return {group, previous};
+    }
+    
+    /**
+     * The one format guard on a stored statement: a latest statement written before the current format (no
+     * `prevDigest`, no `policyHash`) has nothing a new statement could extend. Recreated, not migrated, like
+     * `assertTreeCommitsSupported`'s cases. Later fields of the format are added here, not guarded elsewhere.
+     */
+    private static assertSupportedStatement(group: db.group.Group, previous: types.cloud.GroupTreeCommitStatement|undefined) {
+        if (previous === undefined || typeof previous.prevDigest !== "string" || typeof previous.policyHash !== "string") {
+            throw new AppException("GROUP_TREE_INVALID", [{kind: "UNSUPPORTED_TREE_VERSION", treeVersion: group.treeVersion ?? null}]);
+        }
+    }
+    
+    /**
+     * A statement that does not extend the stored latest lost a race to another commit (any op, a policy commit
+     * included) or was planned on a stale read: retryable, answered before any reservation or tree read and charged
+     * to nothing, like the epoch mismatch above. Returns the stored latest, which `unchangedStatement` then uses.
+     */
+    private async assertStatementExtendsHead(
+        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
+        cloudUser: CloudUser,
+        group: db.group.Group,
+        commit: types.cloud.GroupTreeCommitStatement,
+    ): Promise<types.cloud.GroupTreeCommitStatement> {
+        this.assertTreeCommitsSupported(group);
+        const [previous] = await groupRepository.getTreeCommitsAt(group.id, [group.treeCommitSeq!]);
+        GroupService.assertSupportedStatement(group, previous);
+        if (commit.seq !== group.treeCommitSeq! + 1 || commit.prevDigest !== CommitStatement.digest(previous)) {
+            await this.checkCanRead(cloudUser, group);
+            throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData(group));
+        }
+        return previous;
     }
     
     /** A new epoch's grant key is not any earlier epoch's, below the era floor included: republishing one would reopen
@@ -964,11 +1021,12 @@ export class GroupService extends BaseContainerService {
      *  callers override what their operation moves. It extends the stored latest statement. */
     private async unchangedStatement(groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group, op: types.cloud.GroupTreeCommitOp,
-        tree: HashableTree, path: types.cloud.GroupTreeRefreshedNode[]): Promise<StatementExpectation> {
-        const [previous] = group.treeCommitSeq === undefined ? [] : await groupRepository.getTreeCommitsAt(group.id, [group.treeCommitSeq]);
-        if (previous && typeof previous.prevDigest !== "string") {
-            // Stored before statements were chained: nothing to extend, like `assertTreeCommitsSupported`'s cases.
-            throw new AppException("GROUP_TREE_INVALID", [{kind: "UNSUPPORTED_TREE_VERSION", treeVersion: group.treeVersion ?? null}]);
+        tree: HashableTree, path: types.cloud.GroupTreeRefreshedNode[],
+        latest?: types.cloud.GroupTreeCommitStatement): Promise<StatementExpectation> {
+        let previous = latest;
+        if (group.treeCommitSeq !== undefined) {
+            previous ??= (await groupRepository.getTreeCommitsAt(group.id, [group.treeCommitSeq]))[0];
+            GroupService.assertSupportedStatement(group, previous);
         }
         return {
             seq: (group.treeCommitSeq ?? 0) + 1,
@@ -986,6 +1044,8 @@ export class GroupService extends BaseContainerService {
             addedUsers: [],
             addedManagers: [],
             removed: [],
+            policy: group.policy ?? {},
+            creator: group.creator,
         };
     }
     
@@ -1014,6 +1074,7 @@ export class GroupService extends BaseContainerService {
             groupPubKey: expected.groupPubKey,
             rosterVersion: expected.rosterVersion,
             rosterHash: TreeHash.rosterHash(expected.users, expected.managers),
+            policyHash: CommitStatement.policyHash(expected.policy, expected.creator),
             tree: expected.tree,
             committer: caller.userId,
             committerPubKey: caller.userPubKey,
@@ -1058,7 +1119,7 @@ export class GroupService extends BaseContainerService {
      * moves no epoch but writes the tree; `repair` counts `groupRepairRung` calls, accepted or refused; `refused`
      * counts commits the bridge refused after hashing the tree.
      */
-    private rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
+    private rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
     }
     
@@ -1097,7 +1158,7 @@ export class GroupService extends BaseContainerService {
      * So nothing anybody else does gates a removal, and a member spamming the others runs out of its own allowance
      * rather than anybody else's.
      */
-    private async chargingRefusals<T>(budget: Reservations, kind: "rotate"|"add"|"remove"|"selfUpdate", groupId: types.group.GroupId, userId: types.cloud.UserId, validate: () => Promise<T>): Promise<T> {
+    private async chargingRefusals<T>(budget: Reservations, kind: "rotate"|"add"|"remove"|"selfUpdate"|"policy", groupId: types.group.GroupId, userId: types.cloud.UserId, validate: () => Promise<T>): Promise<T> {
         const refused = this.rateLimitKey("refused", groupId, userId);
         const stale = this.rateLimitKey("stale", groupId, userId);
         if (kind !== "remove") {
@@ -1259,10 +1320,40 @@ class Reservations {
 }
 
 /** The parts of an expected statement that differ per operation; the rest is derived from them. */
-type StatementExpectation = Omit<ExpectedStatement, "treeVersion"|"rosterHash"|"committer"|"committerPubKey"|"committerSeat">
-    & {users: types.cloud.UserId[], managers: types.cloud.UserId[]};
+type StatementExpectation = Omit<ExpectedStatement, "treeVersion"|"rosterHash"|"policyHash"|"committer"|"committerPubKey"|"committerSeat">
+    & {users: types.cloud.UserId[], managers: types.cloud.UserId[], policy: types.cloud.ContainerPolicy, creator: types.cloud.UserId};
 
+/**
+ * The commit rules of a v3 group are the ones its statements sign (`CommitStatement.policyHash`): the group's own
+ * value, or for an absent, `inherit` or `default` one the frozen v3 default, never the context's. The context policy
+ * keeps only a veto: it can deny what the signed rule allows, never allow what it denies (T4-10). Every caller of
+ * these (add, remove, cutEra, prune, metadata writes, rotate, updatePolicy) gets that without a change of its own.
+ */
 class GroupPolicy extends BasePolicy<db.group.Group, never> {
+    
+    canUpdateContainer(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
+        return this.signed(user, context, group, "update");
+    }
+    
+    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
+        return this.signed(user, context, group, "rotateKeys");
+    }
+    
+    canUpdateContainerPolicy(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
+        return this.signed(user, context, group, "updatePolicy");
+    }
+    
+    ownerCanBeRemovedFromManagers(context: db.context.Context, group: db.group.Group) {
+        return CommitStatement.resolve(group.policy, "ownerCanBeRemovedFromManagers") === "yes"
+            && context.policy?.group?.ownerCanBeRemovedFromManagers !== "no";
+    }
+    
+    private signed(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, field: "update"|"rotateKeys"|"updatePolicy") {
+        const who = this.getPolicyUser(user, group);
+        const veto = context.policy?.group?.[field];
+        return this.policyService.userMeetsPolicy(who, CommitStatement.resolve(group.policy, field))
+            && (veto === undefined || veto === "inherit" || veto === "default" || this.policyService.userMeetsPolicy(who, veto));
+    }
     
     protected isItemCreator(_user: db.context.ContextUser, _item: never) {
         return false;

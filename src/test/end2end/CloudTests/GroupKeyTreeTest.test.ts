@@ -14,7 +14,8 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rotationGrantEdge, rotationStatement, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, policyCommitAgainst, registerUserKey, removalOf, rotationGrantEdge, rotationStatement, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
@@ -169,6 +170,28 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(group.treeCommit?.seq === 2, "groupGet serves the latest statement");
         assert.deepStrictEqual(group.treeCommits.map(c => c.seq), [2], "and the one vouching for the served root");
         assert(group.copathHashes?.length === 2, "a path view of four seats has two copath hashes");
+    }
+    
+    @Test()
+    async shouldTakeAPolicyChangeAsASignedCommit() {
+        // T4-10: a policy change is a commit: the chain moves, the stored policy is the one the statement carries and
+        // signs, and nothing else moves.
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        const groupId = this.requireGroupId();
+        const served = (await this.apis.contextApi.groupGet({groupId, scope: "plan"})).group as unknown as ServedGroup;
+        const request = policyCommitAgainst(served, testData.userId, {update: "user", get: "all"});
+        assert(await this.apis.contextApi.groupUpdatePolicy(request) === "OK", "groupUpdatePolicy did not return OK");
+        const {group} = await this.apis.contextApi.groupGet({groupId});
+        assert(group.treeCommit?.seq === 2 && group.treeCommit.op === "policy", "the policy statement is the latest");
+        assert.deepStrictEqual(group.policy, {update: "user", get: "all"}, "the stored policy is the one it carries");
+        assert(group.treeCommit.policyHash === CommitStatement.policyHash(group.policy, group.creator).toString("hex"), "and signs");
+        assert(group.keyVersion === 1 && group.rosterVersion === 1, "no epoch and no roster moved");
+        const {commits} = await this.apis.contextApi.groupGetTreeCommits({groupId, fromSeq: 0});
+        assert.deepStrictEqual(commits.map(c => [c.seq, c.op]), [[1, "create"], [2, "policy"]]);
+        assert(commits[1].prevDigest === CommitStatement.digest(commits[0]), "chained to the creation");
+        // The same request again extends a head that is gone: a lost race, nothing stored.
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePolicy(request), "ROTATED_ALREADY");
     }
     
     @Test()

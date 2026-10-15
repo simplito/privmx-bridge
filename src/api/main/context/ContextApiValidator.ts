@@ -56,7 +56,7 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             // One: the group is a grantee of itself and has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
-            policy: this.builder.optional(this.tv.containerPolicy),
+            // The policy is `commit.policy`, signed into the chain by `policyHash`.
             tree: this.tv.groupTreeState,
             commit: this.tv.groupTreeCommitStatement,
         }));
@@ -78,12 +78,13 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             version: this.builder.int,
         }));
-        // No version and no keyId: the policy is outside the signed envelope, so there is nothing to CAS and no
-        // key to write it under. A caller still sending either is on an API that no longer exists and has to be
-        // told. `policy` is required — on a dedicated method an absent one asks for nothing.
+        // A policy change is a signed commit like any other (T4-10): the policy is `commit.policy`, CAS-ed on both
+        // counters. The old `{id, policy}` shape is refused.
         this.registerMethod("groupUpdatePolicy", this.builder.createObject({
             id: this.tv.groupId,
-            policy: this.tv.containerPolicy,
+            commit: this.tv.groupTreeCommitStatement,
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
         }));
         this.registerMethod("groupGenerateNewKey", this.builder.createObject({
             id: this.tv.groupId,

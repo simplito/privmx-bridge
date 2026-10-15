@@ -86,7 +86,7 @@ export class TypesValidator {
     groupTreeSeatedNode: Validator;
     groupTreeAdditionTransition: Validator;
     groupTreeSelfUpdateTransition: Validator;
-    groupTreeCommitStatement: Validator;
+    groupTreeCommitStatement: ObjectValidator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -374,7 +374,7 @@ export class TypesValidator {
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
             prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
-            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate"]),
+            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,
             date: this.intNonNegative,
@@ -383,6 +383,7 @@ export class TypesValidator {
             rosterVersion: this.builder.min(this.builder.int, 1),
             rosterHash: sha256Hex,
             treeHash: sha256Hex,
+            policyHash: sha256Hex,
             committer: this.cloudUserId,
             committerPubKey: this.cloudUserPubKey,
             committerSeat: this.intNonNegative,
@@ -528,6 +529,11 @@ export class TypesValidator {
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
+        });
+        // A creation's and a policy commit's statement carries the policy it signs (`policyHash`); defined here
+        // because the policy validators are.
+        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.builder.optional(this.containerPolicy),
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),
