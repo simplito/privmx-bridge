@@ -194,6 +194,13 @@ describe("CommitStatement.validate", () => {
         // then signs a different one at the same prevDigest. This lower bound is what makes that window finite.
         const {statement, expected} = honest();
         assert.deepStrictEqual(check(statement, expected, NOW + CommitStatement.DATE_TOLERANCE_MS + 1), [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+        // N-1 takes a date equal to the extended one however far ahead, but never one more than T behind the clock:
+        // a statement matching a forward-dated predecessor is refused once the clock passes its date plus T too.
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        const matched = signStatement({...statement, date: ahead}, "u0");
+        assert.deepStrictEqual(check(matched, {...expected, notBefore: ahead}, ahead + CommitStatement.DATE_TOLERANCE_MS), []);
+        assert.deepStrictEqual(check(matched, {...expected, notBefore: ahead}, ahead + CommitStatement.DATE_TOLERANCE_MS + 1),
+            [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
     });
     
     it("roster lists must arrive sorted, as signed", () => {
