@@ -293,6 +293,20 @@ it("an addition advances the roster version without advancing the epoch", async 
     assert.strictEqual(historyEntry(state).version, 6);
 });
 
+it("a one-leaf self-update advances treeCommitSeq and leaves the epoch alone", async () => {
+    // A sole member renewing its leaf after an identity key change (08a): one statement, no epoch, no roster move.
+    const {repository, state, updates} = createRepository();
+    const tree = buildTree(["janek"], EPOCH);
+    const oldGroup = group({users: [], numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment});
+    const commit = acceptedCommit(tree, EPOCH, {kind: "selfUpdate", committer: "janek"}).commit;
+    assert.strictEqual(await repository.selfUpdateWithTransition(oldGroup, commit, statement(4, "selfUpdate")), true);
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5, treeCommitSeq: 3});
+    assert.strictEqual(updates[0].set.treeCommitSeq, 4);
+    assert.strictEqual("keyVersion" in updates[0].set, false, "a self-update is not a rotation");
+    assert.strictEqual("rosterVersion" in updates[0].set, false);
+    hasOneCall(state.applyCommit);
+});
+
 it("a public-metadata update writes its own counter and nothing else", async () => {
     const {repository, state, updates, replacements} = createRepository();
     const result = await repository.updatePublicMeta(group(), janek, data, keyId, null);

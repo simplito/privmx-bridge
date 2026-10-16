@@ -1327,6 +1327,19 @@ async function statementProblems(run: () => Promise<unknown>): Promise<string[]>
     return (error.getData() as {kind: string, field?: string}[]).map(problem => problem.kind === "BAD_COMMIT_SIGNATURE" ? "SIGNATURE" : problem.field ?? problem.kind);
 }
 
+it("selfUpdate is checked against the caller's key as the context holds it now", async () => {
+    // Leaf renewal (08a): after a directory key change the renewal is signed with the new key. A statement naming
+    // the key the context held before is refused, however validly that key signed it.
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group);
+    const model = selfUpdateModel(group, alice);
+    const previousKey = {...model, commit: signStatement({...model.commit, committerPubKey: userKeys("alice-previous").pub58}, "alice-previous")};
+    assert.deepStrictEqual(await statementProblems(() => groupService.selfUpdate(aliceCloudUser, previousKey)), ["committerPubKey"]);
+    hasNoCalls(groupRepository.selfUpdateWithTransition);
+    await groupService.selfUpdate(aliceCloudUser, model);
+    hasOneCall(groupRepository.selfUpdateWithTransition);
+});
+
 it("every tree commit hands its statement to storage, at the next seq", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group);

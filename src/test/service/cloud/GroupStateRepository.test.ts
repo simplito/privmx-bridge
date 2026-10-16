@@ -522,6 +522,25 @@ it("growing a one-member group replaces the grant edge addressed to the member",
     assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
 });
 
+it("a one-leaf self-update replaces the grant edge to the sole member in one ordered write", async () => {
+    // A sole member renewing its leaf after an identity key change (08a): no node to refresh, only the grant edge.
+    const tree = buildTree(["janek"], EPOCH);
+    const before = tree.edges.find(edge => edge.isGrantEdge)!;
+    const {captured, after, commit} = await commitThroughStorage(tree, EPOCH, {kind: "selfUpdate", committer: "janek"});
+    const grantId = `${groupId}|grant>user:janek`;
+    const ops = captured.edges.operations as unknown as Record<string, {filter: Record<string, unknown>, replacement?: Record<string, unknown>, upsert?: boolean}>[];
+    const dropAt = ops.findIndex(op => op.deleteOne?.filter._id === grantId);
+    const writeAt = ops.findIndex(op => op.replaceOne?.filter._id === grantId);
+    assert.ok(dropAt >= 0 && writeAt > dropAt, "the old grant edge is dropped before the new one is written");
+    assert.strictEqual(ops[writeAt].replaceOne.upsert, true);
+    const written = commit.edges.find(edge => edge.isGrantEdge)!;
+    assert.strictEqual(ops[writeAt].replaceOne.replacement!.data, written.data);
+    assert.notStrictEqual(written.data, before.data, "the new blob, not the old one");
+    assert.deepStrictEqual(captured.nodes.operations, [], "no node operation");
+    assert.deepStrictEqual(after.edges.map(edge => edge.data), [written.data]);
+    assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
+});
+
 it("a long random history applied through storage stays exactly the owed state", async () => {
     let tree = buildTree(WIDE.slice(0, 40), 1);
     let keyVersion = 1;
