@@ -15,6 +15,7 @@ import { PromiseUtils } from "../../../utils/PromiseUtils";
 import { testData } from "../../datasets/testData";
 import { BaseTestSet, Test } from "../BaseTestSet";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 
 export class NotificationTest extends BaseTestSet {
@@ -414,7 +415,7 @@ export class NotificationTest extends BaseTestSet {
     
     async createAndLoginNewUser() {
         const keys = ECUtils.generateKeyPair();
-        const pubKey = ECUtils.publicToBase58DER(keys.keyPair);
+        const pubKey = secp256k1ToBase58(keys.keyPair);
         const userId = `NewUser-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` as types.cloud.UserId;
         const privKey = keys.privWif;
         

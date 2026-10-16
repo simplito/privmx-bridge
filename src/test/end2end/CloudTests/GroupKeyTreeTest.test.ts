@@ -14,6 +14,7 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { additionTransition, buildTree, removalTransition, withAdditionTransitionNodeKeys, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
@@ -41,7 +42,7 @@ function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
     if (existing) {
         return existing;
     }
-    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
+    const generated = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as types.core.EccPubKey;
     nodeKeys.set(cacheKey, generated);
     return generated;
 }
@@ -53,7 +54,7 @@ function epochKey(epoch: number): types.cloud.GroupPubKey {
     if (existing) {
         return existing;
     }
-    const generated = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+    const generated = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.cloud.GroupPubKey;
     epochKeys.set(epoch, generated);
     return generated;
 }
@@ -236,7 +237,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const res = await this.plainApis.contextApi.addUserToContext({
                 contextId: testData.contextId,
                 userId: userId,
-                userPubKey: ECUtils.generateKeyPair().pub58 as types.cloud.UserPubKey,
+                userPubKey: secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as types.cloud.UserPubKey,
                 acl: "ALLOW ALL" as types.cloud.ContextAcl,
             });
             assert(res === "OK", `addUserToContext(${userId}) did not return OK`);

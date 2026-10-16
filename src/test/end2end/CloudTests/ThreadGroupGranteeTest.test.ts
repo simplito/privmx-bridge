@@ -14,30 +14,31 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
 import { buildTree, removalTransition, withNodeKeys, withTransitionNodeKeys } from "../../testUtils/TreeFixtures";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
 const groupIdentity = ECUtils.generateKeyPair();
-const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+const groupPubKey = secp256k1ToBase58(groupIdentity.keyPair) as unknown as types.cloud.GroupPubKey;
 
 // A second context user ("alice") created at runtime — she will get access to a thread ONLY through a group.
 const aliceIdentity = ECUtils.generateKeyPair();
 const aliceId = "alice" as types.cloud.UserId;
-const alicePubKey = aliceIdentity.pub58 as types.cloud.UserPubKey;
+const alicePubKey = secp256k1ToBase58(aliceIdentity.keyPair) as types.cloud.UserPubKey;
 const aliceWif = aliceIdentity.privWif as string;
 
 // A third context user ("bob") — a DIRECT member of the thread who is in no granted group. He is the control for
 // `groupKeys` narrowing: he must see that the grant exists and none of the key material wrapped to it.
 const bobIdentity = ECUtils.generateKeyPair();
 const bobId = "bob" as types.cloud.UserId;
-const bobPubKey = bobIdentity.pub58 as types.cloud.UserPubKey;
+const bobPubKey = secp256k1ToBase58(bobIdentity.keyPair) as types.cloud.UserPubKey;
 const bobWif = bobIdentity.privWif as string;
 
 const groupKeyId = "group-key" as types.core.KeyId;
 const threadKeyId = "thread-key" as types.core.KeyId;
 const rotatedGroupKeyId = "group-key-2" as types.core.KeyId;
-const rotatedGroupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+const rotatedGroupPubKey = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.cloud.GroupPubKey;
 
 /** Real ECC keys, memoized per `(nodeIndex, generation)`: the validator refuses placeholder public keys. */
 const nodeKeys = new Map<string, types.core.EccPubKey>();
@@ -47,7 +48,7 @@ function nodeKey(nodeIndex: number, generation: number): types.core.EccPubKey {
     if (existing) {
         return existing;
     }
-    const generated = ECUtils.generateKeyPair().pub58 as types.core.EccPubKey;
+    const generated = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as types.core.EccPubKey;
     nodeKeys.set(cacheKey, generated);
     return generated;
 }

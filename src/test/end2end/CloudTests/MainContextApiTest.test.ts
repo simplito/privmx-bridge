@@ -13,6 +13,7 @@ import { BaseTestSet, Test } from "../BaseTestSet";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import * as PrivmxRpc from "@simplito/privmx-minimal-js";
 import * as assert from "assert";
 import { expect } from "../AssertUtils";
@@ -119,7 +120,7 @@ export class MainContextApiTests extends BaseTestSet {
     
     private async createNewUser() {
         const keys = ECUtils.generateKeyPair();
-        this.newUserPubkey = ECUtils.publicToBase58DER(keys.keyPair);
+        this.newUserPubkey = secp256k1ToBase58(keys.keyPair);
         this.newUserId = "NewUser" as types.cloud.UserId;
         this.newUserPrivKey = keys.privWif;
         this.helpers.authorizePlainApi();

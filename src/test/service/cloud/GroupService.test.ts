@@ -32,6 +32,7 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
@@ -49,12 +50,12 @@ const keyId = "SomeKeyId" as types.core.KeyId;
 const data = "SomeGroupData" as types.group.GroupData;
 
 const janekKeys = ECUtils.generateKeyPair();
-const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
+const janekPub = secp256k1ToBase58(janekKeys.keyPair) as types.cloud.UserPubKey;
 const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const janek = "janek" as types.cloud.UserId;
 const alice = "alice" as types.cloud.UserId;
 const aliceKeys = ECUtils.generateKeyPair();
-const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
+const alicePub = secp256k1ToBase58(aliceKeys.keyPair) as types.cloud.UserPubKey;
 const janekCloudUser = new CloudUser(janekPub);
 const aliceCloudUser = new CloudUser(alicePub);
 const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
@@ -62,7 +63,7 @@ const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
 // what proves membership is gated separately from it.
 const carol = "carol" as types.cloud.UserId;
 const carolKeys = ECUtils.generateKeyPair();
-const carolPub = carolKeys.pub58 as types.cloud.UserPubKey;
+const carolPub = secp256k1ToBase58(carolKeys.keyPair) as types.cloud.UserPubKey;
 const carolCloudUser = new CloudUser(carolPub);
 
 const myContext: db.context.Context = {

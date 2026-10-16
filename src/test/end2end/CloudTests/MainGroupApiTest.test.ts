@@ -15,11 +15,12 @@ import { testData } from "../../datasets/testData";
 import { buildTree } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 
 // The bridge stores group data opaquely; signing/verification is the endpoint's job (committed inside `data`).
 // These tests exercise CRUD, listing, version-CAS and referential integrity only.
 const groupIdentity = ECUtils.generateKeyPair();
-const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+const groupPubKey = secp256k1ToBase58(groupIdentity.keyPair) as unknown as types.cloud.GroupPubKey;
 
 export class GroupApiTests extends BaseTestSet {
     

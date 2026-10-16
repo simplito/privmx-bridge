@@ -15,6 +15,7 @@ import { testData } from "../../datasets/testData";
 import { buildTree } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
 
 /**
@@ -26,9 +27,9 @@ import { PromiseUtils } from "../../../utils/PromiseUtils";
  */
 
 const groupIdentity = ECUtils.generateKeyPair();
-const groupPubKey = groupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+const groupPubKey = secp256k1ToBase58(groupIdentity.keyPair) as unknown as types.cloud.GroupPubKey;
 const secondGroupIdentity = ECUtils.generateKeyPair();
-const secondGroupPubKey = secondGroupIdentity.pub58 as unknown as types.cloud.GroupPubKey;
+const secondGroupPubKey = secp256k1ToBase58(secondGroupIdentity.keyPair) as unknown as types.cloud.GroupPubKey;
 
 interface ReceivedEvent {
     type: string;

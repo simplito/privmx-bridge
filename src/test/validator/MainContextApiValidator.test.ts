@@ -16,9 +16,10 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../utils/crypto/VerifyKey";
 import { buildTree, rotationGrantEdge, rungsFor } from "../testUtils/TreeFixtures";
 
-const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+const groupPubKey = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "MyKeyId" as types.core.KeyId;
@@ -232,7 +233,7 @@ it("ContextApiValidator.groupGenerateNewKey rejects missing expectedKeyVersion",
 
 // ---------- Hidden key tree + Epoch Ladder ----------
 
-const nodePubKey = ECUtils.generateKeyPair().pub58 as unknown as types.core.EccPubKey;
+const nodePubKey = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.core.EccPubKey;
 
 /** Two members, one internal node, one grant edge — the smallest tree the wire format accepts. */
 function validTree(): types.cloud.GroupTreeState {

@@ -96,7 +96,7 @@ export class TypesValidator {
     inboxData: Validator;
     streamRoomId: Validator;
     streamRoomData: Validator;
-    unknown4Kb: Validator;
+    unknown32Kb: Validator;
     unknown16Kb: Validator;
     unknown1Mb: Validator;
     resourceType: Validator;
@@ -193,7 +193,11 @@ export class TypesValidator {
         this.username = this.builder.extends(this.builder.error(this.builder.rangeLength(this.builder.string, 3, 50), "INVALID_USERNAME"), {custom: (s: string) => usernameRegex.test(s)});
         this.id = this.builder.rangeLength(this.builder.string, 1, 60);
         
-        this.eccSignature = this.builder.error(this.builder.length(this.base64, 65), "INVALID_SIGNATURE");
+        // A signature's length follows the signing algorithm, and this validator sees the signature
+        // before the key that made it: 65 for compact ECDSA (secp256k1), 64 for Ed25519. Bounded
+        // rather than exact — `verifySignature` still checks the length the key's own algorithm
+        // requires, so a signature of the wrong shape for its key is refused there.
+        this.eccSignature = this.builder.error(this.builder.rangeLength(this.base64, 64, 65), "INVALID_SIGNATURE");
         
         this.timestampStr = this.builder.error(this.bi10, "INVALID_TIMESTAMP");
         this.timestamp = this.builder.error(this.builder.int, "INVALID_TIMESTAMP");
@@ -203,9 +207,17 @@ export class TypesValidator {
         this.sessionId = this.builder.maxLength(this.builder.string, 150);
         this.userAgent = this.builder.maxLength(this.builder.string, 1024);
         this.userAgentOpt = this.builder.nullableOptional(this.userAgent);
-        this.unknown4Kb = this.builder.createCustom(value => {
+        // Container data and wrapped keys. 4 KB was ample while an identity was a 33-byte point; a
+        // post-quantum one is 1248 bytes, and these fields carry them several times over — the author's
+        // key in each integrity object, and a wrapped container key that now also carries a 1088-byte
+        // ML-KEM ciphertext per recipient. A three-member thread overran 4 KB outright.
+        //
+        // This is a sanity bound, not a security one: the server never reads inside these blobs. It is
+        // here so that a malformed or hostile request fails early instead of becoming a document nobody
+        // can use, which is why it is raised rather than removed.
+        this.unknown32Kb = this.builder.createCustom(value => {
             const size = this.getValueSize(value, "<root>");
-            const maxSize = 4096;
+            const maxSize = 32768;
             if (size > maxSize) {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
@@ -236,7 +248,7 @@ export class TypesValidator {
         });
         
         this.keyId = this.builder.rangeLength(this.builder.string, 1, 128);
-        this.userKeyData = this.unknown4Kb;
+        this.userKeyData = this.unknown32Kb;
         this.requestId = this.builder.rangeLength(this.builder.string, 1, 60);
         
         this.bufferReadRange = this.builder.createOneOf([
@@ -262,8 +274,8 @@ export class TypesValidator {
         this.cloudUserPubKey = this.eccPub;
         this.threadId = id;
         this.threadMessageId = id;
-        this.threadData = this.unknown4Kb;
-        this.kvdbData = this.unknown4Kb;
+        this.threadData = this.unknown32Kb;
+        this.kvdbData = this.unknown32Kb;
         this.threadMessageData = this.unknown16Kb;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
@@ -371,9 +383,9 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.storeId = id;
-        this.storeData = this.unknown4Kb;
+        this.storeData = this.unknown32Kb;
         this.storeFileId = id;
-        this.storeFileMeta = this.unknown4Kb;
+        this.storeFileMeta = this.unknown32Kb;
         this.storeFileOperations = this.builder.createCustom((value, _validator, checker) => {
             const storeFileOperation = this.builder.createObject({
                 type: this.builder.createEnum(["file", "checksum"]),
@@ -434,11 +446,11 @@ export class TypesValidator {
                 maxFileSize: this.intNonNegative,
                 maxWholeUploadSize: this.intNonNegative,
             }),
-            meta: this.unknown4Kb,
-            publicData: this.unknown4Kb,
+            meta: this.unknown32Kb,
+            publicData: this.unknown32Kb,
         });
         this.streamRoomId = id;
-        this.streamRoomData = this.unknown4Kb;
+        this.streamRoomData = this.unknown32Kb;
         this.resourceType = this.builder.rangeLength(this.builder.string, 1, 128);
         this.optResourceType = this.builder.optional(this.resourceType);
         this.contextAcl = this.builder.maxLength(this.builder.string, 4096);

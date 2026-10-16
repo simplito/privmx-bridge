@@ -15,7 +15,7 @@ import { NonceService } from "../misc/NonceService";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { AppException } from "../../api/AppException";
 import { ECUtils } from "../../utils/crypto/ECUtils";
-import { verifyKeyFromEcc } from "../../utils/crypto/VerifyKey";
+import { publicVerifyKeyFromBase58, secp256k1ToBase58 } from "../../utils/crypto/VerifyKey";
 import { Session } from "../../api/session/Session";
 import { ECIES } from "../../utils/crypto/ECIES";
 import * as types from "../../types";
@@ -83,7 +83,7 @@ export class KeyLoginService {
         return {
             sessionId: session.id,
             I: user.I,
-            pub: ECUtils.publicToBase58DER(priv),
+            pub: secp256k1ToBase58(priv),
         };
     }
     
@@ -107,14 +107,15 @@ export class KeyLoginService {
             throw new AppException("INVALID_PROXY_SESSION");
         }
         const keyLoginData = session.get("keyLogin");
-        const pub = ECUtils.publicFromBase58DER(keyLoginData.pub);
-        if (!pub) {
+        // secp256k1 only, and not for want of agility: this login derives `newK` by ECIES against the very
+        // same key a few lines below, and a sign-only algorithm cannot do key agreement.
+        const keyUserKey = publicVerifyKeyFromBase58(keyLoginData.pub);
+        if (!keyUserKey || keyUserKey.algorithm !== "secp256k1") {
             throw new AppException("INVALID_SESSION_STATE");
         }
+        const pub = keyUserKey.ecc;
         try {
-            // secp256k1 only, and not for want of agility: this login derives `newK` by ECIES against the
-            // very same key a few lines below, and a sign-only algorithm cannot do key agreement.
-            await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), verifyKeyFromEcc(pub), nonce, timestamp, signature);
+            await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), keyUserKey, nonce, timestamp, signature);
         }
         catch (e) {
             await this.sessionHolder.destroy(undefined, session);

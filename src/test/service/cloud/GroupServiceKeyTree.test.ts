@@ -33,6 +33,7 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { TreeTransitionValidator } from "../../../service/cloud/keytree/TreeTransitionValidator";
@@ -58,9 +59,9 @@ const WINNER_TAG = "d29ubmVyLXRhZw==" as types.core.Base64;
 const data = "SomeGroupData" as types.group.GroupData;
 
 const janekKeys = ECUtils.generateKeyPair();
-const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
+const janekPub = secp256k1ToBase58(janekKeys.keyPair) as types.cloud.UserPubKey;
 const aliceKeys = ECUtils.generateKeyPair();
-const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
+const alicePub = secp256k1ToBase58(aliceKeys.keyPair) as types.cloud.UserPubKey;
 const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const nextGroupPubKey = alicePub as unknown as types.cloud.GroupPubKey;
 

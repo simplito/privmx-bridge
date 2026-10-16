@@ -21,7 +21,7 @@ import { TicketsDb, TicketData, TicketId } from "./TicketsDb";
 import { PrivmxConnectionBase } from "./PrivmxConnectionBase";
 import * as types from "../../types";
 import { RequestLogger } from "../../service/log/RequestLogger";
-import { ECUtils } from "../../utils/crypto/ECUtils";
+import { publicVerifyKeyFromBase58, secp256k1ToBase58 } from "../../utils/crypto/VerifyKey";
 import { EcdheLoginService } from "../../service/login/EcdheLoginService";
 import { ServerAgent } from "../ServerAgent";
 import { SessionLoginService } from "../../service/login/SessionLoginService";
@@ -87,7 +87,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.clientAgent = packet.agent;
             }
             const clientKey = ec.keyFromPublic(packet.key);
-            const sessionId = await this.ecdheLoginService.onLogin(ECUtils.publicToBase58DER(clientKey), this.getEncoderType(), packet.solution);
+            const sessionId = await this.ecdheLoginService.onLogin(secp256k1ToBase58(clientKey), this.getEncoderType(), packet.solution);
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);
@@ -115,7 +115,7 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.clientAgent = packet.agent;
             }
             const clientKey = ec.keyFromPublic(packet.key);
-            const transportKey = ECUtils.publicToBase58DER(clientKey);
+            const transportKey = secp256k1ToBase58(clientKey);
             // Two roles, and they are the same key only by default. The channel's ECDH below always runs on
             // `clientKey`, because key agreement needs secp256k1; `identityKey`, when sent, is who the client
             // claims to be and may be of any algorithm the bridge can verify with.
@@ -138,10 +138,13 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 methodInfo.method = "session";
                 methodInfo.params = packet;
                 const ec = elliptic.ec("secp256k1");
-                const clientKey = ECUtils.publicFromBase58DER(packet.sessionKey);
-                if (!clientKey) {
+                // The session key is tagged like any other, and must be secp256k1: the channel below agrees a
+                // secret with it, which a sign-only algorithm cannot do.
+                const sessionKey = publicVerifyKeyFromBase58(packet.sessionKey);
+                if (!sessionKey || sessionKey.algorithm !== "secp256k1") {
                     throw new RpcError("Invalid client key");
                 }
+                const clientKey = sessionKey.ecc;
                 const session = await this.sessionLoginService.onSession(packet.sessionId, clientKey, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature);
                 methodInfo.user = session.get("username");
                 this.sessionId = session.id;

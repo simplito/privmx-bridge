@@ -15,8 +15,7 @@ import { Session } from "../../api/session/Session";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
-import { ECUtils } from "../../utils/crypto/ECUtils";
-import { verifyKeyFromEcc } from "../../utils/crypto/VerifyKey";
+import { secp256k1ToBase58, verifyKeyFromEcc } from "../../utils/crypto/VerifyKey";
 import { NonceService } from "../misc/NonceService";
 
 export class SessionLoginService {
@@ -42,7 +41,8 @@ export class SessionLoginService {
             throw new AppException("UNKNOWN_SESSION");
         }
         const restoreKey = session.get("restoreKey");
-        const pub = ECUtils.publicToBase58DER(clientKey);
+        // Tagged, because `restoreKey` was stored from what the client sent and client keys are tagged.
+        const pub = secp256k1ToBase58(clientKey);
         if (pub != restoreKey) {
             throw new AppException("UNKNOWN_SESSION");
         }
