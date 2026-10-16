@@ -16,6 +16,7 @@ import { SessionHolder } from "../../api/session/SessionHolder";
 import { Logger } from "../log/Logger";
 import { AppException } from "../../api/AppException";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { verifyKeyFromEcc } from "../../utils/crypto/VerifyKey";
 import { NonceService } from "../misc/NonceService";
 
 export class SessionLoginService {
@@ -30,7 +31,9 @@ export class SessionLoginService {
     async onSession(sessionId: types.core.SessionId, clientKey: elliptic.ec.KeyPair, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature): Promise<Session> {
         const session = await this.getSession(sessionId);
         this.checkRestoreKeyInSession(session, clientKey);
-        await this.nonceService.nonceCheck2P(Buffer.from("restore_" + sessionId, "utf8"), clientKey, nonce, timestamp, signature);
+        // The session key is the transport key the bridge itself agreed on with the client, not a user
+        // identity — it is secp256k1 because the channel's ECDH needs it to be.
+        await this.nonceService.nonceCheck2P(Buffer.from("restore_" + sessionId, "utf8"), verifyKeyFromEcc(clientKey), nonce, timestamp, signature);
         return session;
     }
     

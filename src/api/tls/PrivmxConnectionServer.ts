@@ -115,7 +115,13 @@ export class PrivmxConnectionServer extends PrivmxConnectionBase {
                 this.clientAgent = packet.agent;
             }
             const clientKey = ec.keyFromPublic(packet.key);
-            const sessionId = await this.ecdheLoginService.onLoginX(ECUtils.publicToBase58DER(clientKey), packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution, this.getEncoderType());
+            const transportKey = ECUtils.publicToBase58DER(clientKey);
+            // Two roles, and they are the same key only by default. The channel's ECDH below always runs on
+            // `clientKey`, because key agreement needs secp256k1; `identityKey`, when sent, is who the client
+            // claims to be and may be of any algorithm the bridge can verify with.
+            const sessionId = packet.identityKey === undefined
+                ? await this.ecdheLoginService.onLoginX(transportKey, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution, this.getEncoderType())
+                : await this.ecdheLoginService.onLoginX(packet.identityKey, packet.nonce, DateUtils.convertStrToTimestamp(packet.timestamp), packet.signature, packet.solution, this.getEncoderType(), undefined, transportKey);
             this.sessionId = sessionId;
             const der = Buffer.from(ecKey.derive(clientKey.getPublic()).toString("hex", 2), "hex");
             const z = Utils.fillTo32(der);

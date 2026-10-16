@@ -12,7 +12,7 @@ limitations under the License.
 import * as AdvValidator from "adv-validator";
 import Validator = AdvValidator.Types.Validator;
 import ObjectValidator = AdvValidator.Types.ObjectValidator;
-import { ECUtils } from "../utils/crypto/ECUtils";
+import { publicVerifyKeyFromBase58 } from "../utils/crypto/VerifyKey";
 import * as types from "../types";
 import { StringChecker } from "../utils/StringChecker";
 import * as ByteBuffer from "bytebuffer";
@@ -153,8 +153,11 @@ export class TypesValidator {
             if (typeof(value) !== "string") {
                 throw new Error("Expected string");
             }
-            const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
-            if (ecc === null) {
+            // Any algorithm the bridge can verify a signature with, not secp256k1 alone. The check stays
+            // rather than being dropped for agility's sake: a key is matched by its encoding
+            // (`userPubKeyExists` is a string lookup), so a truncated or mistyped one has to fail here and
+            // not later, as a container nobody can open.
+            if (publicVerifyKeyFromBase58(value as types.core.EccPubKey) === null) {
                 throw new Error("Expected Ecc public key");
             }
             return;
@@ -473,11 +476,18 @@ export class TypesValidator {
             ownerCanBeRemovedFromManagers: policyEntry,
             canOverwriteContextPolicy: policyEntry,
             forwardSecrecy: policyEntry,
+            sendCustomNotification: policyEntry,
+            // Opaque to the bridge; PolicyService decides where it may appear, this only bounds its size.
+            cryptoSuite: this.builder.optional(this.builder.maxLength(this.builder.string, 64)),
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
+            context: this.builder.optional(this.builder.createObject({
+                listUsers: policyEntry,
+                sendCustomNotification: policyEntry,
+            })),
             thread: this.builder.optional(this.containerPolicy),
             store: this.builder.optional(this.containerPolicy),
             kvdb: this.builder.optional(this.containerPolicy),

@@ -258,7 +258,20 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     /** When "yes", item writes are refused while a grantee group's epoch is ahead of the container's key, so
      *  clients must re-key before writing. Advisory: the bridge does not re-key anything itself. */
     forwardSecrecy?: PolicyBooleanEntry;
+    /** Names the algorithm set used for data in this container. Fixed when the container is created; an update
+     *  that would change it is refused. Not settable on a context policy. */
+    cryptoSuite?: CryptoSuiteName;
 }
+
+/**
+ * The name of an algorithm set, e.g. "aes256gcm-sha256".
+ *
+ * Opaque to the bridge, deliberately: it is stored, handed back and compared for equality, never interpreted, so
+ * clients can agree on a new suite without the bridge learning about it.
+ *
+ * @doctype string
+ */
+export type CryptoSuiteName = string&{__cryptoSuiteName: never};
 
 export interface ContainerPolicy extends ContainerWithoutItemPolicy {
     /** Item policy */

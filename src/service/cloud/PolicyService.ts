@@ -165,6 +165,9 @@ export class PolicyService {
         if (policy.stream) {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
         }
+        if (policy.kvdb) {
+            this.validateContainerPolicyForContext("policy.kvdb", policy.kvdb);
+        }
         if (policy.group) {
             this.validateContainerPolicyForContext("policy.group", policy.group);
         }
@@ -220,6 +223,12 @@ export class PolicyService {
         }
         if (policy.forwardSecrecy !== undefined) {
             this.validatePolicyEntry(path + ".forwardSecrecy", policy.forwardSecrecy, ["default", "yes", "no"], []);
+        }
+        // A context-level crypto requirement is a separate tier with its own semantics (required vs. default,
+        // and what happens to a client that cannot produce the named suite) and is not designed yet. Refused
+        // rather than stored, so nobody configures a field that silently does nothing.
+        if (policy.cryptoSuite !== undefined) {
+            throw new AppException("INVALID_PARAMS", `${path}.cryptoSuite is not allowed here`);
         }
         if (policy.item !== undefined) {
             this.validateItemPolicy(path + ".item", policy.item, false);

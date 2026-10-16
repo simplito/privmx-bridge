@@ -42,6 +42,7 @@ export class PacketValidator extends BaseValidator {
         this.registerMethod("handshake_ecdhex", this.builder.createObject({
             type: this.builder.createConst("ecdhex"),
             key: this.builder.maxLength(this.tv.byteBuffer, 100),
+            identityKey: this.builder.optional(this.tv.eccPub),
             nonce: this.tv.nonce,
             timestamp: this.tv.timestampStr,
             signature: this.tv.eccSignature,

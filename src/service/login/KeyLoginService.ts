@@ -15,6 +15,7 @@ import { NonceService } from "../misc/NonceService";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { AppException } from "../../api/AppException";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { verifyKeyFromEcc } from "../../utils/crypto/VerifyKey";
 import { Session } from "../../api/session/Session";
 import { ECIES } from "../../utils/crypto/ECIES";
 import * as types from "../../types";
@@ -111,7 +112,9 @@ export class KeyLoginService {
             throw new AppException("INVALID_SESSION_STATE");
         }
         try {
-            await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), pub, nonce, timestamp, signature);
+            // secp256k1 only, and not for want of agility: this login derives `newK` by ECIES against the
+            // very same key a few lines below, and a sign-only algorithm cannot do key agreement.
+            await this.nonceService.nonceCheck2P(Buffer.from("login" + K, "utf8"), verifyKeyFromEcc(pub), nonce, timestamp, signature);
         }
         catch (e) {
             await this.sessionHolder.destroy(undefined, session);

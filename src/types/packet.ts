@@ -41,7 +41,14 @@ export interface EcdheResponsePacket extends BasePacket {
 
 export interface EcdhexRequestPacket extends BasePacket {
     type: "ecdhex";
+    /** The transport key, a secp256k1 point the channel's ECDH runs on. Also the identity, unless `identityKey` is set. */
     key: Buffer;
+    /**
+     * The identity to log in as, when it is not the key in `key` — for a user whose algorithm cannot do key
+     * agreement, so it cannot be the transport key. The signature is then verified with this key and covers
+     * the transport key as well.
+     */
+    identityKey?: types.core.EccPubKey;
     nonce: types.core.Nonce;
     timestamp: types.core.TimestampStr;
     signature: types.core.EccSignature;

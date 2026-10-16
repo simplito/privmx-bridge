@@ -14,7 +14,7 @@ import * as types from "../../types";
 import { SessionHolder } from "../../api/session/SessionHolder";
 import { EcdheDataInSession } from "../../api/session/Session";
 import { NonceService } from "../misc/NonceService";
-import { ECUtils } from "../../utils/crypto/ECUtils";
+import { publicVerifyKeyFromBase58 } from "../../utils/crypto/VerifyKey";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { AppException } from "../../api/AppException";
 import { RpcError } from "../../api/tls/RpcError";
@@ -78,18 +78,27 @@ export class EcdheLoginService {
         }
     }
     
-    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean) {
+    /**
+     * @param key the identity whose signature is verified and which is looked up among context users. It may
+     *        be of any algorithm the bridge can verify with — see `VerifyKey`.
+     * @param transportKey set when the identity is **not** the key the channel's ECDH ran on, i.e. when the
+     *        two roles have been split. It is then part of the signed message, so a captured signature cannot
+     *        be replayed onto someone else's channel. Left undefined by clients that still use one key for
+     *        both, where the binding comes from the keys being the same.
+     */
+    async onLoginX(key: types.core.EccPubKey, nonce: types.core.Nonce, timestamp: types.core.Timestamp, signature: types.core.EccSignature, solutionId: types.cloud.SolutionId|undefined, encoderType: EncoderType, plain?: boolean, transportKey?: types.core.EccPubKey) {
         if (solutionId) {
             const solution = await this.repositoryFactory.createSolutionRepository().get(solutionId);
             if (!solution) {
                 throw new RpcError("Solution does not exist");
             }
         }
-        const pub = ECUtils.publicFromBase58DER(key);
+        const pub = publicVerifyKeyFromBase58(key);
         if (!pub) {
             throw new AppException("INVALID_SIGNATURE");
         }
-        await this.nonceService.nonceCheck2P(Buffer.from("ecdhexlogin", "utf8"), pub, nonce, timestamp, signature);
+        const signedData = transportKey === undefined ? "ecdhexlogin" : "ecdhexlogin " + transportKey;
+        await this.nonceService.nonceCheck2P(Buffer.from(signedData, "utf8"), pub, nonce, timestamp, signature);
         return this.loginUsingKey(key, solutionId, encoderType, plain);
     }
     

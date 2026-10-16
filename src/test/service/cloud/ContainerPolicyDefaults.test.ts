@@ -15,6 +15,7 @@ import { PolicyService } from "../../../service/cloud/PolicyService";
 import * as db from "../../../db/Model";
 import * as types from "../../../types";
 import { AppException } from "../../../api/AppException";
+import { Utils } from "../../../utils/Utils";
 
 /**
  * What a deployment that configures nothing actually gets.
@@ -109,6 +110,24 @@ it("group: a roster is not listable context-wide by default", async () => {
     // an operator asks for it.
     expect(policy.canListAllContainers(asUser(bob), emptyContext)).toBe(false);
     expect(policy.canListMyContainers(asUser(bob), emptyContext)).toBe(true);
+});
+
+it("a container's crypto suite is fixed once it is created", async () => {
+    // The container's existing data stays encrypted under the suite it was created with, so an update that
+    // renames the suite would describe the container wrongly rather than convert it. An update carries the whole
+    // policy, which means dropping the field is as much a change as swapping it.
+    const policy = new KindPolicy(new PolicyService(), "thread");
+    const suite = "aes256gcm-sha256" as types.cloud.CryptoSuiteName;
+    const existing = {...container, policy: {cryptoSuite: suite}};
+    const update = (on: typeof container, newPolicy: types.cloud.ContainerPolicy) =>
+        Utils.try(() => policy.makeUpdateContainerCheck(asUser(alice), emptyContext, on, [alice], newPolicy));
+    
+    expect(update(existing, {cryptoSuite: suite}).success).toBe(true);
+    expect(update(existing, {cryptoSuite: "aes256gcm-sha512" as types.cloud.CryptoSuiteName}).success).toBe(false);
+    expect(update(existing, {}).success).toBe(false);
+    // A container that never named one is not forced to start, and cannot acquire one later either.
+    expect(update(container, {}).success).toBe(true);
+    expect(update(container, {cryptoSuite: suite}).success).toBe(false);
 });
 
 it("a context may set a group policy at all", async () => {
