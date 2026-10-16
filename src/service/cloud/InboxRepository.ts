@@ -148,30 +148,30 @@ export class InboxRepository {
     }
     
     async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
-        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
-        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldInbox.lastModifier
-        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData lives only
-        // in the history — `oldInbox.data` is just its `meta`. The keyId comes from `previous` for the same
-        // reason the data does: see ThreadRepository.rotateKeys.
-        const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], data: types.inbox.InboxData, grantees?: types.cloud.ContainerGrantees) {
+        // Unlike the other containers, an Inbox re-key writes new data under the new key: senders seal entries
+        // to the public key in the data, and keeping the previous data would keep them sealed to the replaced
+        // key. The data's DIO is the modifier's, so lastModifier / lastModificationDate move with it.
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: previous.keyId,
-            data: previous.data,
+            keyId: newKeyId,
+            data: data,
             users: oldInbox.users,
             managers: oldInbox.managers,
             groups: groups,
         };
         const updatedInbox: db.inbox.Inbox = {
             ...oldInbox,
+            lastModifier: entry.author,
+            lastModificationDate: entry.created,
             keyId: newKeyId,
+            data: data.meta,
             keys: newKeys,
             groups: groups,
             groupKeys: grantees?.groupKeys ?? oldInbox.groupKeys ?? [],
             history: [...oldInbox.history, entry],
-            // lastModifier / lastModificationDate intentionally NOT updated
         };
         await this.repository.update(updatedInbox);
         return updatedInbox;
