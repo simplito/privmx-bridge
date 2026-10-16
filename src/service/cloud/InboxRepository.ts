@@ -148,30 +148,38 @@ export class InboxRepository {
     }
     
     async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
-        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], data: types.inbox.InboxData, grantees?: types.cloud.ContainerGrantees) {
-        // Unlike the other containers, an Inbox re-key writes new data under the new key: senders seal entries
-        // to the public key in the data, and keeping the previous data would keep them sealed to the replaced
-        // key. The data's DIO is the modifier's, so lastModifier / lastModificationDate move with it.
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], inboxPubKey: types.core.EccPubKey, grantees?: types.cloud.ContainerGrantees) {
+        // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldInbox.lastModifier
+        // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData lives only
+        // in the history — `oldInbox.data` is just its `meta`. The keyId comes from `previous` for the same
+        // reason the data does: see ThreadRepository.rotateKeys.
+        // The one exception is the entries key in the public data, which senders seal entries to (F-05d): it
+        // moves to the new key's public key, or new entries stay sealed to the replaced key a removed member
+        // holds. A rotator gets nothing else: rotateKeys is a user right, metadata and file limits stay the
+        // managers' (`update` policy), so a rotation cannot carry them.
+        const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
+        const publicData = previous.data.publicData;
+        if (typeof publicData !== "object" || publicData === null || Array.isArray(publicData)) {
+            throw new Error(`inbox '${oldInbox.id}' public data is not an object`);
+        }
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
-            keyId: newKeyId,
-            data: data,
+            keyId: previous.keyId,
+            data: {...previous.data, publicData: {...publicData, inboxPubKey, inboxKeyId: newKeyId}},
             users: oldInbox.users,
             managers: oldInbox.managers,
             groups: groups,
         };
         const updatedInbox: db.inbox.Inbox = {
             ...oldInbox,
-            lastModifier: entry.author,
-            lastModificationDate: entry.created,
             keyId: newKeyId,
-            data: data.meta,
             keys: newKeys,
             groups: groups,
             groupKeys: grantees?.groupKeys ?? oldInbox.groupKeys ?? [],
             history: [...oldInbox.history, entry],
+            // lastModifier / lastModificationDate intentionally NOT updated
         };
         await this.repository.update(updatedInbox);
         return updatedInbox;

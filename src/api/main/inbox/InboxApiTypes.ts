@@ -76,8 +76,8 @@ export interface InboxUpdateModel {
 
 export interface InboxRotateKeysModel {
     id: types.inbox.InboxId;
-    /** Inbox data re-encrypted under the new key, so senders seal entries to the new key's public key */
-    data: types.inbox.InboxData;
+    /** The new key's entries public key, so senders seal entries to the new key; the rest of the inbox data stays as it was */
+    inboxPubKey: types.core.EccPubKey;
     keyId: types.core.KeyId;
     keys: types.cloud.KeyEntrySet[];
     groupKeys?: types.cloud.GroupKeyEntrySet[];

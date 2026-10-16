@@ -151,17 +151,11 @@ export class InboxService extends BaseContainerService {
                 // most likely a concurrent re-key of the same stale key, and a client can retry rather than fail.
                 throw new AppException("CONTAINER_ROTATED_ALREADY", {version: currentVersion, keyId: oldInbox.keyId});
             }
-            // A re-key re-encrypts the data only to move the entries public key to the new key; it may not
-            // re-point the Inbox at another Thread or Store.
-            const last = oldInbox.history[oldInbox.history.length - 1];
-            if (last.data.threadId !== model.data.threadId || last.data.storeId !== model.data.storeId) {
-                throw new AppException("ACCESS_DENIED", "a key rotation cannot change the inbox thread or store");
-            }
             const availableKeyIds = this.cloudKeyService.getAvailableKeyIds(oldInbox, model.keyId);
             const newKeys = await this.cloudKeyService.checkKeysAndClients(oldInbox.contextId, availableKeyIds, oldInbox.keys, model.keys, model.keyId, oldInbox.users, oldInbox.managers);
             const groups = (oldInbox.groups || []);
             const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(oldInbox.contextId, availableKeyIds, oldInbox.groupKeys || [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
-            const inbox = await inboxRepository.rotateKeys(oldInbox, user.userId, model.keyId, newKeys, model.data, {groups, groupKeys: newGroupKeys});
+            const inbox = await inboxRepository.rotateKeys(oldInbox, user.userId, model.keyId, newKeys, model.inboxPubKey, {groups, groupKeys: newGroupKeys});
             return {inbox, context};
         });
         this.inboxNotificationService.sendInboxUpdated(rInbox, usedContext.solution, []);
