@@ -17,6 +17,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { CloudUser, Executor } from "../../CommonTypes";
 import { CloudKeyService } from "./CloudKeyService";
 import { GroupNotificationService } from "./GroupNotificationService";
+import type { StreamNotificationService } from "./StreamNotificationService";
 import { CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
@@ -51,6 +52,7 @@ export class GroupService extends BaseContainerService {
         private cloudAccessValidator: CloudAccessValidator,
         private groupRotationRateLimiter: GroupRotationRateLimiter,
         private config: Config,
+        private streamNotificationService: StreamNotificationService,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -574,6 +576,7 @@ export class GroupService extends BaseContainerService {
         if (model.abandonHistory) {
             this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
         }
+        this.streamNotificationService.sendStreamRoomsUpdatedForGroup(group.id, context.solution);
         return group;
     }
     

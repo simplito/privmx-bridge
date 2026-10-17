@@ -20,6 +20,7 @@ import { GroupNotificationService } from "../../../service/cloud/GroupNotificati
 import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { ThreadRepository } from "../../../service/cloud/ThreadRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
+import { StreamNotificationService } from "../../../service/cloud/StreamNotificationService";
 import { createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
@@ -178,7 +179,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     const activeUsersMap = createMock<ActiveUsersMap>({});
     const host = "localhost" as types.core.Host;
     const groupRotationRateLimiter = fakeRateLimiter();
-    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config);
+    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config, createMock<StreamNotificationService>({}));
     
     const containerRepo = {isGroupReferenced: async () => groupReferenced};
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
