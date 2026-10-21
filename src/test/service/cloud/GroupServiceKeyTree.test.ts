@@ -1727,6 +1727,15 @@ it("generateNewGroupKey rotates a one-member group with the grant edge to its so
     assert.deepStrictEqual([params.grantEdge.childKind, params.grantEdge.childUserId, params.grantEdge.parentGeneration], ["user", janek, EPOCH + 1]);
 });
 
+it("SECURITY: a rotation tells the stream rooms granted to the group, so a live publication re-keys", async () => {
+    // As a removal (audit 05a final-2): a rotation after a suspected compromise must not leave a live publication
+    // under the pre-rotation room key.
+    const group = oneMemberGroup();
+    const {groupService, streamNotificationService} = createGroupService(group);
+    await groupService.generateNewGroupKey(janekCloudUser, rotationModel(group));
+    hasOneCallWithArguments(streamNotificationService.sendStreamRoomsUpdatedForGroup, [group.id, myContext.solution]);
+});
+
 it("SECURITY: a one-member rotation refuses a grant edge to anybody but the sole member", async () => {
     assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, childUserId: alice})), ["GRANT_EDGE_WRONG_CHILD"]);
 });
