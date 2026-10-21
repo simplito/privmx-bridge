@@ -223,6 +223,14 @@ export interface StreamSetNewOfferModel {
     };
 }
 
+export interface StreamSetNewOfferResult {
+    sessionId: types.stream.SessionId;
+    answer?: {
+        type: "answer";
+        sdp: string;
+    };
+}
+
 export interface StreamGetTurnCredentialsResult {
     credentials: TurnCredentials[];
 }
@@ -351,7 +359,7 @@ export interface IStreamApi {
     streamUpdate(model: StreamUpdateModel): Promise<StreamUpdateResult>;
     streamsUpdateRemoteSubscriptions(model: StreamUpdateRemoteSubscriptionsModel): Promise<StreamSubscribeResult>;
     streamAcceptOffer(model: StreamAcceptOfferModel): Promise<types.core.OK>;
-    streamSetNewOffer(model: StreamSetNewOfferModel): Promise<types.core.OK>;
+    streamSetNewOffer(model: StreamSetNewOfferModel): Promise<StreamSetNewOfferResult>;
     streamTrickle(model: StreamTrickleModel): Promise<types.core.OK>;
     streamGetTurnCredentials(): Promise<StreamGetTurnCredentialsResult>;
     streamRoomSendCustomEvent(model: StreamRoomSendCustomEventModel): Promise<types.core.OK>;

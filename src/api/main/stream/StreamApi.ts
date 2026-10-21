@@ -171,14 +171,14 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
     }
     
     @ApiMethod({})
-    async streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<types.core.OK> {
+    async streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<streamApi.StreamSetNewOfferResult> {
         if (!this.websocket) {
             throw new AppException("METHOD_CALLABLE_WITH_WEBSOCKET_ONLY");
         }
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const wsId = this.sessionService.getSessionUser().getWsId();
-        await this.streamService.setStreamOffer(cloudUser, model.offer, model.sessionId, this.websocket, wsId);
-        return "OK";
+        const res = await this.streamService.setStreamOffer(cloudUser, model.offer, model.sessionId, this.websocket, wsId);
+        return res;
     }
     
     @ApiMethod({})
