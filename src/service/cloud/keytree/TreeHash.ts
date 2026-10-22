@@ -50,6 +50,13 @@ export class TreeHash {
             return hash;
         }
         const [left, right] = TreeMath.children(nodeIndex, tree.numLeaves);
+        const hash = TreeHash.nodeHash(tree, nodeIndex, TreeHash.childHash(tree, left, memo), TreeHash.childHash(tree, right, memo));
+        memo?.set(nodeIndex, hash);
+        return hash;
+    }
+    
+    /** `NH` of an internal node from its two children's `CH` — the step a client repeats up its path. */
+    static nodeHash(tree: HashableTree, nodeIndex: number, left: Buffer, right: Buffer): Buffer {
         const writer = new ByteWriter();
         if (TreeMath.isKeyed(nodeIndex, tree.numLeaves)) {
             writer.tag("pmx-tree-node").u32(nodeIndex);
@@ -68,10 +75,7 @@ export class TreeHash {
         else {
             writer.tag("pmx-tree-inner").u32(nodeIndex);
         }
-        writer.raw(TreeHash.childHash(tree, left, memo)).raw(TreeHash.childHash(tree, right, memo));
-        const hash = Crypto.sha256(writer.bytes());
-        memo?.set(nodeIndex, hash);
-        return hash;
+        return Crypto.sha256(writer.raw(left).raw(right).bytes());
     }
     
     /** `CH` of every node and leaf, in one pass — what every seat's copath hashes read off. */

@@ -13,10 +13,8 @@ import "q2-test";
 import * as assert from "assert";
 import { GroupConverter } from "../../../../api/main/context/GroupConverter";
 import { buildTree, planCommit } from "../../../testUtils/TreeFixtures";
-import { ByteWriter } from "../../../../service/cloud/keytree/ByteWriter";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
-import { Crypto } from "../../../../utils/crypto/Crypto";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
 
@@ -312,7 +310,7 @@ it("a path view carries the copath hashes that, with the caller's own path, rebu
         const sibling = Buffer.from(copathHash, "hex");
         const [left] = TreeMath.children(parent, 64);
         // The parent's own fields come from the served record (keyed) or its index alone (unkeyed).
-        hash = left === current ? rehash(served, parent, hash, sibling) : rehash(served, parent, sibling, hash);
+        hash = left === current ? TreeHash.nodeHash(served, parent, hash, sibling) : TreeHash.nodeHash(served, parent, sibling, hash);
         current = parent;
     }
     assert.strictEqual(hash.toString("hex"), TreeHash.childHash(TreeHash.of(wide), TreeMath.root(64)).toString("hex"));
@@ -378,21 +376,3 @@ it("the latest statement is served as is; vouching statements are named by the s
     assert.deepStrictEqual(GroupConverter.vouchingSeqs([...converted.treeNodes, {nodeIndex: 95, generation: 0}]), [1, 2], "a blank record vouches for nothing");
 });
 
-/** `NH`/`CH` of an internal node from its two children's hashes — the step a client repeats up its path. */
-function rehash(view: ReturnType<typeof TreeHash.of>, nodeIndex: number, left: Buffer, right: Buffer): Buffer {
-    const writer = new ByteWriter();
-    if (TreeMath.isKeyed(nodeIndex, view.numLeaves)) {
-        const record = view.nodes.get(nodeIndex);
-        writer.tag("pmx-tree-node").u32(nodeIndex).u8(record ? 1 : 0);
-        if (record) {
-            writer.u32(record.generation).u8(record.publicKey ? 1 : 0);
-            if (record.publicKey) {
-                writer.lp(record.publicKey).u64(record.setBy ?? 0);
-            }
-        }
-    }
-    else {
-        writer.tag("pmx-tree-inner").u32(nodeIndex);
-    }
-    return Crypto.sha256(writer.raw(left).raw(right).bytes());
-}
