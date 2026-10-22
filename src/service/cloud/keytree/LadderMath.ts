@@ -275,6 +275,4 @@ export type LadderProblem =
     | {kind: "DUPLICATE", rung: RungSpan}
     | {kind: "UNIT_RUNG_MISSING", newEpoch: number, requiredTarget: number}
     | {kind: "FUTURE_EPOCH", rung: RungSpan, currentEpoch: number}
-    | {kind: "NOT_CANONICAL", rung: RungSpan}
-    | {kind: "AUTHOR_HAS_RUNG", rung: RungSpan}
-    | {kind: "SPAN_FULL", rung: RungSpan, max: number};
+    | {kind: "NOT_CANONICAL", rung: RungSpan};
