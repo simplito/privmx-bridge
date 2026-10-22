@@ -17,7 +17,6 @@ import { ContextApiValidator } from "./ContextApiValidator";
 import { BaseApi } from "../../BaseApi";
 import { GroupConverter } from "./GroupConverter";
 import { RequestLogger } from "../../../service/log/RequestLogger";
-import { AppException } from "../../AppException";
 import * as db from "../../../db/Model";
 import * as contextApi from "./ContextApiTypes";
 import * as types from "../../../types";
@@ -72,12 +71,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        // The shared statement validator has `policy` optional (only create and policy ops carry it); a creation
-        // must, or `createGroup` would hash and check a policy nobody sent.
-        if (model.commit.policy === undefined) {
-            throw new AppException("INVALID_PARAMS", "commit.policy is required");
-        }
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy, model.tree, model.commit, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }

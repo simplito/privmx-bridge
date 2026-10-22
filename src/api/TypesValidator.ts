@@ -83,10 +83,10 @@ export class TypesValidator {
     groupTreeState: Validator;
     groupTreeRefreshedNode: Validator;
     groupTreeTransition: Validator;
-    groupTreeSeatedNode: Validator;
     groupTreeAdditionTransition: Validator;
     groupTreeSelfUpdateTransition: Validator;
     groupTreeCommitStatement: ObjectValidator;
+    groupTreeCommitStatementWithPolicy: ObjectValidator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -340,7 +340,6 @@ export class TypesValidator {
             generation: this.intNonNegative,
             publicKey: this.eccPubCompressed,
         });
-        this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
         // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
         // newcomers' paths. Its edges are what those nodes owe, and a node whose sibling subtree is all blank wraps
         // to every member under it — so the edge cap is the whole-tree one, not `O(log n)`.
@@ -355,7 +354,7 @@ export class TypesValidator {
         this.groupTreeAdditionTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
             positions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, maxCommitNodes),
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
             edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
         });
         this.groupTreeSelfUpdateTransition = this.builder.createObject({
@@ -534,6 +533,10 @@ export class TypesValidator {
         // because the policy validators are.
         this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
             policy: this.builder.optional(this.containerPolicy),
+        });
+        // Required where the op is `create` or `policy`, so the service never hashes a policy nobody sent.
+        this.groupTreeCommitStatementWithPolicy = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.containerPolicy,
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),

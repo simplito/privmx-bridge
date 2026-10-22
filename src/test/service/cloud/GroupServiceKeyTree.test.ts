@@ -38,12 +38,6 @@ import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
 import type { GroupRepairRungModel, RotatedAlreadyData } from "../../../api/main/context/ContextApiTypes";
-import { ContextApi } from "../../../api/main/context/ContextApi";
-import { ContextApiValidator } from "../../../api/main/context/ContextApiValidator";
-import { ContextService } from "../../../service/cloud/ContextService";
-import { SessionService } from "../../../api/session/SessionService";
-import { GroupConverter } from "../../../api/main/context/GroupConverter";
-import { RequestLogger } from "../../../service/log/RequestLogger";
 
 /**
  * Service-level tests for tree-backed group membership — the bridge's half of the contract, which is entirely
@@ -1682,28 +1676,6 @@ it("a creation's statement carries the policy the group stores and hashes it wit
     assert.deepStrictEqual(await statementProblems(() => other.groupService.createGroup(janekCloudUser, RESOURCE_ID, contextId, undefined, groupPubKey,
         [alice, bob, carol], [janek], data, data, data, keyId, {update: "all"}, tree, statement)), ["policyHash"]);
     hasNoCalls(other.groupRepository.createGroup);
-});
-
-it("groupCreate without commit.policy is refused with INVALID_PARAMS before the service runs", async () => {
-    const groupService = createMock<GroupService>({});
-    mock(groupService, "createGroup", (async () => ({id: groupId, contextId})) as never);
-    const sessionService = createMock<SessionService>({});
-    mock(sessionService, "validateContextSessionAndGetCloudUser", () => janekCloudUser);
-    const requestLogger = createMock<RequestLogger>({});
-    mock(requestLogger, "setContextId", () => {});
-    const api = new ContextApi(new ContextApiValidator(new TypesValidator()), createMock<ContextService>({}), sessionService, groupService,
-        createMock<GroupConverter>({}), requestLogger);
-    const tree = buildTree(SEATING, 1);
-    const commit: Partial<types.cloud.GroupTreeCommitStatement> = creationStatement(tree, "janek", {groupId: RESOURCE_ID, groupPubKey, users: [alice, bob, carol], managers: [janek]});
-    delete commit.policy;
-    const model = {contextId, resourceId: RESOURCE_ID, groupPubKey, users: [alice, bob, carol], managers: [janek], data, publicMeta: data, privateMeta: data,
-        keyId, tree, commit: commit as types.cloud.GroupTreeCommitStatement};
-    const error = await expectFailure("INVALID_PARAMS", () => api.groupCreate(model));
-    assert.strictEqual(error.getData(), "commit.policy is required");
-    hasNoCalls(groupService.createGroup);
-    // With it the call goes through.
-    await api.groupCreate({...model, commit: {...commit, policy: {}} as types.cloud.GroupTreeCommitStatement});
-    hasOneCall(groupService.createGroup);
 });
 
 /** The edge problems a rotation with `edge` is refused with, after checking nothing was stored. */

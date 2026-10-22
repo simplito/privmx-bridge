@@ -305,10 +305,8 @@ export class GroupService extends BaseContainerService {
     /** Sets the group's policy as a signed `policy` commit: CAS'd on the statement chain and rate-limited like every
      *  other commit, in one transaction. It moves neither metadata counter and appends no metadata entry. */
     async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
-        const policy = model.commit.policy;
-        if (policy === undefined) {
-            throw new AppException("INVALID_PARAMS", "commit.policy is required");
-        }
+        // Required by the API validator (`groupTreeCommitStatementWithPolicy`).
+        const policy = model.commit.policy!;
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const budget = new Reservations(this.groupRotationRateLimiter);
         const group = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {

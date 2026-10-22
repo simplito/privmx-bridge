@@ -58,7 +58,7 @@ export class ContextApiValidator extends BaseValidator {
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
             // The policy is `commit.policy`, signed into the chain by `policyHash`.
             tree: this.tv.groupTreeState,
-            commit: this.tv.groupTreeCommitStatement,
+            commit: this.tv.groupTreeCommitStatementWithPolicy,
         }));
         // One plane per method, and `createObject` is strict — so a request here structurally cannot carry the
         // other plane's envelope or the policy. That is what makes the per-plane ACL entry bound the effect
@@ -82,7 +82,7 @@ export class ContextApiValidator extends BaseValidator {
         // counters. The old `{id, policy}` shape is refused.
         this.registerMethod("groupUpdatePolicy", this.builder.createObject({
             id: this.tv.groupId,
-            commit: this.tv.groupTreeCommitStatement,
+            commit: this.tv.groupTreeCommitStatementWithPolicy,
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
         }));

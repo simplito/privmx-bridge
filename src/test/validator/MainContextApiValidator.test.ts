@@ -69,6 +69,15 @@ it("ContextApiValidator.groupCreate requires a resourceId, which the first state
     expect(result.success).toBe(false);
 });
 
+it("groupCreate and groupUpdatePolicy refuse a statement without its policy", () => {
+    const create = validGroupCreate();
+    delete create.commit.policy;
+    expect(Utils.try(() => validator().validate("groupCreate", create)).success).toBe(false);
+    const commit = validStatement("policy");
+    delete commit.policy;
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+});
+
 it("ContextApiValidator.groupCreate accepts the data a group of sixteen thousand needs", () => {
     // A group's data carries the endpoint's DIO, which names every member, so it grows with the roster where a
     // thread's or a store's does not. Measured against a live bridge: ~19 B per member — 154 KB at 8 190 members.
