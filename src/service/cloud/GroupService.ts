@@ -307,17 +307,8 @@ export class GroupService extends BaseContainerService {
         return rGroup;
     }
     
-    /**
-     * Sets the group's policy, and nothing else.
-     *
-     * No version, no CAS and no epoch guard: the policy lives outside the client's signed envelope, so there is
-     * no counter a client could know, no key to write it under and nothing for a reader to re-verify. It moves
-     * neither metadata counter and appends no entry — deliberately, or a policy change would strand the epoch of
-     * a plane it did not rewrite.
-     *
-     * No transaction either: one document, one `updateOne`, nothing appended anywhere. `withTransaction` would
-     * buy nothing a single-document write does not already give and only add a retry surface.
-     */
+    /** Sets the group's policy as a signed `policy` commit: CAS'd on the statement chain and rate-limited like every
+     *  other commit, in one transaction. It moves neither metadata counter and appends no metadata entry. */
     async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
         const policy = model.commit.policy;
         if (policy === undefined) {
