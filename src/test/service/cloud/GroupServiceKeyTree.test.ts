@@ -1300,14 +1300,25 @@ it("selfUpdate that would move the epoch is refused", async () => {
     await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, model));
 });
 
-it("no commit is accepted on a group from before tree version 2", async () => {
-    const group = treeBackedGroup({treeVersion: undefined});
+// A group from before tree version 3 or before commit statements is recreated, not migrated.
+each<[Partial<TreeGroup>, "selfUpdate"|"add"|"policy"]>([
+    [{treeVersion: undefined}, "selfUpdate"],
+    [{treeVersion: undefined}, "add"],
+    [{treeVersion: 2}, "selfUpdate"],
+    [{treeCommitSeq: undefined}, "selfUpdate"],
+    [{treeCommitSeq: undefined}, "policy"],
+]).it("no commit is accepted on a legacy group (%#)", async ([override, op]) => {
+    const group = treeBackedGroup(override);
     const {groupService, groupRepository} = createGroupService(group);
-    const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, selfUpdateModel(group, alice)));
-    assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
-    await expectFailure("GROUP_TREE_INVALID", () => groupService.addMembers(janekCloudUser, additionModel(treeBackedGroup({treeVersion: undefined}), 4)));
-    hasNoCalls(groupRepository.selfUpdateWithTransition);
-    hasNoCalls(groupRepository.addMembersWithTransition);
+    const runs: Record<typeof op, [() => Promise<unknown>, Mock]> = {
+        selfUpdate: [() => groupService.selfUpdate(aliceCloudUser, selfUpdateModel(group, alice)), groupRepository.selfUpdateWithTransition],
+        add: [() => groupService.addMembers(janekCloudUser, additionModel(group, 4)), groupRepository.addMembersWithTransition],
+        policy: [() => groupService.updatePolicy(janekCloudUser, policyModel(group, {})), groupRepository.updatePolicyWithStatement],
+    };
+    const [run, write] = runs[op];
+    const error = await expectFailure("GROUP_TREE_INVALID", run);
+    assert.deepStrictEqual(error.getData(), [{kind: "UNSUPPORTED_TREE_VERSION", treeVersion: group.treeVersion ?? null}]);
+    hasNoCalls(write);
 });
 
 it("no commit is accepted on a group whose latest statement predates chained statements", async () => {
@@ -1441,22 +1452,6 @@ it("a creation's statement is seq 1, names the resourceId the creator chose, and
     // I-1: no deltas, or every read citing seq 1 would carry the whole roster; `getTreeCommits` serves it from seq 0.
     assert.deepStrictEqual([signed.addedUsers, signed.addedManagers], [[], []]);
     assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, addedUsers: [alice]}, "janek"))), ["addedUsers"]);
-});
-
-it("no commit is accepted on a group from before commit statements", async () => {
-    const group = treeBackedGroup({treeCommitSeq: undefined});
-    const {groupService, groupRepository} = createGroupService(group);
-    const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, selfUpdateModel(group, alice)));
-    assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
-    hasNoCalls(groupRepository.selfUpdateWithTransition);
-});
-
-it("no commit is accepted on a version 2 group: its rungs and genesis carry what version 3 binds", async () => {
-    const group = treeBackedGroup({treeVersion: 2});
-    const {groupService, groupRepository} = createGroupService(group);
-    const error = await expectFailure("GROUP_TREE_INVALID", () => groupService.selfUpdate(aliceCloudUser, selfUpdateModel(group, alice)));
-    assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
-    hasNoCalls(groupRepository.selfUpdateWithTransition);
 });
 
 it("getTreeCommits serves a page up to the latest, never past it", async () => {
@@ -1642,16 +1637,6 @@ it("no commit is accepted on a group whose latest statement predates policyHash"
     await unsupported(() => groupService.updatePolicy(janekCloudUser, models.policy));
 });
 
-it("no commit is accepted on a group without a chain", async () => {
-    const group = treeBackedGroup();
-    const models = [selfUpdateModel(group, janek), policyModel(group, {})] as const;
-    const {groupService} = createGroupService({...group, treeCommitSeq: undefined});
-    for (const run of [() => groupService.selfUpdate(janekCloudUser, models[0]), () => groupService.updatePolicy(janekCloudUser, models[1])]) {
-        const error = await expectFailure("GROUP_TREE_INVALID", run);
-        assert.deepStrictEqual(error.getData(), [{kind: "UNSUPPORTED_TREE_VERSION", treeVersion: TreeMath.TREE_VERSION}]);
-    }
-});
-
 it("a commit reads the latest statement once", async () => {
     const group = treeBackedGroup();
     const latestReads = (calls: unknown[][]) => calls.filter(([, seqs]) => (seqs as number[]).includes(group.treeCommitSeq!)).length;
@@ -1704,30 +1689,28 @@ it("SECURITY: a rotation tells the stream rooms granted to the group, so a live 
     hasOneCallWithArguments(streamNotificationService.sendStreamRoomsUpdatedForGroup, [group.id, myContext.solution]);
 });
 
-it("SECURITY: a one-member rotation refuses a grant edge to anybody but the sole member", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, childUserId: alice})), ["GRANT_EDGE_WRONG_CHILD"]);
-});
-
-it("SECURITY: a one-member rotation refuses a grant edge to the leaf as a node", async () => {
+type EdgeMutation = (honest: types.cloud.GroupTreeEdge) => types.cloud.GroupTreeEdge;
+each<[string, () => TreeGroup, EdgeMutation, string[]]>([
+    // One member: the grant edge goes straight to the sole member's leaf.
+    ["SECURITY: one member, to anybody but the sole member", oneMemberGroup, honest => ({...honest, childUserId: alice}), ["GRANT_EDGE_WRONG_CHILD"]],
     // The leaf has no node key: nobody could open such an edge, and the member would be locked out of the epoch.
-    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({
+    ["SECURITY: one member, to the leaf as a node", oneMemberGroup, honest => ({
         isGrantEdge: true, parentGeneration: honest.parentGeneration, childKind: "node", childIndex: 0, childGeneration: 0, data: honest.data,
-    })), ["GRANT_EDGE_WRONG_CHILD"]);
-});
-
-it("a one-member rotation refuses a user grant edge carrying a child generation", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, childGeneration: 1})), ["MALFORMED_EDGE"]);
-});
-
-it("a one-member rotation refuses a grant edge at an epoch other than the next", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(oneMemberGroup(), honest => ({...honest, parentGeneration: EPOCH})), ["GRANT_EDGE_WRONG_EPOCH"]);
-});
-
-it("SECURITY: a rotation of a group of two or more refuses a grant edge addressed to a member", async () => {
+    }), ["GRANT_EDGE_WRONG_CHILD"]],
+    ["one member, a user edge carrying a child generation", oneMemberGroup, honest => ({...honest, childGeneration: 1}), ["MALFORMED_EDGE"]],
+    ["one member, an epoch other than the next", oneMemberGroup, honest => ({...honest, parentGeneration: EPOCH}), ["GRANT_EDGE_WRONG_EPOCH"]],
     // Guards the n ≥ 2 rule against the one-member case widening it: the edge must go to the root node.
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({
+    ["SECURITY: two or more, addressed to a member", treeBackedGroup, honest => ({
         isGrantEdge: true, parentGeneration: honest.parentGeneration, childKind: "user", childUserId: janek, data: honest.data,
-    })), ["GRANT_EDGE_WRONG_CHILD"]);
+    }), ["GRANT_EDGE_WRONG_CHILD"]],
+    // The load-bearing n ≥ 2 check: the new grant key wrapped to a root key nobody holds any more locks the epoch.
+    ["SECURITY: two or more, planned against a superseded root", treeBackedGroup, honest => ({...honest, childGeneration: honest.childGeneration! - 1}), ["STALE_CHILD_GENERATION"]],
+    ["two or more, at the current epoch", treeBackedGroup, honest => ({...honest, parentGeneration: EPOCH}), ["GRANT_EDGE_WRONG_EPOCH"]],
+    ["not a grant edge", treeBackedGroup, honest => ({...honest, isGrantEdge: false}), ["MALFORMED_EDGE", "UNEXPECTED_EDGE", "GRANT_EDGE_COUNT"]],
+    ["naming a parent node", treeBackedGroup, honest => ({...honest, parentIndex: 0}), ["MALFORMED_EDGE"]],
+    ["carrying no data", treeBackedGroup, honest => ({...honest, data: "" as types.core.UserKeyData}), ["EMPTY_EDGE_DATA"]],
+]).it("a rotation refuses a grant edge: %s", async ([, group, edge, expected]) => {
+    assert.deepStrictEqual(await rotationEdgeProblems(group(), edge), expected);
 });
 
 it("a one-member rotation whose statement is signed by somebody else is refused and charged as a refusal", async () => {
@@ -1737,28 +1720,6 @@ it("a one-member rotation whose statement is signed by somebody else is refused 
     assert.deepStrictEqual(await statementProblems(() => groupService.generateNewGroupKey(janekCloudUser, {...model, commit: signStatement(model.commit, "alice")})), ["SIGNATURE"]);
     hasNoCalls(groupRepository.generateNewGroupKey);
     assert.deepStrictEqual(groupRotationRateLimiter.kept, [`refused|${groupId}|janek`]);
-});
-
-it("SECURITY: a rotation of a group of two or more refuses a grant edge planned against a superseded root", async () => {
-    // The load-bearing n ≥ 2 check: the new grant key wrapped to a root key nobody holds any more locks the epoch.
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, childGeneration: honest.childGeneration! - 1})), ["STALE_CHILD_GENERATION"]);
-});
-
-it("a rotation of a group of two or more refuses a grant edge at the current epoch", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, parentGeneration: EPOCH})), ["GRANT_EDGE_WRONG_EPOCH"]);
-});
-
-it("a rotation refuses an edge that is not a grant edge", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, isGrantEdge: false})),
-        ["MALFORMED_EDGE", "UNEXPECTED_EDGE", "GRANT_EDGE_COUNT"]);
-});
-
-it("a rotation refuses a grant edge that names a parent node", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, parentIndex: 0})), ["MALFORMED_EDGE"]);
-});
-
-it("a rotation refuses a grant edge carrying no data", async () => {
-    assert.deepStrictEqual(await rotationEdgeProblems(treeBackedGroup(), honest => ({...honest, data: "" as types.core.UserKeyData})), ["EMPTY_EDGE_DATA"]);
 });
 
 it("a rotation of a group whose stored root is missing is refused as having no tree", async () => {
