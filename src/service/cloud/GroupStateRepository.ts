@@ -11,6 +11,7 @@ limitations under the License.
 
 import * as mongodb from "mongodb";
 import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
+import type { Query, QueryResult } from "../../db/ObjectRepository";
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { TreeMath } from "./keytree/TreeMath";
@@ -118,6 +119,11 @@ export class GroupStateRepository {
             return;
         }
         await repository.collection.bulkWrite(operations, repository.getOptions());
+    }
+    
+    /** `from <= field <= to`, either bound optional. */
+    private static range<T, K extends keyof T>(q: Query<T>, field: K, from?: T[K], to?: T[K]): QueryResult[] {
+        return [...(from === undefined ? [] : [q.gte(field, from)]), ...(to === undefined ? [] : [q.lte(field, to)])];
     }
     
     // ── read ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -236,13 +242,7 @@ export class GroupStateRepository {
      */
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
         const rungs = await this.rungs.query(q => {
-            const conditions = [q.eq("groupId", groupId)];
-            if (fromKeyVersion !== undefined) {
-                conditions.push(q.gte("atKeyVersion", fromKeyVersion));
-            }
-            if (toKeyVersion !== undefined) {
-                conditions.push(q.lte("atKeyVersion", toKeyVersion));
-            }
+            const conditions = [q.eq("groupId", groupId), ...GroupStateRepository.range(q, "atKeyVersion", fromKeyVersion, toKeyVersion)];
             if (minTarget !== undefined) {
                 conditions.push(q.gte("targetKeyVersion", minTarget));
             }
@@ -263,16 +263,8 @@ export class GroupStateRepository {
      * O(window), not O(epochs).
      */
     async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
-        return this.epochKeys.query(q => {
-            const conditions = [q.eq("groupId", groupId)];
-            if (fromKeyVersion !== undefined) {
-                conditions.push(q.gte("keyVersion", fromKeyVersion));
-            }
-            if (toKeyVersion !== undefined) {
-                conditions.push(q.lte("keyVersion", toKeyVersion));
-            }
-            return q.andList(conditions);
-        }).sort("keyVersion", true).array();
+        return this.epochKeys.query(q => q.andList([q.eq("groupId", groupId), ...GroupStateRepository.range(q, "keyVersion", fromKeyVersion, toKeyVersion)]))
+            .sort("keyVersion", true).array();
     }
     
     /** Whether any statement of the group carries `groupPubKey` (T4-24) — every epoch it ever had, below the era floor
@@ -461,16 +453,13 @@ export class GroupStateRepository {
     /** A commit's rungs, all by its committer. Keyed by span and author, so a rung re-submitted after a lost race
      *  (the transaction retried) replaces itself instead of duplicating. */
     async insertRungs(groupId: types.group.GroupId, author: types.cloud.UserId, rungs: types.cloud.GroupArchiveRungSubmission[]): Promise<void> {
-        if (rungs.length === 0) {
-            return;
-        }
-        await this.rungs.collection.bulkWrite(rungs.map(rung => ({
+        await GroupStateRepository.bulkWrite(this.rungs, rungs.map(rung => ({
             replaceOne: {
                 filter: {_id: GroupStateRepository.rungId(groupId, rung, author)},
                 replacement: this.toRungDoc(groupId, rung, author),
                 upsert: true,
             },
-        })), this.rungs.getOptions());
+        })));
     }
     
     /**
