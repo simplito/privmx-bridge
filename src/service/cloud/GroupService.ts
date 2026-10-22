@@ -708,12 +708,8 @@ export class GroupService extends BaseContainerService {
             if (!rung.data) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: span.at, target: span.target});
             }
+            // A second rung by the same author is refused by its derived id (`insertRung`: AUTHOR_HAS_RUNG).
             const stored = await groupRepository.state.getRungsAt(model.id, span.at, span.target);
-            // ponytail: a row stored before authors were server-set has none; it counts towards the cap but is
-            // nobody's, so its opener may add one more. No such row is live (clients always sent `author`).
-            if (stored.some(existing => existing.author === user.userId)) {
-                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "AUTHOR_HAS_RUNG", at: span.at, target: span.target});
-            }
             if (stored.length >= LadderMath.MAX_RUNGS_PER_SPAN) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "SPAN_FULL", at: span.at, target: span.target, max: LadderMath.MAX_RUNGS_PER_SPAN});
             }
