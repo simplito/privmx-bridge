@@ -58,14 +58,7 @@ function honest(tree: types.cloud.GroupTreeState, op: PlanOp, keyVersion = EPOCH
 
 /** A creation, checked the way `GroupService.createGroup` checks it: an empty tree in the final seating. */
 function honestCreate(assignment: string[], creator = assignment.find(a => a !== "")!): Case {
-    const empty = {numLeaves: assignment.length, leafAssignment: assignment.map(userId), nodes: [], edges: []};
-    const plan = planCommit(empty, 0, {kind: "create", committer: creator});
-    return {
-        stored: storedOf(empty, 0),
-        op: {kind: "create", committer: userId(creator)},
-        submitted: {baseKeyVersion: 0, refreshedNodes: plan.refreshedNodes, edges: plan.edges},
-        plan,
-    };
+    return honest({numLeaves: assignment.length, leafAssignment: assignment.map(userId), nodes: [], edges: []}, {kind: "create", committer: creator}, 0);
 }
 
 function run(c: Case): CommitResult {
@@ -515,40 +508,11 @@ describe("validateCommit refuses a wrong edge set", () => {
         assertRejected(c, "UNEXPECTED_EDGE");
     });
     
+    // The edge kinds themselves are TreeValidator.checkEdges's (TreeValidator.test); this one checks the wiring.
     it("SECURITY: leaving out an edge the path owes", () => {
         const c = honest(BASE, {kind: "remove", committer: "u40", removed: ["u0"]});
         c.submitted.edges = c.submitted.edges.filter(edge => edge.childUserId !== "u5");
         assertRejected(c, "MISSING_EDGE");
-    });
-    
-    it("a duplicated edge", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u40"});
-        c.submitted.edges.push({...c.submitted.edges[0]});
-        assertRejected(c, "DUPLICATE_EDGE");
-    });
-    
-    it("SECURITY: an edge naming a stale parent generation", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
-        c.submitted.edges.find(edge => edge.parentIndex === 63)!.parentGeneration = 0;
-        assertRejected(c, "STALE_PARENT_GENERATION");
-    });
-    
-    it("SECURITY: an edge naming a stale child generation", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
-        c.submitted.edges.find(edge => edge.parentIndex === 63 && edge.childIndex === 31)!.childGeneration = 0;
-        assertRejected(c, "STALE_CHILD_GENERATION");
-    });
-    
-    it("an edge carrying no ciphertext", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
-        c.submitted.edges[0].data = "" as types.core.UserKeyData;
-        assertRejected(c, "EMPTY_EDGE_DATA");
-    });
-    
-    it("no grant edge", () => {
-        const c = honest(BASE, {kind: "selfUpdate", committer: "u0"});
-        c.submitted.edges = c.submitted.edges.filter(edge => !edge.isGrantEdge);
-        assertRejected(c, "GRANT_EDGE_COUNT");
     });
     
     it("SECURITY: a removal whose grant edge stays at the old epoch", () => {
