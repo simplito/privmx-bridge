@@ -281,7 +281,8 @@ it("an addition advances the roster version without advancing the epoch", async 
         commit: acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "add", committer: "janek", members: ["dave"], positions: [4]}).commit,
         statement: statement(4, "add"),
         modifier: janek,
-        addedMembers: [{userId: "dave" as types.cloud.UserId, role: "user"}],
+        newUsers: ["dave" as types.cloud.UserId],
+        newManagers: [],
         keyId: keyId,
         data: data,
     });

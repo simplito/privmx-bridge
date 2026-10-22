@@ -397,14 +397,15 @@ export class GroupRepository {
         commit: TreeCommit,
         statement: types.cloud.GroupTreeCommitStatement,
         modifier: types.cloud.UserId,
-        addedMembers: {userId: types.cloud.UserId, role: types.cloud.ContainerRole}[],
+        newUsers: types.cloud.UserId[],
+        newManagers: types.cloud.UserId[],
         keyId: types.core.KeyId,
         data: types.group.GroupData,
     }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, addedMembers, commit} = params;
+        const {oldGroup, modifier, commit} = params;
         const now = DateUtils.now();
-        const users = Utils.unique([...oldGroup.users, ...addedMembers.filter(m => m.role === "user").map(m => m.userId)]);
-        const managers = Utils.unique([...oldGroup.managers, ...addedMembers.filter(m => m.role === "manager").map(m => m.userId)]);
+        const users = Utils.unique([...oldGroup.users, ...params.newUsers]);
+        const managers = Utils.unique([...oldGroup.managers, ...params.newManagers]);
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only — seating a member is not a metadata edit.
         const version = this.nextVersionOf(oldGroup, "rosterVersion");

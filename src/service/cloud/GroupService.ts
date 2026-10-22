@@ -67,9 +67,9 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    private async checkCanRead(executor: Executor, group: db.group.Group) {
+    private async checkCanRead(executor: Executor, group: db.group.Group, acl: "context/groupGet"|"context/groupGetTreeCommits" = "context/groupGet") {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupGet", ["groupId=" + group.id]);
+            this.cloudAclChecker.verifyAccess(user.acl, acl, ["groupId=" + group.id]);
             if (!this.policy.canReadContainer(user, context, group)) {
                 throw new AppException("ACCESS_DENIED");
             }
@@ -104,12 +104,7 @@ export class GroupService extends BaseContainerService {
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
         }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupGetTreeCommits", ["groupId=" + groupId]);
-            if (!this.policy.canReadContainer(user, context, group)) {
-                throw new AppException("ACCESS_DENIED");
-            }
-        });
+        await this.checkCanRead(executor, group, "context/groupGetTreeCommits");
         const latest = group.treeCommitSeq ?? 0;
         const upTo = Math.min(toSeq ?? latest, latest);
         const docs = upTo > fromSeq ? await groupRepository.state.getTreeCommitRange(groupId, fromSeq, upTo) : [];
@@ -146,8 +141,8 @@ export class GroupService extends BaseContainerService {
         groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">) {
         const allUsers = Utils.uniqueFromArrays(users, managers);
         this.policyService.validateContainerPolicyForContainer("policy", policy);
-        this.assertWithinMemberLimit(allUsers.length);
-        this.assertWithinSeatLimit(tree.numLeaves);
+        this.assertWithinLimit(allUsers.length);
+        this.assertWithinLimit(tree.numLeaves, true);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
@@ -155,7 +150,7 @@ export class GroupService extends BaseContainerService {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
-        const newGroupKey = this.buildSelfAddressedKeyForNewGroup(groupKeys, keyId);
+        const newGroupKey = GroupService.buildSelfAddressedKey(undefined, groupKeys, keyId, 1);
         const commit = this.assertCreatedTreeIsValid(tree, {users, managers}, user.userId);
         // The group has no id yet, so the creator signs the resourceId it chose instead.
         this.assertStatementIsValid(statement, user, {
@@ -325,12 +320,12 @@ export class GroupService extends BaseContainerService {
             if (!this.policy.canOverwriteContextPolicy(context) || !this.policy.canUpdateContainerPolicy(user, context, oldGroup)) {
                 throw new AppException("ACCESS_DENIED", "cannot update policy");
             }
-            await budget.reserve(this.rateLimitKey("policy", model.id, user.userId));
+            await budget.reserve(GroupService.rateLimitKey("policy", model.id, user.userId));
             // A policy commit moves no node, no epoch and no roster: its statement vouches for the tree as it stands.
             await this.chargingRefusals(budget, "policy", model.id, user.userId, async () => {
                 const nodes = await groupRepository.state.getNodes(oldGroup.id);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "policy", TreeHash.of({...oldGroup, nodes}), [], previous),
+                    ...this.unchangedStatement(oldGroup, "policy", TreeHash.of({...oldGroup, nodes}), [], previous),
                     policy: policy,
                 });
             });
@@ -360,18 +355,17 @@ export class GroupService extends BaseContainerService {
             if (!this.policy.canRotateContainerKeys(user, context, oldGroup)) {
                 throw new AppException("ACCESS_DENIED");
             }
-            await budget.reserve(this.rateLimitKey("rotate", model.id, user.userId));
+            await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
             const newKeyVersion = oldGroup.keyVersion + 1;
             await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
             await this.assertGroupPubKeyIsNew(groupRepository, oldGroup, model.groupPubKey);
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
-            const groupKey = this.buildSelfAddressedKey(oldGroup, model.groupKeys, model.keyId, newKeyVersion);
+            const groupKey = GroupService.buildSelfAddressedKey(oldGroup.id, model.groupKeys, model.keyId, newKeyVersion);
             // A rotation moves no node, so the statement vouches for the tree exactly as it stands.
-            this.assertTreeCommitsSupported(oldGroup);
             await this.chargingRefusals(budget, "rotate", model.id, user.userId, async () => {
                 const nodes = await groupRepository.state.getNodes(oldGroup.id);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "rotate", TreeHash.of({...oldGroup, nodes}), [], previous),
+                    ...this.unchangedStatement(oldGroup, "rotate", TreeHash.of({...oldGroup, nodes}), [], previous),
                     keyVersion: newKeyVersion,
                     groupPubKey: model.groupPubKey,
                     rosterVersion: oldGroup.rosterVersion + 1,
@@ -414,7 +408,7 @@ export class GroupService extends BaseContainerService {
      */
     async addMembers(cloudUser: CloudUser, model: GroupAddMembersModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
-        const {group} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
+        const group = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
@@ -425,7 +419,9 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("GROUP_META_KEY_MISMATCH");
             }
             const addedUserIds = model.members.map(member => member.userId);
-            const managers = [...oldGroup.managers, ...model.members.filter(member => member.role === "manager").map(member => member.userId)];
+            const newUsers = model.members.filter(member => member.role === "user").map(member => member.userId);
+            const newManagers = model.members.filter(member => member.role === "manager").map(member => member.userId);
+            const managers = [...oldGroup.managers, ...newManagers];
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
             const listed = new Set<types.cloud.UserId>();
             for (const userId of addedUserIds) {
@@ -438,20 +434,18 @@ export class GroupService extends BaseContainerService {
                 }
                 listed.add(userId);
             }
-            this.assertWithinMemberLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, addedUserIds).length);
-            this.assertWithinSeatLimit(TreeMath.numLeavesToSeatAll(model.transition.positions, oldGroup.numLeaves));
+            this.assertWithinLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, addedUserIds).length);
+            this.assertWithinLimit(TreeMath.numLeavesToSeatAll(model.transition.positions, oldGroup.numLeaves), true);
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, addedUserIds);
             const commit = await this.chargingRefusals(budget, "add", model.id, user.userId, async () => {
                 const {commit: accepted, nodes} = await this.assertCommitIsAcceptable(groupRepository, oldGroup, {
                     kind: "add", committer: user.userId, addedUsers: addedUserIds, positions: model.transition.positions,
                 }, {...model.transition, refreshedNodes: model.transition.seatedNodes});
-                const newUsers = model.members.filter(member => member.role === "user").map(member => member.userId);
-                const newManagers = model.members.filter(member => member.role === "manager").map(member => member.userId);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "add", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
+                    ...this.unchangedStatement(oldGroup, "add", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
                     rosterVersion: oldGroup.rosterVersion + 1,
                     users: [...oldGroup.users, ...newUsers],
-                    managers: [...oldGroup.managers, ...newManagers],
+                    managers: managers,
                     addedUsers: newUsers,
                     addedManagers: newManagers,
                 });
@@ -464,14 +458,15 @@ export class GroupService extends BaseContainerService {
                 commit,
                 statement: model.commit,
                 modifier: user.userId,
-                addedMembers: model.members.map(member => ({userId: member.userId, role: member.role})),
+                newUsers,
+                newManagers,
                 keyId: model.keyId,
                 data: model.data,
             });
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
             }
-            return {group: result, context: usedContext};
+            return result;
         }));
         this.groupNotificationService.sendUpdatedGroup(group, [], "memberAdded");
         return group;
@@ -518,7 +513,7 @@ export class GroupService extends BaseContainerService {
             // A removal advances the epoch, so it is rate-limited — but in its own budget, never the rotations':
             // a member who can rotate must not be able to spend the allowance that would remove them. One batch
             // is one epoch, so it is charged once however many members it removes.
-            await budget.reserve(this.rateLimitKey("remove", model.id, user.userId));
+            await budget.reserve(GroupService.rateLimitKey("remove", model.id, user.userId));
             const newKeyVersion = oldGroup.keyVersion + 1;
             // The cheap checks come before the tree is hashed, so failing them costs the bridge nothing.
             if (!model.abandonHistory) {
@@ -530,13 +525,13 @@ export class GroupService extends BaseContainerService {
             }
             await this.assertGroupPubKeyIsNew(groupRepository, oldGroup, model.groupPubKey);
             // The new epoch's metadata key travels as one self-addressed entry, not one wrap per survivor.
-            const groupKey = this.buildSelfAddressedKey(oldGroup, model.groupKeys, model.keyId, newKeyVersion);
+            const groupKey = GroupService.buildSelfAddressedKey(oldGroup.id, model.groupKeys, model.keyId, newKeyVersion);
             const commit = await this.chargingRefusals(budget, "remove", model.id, user.userId, async () => {
                 const {commit: accepted, nodes} = await this.assertCommitIsAcceptable(groupRepository, oldGroup, {
                     kind: "remove", committer: user.userId, removedUsers: model.userIds, blankedPositions: model.transition.blankedPositions,
                 }, model.transition);
                 this.assertStatementIsValid(model.commit, user, {
-                    ...await this.unchangedStatement(groupRepository, oldGroup, "remove", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
+                    ...this.unchangedStatement(oldGroup, "remove", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous),
                     keyVersion: newKeyVersion,
                     groupPubKey: model.groupPubKey,
                     rosterVersion: oldGroup.rosterVersion + 1,
@@ -594,12 +589,12 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
             // The member's own budget first, so no one member can hold more than its own allowance of the group's.
-            await budget.reserve(this.rateLimitKey("selfUpdate", model.id, user.userId));
-            await budget.reserve(GroupService.groupSelfUpdateKey(model.id), this.groupSelfUpdateLimit(oldGroup.numLeaves));
+            await budget.reserve(GroupService.rateLimitKey("selfUpdate", model.id, user.userId));
+            await budget.reserve(`selfUpdate|${model.id}`, this.groupSelfUpdateLimit(oldGroup.numLeaves));
             const commit = await this.chargingRefusals(budget, "selfUpdate", model.id, user.userId, async () => {
                 const {commit: accepted, nodes} = await this.assertCommitIsAcceptable(groupRepository, oldGroup, {kind: "selfUpdate", committer: user.userId}, model.transition);
-                this.assertStatementIsValid(model.commit, user, await this.unchangedStatement(
-                    groupRepository, oldGroup, "selfUpdate", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous,
+                this.assertStatementIsValid(model.commit, user, this.unchangedStatement(
+                    oldGroup, "selfUpdate", TreeHash.afterCommit(nodes, accepted, (oldGroup.treeCommitSeq ?? 0) + 1), accepted.refreshed, previous,
                 ));
                 return accepted;
             });
@@ -612,7 +607,7 @@ export class GroupService extends BaseContainerService {
     
     /** Closes the current era: everything below the new floor becomes unreachable by descending. */
     async cutEra(cloudUser: CloudUser, model: GroupCutEraModel) {
-        const {group} = await this.repositoryFactory.withTransaction(async session => {
+        const group = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
@@ -635,7 +630,7 @@ export class GroupService extends BaseContainerService {
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
             }
-            return {group: result, context: usedContext};
+            return result;
         });
         this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
         return group;
@@ -644,7 +639,7 @@ export class GroupService extends BaseContainerService {
     /** Deletes rungs below a watermark. Recorded separately from a cut era so a client that cannot descend
      *  learns why — pruned, not tampered with. */
     async pruneArchive(cloudUser: CloudUser, model: GroupPruneArchiveModel) {
-        const {group} = await this.repositoryFactory.withTransaction(async session => {
+        const group = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
@@ -662,7 +657,7 @@ export class GroupService extends BaseContainerService {
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
             }
-            return {group: result, context: usedContext};
+            return result;
         });
         this.groupNotificationService.sendUpdatedGroup(group, [], "archivePruned");
         return group;
@@ -698,7 +693,7 @@ export class GroupService extends BaseContainerService {
             }
             this.assertTreeCommitsSupported(group);
             // Never handed back: not under `unlessCommitted`. A retried transaction re-reserves nothing.
-            await budget.reserve(this.rateLimitKey("repair", model.id, user.userId));
+            await budget.reserve(GroupService.rateLimitKey("repair", model.id, user.userId));
             const {rung} = model;
             const span = {at: rung.atKeyVersion, target: rung.targetKeyVersion};
             const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor, group.archivePrunedBelow);
@@ -735,7 +730,7 @@ export class GroupService extends BaseContainerService {
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const lastPast = group.keyVersion - 1;
         const [rungs, epochKeys] = await Promise.all([
-            groupRepository.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, GroupService.rungFloor(group)),
+            groupRepository.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, Math.max(group.eraFloor, group.archivePrunedBelow ?? 0)),
             groupRepository.state.getEpochKeys(groupId, fromKeyVersion, Math.min(toKeyVersion ?? lastPast, lastPast)),
         ]);
         return {group, rungs, epochKeys};
@@ -778,6 +773,10 @@ export class GroupService extends BaseContainerService {
      * Loads a group for a tree operation and rejects a caller working from a superseded epoch. A commit (`commit`
      * given) must also extend the stored latest statement; `previous` is that statement, read once per commit.
      */
+    private async getGroupForTreeOperation(groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>, cloudUser: CloudUser, groupId: types.group.GroupId,
+        expectedKeyVersion: number, expectedRosterVersion: number|undefined, commit: types.cloud.GroupTreeCommitStatement): Promise<{group: db.group.Group, previous: types.cloud.GroupTreeCommitStatement}>;
+    private async getGroupForTreeOperation(groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>, cloudUser: CloudUser, groupId: types.group.GroupId,
+        expectedKeyVersion: number): Promise<{group: db.group.Group}>;
     private async getGroupForTreeOperation(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         cloudUser: CloudUser,
@@ -879,22 +878,26 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    /** The one self-addressed entry a new group may carry: its own metadata key at epoch 1. No `group` to check
-     *  against — the id does not exist yet, and the repository files the entry against the group it generates. */
-    private buildSelfAddressedKeyForNewGroup(
-        insert: Omit<types.cloud.GroupKeyEntrySet, "group">|undefined,
+    /**
+     * The new epoch's self-addressed metadata key, filed in that epoch's row (`db.group.GroupEpochKey`) and kept per
+     * epoch, so an older `data` entry stays readable to whoever can descend the ladder to it. All the bridge can
+     * check: that it is addressed to this group, names the keyId being introduced and the epoch being created, and
+     * carries something. A new group has no id yet (`groupId` undefined); the repository files its entry.
+     */
+    private static buildSelfAddressedKey(
+        groupId: types.group.GroupId|undefined,
+        insert: Omit<types.cloud.GroupKeyEntrySet, "group"> & {group?: types.group.GroupId}|undefined,
         keyId: types.core.KeyId,
+        epoch: number,
     ): types.cloud.GroupKeyEntry|undefined {
         if (!insert) {
             return undefined;
         }
-        GroupService.assertSelfAddressedEntry(insert, keyId, 1);
-        return {keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch};
-    }
-    
-    /** All the bridge can check about a self-addressed metadata key: that it names the keyId being introduced,
-     *  the epoch being created, and carries something. */
-    private static assertSelfAddressedEntry(insert: Omit<types.cloud.GroupKeyEntrySet, "group">, keyId: types.core.KeyId, epoch: number) {
+        if (groupId !== undefined && insert.group !== groupId) {
+            // Wrapping the group's metadata key to a *different* group would hand it to that group's members,
+            // who are not members here.
+            throw new AppException("INVALID_PARAMS", `groupKeys entry must be addressed to group '${groupId}'`);
+        }
         if (insert.keyId !== keyId) {
             throw new AppException("INVALID_PARAMS", `groupKeys entry must name the new keyId '${keyId}'`);
         }
@@ -906,51 +909,19 @@ export class GroupService extends BaseContainerService {
         if (!insert.data) {
             throw new AppException("INVALID_PARAMS", "groupKeys entry carries no data");
         }
-    }
-    
-    /** Checked before anything else, so exceeding it reads as "too many members" rather than as whichever
-     *  field happens to overflow first. */
-    private assertWithinMemberLimit(requested: number) {
-        const limit = this.config.maxGroupMembers;
-        if (requested > limit) {
-            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", {limit, requested});
-        }
+        return {keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch};
     }
     
     /**
-     * The same limit applied to *seats* rather than members.
-     *
-     * Members alone do not bound the tree: a removal leaves a blank, and an addition may append past it, so
-     * remove/add cycles grow `numLeaves` and `leafAssignment` without ever growing the roster. Unchecked, that
-     * is an array on the group document with no ceiling — and eventually seats `groupGet.forPosition` can no
-     * longer name.
+     * `maxGroupMembers`, checked before anything else so exceeding it reads as "too many members" rather than as
+     * whichever field happens to overflow first. Applied to seats too: a removal leaves a blank and an addition may
+     * append past it, so remove/add cycles would otherwise grow `numLeaves` and `leafAssignment` without a ceiling.
      */
-    private assertWithinSeatLimit(requestedNumLeaves: number) {
+    private assertWithinLimit(requested: number, seats = false) {
         const limit = this.config.maxGroupMembers;
-        if (requestedNumLeaves > limit) {
-            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", {limit, requested: requestedNumLeaves, seats: true});
+        if (requested > limit) {
+            throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", seats ? {limit, requested, seats} : {limit, requested});
         }
-    }
-    
-    /** The new epoch's self-addressed metadata key, filed in that epoch's row (`db.group.GroupEpochKey`). Kept
-     *  per epoch rather than replaced: an older `data` entry stays readable to whoever can descend the ladder to
-     *  the epoch it was written at. */
-    private buildSelfAddressedKey(
-        group: db.group.Group,
-        insert: types.cloud.GroupKeyEntrySet|undefined,
-        keyId: types.core.KeyId,
-        newKeyVersion: number,
-    ): types.cloud.GroupKeyEntry|undefined {
-        if (!insert) {
-            return undefined;
-        }
-        if (insert.group !== group.id) {
-            // Wrapping the group's metadata key to a *different* group would hand it to that group's members,
-            // who are not members here.
-            throw new AppException("INVALID_PARAMS", `groupKeys entry must be addressed to group '${group.id}'`);
-        }
-        GroupService.assertSelfAddressedEntry(insert, keyId, newKeyVersion);
-        return {keyId: insert.keyId, data: insert.data, groupEpoch: insert.groupEpoch};
     }
     
     /**
@@ -963,7 +934,6 @@ export class GroupService extends BaseContainerService {
         op: CommitOp,
         submitted: SubmittedCommit,
     ): Promise<{commit: TreeCommit, nodes: types.cloud.GroupTreeNode[]}> {
-        this.assertTreeCommitsSupported(group);
         const nodes = await groupRepository.state.getNodes(group.id);
         // A removal blanks every node a departing member set, so it needs who committed each `setBy`.
         const setters = op.kind !== "remove" ? undefined : new Map((await groupRepository.state.getTreeCommitsAt(
@@ -1012,19 +982,13 @@ export class GroupService extends BaseContainerService {
     
     /** What the statement of a commit that leaves the epoch, the grant key and the roster alone must say;
      *  callers override what their operation moves. It extends the stored latest statement. */
-    private async unchangedStatement(groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
-        group: db.group.Group, op: types.cloud.GroupTreeCommitOp,
+    private unchangedStatement(group: db.group.Group, op: types.cloud.GroupTreeCommitOp,
         tree: HashableTree, path: types.cloud.GroupTreeRefreshedNode[],
-        latest?: types.cloud.GroupTreeCommitStatement): Promise<StatementExpectation> {
-        let previous = latest;
-        if (group.treeCommitSeq !== undefined) {
-            previous ??= (await groupRepository.state.getTreeCommitsAt(group.id, [group.treeCommitSeq]))[0];
-            GroupService.assertSupportedStatement(group, previous);
-        }
+        latest: types.cloud.GroupTreeCommitStatement): StatementExpectation {
         return {
-            seq: (group.treeCommitSeq ?? 0) + 1,
-            prevDigest: previous ? CommitStatement.digest(previous) : "",
-            notBefore: previous?.date ?? 0,
+            seq: group.treeCommitSeq! + 1,
+            prevDigest: CommitStatement.digest(latest),
+            notBefore: latest.date,
             op: op,
             groupId: group.id,
             keyVersion: group.keyVersion,
@@ -1112,25 +1076,14 @@ export class GroupService extends BaseContainerService {
      * moves no epoch but writes the tree; `repair` counts `groupRepairRung` calls, accepted or refused; `refused`
      * counts commits the bridge refused after hashing the tree.
      */
-    private rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
+    private static rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
     }
     
     /**
-     * The per-group self-update budget, shared by every member — on top of each member's own `selfUpdate`.
-     *
-     * Per member alone, a storm after a removal blanked the tree is bounded by the group's size: every seated
-     * member may try `maxGroupRotationsPerHour` times, so a 16k group could send hundreds of commits a second at a
-     * bridge that lands a handful. This caps the group's whole storm. Spending it only delays healing — no epoch,
-     * no revocation and no other operation depends on it — so a member draining it costs the group performance,
-     * never access.
-     */
-    private static groupSelfUpdateKey(groupId: types.group.GroupId): string {
-        return `selfUpdate|${groupId}`;
-    }
-    
-    /**
-     * Four times the group's keyed-node count an hour: one blanked tree heals with one accepted self-update per
+     * The per-group self-update budget (`selfUpdate|<groupId>`), shared by every member on top of each one's own:
+     * per member alone a storm after a removal blanked the tree grows with the group's size. Spending it only delays
+     * healing, never access. Four times the group's keyed-node count an hour: one blanked tree heals with one accepted self-update per
      * keyed node, which leaves room for a full heal twice over at the ~50% loss rate a storm sees. Never below four
      * members' own budgets, so in a small group no one member can spend the whole of it.
      */
@@ -1152,8 +1105,8 @@ export class GroupService extends BaseContainerService {
      * rather than anybody else's.
      */
     private async chargingRefusals<T>(budget: Reservations, kind: "rotate"|"add"|"remove"|"selfUpdate"|"policy", groupId: types.group.GroupId, userId: types.cloud.UserId, validate: () => Promise<T>): Promise<T> {
-        const refused = this.rateLimitKey("refused", groupId, userId);
-        const stale = this.rateLimitKey("stale", groupId, userId);
+        const refused = GroupService.rateLimitKey("refused", groupId, userId);
+        const stale = GroupService.rateLimitKey("stale", groupId, userId);
         if (kind !== "remove") {
             await budget.reserve(refused);
         }
@@ -1168,7 +1121,7 @@ export class GroupService extends BaseContainerService {
         }
         catch (e) {
             if (AppException.is(e, "GROUP_TREE_INVALID")) {
-                await budget.keepOnly(GroupService.isOnlyStaleBase(e.data) ? stale : kind === "remove" ? this.rateLimitKey("remove", groupId, userId) : refused);
+                await budget.keepOnly(GroupService.isOnlyStaleBase(e.data) ? stale : kind === "remove" ? GroupService.rateLimitKey("remove", groupId, userId) : refused);
             }
             throw e;
         }
@@ -1177,11 +1130,6 @@ export class GroupService extends BaseContainerService {
     private static isOnlyStaleBase(problems: unknown): boolean {
         return Array.isArray(problems) && problems.length > 0
             && problems.every(problem => typeof problem?.kind === "string" && problem.kind.startsWith("STALE_BASE_"));
-    }
-    
-    /** The lowest target a rung may have: nothing below the era floor or the prune watermark is stored or served. */
-    private static rungFloor(group: db.group.Group): number {
-        return Math.max(group.eraFloor, group.archivePrunedBelow ?? 0);
     }
     
     /** Where the winner of a CAS race left the epoch. The loser re-reads and re-verifies before planning again, so
