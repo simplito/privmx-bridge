@@ -346,21 +346,18 @@ it("the hash cache keeps one entry per group, its latest seq, and only the nodes
     assert([...cache.get(id)!.hashes.keys()].every(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL));
 });
 
-it("the hash cache stays within its byte bound", async () => {
+it("the hash cache stays within its entry bound, least recently used out first", async () => {
     const {wide, groupWide} = wideGroup();
-    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_BYTES: number, hashCacheBytes: number, hashCache: Map<string, unknown>};
-    const saved = limits.HASH_CACHE_MAX_BYTES;
-    // Room for exactly one 64-seat tree's entry.
-    const one = [...TreeHash.childHashes(TreeHash.of(wide)).keys()].filter(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL).length * GroupConverter.HASH_ENTRY_BYTES;
-    limits.HASH_CACHE_MAX_BYTES = one;
+    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_GROUPS: number, hashCache: Map<string, unknown>};
+    const saved = limits.HASH_CACHE_MAX_GROUPS;
+    limits.HASH_CACHE_MAX_GROUPS = 1;
     try {
         new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundA" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
         new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundB" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
-        assert(limits.hashCacheBytes <= limits.HASH_CACHE_MAX_BYTES);
-        assert(limits.hashCache.has("BoundB") && !limits.hashCache.has("BoundA"), "the least recently used goes first");
+        assert.deepStrictEqual([...limits.hashCache.keys()], ["BoundB"]);
     }
     finally {
-        limits.HASH_CACHE_MAX_BYTES = saved;
+        limits.HASH_CACHE_MAX_GROUPS = saved;
     }
 });
 
