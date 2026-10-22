@@ -27,7 +27,7 @@ import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
 import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
-import { TreeValidator, type TreeView } from "./keytree/TreeValidator";
+import { TreeValidator } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
 import { CommitStatement, ExpectedStatement } from "./keytree/CommitStatement";
@@ -869,7 +869,7 @@ export class GroupService extends BaseContainerService {
         if (!TreeMath.isLeaf(rootIndex) && !root?.publicKey) {
             throw new AppException("GROUP_HAS_NO_TREE");
         }
-        const view: TreeView = {numLeaves: group.numLeaves, leafAssignment: group.leafAssignment, nodes: new Map(root ? [[rootIndex, root]] : [])};
+        const view: HashableTree = {numLeaves: group.numLeaves, leafAssignment: group.leafAssignment, nodes: new Map(root ? [[rootIndex, root]] : [])};
         const problems = TreeValidator.checkEdges([edge], new Map(), TreeValidator.grantExpectation(view, newKeyVersion));
         if (problems.length > 0) {
             throw new AppException("GROUP_TREE_INVALID", problems.map(problem => ({...problem})));

@@ -11,6 +11,7 @@ limitations under the License.
 
 import * as types from "../../../types";
 import { TreeMath } from "./TreeMath";
+import type { HashableTree } from "./TreeHash";
 
 /** Why a submitted edge set was rejected. Shared by the whole-state check and the commit check. */
 export type EdgeProblem =
@@ -42,13 +43,6 @@ export type TreeProblem =
 interface Roster {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-}
-
-/** What `resolve` and `requiredEdges` read: geometry, seating, and the node records by index. */
-export interface TreeView {
-    numLeaves: number;
-    leafAssignment: types.cloud.UserId[];
-    nodes: Map<number, {generation: number, publicKey?: types.core.EccPubKey}>;
 }
 
 /** One element of a resolution: a filled keyed node, or a seated member. */
@@ -154,8 +148,8 @@ export class TreeValidator {
     }
     
     /** Records only on keyed nodes, one each, with a sane generation. Returns the records as a view. */
-    private static checkNodes(tree: types.cloud.GroupTreeState, problems: TreeProblem[]): TreeView {
-        const view: TreeView = {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, nodes: new Map()};
+    private static checkNodes(tree: types.cloud.GroupTreeState, problems: TreeProblem[]): HashableTree {
+        const view: HashableTree = {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, nodes: new Map()};
         for (const node of tree.nodes) {
             if (view.nodes.has(node.nodeIndex)) {
                 problems.push({kind: "DUPLICATE_NODE", nodeIndex: node.nodeIndex});
@@ -176,7 +170,7 @@ export class TreeValidator {
     }
     
     /** A keyed node with a record that carries a public key. Anything else resolves through its children. */
-    static isFilled(view: TreeView, nodeIndex: number): boolean {
+    private static isFilled(view: HashableTree, nodeIndex: number): boolean {
         return TreeMath.isKeyed(nodeIndex, view.numLeaves) && !!view.nodes.get(nodeIndex)?.publicKey;
     }
     
@@ -186,7 +180,7 @@ export class TreeValidator {
      * A seated leaf resolves to its member, a blank leaf to nothing, a filled keyed node to itself; anything else
      * — a blank keyed node, a keyed node with no record, a bucket node — to its two children's resolutions.
      */
-    static resolve(view: TreeView, nodeIndex: number): Resolved[] {
+    static resolve(view: HashableTree, nodeIndex: number): Resolved[] {
         if (TreeMath.isLeaf(nodeIndex)) {
             const userId = view.leafAssignment[TreeMath.leafPosition(nodeIndex)];
             return userId ? [{kind: "user", userId}] : [];
@@ -201,7 +195,7 @@ export class TreeValidator {
      * The edges the given filled nodes owe in `view`: for each one, a wrap to every element of each child's
      * resolution. This is the whole of what a parent may wrap to — never a node or member outside its subtree.
      */
-    static requiredEdges(view: TreeView, parents: number[]): Map<string, RequiredEdge> {
+    static requiredEdges(view: HashableTree, parents: number[]): Map<string, RequiredEdge> {
         const required = new Map<string, RequiredEdge>();
         for (const parentIndex of parents) {
             const parentGeneration = view.nodes.get(parentIndex)!.generation;
@@ -230,7 +224,7 @@ export class TreeValidator {
      * group has no internal node at all — the root *is* the member's leaf — so the grant key is wrapped straight
      * to them.
      */
-    static grantExpectation(view: TreeView, epoch: number): GrantExpectation {
+    static grantExpectation(view: HashableTree, epoch: number): GrantExpectation {
         const rootIndex = TreeMath.root(view.numLeaves);
         if (TreeMath.isLeaf(rootIndex)) {
             return {epoch, child: `user:${view.leafAssignment[0]}`};
@@ -313,7 +307,7 @@ export class TreeValidator {
      * is the grant keypair) or missing on any other, a user id on an edge to a node, a node on an edge to a user.
      * Stored as sent, such an edge would be served back to clients saying something it does not mean.
      */
-    static isMalformed(edge: types.cloud.GroupTreeEdge): boolean {
+    private static isMalformed(edge: types.cloud.GroupTreeEdge): boolean {
         return (edge.isGrantEdge ? edge.parentIndex !== undefined : edge.parentIndex === undefined) ||
             (edge.childKind === "user" ?
                 edge.childUserId === undefined || edge.childIndex !== undefined || edge.childGeneration !== undefined :

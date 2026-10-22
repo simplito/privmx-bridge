@@ -12,7 +12,8 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import * as types from "../../../../types";
-import { TreeProblem, TreeValidator, TreeView } from "../../../../service/cloud/keytree/TreeValidator";
+import { TreeProblem, TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
+import type { HashableTree } from "../../../../service/cloud/keytree/TreeHash";
 import { buildTree as buildTreeAt, cloneTree, planCommit, userId } from "../../../testUtils/TreeFixtures";
 
 /**
@@ -48,7 +49,7 @@ function assertHas(problems: TreeProblem[], kind: string, message?: string) {
     assert.ok(kinds(problems).includes(kind), message ?? `expected ${kind}, got ${JSON.stringify(problems)}`);
 }
 
-function view(numLeaves: number, assignment: string[], nodes: [number, number, boolean][]): TreeView {
+function view(numLeaves: number, assignment: string[], nodes: [number, number, boolean][]): HashableTree {
     return {
         numLeaves,
         leafAssignment: assignment.map(user),
