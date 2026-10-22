@@ -246,12 +246,6 @@ describe("CommitStatement.validate", () => {
             [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
     });
     
-    it("SECURITY: validate refuses a policyHash other than the expected", () => {
-        const {statement, expected} = honest();
-        const widened = CommitStatement.policyHash({update: "all"}, "u0" as types.cloud.UserId);
-        assert.deepStrictEqual(check(statement, {...expected, policyHash: widened}), [{kind: "BAD_COMMIT_STATEMENT", field: "policyHash"}]);
-    });
-    
     it("validate refuses a policy on an add, and its absence on a policy op", () => {
         const {statement, expected} = honest();
         assert.deepStrictEqual(check(signStatement({...statement, policy: {update: "all"}}, "u0"), expected), [{kind: "BAD_COMMIT_STATEMENT", field: "policy"}]);

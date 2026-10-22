@@ -397,21 +397,6 @@ export function selfUpdateOf(plan: Plan, keyVersion: number): types.cloud.GroupT
     return {baseKeyVersion: keyVersion, refreshedNodes: plan.refreshedNodes, edges: plan.edges};
 }
 
-/** The addition delta an honest adder submits. */
-export function additionTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, members: string[], positions: number[]) {
-    return additionOf(planCommit(tree, keyVersion, {kind: "add", committer, members, positions}), keyVersion, positions);
-}
-
-/** The removal delta an honest remover submits. */
-export function removalTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, removed: string[]) {
-    return removalOf(planCommit(tree, keyVersion, {kind: "remove", committer, removed}), keyVersion);
-}
-
-/** The self-update an honest member submits. */
-export function selfUpdateTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string) {
-    return selfUpdateOf(planCommit(tree, keyVersion, {kind: "selfUpdate", committer}), keyVersion);
-}
-
 /** What `groupGet` serves, as far as planning a commit against it goes. */
 export interface ServedGroup {
     id: string;
