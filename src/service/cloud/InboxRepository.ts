@@ -15,6 +15,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
+import { AppException } from "../../api/AppException";
 
 export class InboxRepository {
     
@@ -160,7 +161,7 @@ export class InboxRepository {
         const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
         const publicData = previous.data.publicData;
         if (typeof publicData !== "object" || publicData === null || Array.isArray(publicData)) {
-            throw new Error(`inbox '${oldInbox.id}' public data is not an object`);
+            throw new AppException("INTERNAL_ERROR", `inbox '${oldInbox.id}' public data is not an object`);
         }
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
