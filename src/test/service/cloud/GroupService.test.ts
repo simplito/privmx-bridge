@@ -17,11 +17,10 @@ import * as assert from "assert";
 import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { CloudKeyService } from "../../../service/cloud/CloudKeyService";
 import { GroupNotificationService } from "../../../service/cloud/GroupNotificationService";
-import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { ThreadRepository } from "../../../service/cloud/ThreadRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
 import { StreamNotificationService } from "../../../service/cloud/StreamNotificationService";
-import { createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { createGroupRepositoryMock, createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -170,7 +169,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const groupNotificationService = createMock<GroupNotificationService>({});
-    const groupRepository = createMock<GroupRepository>({});
+    const groupRepository = createGroupRepositoryMock();
     const threadRepository = createMock<ThreadRepository>({});
     const contextUserRepository = createMock<ContextUserRepository>({});
     const cloudAclChecker = new CloudAclChecker();
@@ -200,7 +199,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     
     const served = Object.keys(groupPolicy).length === 0 ? group : {...group, policy: groupPolicy};
     mock(groupRepository, "get", async (id) => id === groupId ? served : null);
-    mock(groupRepository, "getTreeCommitsAt", async (_id, seqs) => seqs.includes(1) ? [creationWith(groupPolicy)] : []);
+    mock(groupRepository.state, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs.includes(1) ? [creationWith(groupPolicy)] : []) as never);
     mock(groupRepository, "createGroup", async () => group);
     mock(groupRepository, "updatePublicMeta", async () => group);
     mock(groupRepository, "updatePrivateMeta", async () => group);
@@ -208,13 +207,10 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     mock(groupRepository, "deleteGroup", async () => {});
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
     // Phase 2 (epochs/CAS): default mocks — success path.
-    mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
     // A lost CAS race reads the winning version's history entry for its confirmation tag.
-    mock(groupRepository, "getHistory", (async () => []) as never);
-    mock(groupRepository, "getTree", async () => tree);
-    mock(groupRepository, "hasEpochWithGroupPubKey", (async () => false) as never);
-    mock(groupRepository, "getRootNode", (async () => tree.nodes[tree.nodes.length - 1]) as never);
-    mock(groupRepository, "getNodes", (async () => tree.nodes) as never);
+    mock(groupRepository.state, "hasEpochWithGroupPubKey", (async () => false) as never);
+    mock(groupRepository.state, "getNodesAt", (async () => [tree.nodes[tree.nodes.length - 1]]) as never);
+    mock(groupRepository.state, "getNodes", (async () => tree.nodes) as never);
     mock(groupRepository, "casRotate", (async () => true) as never);
     mock(groupRepository, "generateNewGroupKey", (async () => ({...group, keyVersion: 2}) as db.group.Group) as never);
     
@@ -449,12 +445,12 @@ it("deleting a context's groups prunes its tombstones after the last group is go
             await func(deleted);
         }
     }) as never);
-    mock(groupRepository, "deleteTombstonesOfContext", (async () => {
+    mock(groupRepository.state, "deleteTombstonesOfContext", (async () => {
         order.push("tombstones");
     }) as never);
     await groupService.deleteGroupsByContext(contextId);
     assert.deepStrictEqual(order, [groupId, "OtherGroupId", "tombstones"]);
-    assert.deepStrictEqual([...groupRepository.deleteTombstonesOfContext.mock.calls[0]], [contextId]);
+    assert.deepStrictEqual([...groupRepository.state.deleteTombstonesOfContext.mock.calls[0]], [contextId]);
 });
 
 // ---------- rotation is decoupled from the metadata writes ----------
@@ -524,7 +520,7 @@ it("SECURITY: a rotation whose statement is wrong or signed by somebody else is 
 it("SECURITY: a rotation refuses a new epoch under the grant key of an earlier one", async () => {
     // T4-24, the rotation twin of the removal check: the key republished would reopen the epoch to whoever held it.
     const {groupService, groupRepository} = createGroupService();
-    mock(groupRepository, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === groupPubKey) as never);
+    mock(groupRepository.state, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === groupPubKey) as never);
     try {
         await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
         assert.fail("expected a refusal");
@@ -809,7 +805,7 @@ it("a custom event never reads the group's tree or history", async () => {
     // A notification does not need the state, and reading it would put the cost of a keystroke back on the
     // size of the group.
     const {groupService, groupRepository} = createGroupService();
+    mock(groupRepository, "getFullState");
     await groupService.sendCustomNotification(janekCloudUser, groupId, "base64Envelope", typing);
-    hasNoCalls(groupRepository.getTree);
-    hasNoCalls(groupRepository.getHistoryKeyIds);
+    hasNoCalls(groupRepository.getFullState);
 });

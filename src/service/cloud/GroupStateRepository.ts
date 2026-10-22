@@ -179,13 +179,6 @@ export class GroupStateRepository {
         return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
-    /** Every keyId the group has ever used — what a submitted key entry is checked against. Projected, so a
-     *  long history does not pull its `data` through memory. */
-    async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
-        const entries = await this.history.query(q => q.eq("groupId", groupId)).props("keyId").array();
-        return entries.map(entry => entry.keyId);
-    }
-    
     /** The group's public-metadata entry — a lookup by derived id. */
     async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
         return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));

@@ -60,7 +60,8 @@ export class GroupRepository {
     
     constructor(
         private repository: MongoObjectRepository<types.group.GroupId, db.group.Group>,
-        private state: GroupStateRepository,
+        /** The group's out-of-document state, in the same session. */
+        readonly state: GroupStateRepository,
     ) {
     }
     
@@ -81,7 +82,7 @@ export class GroupRepository {
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         // `onlyForUser` narrows to the caller's own groups, served off the `{contextId, users}` /
-        // `{contextId, managers}` indexes from Migration072. In the same `$match` as `contextId`, so no query
+        // `{contextId, managers}` indexes from Migration071. In the same `$match` as `contextId`, so no query
         // from `listParams` can widen it back.
         const match = onlyForUser === undefined
             ? {contextId: contextId}
@@ -159,45 +160,6 @@ export class GroupRepository {
         }
     }
     
-    // ── out-of-document state (see GroupStateRepository) ──────────────────────────────────────────────────────
-    
-    /** The hidden key tree, assembled in the shape the validator and the API have always seen. */
-    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
-        return this.state.getTree(group);
-    }
-    
-    async getHistory(groupId: types.group.GroupId, fromRosterVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
-        return this.state.getHistory(groupId, fromRosterVersion);
-    }
-    
-    /** The epoch each plane's head entry is keyed at — what `cutEra`/`pruneArchive` must not cut below. */
-    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
-        return this.state.getMetaHeadKeyVersions(groupId);
-    }
-    
-    /** Every keyId the group has ever used — what a submitted key entry is checked against. */
-    async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
-        return this.state.getHistoryKeyIds(groupId);
-    }
-    
-    /** Epoch rows of the group, ascending, optionally only those in `[from, to]` (see `db.group.GroupEpochKey`). */
-    async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
-        return this.state.getEpochKeys(groupId, fromKeyVersion, toKeyVersion);
-    }
-    
-    async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
-        return this.state.hasEpochWithGroupPubKey(groupId, groupPubKey);
-    }
-    
-    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, minTarget);
-    }
-    
-    /** The rungs stored for one span (see `GroupStateRepository.getRungsAt`). */
-    async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
-        return this.state.getRungsAt(groupId, atKeyVersion, targetKeyVersion);
-    }
-    
     /**
      * Serialises a repair on the group document: bumps `ladderRev` only while the floors are still those `oldGroup`
      * was read with. Every floor change and every commit writes the same document, so inside a transaction a
@@ -214,11 +176,6 @@ export class GroupRepository {
         };
         const result = await this.repository.collection.updateOne(filter, {$inc: {ladderRev: 1}}, this.repository.getOptions());
         return result.matchedCount > 0;
-    }
-    
-    /** Appends one repair rung by `author`; never replaces a stored one (see `GroupStateRepository.insertRung`). */
-    async insertRepairRung(groupId: types.group.GroupId, author: types.cloud.UserId, rung: types.cloud.GroupArchiveRungSubmission): Promise<void> {
-        await this.state.insertRung(groupId, author, rung);
     }
     
     /** At most this many reads of a group's state while commits keep landing under it (`getFullState`). */
@@ -274,16 +231,6 @@ export class GroupRepository {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no private metadata entry; it predates the metadata planes and must be recreated`);
         }
         return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null, epochKeys};
-    }
-    
-    /** The statements at the given seqs — what vouches for the node records a response serves. */
-    async getTreeCommitsAt(groupId: types.group.GroupId, seqs: number[]): Promise<types.cloud.GroupTreeCommitStatement[]> {
-        return this.state.getTreeCommitsAt(groupId, seqs);
-    }
-    
-    /** Statements with `fromSeq < seq <= toSeq`, ascending, one page. */
-    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<db.group.GroupTreeCommit[]> {
-        return this.state.getTreeCommitRange(groupId, fromSeq, toSeq);
     }
     
     // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -367,17 +314,6 @@ export class GroupRepository {
         // Nothing inside the ciphertext depends on it — it binds contextId and resourceId.
         await this.state.writeEpochKey(id, 1, groupPubKey, groupKey);
         return group;
-    }
-    
-    /** Every node record of the group — what a commit is checked against. One per keyed node at most, so a
-     *  few dozen documents for the largest group. */
-    async getNodes(group: db.group.Group): Promise<types.cloud.GroupTreeNode[]> {
-        return this.state.getNodes(group.id);
-    }
-    
-    /** The root node alone, which is all a rotation is checked against. */
-    async getRootNode(group: db.group.Group): Promise<types.cloud.GroupTreeNode|undefined> {
-        return (await this.state.getNodesAt(group.id, [TreeMath.root(group.numLeaves)]))[0];
     }
     
     /**
@@ -674,10 +610,6 @@ export class GroupRepository {
         await this.repository.delete(group.id);
         await this.state.deleteState(group.id);
         await this.state.markDeleted(group.id, group.contextId);
-    }
-    
-    async deleteTombstonesOfContext(contextId: types.context.ContextId) {
-        await this.state.deleteTombstonesOfContext(contextId);
     }
     
     /**

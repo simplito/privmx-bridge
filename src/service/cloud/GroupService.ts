@@ -91,7 +91,7 @@ export class GroupService extends BaseContainerService {
     /** The statements at `seqs` — what vouches for the node records a `groupGet` response serves. For a caller
      *  that has already passed `getGroupWithState`'s read check; it checks nothing itself. */
     async getTreeCommitsAt(group: db.group.Group, seqs: number[]) {
-        return this.repositoryFactory.createGroupRepository().getTreeCommitsAt(group.id, seqs);
+        return this.repositoryFactory.createGroupRepository().state.getTreeCommitsAt(group.id, seqs);
     }
     
     /**
@@ -112,7 +112,7 @@ export class GroupService extends BaseContainerService {
         });
         const latest = group.treeCommitSeq ?? 0;
         const upTo = Math.min(toSeq ?? latest, latest);
-        const docs = upTo > fromSeq ? await groupRepository.getTreeCommitRange(groupId, fromSeq, upTo) : [];
+        const docs = upTo > fromSeq ? await groupRepository.state.getTreeCommitRange(groupId, fromSeq, upTo) : [];
         // From seq 0 the client replays the roster from genesis (I-1), which seq 1 binds by `rosterHash` alone.
         const genesis = docs[0]?.seq === 1 ? docs[0].genesis : undefined;
         return {group, commits: docs.map(doc => doc.statement), genesis};
@@ -337,7 +337,7 @@ export class GroupService extends BaseContainerService {
             await budget.reserve(this.rateLimitKey("policy", model.id, user.userId));
             // A policy commit moves no node, no epoch and no roster: its statement vouches for the tree as it stands.
             await this.chargingRefusals(budget, "policy", model.id, user.userId, async () => {
-                const nodes = await groupRepository.getNodes(oldGroup);
+                const nodes = await groupRepository.state.getNodes(oldGroup.id);
                 this.assertStatementIsValid(model.commit, user, {
                     ...await this.unchangedStatement(groupRepository, oldGroup, "policy", TreeHash.of({...oldGroup, nodes}), [], previous),
                     policy: policy,
@@ -378,7 +378,7 @@ export class GroupService extends BaseContainerService {
             // A rotation moves no node, so the statement vouches for the tree exactly as it stands.
             this.assertTreeCommitsSupported(oldGroup);
             await this.chargingRefusals(budget, "rotate", model.id, user.userId, async () => {
-                const nodes = await groupRepository.getNodes(oldGroup);
+                const nodes = await groupRepository.state.getNodes(oldGroup.id);
                 this.assertStatementIsValid(model.commit, user, {
                     ...await this.unchangedStatement(groupRepository, oldGroup, "rotate", TreeHash.of({...oldGroup, nodes}), [], previous),
                     keyVersion: newKeyVersion,
@@ -717,7 +717,7 @@ export class GroupService extends BaseContainerService {
             if (!rung.data) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: span.at, target: span.target});
             }
-            const stored = await groupRepository.getRungsAt(model.id, span.at, span.target);
+            const stored = await groupRepository.state.getRungsAt(model.id, span.at, span.target);
             // ponytail: a row stored before authors were server-set has none; it counts towards the cap but is
             // nobody's, so its opener may add one more. No such row is live (clients always sent `author`).
             if (stored.some(existing => existing.author === user.userId)) {
@@ -729,7 +729,7 @@ export class GroupService extends BaseContainerService {
             if (!await groupRepository.touchLadder(group)) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
             }
-            await groupRepository.insertRepairRung(model.id, user.userId, rung);
+            await groupRepository.state.insertRung(model.id, user.userId, rung);
             return group;
         });
     }
@@ -748,8 +748,8 @@ export class GroupService extends BaseContainerService {
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const lastPast = group.keyVersion - 1;
         const [rungs, epochKeys] = await Promise.all([
-            groupRepository.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, GroupService.rungFloor(group)),
-            groupRepository.getEpochKeys(groupId, fromKeyVersion, Math.min(toKeyVersion ?? lastPast, lastPast)),
+            groupRepository.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, GroupService.rungFloor(group)),
+            groupRepository.state.getEpochKeys(groupId, fromKeyVersion, Math.min(toKeyVersion ?? lastPast, lastPast)),
         ]);
         return {group, rungs, epochKeys};
     }
@@ -774,7 +774,7 @@ export class GroupService extends BaseContainerService {
         groupId: types.group.GroupId,
         floor: number,
     ) {
-        const heads = await groupRepository.getMetaHeadKeyVersions(groupId);
+        const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
         const stranded = ([
             {plane: "public", at: heads.publicMeta, fix: "context.groupUpdatePublicMeta"},
             {plane: "private", at: heads.privateMeta, fix: "context.groupUpdatePrivateMeta"},
@@ -845,7 +845,7 @@ export class GroupService extends BaseContainerService {
         commit: types.cloud.GroupTreeCommitStatement,
     ): Promise<types.cloud.GroupTreeCommitStatement> {
         this.assertTreeCommitsSupported(group);
-        const [previous] = await groupRepository.getTreeCommitsAt(group.id, [group.treeCommitSeq!]);
+        const [previous] = await groupRepository.state.getTreeCommitsAt(group.id, [group.treeCommitSeq!]);
         GroupService.assertSupportedStatement(group, previous);
         if (commit.seq !== group.treeCommitSeq! + 1 || commit.prevDigest !== CommitStatement.digest(previous)) {
             await this.checkCanRead(cloudUser, group);
@@ -861,7 +861,7 @@ export class GroupService extends BaseContainerService {
         group: db.group.Group,
         groupPubKey: types.cloud.GroupPubKey,
     ) {
-        if (await groupRepository.hasEpochWithGroupPubKey(group.id, groupPubKey)) {
+        if (await groupRepository.state.hasEpochWithGroupPubKey(group.id, groupPubKey)) {
             throw new AppException("INVALID_PARAMS", "groupPubKey of an earlier epoch");
         }
     }
@@ -881,7 +881,7 @@ export class GroupService extends BaseContainerService {
         newKeyVersion: number,
     ) {
         const rootIndex = TreeMath.root(group.numLeaves);
-        const root = TreeMath.isLeaf(rootIndex) ? undefined : await groupRepository.getRootNode(group);
+        const root = TreeMath.isLeaf(rootIndex) ? undefined : (await groupRepository.state.getNodesAt(group.id, [rootIndex]))[0];
         if (!TreeMath.isLeaf(rootIndex) && !root?.publicKey) {
             throw new AppException("GROUP_HAS_NO_TREE");
         }
@@ -977,9 +977,9 @@ export class GroupService extends BaseContainerService {
         submitted: SubmittedCommit,
     ): Promise<{commit: TreeCommit, nodes: types.cloud.GroupTreeNode[]}> {
         this.assertTreeCommitsSupported(group);
-        const nodes = await groupRepository.getNodes(group);
+        const nodes = await groupRepository.state.getNodes(group.id);
         // A removal blanks every node a departing member set, so it needs who committed each `setBy`.
-        const setters = op.kind !== "remove" ? undefined : new Map((await groupRepository.getTreeCommitsAt(
+        const setters = op.kind !== "remove" ? undefined : new Map((await groupRepository.state.getTreeCommitsAt(
             group.id, [...new Set(nodes.filter(node => node.publicKey && node.setBy !== undefined).map(node => node.setBy!))],
         )).map(statement => [statement.seq, statement.committer]));
         const result = TreeTransitionValidator.validateCommit({
@@ -1031,7 +1031,7 @@ export class GroupService extends BaseContainerService {
         latest?: types.cloud.GroupTreeCommitStatement): Promise<StatementExpectation> {
         let previous = latest;
         if (group.treeCommitSeq !== undefined) {
-            previous ??= (await groupRepository.getTreeCommitsAt(group.id, [group.treeCommitSeq]))[0];
+            previous ??= (await groupRepository.state.getTreeCommitsAt(group.id, [group.treeCommitSeq]))[0];
             GroupService.assertSupportedStatement(group, previous);
         }
         return {
@@ -1271,7 +1271,7 @@ export class GroupService extends BaseContainerService {
             this.groupNotificationService.sendDeletedGroup(group);
         });
         // One delete for the tombstones just written and those of groups deleted earlier one by one.
-        await groupRepository.deleteTombstonesOfContext(contextId);
+        await groupRepository.state.deleteTombstonesOfContext(contextId);
     }
     
 }
