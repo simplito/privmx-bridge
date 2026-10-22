@@ -642,9 +642,9 @@ export class GroupRepository {
      *
      * `expectedRosterVersion` is what the writers of a roster entry pass, and it is not redundant with the
      * epoch: an addition moves `rosterVersion` without moving `keyVersion`, so two concurrent additions both
-     * match on the epoch alone. Without it, a transaction retried on a write conflict would recompute
-     * `nextRosterVersion` server-side and land the entry at a version the caller's `rosterTag` never committed
-     * to — unverifiable forever. A cut or a prune writes no entry and passes nothing.
+     * match on the epoch alone. Without it, a transaction retried on a write conflict would recompute the roster
+     * version server-side and land the entry at a version the caller's statement never signed — unverifiable
+     * forever. A cut or a prune writes no entry and passes nothing.
      *
      * `expectedTreeCommitSeq` is what every tree commit passes: its statement is signed as the next seq, and
      * landing it on a chain that has moved on would leave two statements claiming one number.

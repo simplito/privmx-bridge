@@ -164,7 +164,7 @@ export interface GroupAddMembersModel {
      *
      * `expectedKeyVersion` cannot stand in for it: an addition moves the roster without moving the epoch, so a
      * caller can hold the current epoch and still be planning against a roster that has already grown. The
-     * entry's `rosterTag` commits the version it lands at, so a write the bridge renumbered would carry a tag
+     * commit statement signs the version it lands at, so a write the bridge renumbered would carry a statement
      * no reader can verify — this is what makes the number the caller predicts the number it gets.
      *
      * Every roster-plane write carries one; the other two point here rather than restating this.

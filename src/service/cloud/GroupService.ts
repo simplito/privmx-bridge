@@ -1071,8 +1071,9 @@ export class GroupService extends BaseContainerService {
      * number of members allowed to cause it rather than by the group; the policy decides who those are.
      *
      * `rotate` and `remove` advance the epoch and stale every container granted to the group; `selfUpdate`
-     * moves no epoch but writes the tree; `repair` counts `groupRepairRung` calls, accepted or refused; `refused`
-     * counts commits the bridge refused after hashing the tree.
+     * moves no epoch but writes the tree (and shares the per-group `selfUpdate|<groupId>` too); `policy` counts
+     * policy commits; `repair` counts `groupRepairRung` calls, accepted or refused; `refused` counts commits the
+     * bridge refused after hashing the tree, `stale` lost races (`chargingRefusals`).
      */
     private static rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
