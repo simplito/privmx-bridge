@@ -439,7 +439,7 @@ export namespace group {
         privateMeta: GroupPrivateMetaEntry;
         /** The latest commit statement; `null` only for a group from before statements existed. */
         treeCommit: types.cloud.GroupTreeCommitStatement|null;
-        /** Every epoch row the group still has, ascending. */
+        /** The rows of the current epoch and of the epochs both metadata heads sit at, ascending. */
         epochKeys: GroupEpochKey[];
     }
 }

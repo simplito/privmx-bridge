@@ -372,7 +372,7 @@ it("a group with a metadata plane missing is an internal invariant, not a client
         const {repository, state} = createRepository();
         mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
         mock(state, "getHistory", async () => [] as never);
-        mock(state, "getEpochKeys", async () => [] as never);
+        mock(state, "getEpochKeysAt", async () => [] as never);
         mock(state, "getPublicMetaHead", async () => ({}) as never);
         mock(state, "getPrivateMetaHead", async () => ({}) as never);
         mock(state, "getTreeCommitsAt", async () => [] as never);
@@ -390,7 +390,7 @@ function fullStateRepository(rereads: db.group.Group[]) {
     const {repository, state} = createRepository({rereads});
     mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
     mock(state, "getHistory", async () => [] as never);
-    mock(state, "getEpochKeys", async () => [] as never);
+    mock(state, "getEpochKeysAt", async () => [] as never);
     mock(state, "getPublicMetaHead", async () => ({}) as never);
     mock(state, "getPrivateMetaHead", async () => ({}) as never);
     mock(state, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs.map(seq => statement(seq))) as never);
@@ -423,20 +423,25 @@ it("a group that keeps moving is refused after a bounded number of reads", async
     assert.strictEqual((state.getTree as unknown as {mock: {calls: unknown[]}}).mock.calls.length, GroupRepository.FULL_STATE_ATTEMPTS);
 });
 
-it("M6: groupGet serves the most recent epochs and the ones the metadata heads sit at, not every epoch", async () => {
-    const keyVersion = GroupRepository.MAX_GROUP_GET_EPOCHS + 100;
-    const current = group({keyVersion});
+it("groupGet serves only the current epoch and the ones the metadata heads sit at, in one indexed read", async () => {
+    // Any other epoch only opens an old envelope, and comes from groupGetEpochKeys by keyId or grant key.
+    const current = group({keyVersion: 2000});
     const {repository, state} = fullStateRepository([current]);
-    const rows = Array.from({length: keyVersion}, (_, i) => ({keyVersion: i + 1}) as db.group.GroupEpochKey);
-    mock(state, "getEpochKeys", (async (_id: types.group.GroupId, from = -Infinity, to = Infinity) =>
-        rows.filter(row => row.keyVersion >= from && row.keyVersion <= to)) as never);
+    mock(state, "getEpochKeysAt", (async (_id: types.group.GroupId, keyVersions: number[]) =>
+        [...keyVersions].sort((a, b) => a - b).map(keyVersion => ({keyVersion}) as db.group.GroupEpochKey)) as never);
     mock(state, "getPublicMetaHead", async () => ({keyVersion: 3}) as never);
-    mock(state, "getPrivateMetaHead", async () => ({keyVersion: 3}) as never);
+    mock(state, "getPrivateMetaHead", async () => ({keyVersion: 1500}) as never);
     const {state: full} = await repository.getFullState(current);
-    const served = full.epochKeys.map(row => row.keyVersion);
-    assert.strictEqual(served.length, GroupRepository.MAX_GROUP_GET_EPOCHS + 1);
-    assert.deepStrictEqual(served.slice(0, 2), [3, 101], "the metadata epoch, then the window, ascending");
-    assert.strictEqual(served[served.length - 1], keyVersion, "the current epoch is always served");
+    assert.deepStrictEqual(full.epochKeys.map(row => row.keyVersion), [3, 1500, 2000]);
+    hasOneCall(state.getEpochKeysAt);
+    
+    // Both heads at the current epoch: one row, asked for once.
+    const fresh = fullStateRepository([group({keyVersion: 7})]);
+    mock(fresh.state, "getEpochKeysAt", (async () => []) as never);
+    mock(fresh.state, "getPublicMetaHead", async () => ({keyVersion: 7}) as never);
+    mock(fresh.state, "getPrivateMetaHead", async () => ({keyVersion: 7}) as never);
+    await fresh.repository.getFullState(group({keyVersion: 7}));
+    assert.deepStrictEqual(fresh.state.getEpochKeysAt.mock.calls[0][1], [7]);
 });
 
 it("a policy commit stores the policy and its statement under the commit CAS, and moves no other counter", async () => {
