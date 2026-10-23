@@ -180,6 +180,15 @@ export class GroupRepository {
     
     /** At most this many reads of a group's state while commits keep landing under it (`getFullState`). */
     static readonly FULL_STATE_ATTEMPTS = 3;
+    /**
+     * Epoch rows `groupGet` serves: the most recent this many, plus the epochs both metadata heads sit at (a
+     * client cannot read the group without those). Without a cap every commit grows every member's `groupGet`
+     * for good, up to 4 KB a row. Only rotations and removals start an epoch, so an honest group rarely gets
+     * near it.
+     * ponytail: an envelope sealed more than this many epochs ago can no longer be opened off `groupGet`; serve
+     * past epochs' keys from the windowed key archive instead if that ever matters.
+     */
+    static readonly MAX_GROUP_GET_EPOCHS = 1024;
     
     /**
      * Tree, roster history, both metadata heads and the latest commit statement — what a read path needs to serve
@@ -215,7 +224,7 @@ export class GroupRepository {
             this.state.getPublicMetaHead(group.id),
             this.state.getPrivateMetaHead(group.id),
             group.treeCommitSeq === undefined ? Promise.resolve([]) : this.state.getTreeCommitsAt(group.id, [group.treeCommitSeq]),
-            this.state.getEpochKeys(group.id),
+            this.state.getEpochKeys(group.id, group.keyVersion - GroupRepository.MAX_GROUP_GET_EPOCHS + 1),
         ]);
         // An invariant, not a client error: `createGroup` writes the document and both entries in one
         // transaction, so only a group left over from an older build of this branch can be missing either.
@@ -230,7 +239,10 @@ export class GroupRepository {
         if (!privateMeta) {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no private metadata entry; it predates the metadata planes and must be recreated`);
         }
-        return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null, epochKeys};
+        const floor = group.keyVersion - GroupRepository.MAX_GROUP_GET_EPOCHS + 1;
+        const metaEpochs = [...new Set([publicMeta.keyVersion, privateMeta.keyVersion])].filter(epoch => epoch < floor);
+        const metaRows = (await Promise.all(metaEpochs.map(epoch => this.state.getEpochKeys(group.id, epoch, epoch)))).flat();
+        return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null, epochKeys: [...metaRows, ...epochKeys].sort((a, b) => a.keyVersion - b.keyVersion)};
     }
     
     // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────

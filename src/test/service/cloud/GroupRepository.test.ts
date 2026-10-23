@@ -423,6 +423,22 @@ it("a group that keeps moving is refused after a bounded number of reads", async
     assert.strictEqual((state.getTree as unknown as {mock: {calls: unknown[]}}).mock.calls.length, GroupRepository.FULL_STATE_ATTEMPTS);
 });
 
+it("M6: groupGet serves the most recent epochs and the ones the metadata heads sit at, not every epoch", async () => {
+    const keyVersion = GroupRepository.MAX_GROUP_GET_EPOCHS + 100;
+    const current = group({keyVersion});
+    const {repository, state} = fullStateRepository([current]);
+    const rows = Array.from({length: keyVersion}, (_, i) => ({keyVersion: i + 1}) as db.group.GroupEpochKey);
+    mock(state, "getEpochKeys", (async (_id: types.group.GroupId, from = -Infinity, to = Infinity) =>
+        rows.filter(row => row.keyVersion >= from && row.keyVersion <= to)) as never);
+    mock(state, "getPublicMetaHead", async () => ({keyVersion: 3}) as never);
+    mock(state, "getPrivateMetaHead", async () => ({keyVersion: 3}) as never);
+    const {state: full} = await repository.getFullState(current);
+    const served = full.epochKeys.map(row => row.keyVersion);
+    assert.strictEqual(served.length, GroupRepository.MAX_GROUP_GET_EPOCHS + 1);
+    assert.deepStrictEqual(served.slice(0, 2), [3, 101], "the metadata epoch, then the window, ascending");
+    assert.strictEqual(served[served.length - 1], keyVersion, "the current epoch is always served");
+});
+
 it("a policy commit stores the policy and its statement under the commit CAS, and moves no other counter", async () => {
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
     // entry that commits it would leave the group unreadable. So: neither. The statement chain moves (T4-10).
