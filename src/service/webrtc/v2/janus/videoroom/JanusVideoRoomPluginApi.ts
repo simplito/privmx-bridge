@@ -84,6 +84,9 @@ export class JanusVideoRoomPluginApi {
     async reconfigure(model: videoroom.ConfigureRequest) {
         return this.async<videoroom.ConfigureResponse>(model);
     }
+    async restartSubscriberIce(model: videoroom.SubscriberRestartIceRequest) {
+        return this.async<videoroom.SubscriberRestartIceResponse>(model);
+    }
     
     async trickle(model: videoroom.TrickleRequest): Promise<void> {
         try {

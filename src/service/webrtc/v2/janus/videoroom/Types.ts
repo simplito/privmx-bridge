@@ -261,6 +261,17 @@ export type ConfigureResponse = AsyncJanusResponse<{
     streams?: PublisherStream[];
 }>&{jsep: WebRtcTypes.RTCSessionDescriptionAnswer};
 
+// A subscriber cannot renegotiate by itself, so it asks the plugin to restart ICE and answers the offer
+// which the plugin sends back. The request carries no jsep, unlike the publisher's configure.
+export type SubscriberRestartIceRequest = JanusRequest<{
+    request: "configure";
+    restart: true;
+}>;
+
+export type SubscriberRestartIceResponse = AsyncJanusResponse<{
+    videoroom: "event";
+}>&{jsep?: WebRtcTypes.RTCSessionDescriptionOffer};
+
 export type UnpublishRequest = JanusRequest<{
     request: "unpublish";
 }>;
