@@ -180,7 +180,7 @@ export class StreamApi extends BaseApi implements streamApi.IStreamApi {
         const res = await this.streamService.setStreamOffer(cloudUser, model.offer, model.sessionId, this.websocket, wsId);
         return res;
     }
-
+    
     @ApiMethod({})
     async streamRestartSubscriberIce(model: streamApi.StreamRestartSubscriberIceModel): Promise<streamApi.StreamRestartSubscriberIceResult> {
         if (!this.websocket) {

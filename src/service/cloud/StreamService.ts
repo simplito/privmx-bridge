@@ -435,7 +435,7 @@ export class StreamService extends BaseContainerService {
             return { sessionId: janusSession.id, offer: res.jsep ? res.jsep : undefined };
         });
     }
-
+    
     private async modifyExistingRemoteSubscriptions(existingJanusSession: JanusSession, ctx: JanusContext, subscriptionsToAdd: StreamSubscription[], subscriptionsToRemove: StreamSubscription[]) {
         const mappedStreamsToAdd = subscriptionsToAdd.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));
         const mappedStreamsToRemove = subscriptionsToRemove.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));
