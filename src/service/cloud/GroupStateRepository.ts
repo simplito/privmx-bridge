@@ -48,9 +48,12 @@ export class GroupStateRepository {
     static readonly MAX_HISTORY_PAGE = 8;
     /** At most this many statements per `getTreeCommits` page. */
     static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
-    /** At most this many rungs per `getArchiveRungs` page when the window is open on either side. One epoch holds
-     *  at most ~33 spans x `MAX_RUNGS_PER_SPAN`, so the next page from the last `atKeyVersion` always moves on. */
+    /** At most this many rungs per `getArchiveRungs` page, whatever the window. One epoch holds at most ~33 spans x
+     *  `MAX_RUNGS_PER_SPAN` (`LadderMath.validateRungSet` refuses any other span), so the next page from the last
+     *  `atKeyVersion` always moves on. */
     static readonly MAX_ARCHIVE_RUNGS_PER_PAGE = 256;
+    /** At most this many epoch rows per windowed `getEpochKeys` read (the key archive's `keyHistory`). */
+    static readonly MAX_EPOCH_KEYS_PER_PAGE = 256;
     
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
@@ -234,8 +237,9 @@ export class GroupStateRepository {
     /**
      * Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
      * client descending twenty epochs reads twenty documents, not the whole archive. `minTarget` leaves out rungs
-     * pointing below a floor: none should be stored, and none is served even if one were. A window open on
-     * either side is served a page at a time, `MAX_ARCHIVE_RUNGS_PER_PAGE` from the bottom up.
+     * pointing below a floor: none should be stored, and none is served even if one were. Any window, closed ones
+     * too, is served a page at a time, `MAX_ARCHIVE_RUNGS_PER_PAGE` from the bottom up: a closed window over a long
+     * history is as large as an open one.
      */
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
         const query = this.rungs.query(q => {
@@ -245,8 +249,7 @@ export class GroupStateRepository {
             }
             return q.andList(conditions);
         }).sort("atKeyVersion", true);
-        const closed = fromKeyVersion !== undefined && toKeyVersion !== undefined;
-        const rungs = await (closed ? query : query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE)).array();
+        const rungs = await query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE).array();
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
@@ -277,13 +280,12 @@ export class GroupStateRepository {
     }
     
     /**
-     * Epoch rows of the group, ascending — what `groupGet` and the key archive serve. With bounds, only the rows in
-     * `[fromKeyVersion, toKeyVersion]`, read off the `{groupId, keyVersion}` index: a windowed archive read costs
-     * O(window), not O(epochs).
+     * Epoch rows of the group in `[fromKeyVersion, toKeyVersion]`, ascending — the key archive's `keyHistory`. Read
+     * off the `{groupId, keyVersion}` index, at most `MAX_EPOCH_KEYS_PER_PAGE` from the bottom up.
      */
     async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
         return this.epochKeys.query(q => q.andList([q.eq("groupId", groupId), ...GroupStateRepository.range(q, "keyVersion", fromKeyVersion, toKeyVersion)]))
-            .sort("keyVersion", true).array();
+            .sort("keyVersion", true).limit(GroupStateRepository.MAX_EPOCH_KEYS_PER_PAGE).array();
     }
     
     /** The epoch rows of the given epochs, ascending; one indexed `$in` read. */
