@@ -559,25 +559,25 @@ describe("validateCommit derives Know of the removed members", () => {
         return commit.blanked;
     };
     
-    it("V3: a healed path makes the creator's removal blank nothing", () => {
+    it("a healed path makes the creator's removal blank nothing", () => {
         assert.deepStrictEqual(removalBlanks(honest(selfUpdates(B64, "u40"), {kind: "remove", committer: "u5", removed: ["u0"]})), []);
     });
     
-    it("V4: the leaver's own path, minus the remover's", () => {
+    it("the leaver's own path, minus the remover's", () => {
         assert.deepStrictEqual(removalBlanks(honest(B64, {kind: "remove", committer: "u5", removed: ["u40"]})), [95]);
     });
     
-    it("SECURITY V5: an ancestor re-keyed by somebody else is blanked when it wraps to a node the leaver set", () => {
+    it("SECURITY: an ancestor re-keyed by somebody else is blanked when it wraps to a node the leaver set", () => {
         // u40 re-keyed 63, but 63 still wraps to 31 (set by u0): u0 can open 63, so it is in Know(u0).
         assert.deepStrictEqual(removalBlanks(honest(selfUpdates(B128, "u40"), {kind: "remove", committer: "u100", removed: ["u0"]})), [31, 63, 159]);
     });
     
-    it("V6: a batch blanks the union", () => {
+    it("a batch blanks the union", () => {
         const tree = selfUpdates(B128, "u40", "u70", "u100");
         assert.deepStrictEqual(removalBlanks(honest(tree, {kind: "remove", committer: "u40", removed: ["u0", "u70"]})), [31, 159, 191]);
     });
     
-    it("V7/V8: the adder's fills are blanked at the adder's removal", () => {
+    it("the adder's fills are blanked at the adder's removal", () => {
         const v7 = honest(after(B64, {kind: "remove", committer: "u40", removed: ["u5"]}), {kind: "add", committer: "u40", members: ["n5"], positions: [5]}, EPOCH + 1);
         const added = accepted(v7);
         assert.deepStrictEqual(added.refreshed.map(node => [node.nodeIndex, node.fromGeneration, node.generation]), [[31, 0, 1], [95, 1, 2], [63, 1, 2]]);
@@ -585,18 +585,18 @@ describe("validateCommit derives Know of the removed members", () => {
         assert.deepStrictEqual(removalBlanks(honest(v7.plan.after, {kind: "remove", committer: "u0", removed: ["u40"]}, EPOCH + 1)), [95]);
     });
     
-    it("V9: a creator that also added is blanked for both", () => {
+    it("a creator that also added is blanked for both", () => {
         let tree = after(selfUpdates(B64, "u40"), {kind: "remove", committer: "u5", removed: ["u41"]});
         tree = after(tree, {kind: "add", committer: "u0", members: ["n41"], positions: [41]}, EPOCH + 1);
         assert.deepStrictEqual(removalBlanks(honest(tree, {kind: "remove", committer: "u40", removed: ["u0"]}, EPOCH + 1)), [31]);
     });
     
-    it("V10: a batch of the creator and another", () => {
+    it("a batch of the creator and another", () => {
         assert.deepStrictEqual(removalBlanks(honest(B64, {kind: "remove", committer: "u40", removed: ["u0", "u63"]})), [31]);
     });
     
     it("SECURITY: a removal leaving a node of Know filled is refused", () => {
-        // V5 with path-only blanking: 159 (set by u0) kept, 191 wrapping to it instead of to the seats below it.
+        // The previous case with path-only blanking: 159 (set by u0) kept, 191 wrapping to it instead of to the seats below it.
         const c = honest(selfUpdates(B128, "u40"), {kind: "remove", committer: "u100", removed: ["u0"]});
         const node159 = c.stored.nodes.find(node => node.nodeIndex === 159)!;
         const generation191 = c.submitted.refreshedNodes.find(node => node.nodeIndex === 191)!.generation;

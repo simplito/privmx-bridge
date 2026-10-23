@@ -569,14 +569,14 @@ it("removeMember accepts an honest removal and charges the rotation budget", asy
 
 it("SECURITY: a removal tells the stream rooms granted to the group, so a live publication re-keys", async () => {
     // A publishing client never writes again, so without this event the room stays under the key the removed
-    // member holds for the rest of the publication (audit 05a final-1).
+    // member holds for the rest of the publication.
     const group = treeBackedGroup();
     const {groupService, streamNotificationService} = createGroupService(group);
     await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
     hasOneCallWithArguments(streamNotificationService.sendStreamRoomsUpdatedForGroup, [group.id, myContext.solution]);
 });
 
-it("SECURITY: removeMember accepts an honest removal after a statement dated ahead of the bridge's clock (N-1)", async () => {
+it("SECURITY: removeMember accepts an honest removal after a statement dated ahead of the bridge's clock", async () => {
     // The stored latest is dated past the tolerance (collusion, or a bridge clock stepped back). The honest
     // remover signs that same date; refusing it would freeze every commit, the forward-dater's removal included.
     const group = treeBackedGroup();
@@ -592,7 +592,7 @@ it("SECURITY: removeMember accepts an honest removal after a statement dated ahe
 });
 
 it("SECURITY: removeMember refuses a new epoch under the grant key of an earlier one", async () => {
-    // T4-24: the key republished would reopen the new epoch to whoever held it then, the leaver included.
+    // The key republished would reopen the new epoch to whoever held it then, the leaver included.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     const error = await expectFailure("INVALID_PARAMS", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), groupPubKey: group.groupPubKey}));
@@ -1143,7 +1143,7 @@ it("addMembers refuses more members than the transition seats", async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("a lost race hands back only where the epoch is now", async () => {
-    // T4-20: the endpoint re-reads and re-verifies after a lost race and adopts nothing, so the winner's metadata key
+    // The endpoint re-reads and re-verifies after a lost race and adopts nothing, so the winner's metadata key
     // and confirmation tag the payload once carried were decoration, each an extra read on the error path.
     const group = treeBackedGroup();
     const {groupService} = createGroupService(group, {casMiss: true});
@@ -1322,7 +1322,7 @@ each<[Partial<TreeGroup>, "selfUpdate"|"add"|"policy"]>([
 });
 
 it("no commit is accepted on a group whose latest statement predates chained statements", async () => {
-    // I-6: stored without `prevDigest`, it has no digest to extend; refused cleanly, not as a TypeError.
+    // Stored without `prevDigest`, it has no digest to extend; refused cleanly, not as a TypeError.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     mock(groupRepository.state, "getTreeCommitsAt", (async () => [{...storedLatest(group), prevDigest: undefined}]) as never);
@@ -1342,7 +1342,7 @@ async function statementProblems(run: () => Promise<unknown>): Promise<string[]>
 }
 
 it("selfUpdate is checked against the caller's key as the context holds it now", async () => {
-    // Leaf renewal (08a): after a directory key change the renewal is signed with the new key. A statement naming
+    // Leaf renewal: after a directory key change the renewal is signed with the new key. A statement naming
     // the key the context held before is refused, however validly that key signed it.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
@@ -1400,8 +1400,8 @@ it("SECURITY: a statement that does not describe the state the commit leaves beh
 });
 
 it("SECURITY: a statement must extend exactly the latest one stored, else it lost a race (retryable)", async () => {
-    // T4-02/T4-17: what the signer saw as the history is part of what it signs; any other base is a fork. Since
-    // T4-10 any commit can move the head (a policy commit moves nothing else), so a statement on another base is
+    // What the signer saw as the history is part of what it signs; any other base is a fork. Any
+    // commit can move the head (a policy commit moves nothing else), so a statement on another base is
     // answered as a lost race, before the tree is read and charged to nothing.
     const group = treeBackedGroup();
     const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService(group);
@@ -1416,7 +1416,7 @@ it("SECURITY: a statement must extend exactly the latest one stored, else it los
 });
 
 it("SECURITY: a statement dated before the one it extends is refused", async () => {
-    // T4-04: dates never go back along the chain; the bridge reads the bound off the latest statement it stores.
+    // Dates never go back along the chain; the bridge reads the bound off the latest statement it stores.
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     const latest = {...storedLatest(group), date: DateUtils.now() + 60_000};
@@ -1449,7 +1449,7 @@ it("a creation's statement is seq 1, names the resourceId the creator chose, and
     await create(signed);
     assert.deepStrictEqual(await statementProblems(() => create(creation(tree, [alice, bob, carol], [janek]))), ["groupId"]);
     assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, seq: 2}, "janek"))), ["seq"]);
-    // I-1: no deltas, or every read citing seq 1 would carry the whole roster; `getTreeCommits` serves it from seq 0.
+    // No deltas, or every read citing seq 1 would carry the whole roster; `getTreeCommits` serves it from seq 0.
     assert.deepStrictEqual([signed.addedUsers, signed.addedManagers], [[], []]);
     assert.deepStrictEqual(await statementProblems(() => create(signStatement({...signed, addedUsers: [alice]}, "janek"))), ["addedUsers"]);
 });
@@ -1464,7 +1464,7 @@ it("getTreeCommits serves a page up to the latest, never past it", async () => {
     assert.strictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 6)).genesis, undefined);
 });
 
-it("getTreeCommits from seq 0 serves the genesis roster beside the chain (I-1)", async () => {
+it("getTreeCommits from seq 0 serves the genesis roster beside the chain", async () => {
     const group = treeBackedGroup({treeCommitSeq: 3});
     const {groupService} = createGroupService(group);
     assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 0)).genesis, {users: group.users, managers: group.managers});
@@ -1477,7 +1477,7 @@ it("getTreeCommits needs read access to the group", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// rotation's grant edge (T3-27)
+// rotation's grant edge
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** janek alone: a one-leaf tree, whose root is janek's own leaf. */
@@ -1505,7 +1505,7 @@ function rotationModel(group: TreeGroup, edge: (honest: types.cloud.GroupTreeEdg
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the signed group policy (T4-10)
+// the signed group policy
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The `groupUpdatePolicy` request `committer` signs to set `policy`, extending the stored latest statement. */
@@ -1568,7 +1568,7 @@ it("SECURITY: every commit's statement must sign the stored policy's hash", asyn
     hasNoCalls(groupRepository.generateNewGroupKey);
 });
 
-it("SECURITY: inherit resolves to the v3 defaults, so a wider context policy no longer lets a user add", async () => {
+it("SECURITY: inherit resolves to the v3 defaults, so a wider context policy does not let a user add", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService, groupRepository} = createGroupService(group, {contextPolicy: {group: {update: "all"}}});
     await expectFailure("ACCESS_DENIED", () => groupService.addMembers(aliceCloudUser, additionModel(group)));
@@ -1681,7 +1681,7 @@ it("generateNewGroupKey rotates a one-member group with the grant edge to its so
 });
 
 it("SECURITY: a rotation tells the stream rooms granted to the group, so a live publication re-keys", async () => {
-    // As a removal (audit 05a final-2): a rotation after a suspected compromise must not leave a live publication
+    // As a removal: a rotation after a suspected compromise must not leave a live publication
     // under the pre-rotation room key.
     const group = oneMemberGroup();
     const {groupService, streamNotificationService} = createGroupService(group);

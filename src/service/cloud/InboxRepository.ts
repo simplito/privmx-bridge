@@ -154,7 +154,7 @@ export class InboxRepository {
         // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData lives only
         // in the history — `oldInbox.data` is just its `meta`. The keyId comes from `previous` for the same
         // reason the data does: see ThreadRepository.rotateKeys.
-        // The one exception is the entries key in the public data, which senders seal entries to (F-05d): it
+        // The one exception is the entries key in the public data, which senders seal entries to: it
         // moves to the new key's public key, or new entries stay sealed to the replaced key a removed member
         // holds. A rotator gets nothing else: rotateKeys is a user right, metadata and file limits stay the
         // managers' (`update` policy), so a rotation cannot carry them.

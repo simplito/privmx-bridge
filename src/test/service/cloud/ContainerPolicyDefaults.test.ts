@@ -119,7 +119,7 @@ it("a context may set a group policy at all", async () => {
 });
 
 it("group: inherit and default resolve to the frozen v3 rules, which are today's context defaults", async () => {
-    // T4-10: a group's commit rules are signed, so `inherit`/`default` resolve against a table frozen with the v3
+    // A group's commit rules are signed, so `inherit`/`default` resolve against a table frozen with the v3
     // format, never against the context. Pinned to the shipped context defaults so a change to either is deliberate.
     for (const field of ["update", "rotateKeys", "updatePolicy", "ownerCanBeRemovedFromManagers"] as const) {
         for (const value of [undefined, "inherit", "default"] as const) {

@@ -295,7 +295,7 @@ it("epoch rows: one per (group, epoch), read in order, cut as a range below the 
 
 it("SECURITY: a new epoch's key is looked up among every statement of the group, which no era cut removes", async () => {
     // Epoch rows go below the floor (`cutEra`, `abandonHistory`), so a check against them forgot every key down
-    // there — keys every member of those epochs, removed ones included, holds the private half of (T4-24).
+    // there — keys every member of those epochs, removed ones included, holds the private half of.
     const key = "EarlierGroupPubKey" as unknown as types.cloud.GroupPubKey;
     const {repository, captured} = createStateRepository({commits: [{id: GroupStateRepository.treeCommitId(groupId, 1)} as db.group.GroupTreeCommit]});
     assert.strictEqual(await repository.hasEpochWithGroupPubKey(groupId, key), true);
@@ -531,7 +531,7 @@ it("growing a one-member group replaces the grant edge addressed to the member",
 });
 
 it("a one-leaf self-update replaces the grant edge to the sole member in one ordered write", async () => {
-    // A sole member renewing its leaf after an identity key change (08a): no node to refresh, only the grant edge.
+    // A sole member renewing its leaf after an identity key change: no node to refresh, only the grant edge.
     const tree = buildTree(["janek"], EPOCH);
     const before = tree.edges.find(edge => edge.isGrantEdge)!;
     const {captured, after, commit} = await commitThroughStorage(tree, EPOCH, {kind: "selfUpdate", committer: "janek"});

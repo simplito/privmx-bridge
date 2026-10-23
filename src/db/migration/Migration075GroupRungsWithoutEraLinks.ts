@@ -15,7 +15,7 @@ import { MigrationId } from "./MigrationManager";
 import { GroupStateRepository } from "../../service/cloud/GroupStateRepository";
 
 /**
- * Every rung is an epoch rung now (L-2). Era links (`recipientKind` `user`/`group`) were never written by a client,
+ * Every rung is an epoch rung now. Era links (`recipientKind` `user`/`group`) were never written by a client,
  * so the delete is expected to find nothing; the kind fields of the epoch rungs go. Ids are not rewritten: the old
  * format exists only on pre-release databases, where an author's old rung does not block one repair rung beside it.
  */

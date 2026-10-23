@@ -174,7 +174,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     @Test()
     async shouldTakeAPolicyChangeAsASignedCommit() {
-        // T4-10: a policy change is a commit: the chain moves, the stored policy is the one the statement carries and
+        // A policy change is a commit: the chain moves, the stored policy is the one the statement carries and
         // signs, and nothing else moves.
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
@@ -290,7 +290,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.verifyDeletingTheGroupEmptiesEveryCollection();
     }
     
-    /** T3-27: a one-member group rotates, its grant edge going straight to the sole member, whose leaf is the
+    /** A one-member group rotates, its grant edge going straight to the sole member, whose leaf is the
      *  root; growing to two moves it to node 1, and every later rotation keeps exactly one grant edge. */
     @Test()
     async shouldRotateAOneMemberGroupAndKeepOneGrantEdgeThroughGrowingAndShrinking() {

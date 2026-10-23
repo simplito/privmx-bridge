@@ -405,11 +405,11 @@ export namespace group {
      * and, when that commit carried one, the group's own metadata key wrapped **once** to that grant key (what
      * `groupKeys` serves). A row per epoch rather than two arrays on the group document, which grew with every
      * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. `cutEra` drops the rows
-     * below its floor; `pruneArchive` leaves them. The T4-24 check does not read these rows (they go with the era);
+     * below its floor; `pruneArchive` leaves them. The grant-key reuse check does not read these rows (they go with the era);
      * it reads the statements in `groupTreeCommit`, which no cut removes.
      *
-     * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch its
-     * `keyHistory` no longer had.
+     * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch missing
+     * from its `keyHistory`.
      */
     export interface GroupEpochKey {
         id: GroupEpochKeyId;

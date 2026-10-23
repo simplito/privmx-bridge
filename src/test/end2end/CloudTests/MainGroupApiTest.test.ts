@@ -67,7 +67,7 @@ export class GroupApiTests extends BaseTestSet {
     async shouldRejectDeletingGroupReferencedByThread() {
         await this.createGroup();
         const groupId = this.requireGroupId();
-        // Read the epoch rather than assume one: a grant must name the group's current keyVersion (BR-5).
+        // Read the epoch rather than assume one: a grant must name the group's current keyVersion.
         const {group} = await this.apis.contextApi.groupGet({groupId});
         await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
@@ -222,7 +222,7 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     /**
-     * The policy has a method of its own, and it disturbs neither signed envelope. It is a signed commit (T4-10):
+     * The policy has a method of its own, and it disturbs neither signed envelope. It is a signed commit:
      * the chain moves, the metadata counters do not, and a commit planned on the old head is a lost race.
      */
     private async updatePolicyWithoutTouchingMetadata() {

@@ -20,7 +20,7 @@ import * as db from "../../../db/Model";
 
 it("SECURITY: sharing or unsharing a context never creates it", async () => {
     // An upsert racing `deleteContext` would bring a deleted context id back, and the group tombstones pruned with
-    // that context (T4-14) would no longer stop a group being created under a deleted group's id.
+    // that context would then fail to stop a group being created under a deleted group's id.
     const calls: {filter: unknown, options: mongodb.UpdateOptions}[] = [];
     const collection = createFake<mongodb.Collection>({
         updateOne: (async (filter: unknown, _update: unknown, options: mongodb.UpdateOptions) => {

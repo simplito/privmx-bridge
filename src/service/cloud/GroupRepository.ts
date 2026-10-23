@@ -185,7 +185,7 @@ export class GroupRepository {
      * client cannot read the group without those). Without a cap every commit grows every member's `groupGet`
      * for good, up to 4 KB a row. Only rotations and removals start an epoch, so an honest group rarely gets
      * near it.
-     * ponytail: an envelope sealed more than this many epochs ago can no longer be opened off `groupGet`; serve
+     * Limit: an envelope sealed more than this many epochs ago can no longer be opened off `groupGet`; serve
      * past epochs' keys from the windowed key archive instead if that ever matters.
      */
     static readonly MAX_GROUP_GET_EPOCHS = 1024;
@@ -580,7 +580,7 @@ export class GroupRepository {
     
     /**
      * A policy commit: the new policy and its statement, under the same CAS on epoch, roster version and
-     * `treeCommitSeq` as every other commit, so it lands only on the state its statement extends (T4-10).
+     * `treeCommitSeq` as every other commit, so it lands only on the state its statement extends.
      *
      * It moves neither metadata counter and appends no entry in either plane: moving a counter a client's envelope
      * pins without writing the entry that commits it would leave the group unreadable. The policy's history is the

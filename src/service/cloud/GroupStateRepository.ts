@@ -266,7 +266,7 @@ export class GroupStateRepository {
             .sort("keyVersion", true).array();
     }
     
-    /** Whether any statement of the group carries `groupPubKey` (T4-24) — every epoch it ever had, below the era floor
+    /** Whether any statement of the group carries `groupPubKey` — every epoch it ever had, below the era floor
      *  included: statements are never cut (clients verify the chain from seq 1), epoch rows are. If statements are ever
      *  pruned, the opener of every epoch must stay, or this check silently weakens again. */
     async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {

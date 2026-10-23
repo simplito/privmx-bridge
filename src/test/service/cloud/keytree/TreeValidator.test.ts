@@ -323,7 +323,7 @@ describe("TreeValidator.validateState grant edge", () => {
     });
     
     it("SECURITY: rejects an edge carrying a field its kind does not have", () => {
-        // T4-23: stored as sent, a grant edge with a parent node or a user id beside its root would be served back.
+        // Stored as sent, a grant edge with a parent node or a user id beside its root would be served back.
         for (const malform of [
             (e: types.cloud.GroupTreeEdge) => Object.assign(e, {parentIndex: 0}),
             (e: types.cloud.GroupTreeEdge) => Object.assign(e, {childUserId: user("u1")}),

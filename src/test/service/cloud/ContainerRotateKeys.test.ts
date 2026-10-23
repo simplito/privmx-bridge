@@ -16,7 +16,7 @@ limitations under the License.
  * `lastModificationDate` describe — the endpoint checks that pairing in `assertContainerDIOIntegrity`, with a
  * five-minute window on the timestamp. Touch either field and every client read of the container fails
  * verification: invisible here, invisible on the write path, reported by the client as corrupt data. An Inbox
- * rotation changes one thing more: the entries public key in the head's public data (F-05d), which no signature
+ * rotation changes one thing more: the entries public key in the head's public data, which no signature
  * covers.
  */
 
@@ -272,7 +272,7 @@ it("inbox: installs the new key and writes the document once", async () => {
     assert.deepStrictEqual(result.groupKeys, NEW_GROUP_KEYS);
 });
 
-it("SECURITY inbox: the new head seals entries to the new key (F-05d)", async () => {
+it("SECURITY inbox: the new head seals entries to the new key", async () => {
     // Kept as it was, the head's public data would keep senders sealing entries to the replaced key, which a
     // member removed before the re-key still holds.
     const {result} = await rotateInbox(grantees());

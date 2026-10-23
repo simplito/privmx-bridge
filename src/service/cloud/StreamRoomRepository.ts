@@ -197,7 +197,7 @@ export class StreamRoomRepository {
         return found.length > 0;
     }
     
-    // ponytail: unbounded list of a group's rooms (indexed, Migration074); page it if groups ever grant thousands.
+    // Limit: unbounded list of a group's rooms (indexed, Migration074); page it if groups ever grant thousands.
     async getGrantedTo(groupId: types.group.GroupId): Promise<db.stream.StreamRoom[]> {
         return this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).array();
     }

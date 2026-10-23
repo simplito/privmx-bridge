@@ -15,7 +15,7 @@ import { CacheWithTTL } from "../../../utils/CacheWithTTL";
 import { DateUtils } from "../../../utils/DateUtils";
 
 /**
- * Cross-worker (IPC) sliding-window rate limiter for group key rotations (Phase 2, BR-4).
+ * Cross-worker (IPC) sliding-window rate limiter for group key rotations.
  * Keyed by whatever the caller passes; `GroupService.rateLimitKey` keeps a separate budget per member and
  * per kind of operation, so no member can spend another's. The state lives in the master process so the cap is global
  * across worker processes (an in-worker Map would only cap per worker). Modeled on NonceMap.

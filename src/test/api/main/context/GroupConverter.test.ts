@@ -202,7 +202,7 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// history windowing (BR-09)
+// history windowing
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("serves the whole history, from genesis, when the caller does not say what it has", async () => {

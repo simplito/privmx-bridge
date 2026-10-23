@@ -108,7 +108,7 @@ export class GroupService extends BaseContainerService {
         const latest = group.treeCommitSeq ?? 0;
         const upTo = Math.min(toSeq ?? latest, latest);
         const docs = upTo > fromSeq ? await groupRepository.state.getTreeCommitRange(groupId, fromSeq, upTo) : [];
-        // From seq 0 the client replays the roster from genesis (I-1), which seq 1 binds by `rosterHash` alone.
+        // From seq 0 the client replays the roster from genesis, which seq 1 binds by `rosterHash` alone.
         const genesis = docs[0]?.seq === 1 ? docs[0].genesis : undefined;
         return {group, commits: docs.map(doc => doc.statement), genesis};
     }
@@ -170,7 +170,7 @@ export class GroupService extends BaseContainerService {
             policy: policy,
             creator: user.userId,
             // No deltas: `rosterHash` binds the genesis roster, served beside the chain to a client replaying it
-            // (I-1) rather than with every read that cites seq 1.
+            // rather than with every read that cites seq 1.
             addedUsers: [],
             addedManagers: [],
             removed: [],
@@ -664,7 +664,7 @@ export class GroupService extends BaseContainerService {
     /**
      * Appends a repair rung: one more rung for a span an epoch already published, by a seated member holding both
      * keys. It is what makes a broken rung (a client bug, or a member who may rotate and wrote garbage) repairable
-     * rather than a permanent cut through history (L-1).
+     * rather than a permanent cut through history.
      *
      * The bridge cannot tell a good rung from a bad one, and does not need to: readers check every rung against
      * the member-signed chain. What it enforces is the shape: a canonical downward span at an existing epoch, never
@@ -839,7 +839,7 @@ export class GroupService extends BaseContainerService {
     }
     
     /** A new epoch's grant key is not any earlier epoch's, below the era floor included: republishing one would reopen
-     *  the epoch to whoever held it then, a member removed since included (T4-24). */
+     *  the epoch to whoever held it then, a member removed since included. */
     private async assertGroupPubKeyIsNew(
         groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
         group: db.group.Group,
@@ -853,7 +853,7 @@ export class GroupService extends BaseContainerService {
     /**
      * Checks the one edge a rotation writes: the grant edge at the epoch being created, addressed as every other
      * commit addresses it (`TreeValidator.grantExpectation`) — to the current root, or in a one-leaf tree straight
-     * to the sole member, whose leaf *is* the root (T3-27).
+     * to the sole member, whose leaf *is* the root.
      *
      * `childGeneration` is the load-bearing check for n ≥ 2 — an edge planned against a superseded root would wrap
      * the new grant key to a node key nobody can reach, locking every member out of the epoch.
@@ -1132,7 +1132,7 @@ export class GroupService extends BaseContainerService {
     }
     
     /** Where the winner of a CAS race left the epoch. The loser re-reads and re-verifies before planning again, so
-     *  nothing here is needed to adopt anything (T4-20: the confirmation tag that once vouched for it is gone). */
+     *  nothing here is needed to adopt anything. */
     private static rotatedAlreadyData(winner: db.group.Group): RotatedAlreadyData {
         return {keyVersion: winner.keyVersion, groupPubKey: winner.groupPubKey};
     }
@@ -1266,7 +1266,7 @@ type StatementExpectation = Omit<ExpectedStatement, "treeVersion"|"rosterHash"|"
 /**
  * The commit rules of a v3 group are the ones its statements sign (`CommitStatement.policyHash`): the group's own
  * value, or for an absent, `inherit` or `default` one the frozen v3 default, never the context's. The context policy
- * keeps only a veto: it can deny what the signed rule allows, never allow what it denies (T4-10). Every caller of
+ * keeps only a veto: it can deny what the signed rule allows, never allow what it denies. Every caller of
  * these (add, remove, cutEra, prune, metadata writes, rotate, updatePolicy) gets that without a change of its own.
  */
 class GroupPolicy extends BasePolicy<db.group.Group, never> {

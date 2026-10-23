@@ -67,7 +67,7 @@ export class ContextRepository {
     }
     
     // No upsert here or below: a context row is created only by `create`. An upsert racing `deleteContext` would
-    // revive the deleted id, and the group tombstones pruned with that context (T4-14) assume it never comes back.
+    // revive the deleted id, and the group tombstones pruned with that context assume it never comes back.
     async addSolutionToContext(contextId: types.context.ContextId, solutionId: types.cloud.SolutionId) {
         await this.repository.collection.updateOne({_id: contextId}, {$addToSet: {shares: solutionId}}, {session: this.repository.getSession()});
     }

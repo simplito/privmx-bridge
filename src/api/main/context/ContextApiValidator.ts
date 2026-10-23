@@ -78,7 +78,7 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             version: this.builder.int,
         }));
-        // A policy change is a signed commit like any other (T4-10): the policy is `commit.policy`, CAS-ed on both
+        // A policy change is a signed commit like any other: the policy is `commit.policy`, CAS-ed on both
         // counters. The old `{id, policy}` shape is refused.
         this.registerMethod("groupUpdatePolicy", this.builder.createObject({
             id: this.tv.groupId,

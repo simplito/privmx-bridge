@@ -303,7 +303,7 @@ export class TreeValidator {
     }
     
     /**
-     * Whether the edge carries a field its kind does not have (T4-23): a `parentIndex` on the grant edge (whose parent
+     * Whether the edge carries a field its kind does not have: a `parentIndex` on the grant edge (whose parent
      * is the grant keypair) or missing on any other, a user id on an edge to a node, a node on an edge to a user.
      * Stored as sent, such an edge would be served back to clients saying something it does not mean.
      */

@@ -92,7 +92,7 @@ export interface GroupKeysEntry {
 
 export interface GroupKeyEntrySet {
     group: types.group.GroupId;
-    groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion (Phase 2, BR-5)
+    groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
 }
@@ -274,7 +274,7 @@ export interface GroupTreeState {
  *
  * `targetKeyVersion < atKeyVersion` always — an upward rung would hand a removed member a key from after their
  * removal. Enforced on every write. Every rung is sealed to the grant key of `atKeyVersion`: there is no other
- * kind of recipient, so an era-crossing link sealed to somebody's own key cannot pass as the unit rung (L-2).
+ * kind of recipient, so an era-crossing link sealed to somebody's own key cannot pass as the unit rung.
  */
 export interface GroupArchiveRungSubmission {
     atKeyVersion: number;

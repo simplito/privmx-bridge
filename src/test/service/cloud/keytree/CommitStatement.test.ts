@@ -227,7 +227,7 @@ describe("CommitStatement.validate", () => {
         assert.deepStrictEqual(check(statement, expected, NOW - CommitStatement.DATE_TOLERANCE_MS), []);
     });
     
-    it("SECURITY: a statement dated as the one it extends is accepted however far ahead of the clock that one is (N-1)", () => {
+    it("SECURITY: a statement dated as the one it extends is accepted however far ahead of the clock that one is", () => {
         // A forward-dated statement already stored (collusion, or a bridge clock stepped back) must not freeze every
         // honest commit after it: the honest client signs max(its clock, previous.date), i.e. exactly that date.
         const {statement, expected} = honest();
@@ -242,12 +242,12 @@ describe("CommitStatement.validate", () => {
             [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
     });
     
-    it("m2: an exact resend is refused once the bridge's clock is past its date plus the tolerance", () => {
+    it("an exact resend is refused once the bridge's clock is past its date plus the tolerance", () => {
         // The endpoint resends an unresolved statement byte for byte for 2 x DATE_TOLERANCE_MS of its date, and only
         // then signs a different one at the same prevDigest. This lower bound is what makes that window finite.
         const {statement, expected} = honest();
         assert.deepStrictEqual(check(statement, expected, NOW + CommitStatement.DATE_TOLERANCE_MS + 1), [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
-        // N-1 takes a date equal to the extended one however far ahead, but never one more than T behind the clock:
+        // The bridge takes a date equal to the extended one however far ahead, but never one more than T behind the clock:
         // a statement matching a forward-dated predecessor is refused once the clock passes its date plus T too.
         const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
         const matched = signStatement({...statement, date: ahead}, "u0");
@@ -342,7 +342,7 @@ describe("CommitStatement.checkStoredState", () => {
     });
     
     it("SECURITY: finds a node whose subtree was rolled back to an older, genuinely vouched generation", () => {
-        // u35 heals node 95 over u40's; u0, colluding, signs a state with 95 back at u40's generation (AM-1). 95
+        // u35 heals node 95 over u40's; u0, colluding, signs a state with 95 back at u40's generation. 95
         // itself still matches statement 2 (nothing keyed below it), but the root u35 minted sits over another subtree.
         const {group, tree, statements} = stored();
         const healed = planCommit(tree, 1, {kind: "selfUpdate", committer: "u35"}, 3);

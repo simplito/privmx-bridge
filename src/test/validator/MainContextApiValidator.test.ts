@@ -112,7 +112,7 @@ function nonCanonicalSpellings(key: types.cloud.GroupPubKey): Record<string, typ
 }
 
 it("SECURITY: a group public key in any encoding but the compressed one is refused", () => {
-    // Keys are compared as strings (T4-24, the statement's key against the model's): the same key re-encoded
+    // Keys are compared as strings (the statement's key against the model's): the same key re-encoded
     // would pass for a new one everywhere.
     const tree = buildTree(["janek"], 1);
     const calls: [string, (key: types.cloud.GroupPubKey) => unknown][] = [
@@ -177,7 +177,7 @@ it("ContextApiValidator.groupUpdatePolicy valid", () => {
     expect(result.success).toBe(true);
 });
 
-it("SECURITY: groupUpdatePolicy without a statement, the old {id, policy} shape, is refused (T4-10)", () => {
+it("SECURITY: groupUpdatePolicy without a statement, the old {id, policy} shape, is refused", () => {
     expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, policy: {}})).success).toBe(false);
     const model = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2, policy: {}};
     expect(Utils.try(() => validator().validate("groupUpdatePolicy", model)).success).toBe(false);
@@ -224,7 +224,7 @@ it("groupUpdatePolicy requires its statement and both CAS counters", () => {
     }
 });
 
-it("groupCreate no longer takes a policy beside its statement", () => {
+it("groupCreate takes no policy beside its statement", () => {
     expect(Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), policy: {}})).success).toBe(false);
 });
 
@@ -473,8 +473,8 @@ it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () =
 });
 
 it("SECURITY: groupRemoveMembers refuses a rung naming a recipientKind", () => {
-    // L-2: an era link `{recipientKind: "user", recipient}` sealed to anybody's key used to pass as the unit rung,
-    // which clients never open, so the epoch was born unreachable from below. Every rung is an epoch rung now.
+    // An era link `{recipientKind: "user", recipient}` sealed to anybody's key would pass as the unit rung, which
+    // clients never open, so the epoch would be born unreachable from below. Every rung is an epoch rung.
     const model = {
         id: groupId,
         userIds: ["ola" as types.cloud.UserId],

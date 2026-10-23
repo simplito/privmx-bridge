@@ -518,7 +518,7 @@ it("SECURITY: a rotation whose statement is wrong or signed by somebody else is 
 });
 
 it("SECURITY: a rotation refuses a new epoch under the grant key of an earlier one", async () => {
-    // T4-24, the rotation twin of the removal check: the key republished would reopen the epoch to whoever held it.
+    // The rotation twin of the removal check: the key republished would reopen the epoch to whoever held it.
     const {groupService, groupRepository} = createGroupService();
     mock(groupRepository.state, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === groupPubKey) as never);
     try {
@@ -609,7 +609,7 @@ it("gates generateNewGroupKey on the rotateKeys policy, not on update", async ()
     expect(true).toBeFalsy();
 });
 
-it("SECURITY: a context can no longer widen rotateKeys for groups, the group's signed policy can (T4-10)", async () => {
+it("SECURITY: a context cannot widen rotateKeys for groups, the group's signed policy can", async () => {
     // inherit resolves to the frozen v3 rule (manager), so the context only vetoes; the knob that widens is the
     // group's own policy, which its statements sign.
     const widened = createGroupService(false, {group: {rotateKeys: "user"}});
@@ -638,7 +638,7 @@ it("rejects a metadata write from a non-manager (context ACL alone is insufficie
     hasNoCalls(privateSide.groupRepository.updatePrivateMeta);
 });
 
-it("SECURITY: the group's signed update rule opens both metadata planes; a context's no longer does (T4-10)", async () => {
+it("SECURITY: the group's signed update rule opens both metadata planes; a context's does not", async () => {
     // The other direction: the knob has to reach the gate, or the test above would pass with the gate hardwired.
     const publicSide = createGroupService(false, {}, {update: "all"});
     await publicSide.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1));
@@ -679,7 +679,7 @@ it("gates updatePolicy on the updatePolicy policy, not on update", async () => {
     expect(true).toBeFalsy();
 });
 
-it("SECURITY: updatePolicy follows the group's signed updatePolicy rule, not a context's (T4-10)", async () => {
+it("SECURITY: updatePolicy follows the group's signed updatePolicy rule, not a context's", async () => {
     const widened = createGroupService(false, {group: {updatePolicy: "user"}});
     await expectRefusal("ACCESS_DENIED", () => widened.groupService.updatePolicy(aliceCloudUser, policyChange({}, "alice")));
     hasNoCalls(widened.groupRepository.updatePolicyWithStatement);

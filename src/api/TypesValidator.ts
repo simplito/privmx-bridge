@@ -168,7 +168,7 @@ export class TypesValidator {
             if (typeof(value) !== "string") {
                 throw new Error("Expected string");
             }
-            // One string per key: T4-24 compares keys as strings, and a re-encoded key (uncompressed, hybrid) passes
+            // One string per key: the grant-key reuse check compares keys as strings, and a re-encoded key (uncompressed, hybrid) passes
             // for a new one. A throw from the decode (a compressed x with no point) is a refusal too, as in `eccPub`.
             const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
             if (ecc === null || ECUtils.publicToBase58DER(ecc) !== value) {

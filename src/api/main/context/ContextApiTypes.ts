@@ -334,7 +334,7 @@ export interface GroupUpdatePrivateMetaModel {
 
 /**
  * Sets the group's container policy, as a signed commit (op `policy`): the rules that govern commits are part of the
- * signed group state, so a policy change is chained, CAS-ed and checked like any other commit (T4-10).
+ * signed group state, so a policy change is chained, CAS-ed and checked like any other commit.
  *
  * Neither metadata plane moves and no epoch advances; the tree and roster stay as they are.
  */

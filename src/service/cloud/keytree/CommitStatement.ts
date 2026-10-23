@@ -75,7 +75,7 @@ export class CommitStatement {
     static readonly OP_CODES: Record<types.cloud.GroupTreeCommitOp, number> = {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5, policy: 6};
     
     /** The rules a v3 group's statements sign, and what an absent, `inherit` or `default` value means for them.
-     *  Frozen with the format and deliberately NOT `DefaultContextPolicy`: the context only holds a veto (T4-10). */
+     *  Frozen with the format and deliberately NOT `DefaultContextPolicy`: the context only holds a veto. */
     static readonly V3_POLICY_DEFAULTS = {
         update: "manager",
         rotateKeys: "manager",

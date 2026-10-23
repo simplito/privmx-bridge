@@ -295,7 +295,7 @@ it("an addition advances the roster version without advancing the epoch", async 
 });
 
 it("a one-leaf self-update advances treeCommitSeq and leaves the epoch alone", async () => {
-    // A sole member renewing its leaf after an identity key change (08a): one statement, no epoch, no roster move.
+    // A sole member renewing its leaf after an identity key change: one statement, no epoch, no roster move.
     const {repository, state, updates} = createRepository();
     const tree = buildTree(["janek"], EPOCH);
     const oldGroup = group({users: [], numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment});
@@ -441,7 +441,7 @@ it("M6: groupGet serves the most recent epochs and the ones the metadata heads s
 
 it("a policy commit stores the policy and its statement under the commit CAS, and moves no other counter", async () => {
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
-    // entry that commits it would leave the group unreadable. So: neither. The statement chain moves (T4-10).
+    // entry that commits it would leave the group unreadable. So: neither. The statement chain moves.
     const {repository, state, updates, replacements} = createRepository();
     const result = await repository.updatePolicyWithStatement(group(), janek, {get: "all"} as types.cloud.ContainerPolicy, statement(4, "policy"));
     assert.ok(result);
@@ -498,7 +498,7 @@ it("cutting an era drops the key material for the epochs it closes", async () =>
 });
 
 it("SECURITY: cutting an era or abandoning history leaves every statement in place", async () => {
-    // The T4-24 check reads the statements for every key the group ever had; if either of these took statements
+    // The grant-key reuse check reads the statements for every key the group ever had; if either of these took statements
     // with it, the keys below the floor would be forgotten again.
     const deletes = (state: ReturnType<typeof createRepository>["state"]) => (Object.keys(state) as (keyof typeof state)[])
         .filter(name => /^delete|^markDeleted$/.test(name) && state[name].mock.calls.length > 0).sort();
