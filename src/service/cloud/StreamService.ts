@@ -409,6 +409,33 @@ export class StreamService extends BaseContainerService {
         }
     }
     
+    async restartSubscriberIce(cloudUser: CloudUser, streamRoomId: types.stream.StreamRoomId, websocket: WebSocketExtendedWithJanus, wsId: types.core.WsId) {
+        const { streamRoom, ctx } = await this.ensureActiveStreamRoomWithAcl(cloudUser, streamRoomId, websocket, wsId, "stream/streamUpdateSubscriptions");
+        return ctx.runExclusive(roomLockKey(streamRoom.id), async () => {
+            const existingJanusSession = this.findJanusSession(ctx, JanusConstants.SESSION_TYPE.SUBSCRIBER, streamRoom.janusRoomId);
+            if (!existingJanusSession) {
+                throw new AppException("NOT_CONNECTED_TO_THE_ROOM");
+            }
+            const janusSession = existingJanusSession.session;
+            let res;
+            try {
+                // the plugin owns the subscriber's offer, so the restart is asked for rather than offered
+                res = await ctx.ws.janusVideoRoomPluginApi.restartSubscriberIce({
+                    janus: "message",
+                    session_id: janusSession.id,
+                    plugin: JanusConstants.PLUGIN,
+                    handle_id: janusSession.handle,
+                    body: { request: JanusConstants.REQUEST.CONFIGURE, restart: true },
+                });
+            }
+            catch {
+                throw new AppException("MEDIA_SERVER_ERROR", "Failed to restart subscriber ICE");
+            }
+            // Janus may answer with the new offer in place, or send it afterwards as a reoffer event
+            return { sessionId: janusSession.id, offer: res.jsep ? res.jsep : undefined };
+        });
+    }
+    
     private async modifyExistingRemoteSubscriptions(existingJanusSession: JanusSession, ctx: JanusContext, subscriptionsToAdd: StreamSubscription[], subscriptionsToRemove: StreamSubscription[]) {
         const mappedStreamsToAdd = subscriptionsToAdd.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));
         const mappedStreamsToRemove = subscriptionsToRemove.map(x => ({ feed: x.streamId, mid: x.streamTrackId }));

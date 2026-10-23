@@ -535,6 +535,7 @@ export interface RoomPublishOptions {
 }
 
 export interface RoomConfigureOptions {
+    restart?: boolean; // <trigger an ICE restart; subscribers only, the publisher restarts by sending an offer>
     keyframe?: boolean;
     bitrate?: number; // <bitrate cap to return via REMB; optional, overrides the global room value if present>,
     display?: string; // "<display name to use in the room; optional>",

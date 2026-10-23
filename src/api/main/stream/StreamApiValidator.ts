@@ -144,6 +144,10 @@ export class StreamApiValidator extends BaseValidator {
             }),
         }));
         
+        this.registerMethod("streamRestartSubscriberIce", this.builder.createObject({
+            streamRoomId: this.tv.streamRoomId,
+        }));
+        
         this.registerMethod("streamTrickle", this.builder.createObject({
             sessionId: this.builder.int,
             rtcCandidate: this.builder.createObject({

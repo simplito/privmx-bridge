@@ -71,8 +71,12 @@ export class StreamApiClient extends BaseApiClient implements streamApi.IStreamA
         return this.requestWS("stream.streamAcceptOffer", model);
     }
     
-    streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<types.core.OK> {
+    streamSetNewOffer(model: streamApi.StreamSetNewOfferModel): Promise<streamApi.StreamSetNewOfferResult> {
         return this.requestWS("stream.streamSetNewOffer", model);
+    }
+    
+    streamRestartSubscriberIce(model: streamApi.StreamRestartSubscriberIceModel): Promise<streamApi.StreamRestartSubscriberIceResult> {
+        return this.requestWS("stream.streamRestartSubscriberIce", model);
     }
     
     streamTrickle(model: streamApi.StreamTrickleModel): Promise<types.core.OK> {
