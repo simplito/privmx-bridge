@@ -287,7 +287,8 @@ export interface GroupRepairRungModel {
  */
 export interface GroupGetKeyArchiveModel {
     id: types.group.GroupId;
-    /** Optional window; omitted bounds mean "everything reachable". */
+    /** Optional window. With either bound omitted the rungs come a page of at most 256 at a time, ascending by
+     *  `atKeyVersion`; ask again from the last one's `atKeyVersion` for the next page. */
     fromKeyVersion?: number;
     toKeyVersion?: number;
 }

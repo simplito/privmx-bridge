@@ -330,6 +330,14 @@ it("an unwindowed archive read asks only for the group", async () => {
     assert.deepStrictEqual(captured.rungs.filter, {groupId: groupId});
 });
 
+it("an archive window open on either side is served a bounded page, a closed one whole", async () => {
+    for (const [from, to, limit] of [[undefined, undefined, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [2, undefined, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [undefined, 5, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [2, 5, undefined]]) {
+        const {repository, captured} = createStateRepository({rungs: []});
+        await repository.getArchiveRungs(groupId, from, to);
+        assert.strictEqual(captured.rungs.limit, limit, `window [${from}, ${to}]`);
+    }
+});
+
 it("a windowed archive read puts the window and the floor into the query", async () => {
     const {repository, captured} = createStateRepository({rungs: [], epochKeys: []});
     await repository.getArchiveRungs(groupId, 2, 5, 3);

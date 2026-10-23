@@ -48,6 +48,9 @@ export class GroupStateRepository {
     static readonly MAX_HISTORY_PAGE = 8;
     /** At most this many statements per `getTreeCommits` page. */
     static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
+    /** At most this many rungs per `getArchiveRungs` page when the window is open on either side. One epoch holds
+     *  at most ~33 spans x `MAX_RUNGS_PER_SPAN`, so the next page from the last `atKeyVersion` always moves on. */
+    static readonly MAX_ARCHIVE_RUNGS_PER_PAGE = 256;
     
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
@@ -231,16 +234,19 @@ export class GroupStateRepository {
     /**
      * Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
      * client descending twenty epochs reads twenty documents, not the whole archive. `minTarget` leaves out rungs
-     * pointing below a floor: none should be stored, and none is served even if one were.
+     * pointing below a floor: none should be stored, and none is served even if one were. A window open on
+     * either side is served a page at a time, `MAX_ARCHIVE_RUNGS_PER_PAGE` from the bottom up.
      */
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        const rungs = await this.rungs.query(q => {
+        const query = this.rungs.query(q => {
             const conditions = [q.eq("groupId", groupId), ...GroupStateRepository.range(q, "atKeyVersion", fromKeyVersion, toKeyVersion)];
             if (minTarget !== undefined) {
                 conditions.push(q.gte("targetKeyVersion", minTarget));
             }
             return q.andList(conditions);
-        }).sort("atKeyVersion", true).array();
+        }).sort("atKeyVersion", true);
+        const closed = fromKeyVersion !== undefined && toKeyVersion !== undefined;
+        const rungs = await (closed ? query : query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE)).array();
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
