@@ -71,7 +71,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.policy || {}, model.tree, model.commit, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
@@ -181,6 +181,14 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     async groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const group = await this.groupService.pruneArchive(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupRepairRung(model: contextApi.GroupRepairRungModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.repairRung(cloudUser, model);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }

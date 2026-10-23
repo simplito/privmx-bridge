@@ -111,20 +111,36 @@ interface SelfUpdateCase {
     after: WireTree;
 }
 
-/** What a fixture regenerated for commit statements adds to every case (addendum spec §6). */
-interface StatementFields {
-    commit?: types.cloud.GroupTreeCommitStatement;
-    /** Hex digest of `commit` as the endpoint computes it — what the next statement names as `prevDigest`. */
-    digest?: string;
-    /** Hex tree hash of the state the commit leaves behind. */
-    treeHash?: string;
-    /** The post-commit roster, when the dump states it; otherwise every member is a user. */
-    users?: string[];
-    managers?: string[];
+/** A policy commit: no node moves, so `before` and `after` are the same tree and nothing is refreshed. */
+interface PolicyCase {
+    kind: "policy";
+    epoch: number;
+    member: string;
+    members: string[];
+    /** The policy the commit sets, as its statement carries it. */
+    policy: types.cloud.ContainerPolicy;
+    refreshed: RefreshedEntry[];
+    before: WireTree;
+    after: WireTree;
 }
 
-type FixtureCase = (CreateCase|RemoveCase|AddCase|SelfUpdateCase) & StatementFields;
-type Fixture = {treeVersion: number, bucketLevel: number, cases: FixtureCase[], userPubKeys?: Record<string, string>};
+/** The commit statement every case carries, and what it is checked against. */
+interface StatementFields {
+    /** The group's policy and creator after the commit: what the statement's `policyHash` signs. */
+    groupPolicy: types.cloud.ContainerPolicy;
+    groupCreator: string;
+    commit: types.cloud.GroupTreeCommitStatement;
+    /** Hex digest of `commit` as the endpoint computes it — what the next statement names as `prevDigest`. */
+    digest: string;
+    /** Hex tree hash of the state the commit leaves behind. */
+    treeHash: string;
+    /** The post-commit roster. */
+    users: string[];
+    managers: string[];
+}
+
+type FixtureCase = (CreateCase|RemoveCase|AddCase|SelfUpdateCase|PolicyCase) & StatementFields;
+type Fixture = {treeVersion: number, bucketLevel: number, cases: FixtureCase[], userPubKeys: Record<string, string>};
 
 function loadFixture(): Fixture {
     // Read from `src`, not `out`: the build copies TypeScript only, and a JSON test vector belongs with the test
@@ -161,7 +177,7 @@ function submittedCommit(refreshed: RefreshedEntry[], after: WireTree, baseKeyVe
 }
 
 /** The stored state and operation the bridge would have checked that request against. */
-function commitInput(testCase: FixtureCase) {
+function commitInput(testCase: Exclude<FixtureCase, PolicyCase>) {
     const users = (ids: string[]) => ids as types.cloud.UserId[];
     if (testCase.kind === "create") {
         const stored = {numLeaves: testCase.tree.numLeaves, leafAssignment: users(testCase.tree.leafAssignment), keyVersion: 0, nodes: []};
@@ -193,13 +209,14 @@ describe("tree states produced by the endpoint", () => {
     it("the fixture is the current tree version and covers every kind of commit", () => {
         assert.strictEqual(fixture.treeVersion, TreeMath.TREE_VERSION);
         const kinds = new Set(fixture.cases.map(c => c.kind));
-        for (const kind of ["create", "remove", "add", "selfUpdate"]) {
+        for (const kind of ["create", "remove", "add", "selfUpdate", "policy"]) {
             assert.ok(kinds.has(kind as FixtureCase["kind"]), `no ${kind} cases`);
         }
         assert.ok(fixture.cases.length >= 20, `only ${fixture.cases.length} cases`);
     });
     
-    each<[FixtureCase]>(fixture.cases.map(c => [c])).it("the bridge accepts the endpoint's commit %#", ([testCase]) => {
+    const transitions = fixture.cases.filter((c): c is Exclude<FixtureCase, PolicyCase> => c.kind !== "policy");
+    each<[Exclude<FixtureCase, PolicyCase>]>(transitions.map(c => [c])).it("the bridge accepts the endpoint's commit %#", ([testCase]) => {
         const {stored, op, submitted} = commitInput(testCase);
         const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
         assert.ok(result.ok, `${testCase.kind}: ${result.ok ? "" : JSON.stringify(result.rejections)}`);
@@ -209,7 +226,7 @@ describe("tree states produced by the endpoint", () => {
         }
     });
     
-    const creates = fixture.cases.filter((c): c is CreateCase => c.kind === "create");
+    const creates = fixture.cases.filter((c): c is CreateCase & StatementFields => c.kind === "create");
     each<[CreateCase]>(creates.map(c => [c])).it("a freshly built tree of %#", ([testCase]) => {
         const problems = TreeValidator.validateState(asTree(testCase.tree), roster(testCase.members), testCase.epoch);
         assert.deepStrictEqual(
@@ -218,7 +235,7 @@ describe("tree states produced by the endpoint", () => {
         );
     });
     
-    const removals = fixture.cases.filter((c): c is RemoveCase => c.kind === "remove");
+    const removals = fixture.cases.filter((c): c is RemoveCase & StatementFields => c.kind === "remove");
     each<[RemoveCase]>(removals.map(c => [c])).it("a removal of %#", ([testCase]) => {
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.remaining), testCase.afterEpoch,
@@ -240,7 +257,7 @@ describe("tree states produced by the endpoint", () => {
         );
     });
     
-    const additions = fixture.cases.filter((c): c is AddCase => c.kind === "add");
+    const additions = fixture.cases.filter((c): c is AddCase & StatementFields => c.kind === "add");
     each<[AddCase]>(additions.map(c => [c])).it("an addition of %#", ([testCase]) => {
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.after_members), testCase.epoch,
@@ -251,7 +268,7 @@ describe("tree states produced by the endpoint", () => {
         );
     });
     
-    const selfUpdates = fixture.cases.filter((c): c is SelfUpdateCase => c.kind === "selfUpdate");
+    const selfUpdates = fixture.cases.filter((c): c is SelfUpdateCase & StatementFields => c.kind === "selfUpdate");
     each<[SelfUpdateCase]>(selfUpdates.map(c => [c])).it("a self-update of %#", ([testCase]) => {
         const state = TreeValidator.validateState(asTree(testCase.after), roster(testCase.members), testCase.epoch);
         assert.deepStrictEqual(state, [], `self-update by ${testCase.member}: ${JSON.stringify(state)}`);
@@ -343,18 +360,9 @@ describe("tree states produced by the endpoint", () => {
 // commit statements (addendum spec §6)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Whether the fixture carries commit statements. It is regenerated by the coordinator from the endpoint's dump
- * once both sides sign; until then these checks have nothing to run on and register no tests, so the suite stays
- * green. Detected rather than flagged, so the first regenerated fixture switches them on by itself.
- */
-const HAS_STATEMENTS = fixture.cases.some(c => c.commit !== undefined);
-
 /** The state a case's commit leaves behind, and the roster after it. */
 function postOf(testCase: FixtureCase) {
-    const tree = testCase.kind === "create" ? testCase.tree : testCase.after;
-    const members = testCase.kind === "remove" ? testCase.remaining : testCase.kind === "add" ? testCase.after_members : testCase.members;
-    return {tree, users: testCase.users ?? members, managers: testCase.managers ?? []};
+    return {tree: testCase.kind === "create" ? testCase.tree : testCase.after, users: testCase.users, managers: testCase.managers};
 }
 
 function committerOf(testCase: FixtureCase): string {
@@ -363,41 +371,34 @@ function committerOf(testCase: FixtureCase): string {
         case "add": return testCase.adder;
         case "remove": return testCase.remover;
         case "selfUpdate": return testCase.member;
+        case "policy": return testCase.member;
     }
 }
 
 describe("commit statements produced by the endpoint", () => {
-    it("the fixture either carries a statement on every case or on none", () => {
-        const withStatement = fixture.cases.filter(c => c.commit !== undefined).length;
-        assert.ok(withStatement === 0 || withStatement === fixture.cases.length, `${withStatement} of ${fixture.cases.length} cases carry a statement`);
-        if (HAS_STATEMENTS) {
-            assert.ok(fixture.userPubKeys, "statements without the signers' public keys cannot be checked");
-        }
-    });
-    
-    const signed = HAS_STATEMENTS ? fixture.cases.map(c => [c] as [FixtureCase]) : [];
+    const signed = fixture.cases.map(c => [c] as [FixtureCase]);
     
     each<[FixtureCase]>(signed).it("SECURITY: the statement of %# is signed by its committer", ([testCase]) => {
-        const commit = testCase.commit!;
+        const commit = testCase.commit;
         assert.strictEqual(commit.committer, committerOf(testCase));
-        assert.ok(fixture.userPubKeys![commit.committer], `no public key for ${commit.committer}`);
-        assert.strictEqual(commit.committerPubKey, fixture.userPubKeys![commit.committer], `${testCase.kind}: names another key than its committer's`);
+        assert.ok(fixture.userPubKeys[commit.committer], `no public key for ${commit.committer}`);
+        assert.strictEqual(commit.committerPubKey, fixture.userPubKeys[commit.committer], `${testCase.kind}: names another key than its committer's`);
         assert.ok(CommitStatement.verifySignature(commit), `${testCase.kind}: signature does not verify`);
     });
     
     each<[FixtureCase]>(signed).it("SECURITY: the digest of %# is the endpoint's, so statements chain across the two", ([testCase]) => {
-        assert.strictEqual(CommitStatement.digest(testCase.commit!), testCase.digest);
-        assert.strictEqual(testCase.commit!.prevDigest === "", testCase.commit!.seq === 1);
+        assert.strictEqual(CommitStatement.digest(testCase.commit), testCase.digest);
+        assert.strictEqual(testCase.commit.prevDigest === "", testCase.commit.seq === 1);
     });
     
     each<[FixtureCase]>(signed).it("the tree and roster of %# hash to what the statement says", ([testCase]) => {
         const {tree, users, managers} = postOf(testCase);
         const treeHash = TreeHash.treeHash(TreeHash.of(asTree(tree))).toString("hex");
-        assert.strictEqual(treeHash, testCase.commit!.treeHash, `${testCase.kind}: TH(post state) != commit.treeHash`);
+        assert.strictEqual(treeHash, testCase.commit.treeHash, `${testCase.kind}: TH(post state) != commit.treeHash`);
         assert.strictEqual(treeHash, testCase.treeHash, `${testCase.kind}: TH(post state) != case.treeHash`);
-        assert.strictEqual(TreeHash.rosterHash(users, managers).toString("hex"), testCase.commit!.rosterHash, `${testCase.kind}: rosterHash`);
+        assert.strictEqual(TreeHash.rosterHash(users, managers).toString("hex"), testCase.commit.rosterHash, `${testCase.kind}: rosterHash`);
         for (const node of tree.nodes.filter(record => record.publicKey)) {
-            assert.ok(node.setBy !== undefined && node.setBy <= testCase.commit!.seq, `node ${node.nodeIndex} has no valid setBy`);
+            assert.ok(node.setBy !== undefined && node.setBy <= testCase.commit.seq, `node ${node.nodeIndex} has no valid setBy`);
         }
     });
     
@@ -405,10 +406,17 @@ describe("commit statements produced by the endpoint", () => {
         // The same check `GroupService` runs on a request, with what the bridge would derive. The fixture has no
         // stored group around the case, so the group id, grant key, roster version and seq are taken from the
         // statement itself; everything else — epoch, committer, seat, path, deltas, both hashes — is derived.
-        const commit = testCase.commit!;
-        const {stored, op, submitted} = commitInput(testCase);
-        const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
-        assert.ok(result.ok, JSON.stringify(!result.ok && result.rejections));
+        const commit = testCase.commit;
+        // A policy commit moves no node: the tree is the one before it, and its path is empty.
+        const transition = testCase.kind === "policy" ? undefined : (() => {
+            const {stored, op, submitted} = commitInput(testCase);
+            const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
+            assert.ok(result.ok, JSON.stringify(!result.ok && result.rejections));
+            return {tree: TreeHash.afterCommit(stored.nodes, result.commit, commit.seq), path: submitted.refreshedNodes,
+                leafAssignment: result.commit.leafAssignment};
+        })();
+        const tree = transition?.tree ?? TreeHash.of(asTree((testCase as PolicyCase).after));
+        const leafAssignment = transition?.leafAssignment ?? asTree((testCase as PolicyCase).after).leafAssignment;
         const {users, managers} = postOf(testCase);
         // A creation has no deltas: its `rosterHash` binds the genesis roster.
         const added = testCase.kind === "add" ? testCase.added : [];
@@ -423,11 +431,12 @@ describe("commit statements produced by the endpoint", () => {
             groupPubKey: commit.groupPubKey,
             rosterVersion: commit.rosterVersion,
             rosterHash: TreeHash.rosterHash(users, managers),
-            tree: TreeHash.afterCommit(stored.nodes, result.commit, commit.seq),
+            policyHash: CommitStatement.policyHash(testCase.groupPolicy, testCase.groupCreator as types.cloud.UserId),
+            tree,
             committer: committerOf(testCase) as types.cloud.UserId,
-            committerPubKey: fixture.userPubKeys![commit.committer] as types.cloud.UserPubKey,
-            committerSeat: result.commit.leafAssignment.indexOf(committerOf(testCase) as types.cloud.UserId),
-            path: submitted.refreshedNodes,
+            committerPubKey: fixture.userPubKeys[commit.committer] as types.cloud.UserPubKey,
+            committerSeat: leafAssignment.indexOf(committerOf(testCase) as types.cloud.UserId),
+            path: transition?.path ?? [],
             addedUsers: added.filter(u => !managers.includes(u)) as types.cloud.UserId[],
             addedManagers: added.filter(u => managers.includes(u)) as types.cloud.UserId[],
             removed: (testCase.kind === "remove" ? testCase.removed : []) as types.cloud.UserId[],

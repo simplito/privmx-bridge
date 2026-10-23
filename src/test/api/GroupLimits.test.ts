@@ -60,8 +60,8 @@ function createModel(overrides: Record<string, unknown> = {}) {
         // Shape only: what the statement says is the service's to check, and none of these limits are about it.
         commit: signStatement({
             seq: 1, prevDigest: "", op: "create", groupId: RESOURCE_ID, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: PUB_KEY as unknown as types.cloud.GroupPubKey,
-            rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: "manager" as types.cloud.UserId,
-            committerPubKey: userKeys("manager").pub58, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [],
+            rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: "manager" as types.cloud.UserId,
+            committerPubKey: userKeys("manager").pub58, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], policy: {},
         }),
         ...overrides,
     };

@@ -22,6 +22,8 @@ import { TreeValidator } from "../../../service/cloud/keytree/TreeValidator";
 import { TreeHash } from "../../../service/cloud/keytree/TreeHash";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
+import { AppException } from "../../../api/AppException";
+import { DbDuplicateError } from "../../../error/DbDuplicateError";
 
 /**
  * Moving the state out of the document is only worth anything if a change costs writes proportional to what
@@ -291,6 +293,29 @@ it("epoch rows: one per (group, epoch), read in order, cut as a range below the 
     assert.deepStrictEqual(captured.epochKeys.filter, {groupId: groupId});
 });
 
+it("SECURITY: a new epoch's key is looked up among every statement of the group, which no era cut removes", async () => {
+    // Epoch rows go below the floor (`cutEra`, `abandonHistory`), so a check against them forgot every key down
+    // there — keys every member of those epochs, removed ones included, holds the private half of.
+    const key = "EarlierGroupPubKey" as unknown as types.cloud.GroupPubKey;
+    const {repository, captured} = createStateRepository({commits: [{id: GroupStateRepository.treeCommitId(groupId, 1)} as db.group.GroupTreeCommit]});
+    assert.strictEqual(await repository.hasEpochWithGroupPubKey(groupId, key), true);
+    assert.deepStrictEqual(captured.commits.filter, {$and: [{groupId: groupId}, {"statement.groupPubKey": key}]});
+    assert.strictEqual(captured.commits.limit, 1, "the first hit answers it");
+    assert.strictEqual(captured.epochKeys.filter, null, "epoch rows are not consulted");
+    const fresh = createStateRepository();
+    assert.strictEqual(await fresh.repository.hasEpochWithGroupPubKey(groupId, key), false);
+});
+
+it("a tombstone is filed under its group's context, and a context's tombstones go in one delete over the context", async () => {
+    // A deleted context's id never returns, so nobody can create a group there again: its tombstones guard nothing.
+    const contextId = "MyContextId" as types.context.ContextId;
+    const {repository, captured} = createStateRepository();
+    await repository.markDeleted(groupId, contextId);
+    assert.deepStrictEqual(captured.tombstones.inserted, [{id: groupId, contextId: contextId}]);
+    await repository.deleteTombstonesOfContext(contextId);
+    assert.deepStrictEqual(captured.tombstones.filter, {contextId: contextId});
+});
+
 it("SECURITY: the roster trail is served a bounded page at a time, oldest first", async () => {
     // Entries carry up to 1 MB each; an unbounded read of a long-lived group's trail ran a worker out of memory.
     const {repository, captured} = createStateRepository({history: [{version: 3} as unknown as db.group.GroupHistoryEntry]});
@@ -305,6 +330,43 @@ it("an unwindowed archive read asks only for the group", async () => {
     assert.deepStrictEqual(captured.rungs.filter, {groupId: groupId});
 });
 
+it("an archive window open on either side is served a bounded page, a closed one whole", async () => {
+    for (const [from, to, limit] of [[undefined, undefined, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [2, undefined, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [undefined, 5, GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE], [2, 5, undefined]]) {
+        const {repository, captured} = createStateRepository({rungs: []});
+        await repository.getArchiveRungs(groupId, from, to);
+        assert.strictEqual(captured.rungs.limit, limit, `window [${from}, ${to}]`);
+    }
+});
+
+it("a windowed archive read puts the window and the floor into the query", async () => {
+    const {repository, captured} = createStateRepository({rungs: [], epochKeys: []});
+    await repository.getArchiveRungs(groupId, 2, 5, 3);
+    assert.deepStrictEqual(captured.rungs.filter, {$and: [{groupId: groupId}, {atKeyVersion: {$gte: 2}}, {atKeyVersion: {$lte: 5}}, {targetKeyVersion: {$gte: 3}}]});
+    await repository.getEpochKeys(groupId, 2, 5);
+    assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$gte: 2}}, {keyVersion: {$lte: 5}}]});
+});
+
+it("a repair rung is one insert under its author's id, and a second one by that author is AUTHOR_HAS_RUNG", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {atKeyVersion: 6, targetKeyVersion: 5, data: "repair" as types.core.UserKeyData};
+    const {repository, captured} = createStateRepository();
+    await repository.insertRung(groupId, "bob" as types.cloud.UserId, rung);
+    assert.deepStrictEqual(captured.rungs.inserted, [{id: `${groupId}|6|5|bob`, groupId, atKeyVersion: 6, targetKeyVersion: 5, data: "repair", author: "bob"}]);
+    assert.deepStrictEqual(captured.rungs.operations, [], "never an upsert: nothing stored is replaced");
+    
+    const duplicate = createStateRepository();
+    (duplicate.repository as unknown as {rungs: {insert: () => Promise<void>}}).rungs.insert = async () => {
+        throw new DbDuplicateError();
+    };
+    await assert.rejects(() => duplicate.repository.insertRung(groupId, "bob" as types.cloud.UserId, rung),
+        (e: unknown) => AppException.is(e, "GROUP_ARCHIVE_INVALID") && (e as AppException).getData()?.kind === "AUTHOR_HAS_RUNG");
+});
+
+it("the rungs of one span are read by span", async () => {
+    const {repository, captured} = createStateRepository({rungs: []});
+    await repository.getRungsAt(groupId, 6, 5);
+    assert.deepStrictEqual(captured.rungs.filter, {$and: [{groupId: groupId}, {atKeyVersion: 6}, {targetKeyVersion: 5}]});
+});
+
 it("pruning is a range delete over the epoch a rung points at", async () => {
     const {repository, captured} = createStateRepository();
     await repository.deleteRungsTargetingBelow(groupId, 4);
@@ -313,19 +375,29 @@ it("pruning is a range delete over the epoch a rung points at", async () => {
     });
 });
 
-it("a rung is identified by the span it covers and its recipient, so re-submitting one cannot duplicate it", async () => {
-    const rung: types.cloud.GroupArchiveRung = {
+it("a rung is identified by the span it covers and its author, so re-submitting one cannot duplicate it", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {
         atKeyVersion: 6,
         targetKeyVersion: 5,
-        recipientKind: "epoch",
         data: "rung" as types.core.UserKeyData,
     };
     const {repository, captured} = createStateRepository();
-    await repository.insertRungs(groupId, [rung, {...rung, data: "resubmitted" as types.core.UserKeyData}]);
-    const ids = (captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}, upsert: boolean}}[])
-        .map(op => op.replaceOne.filter._id);
+    await repository.insertRungs(groupId, "alice" as types.cloud.UserId, [rung, {...rung, data: "resubmitted" as types.core.UserKeyData}]);
+    const operations = captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}, replacement: db.group.GroupArchiveRung, upsert: boolean}}[];
+    const ids = operations.map(op => op.replaceOne.filter._id);
     assert.strictEqual(ids[0], ids[1]);
-    assert.strictEqual(ids[0], `${groupId}|6|5|epoch|`);
+    assert.strictEqual(ids[0], `${groupId}|6|5|alice`);
+    // The author is the bridge's: whoever the caller of the commit was, never a field the client sent.
+    assert.strictEqual(operations[0].replaceOne.replacement.author, "alice");
+});
+
+it("rungs of one span from two authors are two rows", async () => {
+    const rung: types.cloud.GroupArchiveRungSubmission = {atKeyVersion: 6, targetKeyVersion: 5, data: "rung" as types.core.UserKeyData};
+    const {repository, captured} = createStateRepository();
+    await repository.insertRungs(groupId, "alice" as types.cloud.UserId, [rung]);
+    await repository.insertRungs(groupId, "bob" as types.cloud.UserId, [rung]);
+    const ids = (captured.rungs.operations as unknown as {replaceOne: {filter: {_id: string}}}[]).map(op => op.replaceOne.filter._id);
+    assert.deepStrictEqual(ids, [`${groupId}|6|5|alice`, `${groupId}|6|5|bob`]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,7 +476,7 @@ async function commitThroughStorage(tree: types.cloud.GroupTreeState, keyVersion
 function statement(seq: number): types.cloud.GroupTreeCommitStatement {
     return {
         seq, prevDigest: "", op: seq === 1 ? "create" : "selfUpdate", groupId, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: "pk" as types.cloud.GroupPubKey,
-        rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: "janek" as types.cloud.UserId,
+        rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: "janek" as types.cloud.UserId,
         committerPubKey: "pub" as types.cloud.UserPubKey, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], signature: "sig" as types.core.EccSignature,
     };
 }
@@ -455,6 +527,25 @@ it("growing a one-member group replaces the grant edge addressed to the member",
     const {captured, after} = await commitThroughStorage(tree, EPOCH, {kind: "add", committer: "janek", members: ["alice"], positions: [1]});
     const dropGrant = (captured.edges.operations as unknown as Record<string, {filter: Record<string, unknown>}>[])[1];
     assert.deepStrictEqual(dropGrant.deleteOne.filter, {_id: `${groupId}|grant>user:janek`});
+    assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
+});
+
+it("a one-leaf self-update replaces the grant edge to the sole member in one ordered write", async () => {
+    // A sole member renewing its leaf after an identity key change: no node to refresh, only the grant edge.
+    const tree = buildTree(["janek"], EPOCH);
+    const before = tree.edges.find(edge => edge.isGrantEdge)!;
+    const {captured, after, commit} = await commitThroughStorage(tree, EPOCH, {kind: "selfUpdate", committer: "janek"});
+    const grantId = `${groupId}|grant>user:janek`;
+    const ops = captured.edges.operations as unknown as Record<string, {filter: Record<string, unknown>, replacement?: Record<string, unknown>, upsert?: boolean}>[];
+    const dropAt = ops.findIndex(op => op.deleteOne?.filter._id === grantId);
+    const writeAt = ops.findIndex(op => op.replaceOne?.filter._id === grantId);
+    assert.ok(dropAt >= 0 && writeAt > dropAt, "the old grant edge is dropped before the new one is written");
+    assert.strictEqual(ops[writeAt].replaceOne.upsert, true);
+    const written = commit.edges.find(edge => edge.isGrantEdge)!;
+    assert.strictEqual(ops[writeAt].replaceOne.replacement!.data, written.data);
+    assert.notStrictEqual(written.data, before.data, "the new blob, not the old one");
+    assert.deepStrictEqual(captured.nodes.operations, [], "no node operation");
+    assert.deepStrictEqual(after.edges.map(edge => edge.data), [written.data]);
     assert.deepStrictEqual(TreeValidator.validateState(after, rosterOf(after), EPOCH), []);
 });
 

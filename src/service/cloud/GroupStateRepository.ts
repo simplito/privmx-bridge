@@ -11,10 +11,13 @@ limitations under the License.
 
 import * as mongodb from "mongodb";
 import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
+import type { Query, QueryResult } from "../../db/ObjectRepository";
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { TreeMath } from "./keytree/TreeMath";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
+import { AppException } from "../../api/AppException";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
@@ -45,6 +48,9 @@ export class GroupStateRepository {
     static readonly MAX_HISTORY_PAGE = 8;
     /** At most this many statements per `getTreeCommits` page. */
     static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
+    /** At most this many rungs per `getArchiveRungs` page when the window is open on either side. One epoch holds
+     *  at most ~33 spans x `MAX_RUNGS_PER_SPAN`, so the next page from the last `atKeyVersion` always moves on. */
+    static readonly MAX_ARCHIVE_RUNGS_PER_PAGE = 256;
     
     constructor(
         private nodes: MongoObjectRepository<db.group.GroupTreeNodeId, db.group.GroupTreeNode>,
@@ -99,9 +105,12 @@ export class GroupStateRepository {
         return `${groupId}|privateMeta` as db.group.GroupPrivateMetaEntryId;
     }
     
-    /** Identified by the span it covers and its recipient, which makes re-submitting a rung idempotent. */
-    static rungId(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRung) {
-        return `${groupId}|${rung.atKeyVersion}|${rung.targetKeyVersion}|${rung.recipientKind ?? ""}|${rung.recipient ?? ""}` as db.group.GroupArchiveRungId;
+    /**
+     * Identified by the span it covers and its author: one rung per span per author. A commit re-submitted after a
+     * lost race lands on the same id; a repair by another member lands beside the original instead of over it.
+     */
+    static rungId(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRungSubmission, author: types.cloud.UserId) {
+        return `${groupId}|${rung.atKeyVersion}|${rung.targetKeyVersion}|${author}` as db.group.GroupArchiveRungId;
     }
     
     /** `bulkWrite`, minus mongo's refusal to accept an empty batch. */
@@ -113,6 +122,11 @@ export class GroupStateRepository {
             return;
         }
         await repository.collection.bulkWrite(operations, repository.getOptions());
+    }
+    
+    /** `from <= field <= to`, either bound optional. */
+    private static range<T, K extends keyof T>(q: Query<T>, field: K, from?: T[K], to?: T[K]): QueryResult[] {
+        return [...(from === undefined ? [] : [q.gte(field, from)]), ...(to === undefined ? [] : [q.lte(field, to)])];
     }
     
     // ── read ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -168,13 +182,6 @@ export class GroupStateRepository {
         return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
-    /** Every keyId the group has ever used — what a submitted key entry is checked against. Projected, so a
-     *  long history does not pull its `data` through memory. */
-    async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
-        const entries = await this.history.query(q => q.eq("groupId", groupId)).props("keyId").array();
-        return entries.map(entry => entry.keyId);
-    }
-    
     /** The group's public-metadata entry — a lookup by derived id. */
     async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
         return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));
@@ -224,30 +231,50 @@ export class GroupStateRepository {
         );
     }
     
-    /** Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
-     *  client descending twenty epochs reads twenty documents, not the whole archive. */
-    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        const rungs = await this.rungs.query(q => {
-            const conditions = [q.eq("groupId", groupId)];
-            if (fromKeyVersion !== undefined) {
-                conditions.push(q.gte("atKeyVersion", fromKeyVersion));
-            }
-            if (toKeyVersion !== undefined) {
-                conditions.push(q.lte("atKeyVersion", toKeyVersion));
+    /**
+     * Rungs of one group, windowed by the epoch they are readable at. The window goes into the query, so a
+     * client descending twenty epochs reads twenty documents, not the whole archive. `minTarget` leaves out rungs
+     * pointing below a floor: none should be stored, and none is served even if one were. A window open on
+     * either side is served a page at a time, `MAX_ARCHIVE_RUNGS_PER_PAGE` from the bottom up.
+     */
+    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
+        const query = this.rungs.query(q => {
+            const conditions = [q.eq("groupId", groupId), ...GroupStateRepository.range(q, "atKeyVersion", fromKeyVersion, toKeyVersion)];
+            if (minTarget !== undefined) {
+                conditions.push(q.gte("targetKeyVersion", minTarget));
             }
             return q.andList(conditions);
-        }).sort("atKeyVersion", true).array();
+        }).sort("atKeyVersion", true);
+        const closed = fromKeyVersion !== undefined && toKeyVersion !== undefined;
+        const rungs = await (closed ? query : query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE)).array();
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
-    /** Every epoch row of the group, ascending — what `groupGet` and the key archive serve. */
-    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
-        return this.epochKeys.query(q => q.eq("groupId", groupId)).sort("keyVersion", true).array();
+    /** The rungs stored for one span, at most `LadderMath.MAX_RUNGS_PER_SPAN` of them. */
+    async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
+        const rungs = await this.rungs.query(q => q.and(q.eq("groupId", groupId), q.eq("atKeyVersion", atKeyVersion), q.eq("targetKeyVersion", targetKeyVersion))).array();
+        return rungs.map(rung => this.toArchiveRung(rung));
     }
     
-    /** Whether an epoch of the group still on record was born with `groupPubKey` (T4-24). */
+    /**
+     * Epoch rows of the group, ascending — what `groupGet` and the key archive serve. With bounds, only the rows in
+     * `[fromKeyVersion, toKeyVersion]`, read off the `{groupId, keyVersion}` index: a windowed archive read costs
+     * O(window), not O(epochs).
+     */
+    async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
+        return this.epochKeys.query(q => q.andList([q.eq("groupId", groupId), ...GroupStateRepository.range(q, "keyVersion", fromKeyVersion, toKeyVersion)]))
+            .sort("keyVersion", true).array();
+    }
+    
+    /** Whether any statement of the group carries `groupPubKey` — every epoch it ever had, below the era floor
+     *  included: statements are never cut (clients verify the chain from seq 1), epoch rows are. If statements are ever
+     *  pruned, the opener of every epoch must stay, or this check silently weakens again. */
     async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
-        return await this.epochKeys.count(q => q.and(q.eq("groupId", groupId), q.eq("groupPubKey", groupPubKey))) > 0;
+        const hits = await this.commits.query(q => q.and(
+            q.eq("groupId", groupId),
+            q.eq("statement.groupPubKey" as keyof db.group.GroupTreeCommit, groupPubKey as never),
+        )).props("id").limit(1).array();
+        return hits.length > 0;
     }
     
     /** Writes the row of an epoch being started. An upsert, so a migration re-run lands on the same row. */
@@ -422,18 +449,33 @@ export class GroupStateRepository {
         await this.history.insert(entry);
     }
     
-    /** Keyed by coordinate, so a rung re-submitted after a lost race replaces itself instead of duplicating. */
-    async insertRungs(groupId: types.group.GroupId, rungs: types.cloud.GroupArchiveRung[]): Promise<void> {
-        if (rungs.length === 0) {
-            return;
-        }
-        await this.rungs.collection.bulkWrite(rungs.map(rung => ({
+    /** A commit's rungs, all by its committer. Keyed by span and author, so a rung re-submitted after a lost race
+     *  (the transaction retried) replaces itself instead of duplicating. */
+    async insertRungs(groupId: types.group.GroupId, author: types.cloud.UserId, rungs: types.cloud.GroupArchiveRungSubmission[]): Promise<void> {
+        await GroupStateRepository.bulkWrite(this.rungs, rungs.map(rung => ({
             replaceOne: {
-                filter: {_id: GroupStateRepository.rungId(groupId, rung)},
-                replacement: this.toRungDoc(groupId, rung),
+                filter: {_id: GroupStateRepository.rungId(groupId, rung, author)},
+                replacement: this.toRungDoc(groupId, rung, author),
                 upsert: true,
             },
-        })), this.rungs.getOptions());
+        })));
+    }
+    
+    /**
+     * One repair rung: an insert, never an upsert, so nothing a member submits can replace or delete a stored rung
+     * (an opener cannot swap its good rung for a bad one after others checked it). A second rung for the span by
+     * the same author is a duplicate id, reported as `AUTHOR_HAS_RUNG`.
+     */
+    async insertRung(groupId: types.group.GroupId, author: types.cloud.UserId, rung: types.cloud.GroupArchiveRungSubmission): Promise<void> {
+        try {
+            await this.rungs.insert({id: GroupStateRepository.rungId(groupId, rung, author), ...this.toRungDoc(groupId, rung, author)});
+        }
+        catch (e) {
+            if (e instanceof DbDuplicateError) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "AUTHOR_HAS_RUNG", at: rung.atKeyVersion, target: rung.targetKeyVersion});
+            }
+            throw e;
+        }
     }
     
     /** Drops the rungs that point below `belowEpoch` — one range delete over the target-epoch index. */
@@ -455,9 +497,15 @@ export class GroupStateRepository {
         ]);
     }
     
-    // ponytail: one row per deleted group, never pruned; prune with the context if that ever matters.
-    async markDeleted(groupId: types.group.GroupId): Promise<void> {
-        await this.tombstones.insert({id: groupId});
+    /** Pruned with its context (`deleteTombstonesOfContext`): context ids are Bridge uuids that never return, so no
+     *  group can be created under a pruned id. */
+    async markDeleted(groupId: types.group.GroupId, contextId: types.context.ContextId): Promise<void> {
+        await this.tombstones.insert({id: groupId, contextId});
+    }
+    
+    /** The tombstones of a deleted context's groups: nobody can create a group there any more, so they guard nothing. */
+    async deleteTombstonesOfContext(contextId: types.context.ContextId): Promise<void> {
+        await this.tombstones.deleteMany(q => q.eq("contextId", contextId));
     }
     
     async wasDeleted(groupId: types.group.GroupId): Promise<boolean> {
@@ -512,12 +560,6 @@ export class GroupStateRepository {
             targetKeyVersion: doc.targetKeyVersion,
             data: doc.data,
         };
-        if (doc.recipientKind !== undefined) {
-            rung.recipientKind = doc.recipientKind;
-        }
-        if (doc.recipient !== undefined) {
-            rung.recipient = doc.recipient;
-        }
         if (doc.author !== undefined) {
             rung.author = doc.author;
         }
@@ -549,22 +591,13 @@ export class GroupStateRepository {
         return doc;
     }
     
-    private toRungDoc(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRung): Omit<db.group.GroupArchiveRung, "id"> {
-        const doc: Omit<db.group.GroupArchiveRung, "id"> = {
+    private toRungDoc(groupId: types.group.GroupId, rung: types.cloud.GroupArchiveRungSubmission, author: types.cloud.UserId): Omit<db.group.GroupArchiveRung, "id"> {
+        return {
             groupId: groupId,
             atKeyVersion: rung.atKeyVersion,
             targetKeyVersion: rung.targetKeyVersion,
             data: rung.data,
+            author: author,
         };
-        if (rung.recipientKind !== undefined) {
-            doc.recipientKind = rung.recipientKind;
-        }
-        if (rung.recipient !== undefined) {
-            doc.recipient = rung.recipient;
-        }
-        if (rung.author !== undefined) {
-            doc.author = rung.author;
-        }
-        return doc;
     }
 }

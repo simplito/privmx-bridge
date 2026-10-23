@@ -248,6 +248,12 @@ export namespace group {
         eraFloor: number;
         /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
         archivePrunedBelow?: number;
+        /**
+         * Bumped by every `groupRepairRung`. The write is what serialises a repair against every floor change and
+         * every other repair of the group: they all write this document, so a concurrent one is a write conflict
+         * and the repair re-validates against the state that won.
+         */
+        ladderRev?: number;
     }
     
     /**
@@ -387,9 +393,9 @@ export namespace group {
         groupId: types.group.GroupId;
         atKeyVersion: number;
         targetKeyVersion: number;
-        recipientKind?: "epoch"|"user"|"group";
-        recipient?: string;
         data: types.core.UserKeyData;
+        /** Who stored the rung, set by the bridge. Always set on new rows; rows from before it was required lack it,
+         *  and the per-author repair check counts such a row as the opener's. */
         author?: types.cloud.UserId;
     }
     
@@ -399,10 +405,11 @@ export namespace group {
      * and, when that commit carried one, the group's own metadata key wrapped **once** to that grant key (what
      * `groupKeys` serves). A row per epoch rather than two arrays on the group document, which grew with every
      * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. `cutEra` drops the rows
-     * below its floor; `pruneArchive` leaves them.
+     * below its floor; `pruneArchive` leaves them. The grant-key reuse check does not read these rows (they go with the era);
+     * it reads the statements in `groupTreeCommit`, which no cut removes.
      *
-     * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch its
-     * `keyHistory` no longer had.
+     * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch missing
+     * from its `keyHistory`.
      */
     export interface GroupEpochKey {
         id: GroupEpochKeyId;
@@ -418,6 +425,8 @@ export namespace group {
      */
     export interface GroupTombstone {
         id: types.group.GroupId;
+        /** Pruned with its context. Absent only on rows written before migration 074, which are never pruned. */
+        contextId?: types.context.ContextId;
     }
     
     /** A group's out-of-document state, assembled for the read path. */

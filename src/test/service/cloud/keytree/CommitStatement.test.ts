@@ -11,13 +11,15 @@ limitations under the License.
 
 import "q2-test";
 import * as assert from "assert";
+import * as fs from "fs";
+import * as path from "path";
 import * as types from "../../../../types";
 import { CommitStatement, ExpectedStatement } from "../../../../service/cloud/keytree/CommitStatement";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import { ECUtils } from "../../../../utils/crypto/ECUtils";
 import { Crypto } from "../../../../utils/crypto/Crypto";
-import { buildTree, creationStatement, planCommit, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, planCommit, policyStatement, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
 
 /**
  * The bridge's check of a commit statement: every field against what the bridge derived, then the signature.
@@ -48,6 +50,7 @@ function honest() {
         groupPubKey: NEXT_GROUP_PUB,
         rosterVersion: 8,
         rosterHash: TreeHash.rosterHash(users, []),
+        policyHash: CommitStatement.policyHash({}, "u0" as types.cloud.UserId),
         tree: TreeHash.of(plan.after),
         committer: "u0" as types.cloud.UserId,
         committerPubKey: userKeys("u0").pub58,
@@ -92,6 +95,53 @@ describe("CommitStatement signature", () => {
         const {statement} = honest();
         assert.strictEqual(CommitStatement.verifySignature({...statement, signature: "AAAA" as types.core.EccSignature}), false);
         assert.strictEqual(CommitStatement.verifySignature({...statement, committerPubKey: "notAKey" as types.cloud.UserPubKey}), false);
+    });
+    
+    // H1: the native Endpoint throws on a header outside 27..42, so storing one would freeze the group for it.
+    each<[number, boolean]>([[0, false], [26, false], [27, true], [30, true], [31, true], [42, true], [43, false], [255, false]])
+        .it("SECURITY: a valid r||s under header %s verifies: %s", ([header, ok]) => {
+            const {statement} = honest();
+            assert.strictEqual(CommitStatement.verifySignature(statement), true);
+            const sig = Buffer.from(statement.signature, "base64");
+            sig[0] = header;
+            assert.strictEqual(CommitStatement.verifySignature({...statement, signature: sig.toString("base64") as types.core.EccSignature}), ok);
+        });
+});
+
+/** The vectors `test/fixtures/keytree/reference.py` in the endpoint writes from the spec; this is a byte-identical copy. */
+interface Vectors {
+    signedBytes: {statement: Omit<types.cloud.GroupTreeCommitStatement, "signature">, expectedHex: string}[];
+    policyHash: {policy: types.cloud.ContainerPolicy, creator: types.cloud.UserId, expectedHex: string}[];
+}
+
+function vectors(): Vectors {
+    // Read from `src`, like keytree-states.json: the build copies TypeScript only.
+    return JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../../..", "src/test/fixtures/keytree-vectors.json"), "utf8")) as Vectors;
+}
+
+describe("CommitStatement shared vectors", () => {
+    it("signed bytes match the shared vectors", () => {
+        const all = vectors().signedBytes;
+        assert.ok(all.some(v => v.statement.op === "policy"), "a policy op among them");
+        for (const vector of all) {
+            assert.strictEqual(CommitStatement.signedBytes(vector.statement).toString("hex"), vector.expectedHex, vector.statement.op);
+        }
+    });
+    
+    it("SECURITY: policy hash matches the shared vectors", () => {
+        const all = vectors().policyHash;
+        assert.strictEqual(all.length, 6);
+        for (const vector of all) {
+            assert.strictEqual(CommitStatement.policyHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
+        }
+    });
+    
+    it("inherit, default and absent resolve to the frozen v3 rules, never the context's", () => {
+        for (const value of [undefined, "inherit", "default"] as const) {
+            assert.strictEqual(CommitStatement.resolve({update: value}, "update"), "manager");
+            assert.strictEqual(CommitStatement.resolve({ownerCanBeRemovedFromManagers: value}, "ownerCanBeRemovedFromManagers"), "yes");
+        }
+        assert.strictEqual(CommitStatement.resolve({rotateKeys: "manager,owner"}, "rotateKeys"), "manager,owner", "verbatim");
     });
 });
 
@@ -145,6 +195,9 @@ describe("CommitStatement.validate", () => {
         ["rosterVersion", cs => ({...cs, rosterVersion: 7})],
         ["rosterHash", cs => ({...cs, rosterHash: TreeHash.rosterHash(SEATS, []).toString("hex")})],
         ["rosterHash", cs => ({...cs, rosterHash: cs.rosterHash.toUpperCase()})],
+        ["policyHash", cs => ({...cs, policyHash: CommitStatement.policyHash({update: "user"}, "u0" as types.cloud.UserId).toString("hex")})],
+        ["policyHash", cs => ({...cs, policyHash: CommitStatement.policyHash({}, "u1" as types.cloud.UserId).toString("hex")})],
+        ["policy", cs => ({...cs, policy: {}})],
         ["treeHash", cs => ({...cs, treeHash: TreeHash.treeHash(TreeHash.of(BASE)).toString("hex")})],
         ["committer", cs => ({...cs, committer: "u1" as types.cloud.UserId})],
         ["committerPubKey", cs => ({...cs, committerPubKey: userKeys("u1").pub58})],
@@ -174,6 +227,50 @@ describe("CommitStatement.validate", () => {
         assert.deepStrictEqual(check(statement, expected, NOW - CommitStatement.DATE_TOLERANCE_MS), []);
     });
     
+    it("SECURITY: a statement dated as the one it extends is accepted however far ahead of the clock that one is", () => {
+        // A forward-dated statement already stored (collusion, or a bridge clock stepped back) must not freeze every
+        // honest commit after it: the honest client signs max(its clock, previous.date), i.e. exactly that date.
+        const {statement, expected} = honest();
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        assert.deepStrictEqual(check(signStatement({...statement, date: ahead}, "u0"), {...expected, notBefore: ahead}), []);
+    });
+    
+    it("SECURITY: past the tolerance a date may match the one it extends but not move beyond it", () => {
+        const {statement, expected} = honest();
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        assert.deepStrictEqual(check(signStatement({...statement, date: ahead + 1}, "u0"), {...expected, notBefore: ahead}),
+            [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+    });
+    
+    it("an exact resend is refused once the bridge's clock is past its date plus the tolerance", () => {
+        // The endpoint resends an unresolved statement byte for byte for 2 x DATE_TOLERANCE_MS of its date, and only
+        // then signs a different one at the same prevDigest. This lower bound is what makes that window finite.
+        const {statement, expected} = honest();
+        assert.deepStrictEqual(check(statement, expected, NOW + CommitStatement.DATE_TOLERANCE_MS + 1), [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+        // The bridge takes a date equal to the extended one however far ahead, but never one more than T behind the clock:
+        // a statement matching a forward-dated predecessor is refused once the clock passes its date plus T too.
+        const ahead = NOW + CommitStatement.DATE_TOLERANCE_MS + 5 * 60_000;
+        const matched = signStatement({...statement, date: ahead}, "u0");
+        assert.deepStrictEqual(check(matched, {...expected, notBefore: ahead}, ahead + CommitStatement.DATE_TOLERANCE_MS), []);
+        assert.deepStrictEqual(check(matched, {...expected, notBefore: ahead}, ahead + CommitStatement.DATE_TOLERANCE_MS + 1),
+            [{kind: "BAD_COMMIT_STATEMENT", field: "date"}]);
+    });
+    
+    it("validate refuses a policy on an add, and its absence on a policy op", () => {
+        const {statement, expected} = honest();
+        assert.deepStrictEqual(check(signStatement({...statement, policy: {update: "all"}}, "u0"), expected), [{kind: "BAD_COMMIT_STATEMENT", field: "policy"}]);
+        const tree = BASE;
+        const previous = creationStatement(tree, "u0", {groupId: "res", groupPubKey: GROUP_PUB, users: SEATS, managers: [], date: NOW - 1});
+        const change = policyStatement(tree, 2, 5, "u0", {update: "user"}, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, users: SEATS, managers: [], date: NOW, previous, creator: "u0"});
+        const policyExpected: ExpectedStatement = {...expected, op: "policy", prevDigest: CommitStatement.digest(previous), notBefore: previous.date, keyVersion: 5, groupPubKey: GROUP_PUB, rosterVersion: 1,
+            rosterHash: TreeHash.rosterHash(SEATS, []), tree: TreeHash.of(tree), path: [], removed: [],
+            policyHash: CommitStatement.policyHash({update: "user"}, "u0" as types.cloud.UserId)};
+        assert.deepStrictEqual(check(change, policyExpected), []);
+        const bare: Partial<types.cloud.GroupTreeCommitStatement> = {...change};
+        delete bare.policy;
+        assert.deepStrictEqual(check(signStatement(bare as types.cloud.GroupTreeCommitStatement, "u0"), policyExpected), [{kind: "BAD_COMMIT_STATEMENT", field: "policy"}]);
+    });
+    
     it("roster lists must arrive sorted, as signed", () => {
         const {expected} = honest();
         const plan = planCommit(BASE, 5, {kind: "add", committer: "u0", members: ["zed", "amy"], positions: [64, 65]});
@@ -188,15 +285,16 @@ describe("CommitStatement.validate", () => {
 
 describe("CommitStatement.checkStoredState", () => {
     const roster = {users: SEATS, managers: [] as string[]};
+    const creator = "u0";
     
     /** u0 creates the group (statement 1), u40 self-updates (statement 2): what storage holds afterwards. */
     function stored() {
         const created = planCommit({numLeaves: 64, leafAssignment: SEATS as types.cloud.UserId[], nodes: [], edges: []}, 0, {kind: "create", committer: "u0"}, 1);
         const create = statementFor(created, {kind: "create", committer: "u0"}, {groupId: "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f", groupPubKey: GROUP_PUB, rosterVersion: 1, ...roster});
         const update = planCommit(created.after, 1, {kind: "selfUpdate", committer: "u40"}, 2);
-        const second = statementFor(update, {kind: "selfUpdate", committer: "u40"}, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, ...roster});
+        const second = statementFor(update, {kind: "selfUpdate", committer: "u40"}, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, creator, ...roster});
         return {
-            group: {treeCommitSeq: 2, keyVersion: 1, groupPubKey: GROUP_PUB, rosterVersion: 1, ...roster},
+            group: {treeCommitSeq: 2, keyVersion: 1, groupPubKey: GROUP_PUB, rosterVersion: 1, creator: "u0" as types.cloud.UserId, ...roster},
             tree: update.after,
             statements: new Map([[1, create], [2, second]]),
         };
@@ -227,6 +325,15 @@ describe("CommitStatement.checkStoredState", () => {
         assert.ok(CommitStatement.checkStoredState({...group, users: [...SEATS, "outsider"]}, tree, statements).some(p => p.includes("rosterHash")));
     });
     
+    it("checkStoredState reports a stored policy, or creator, the latest statement does not hash", () => {
+        const {group, tree, statements} = stored();
+        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, policy: {update: "all"}}, tree, statements),
+            ["the stored policy does not hash to the latest statement's policyHash"]);
+        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, policy: {get: "all"}}, tree, statements), [], "an unsigned field");
+        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, creator: "u1" as types.cloud.UserId}, tree, statements),
+            ["the stored policy does not hash to the latest statement's policyHash"]);
+    });
+    
     it("SECURITY: finds a filled node still vouched for by a former member", () => {
         // A removal blanks every node its departing members set; one that survived is a key a former member has.
         const {group, tree, statements} = stored();
@@ -235,13 +342,13 @@ describe("CommitStatement.checkStoredState", () => {
     });
     
     it("SECURITY: finds a node whose subtree was rolled back to an older, genuinely vouched generation", () => {
-        // u35 heals node 95 over u40's; u0, colluding, signs a state with 95 back at u40's generation (AM-1). 95
+        // u35 heals node 95 over u40's; u0, colluding, signs a state with 95 back at u40's generation. 95
         // itself still matches statement 2 (nothing keyed below it), but the root u35 minted sits over another subtree.
         const {group, tree, statements} = stored();
         const healed = planCommit(tree, 1, {kind: "selfUpdate", committer: "u35"}, 3);
         const old = tree.nodes.find(n => n.nodeIndex === 95)!;
         const rolledBack = {...healed.after, nodes: healed.after.nodes.map(n => n.nodeIndex === 95 ? old : n)};
-        const ctx = {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, ...roster};
+        const ctx = {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, creator, ...roster};
         statements.set(3, statementFor(healed, {kind: "selfUpdate", committer: "u35"}, ctx));
         statements.set(4, statementFor({...healed, after: rolledBack, refreshedNodes: [], seq: 4}, {kind: "selfUpdate", committer: "u0"}, ctx));
         const problems = CommitStatement.checkStoredState({...group, treeCommitSeq: 4}, rolledBack, statements);

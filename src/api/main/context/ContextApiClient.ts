@@ -91,6 +91,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupPruneArchive", model);
     }
     
+    groupRepairRung(model: contextApi.GroupRepairRungModel): Promise<types.core.OK> {
+        return this.request("context.groupRepairRung", model);
+    }
+    
     groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         return this.request("context.groupGetKeyArchive", model);
     }

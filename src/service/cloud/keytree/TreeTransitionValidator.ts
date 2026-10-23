@@ -11,7 +11,8 @@ limitations under the License.
 
 import * as types from "../../../types";
 import { TreeMath } from "./TreeMath";
-import { EdgeProblem, TreeValidator, TreeView } from "./TreeValidator";
+import { EdgeProblem, TreeValidator } from "./TreeValidator";
+import { TreeHash } from "./TreeHash";
 
 /**
  * Why a submitted commit was rejected.
@@ -156,18 +157,17 @@ export class TreeTransitionValidator {
             return TreeTransitionValidator.reject(nodeProblems);
         }
         
-        // The post state: blanks dropped, the path filled with what was submitted, unkeyed records gone.
-        const unkeyed = stored.nodes.map(node => node.nodeIndex).filter(nodeIndex => !TreeMath.isKeyed(nodeIndex, derived.numLeaves));
-        const post: TreeView = {numLeaves: derived.numLeaves, leafAssignment: derived.leafAssignment, nodes: new Map()};
-        for (const node of stored.nodes) {
-            if (unkeyed.includes(node.nodeIndex)) {
-                continue;
-            }
-            post.nodes.set(node.nodeIndex, derived.blanked.has(node.nodeIndex) ? {generation: node.generation} : node);
-        }
-        for (const node of submitted.refreshedNodes) {
-            post.nodes.set(node.nodeIndex, node);
-        }
+        const commit: TreeCommit = {
+            numLeaves: derived.numLeaves,
+            leafAssignment: derived.leafAssignment,
+            keyVersion: derived.keyVersion,
+            blanked: [...derived.blanked].filter(nodeIndex => !path.includes(nodeIndex)).sort((a, b) => a - b),
+            refreshed: submitted.refreshedNodes,
+            unkeyed: stored.nodes.map(node => node.nodeIndex).filter(nodeIndex => !TreeMath.isKeyed(nodeIndex, derived.numLeaves)),
+            edges: submitted.edges,
+        };
+        // The post state, built as the statement hashes it; the seq only sets `setBy`, which no edge reads.
+        const post = TreeHash.afterCommit(stored.nodes, commit, 0);
         const edgeProblems = TreeValidator.checkEdges(
             submitted.edges,
             TreeValidator.requiredEdges(post, path),
@@ -176,15 +176,7 @@ export class TreeTransitionValidator {
         if (edgeProblems.length > 0) {
             return TreeTransitionValidator.reject(edgeProblems);
         }
-        return {ok: true, commit: {
-            numLeaves: derived.numLeaves,
-            leafAssignment: derived.leafAssignment,
-            keyVersion: derived.keyVersion,
-            blanked: [...derived.blanked].filter(nodeIndex => !path.includes(nodeIndex)).sort((a, b) => a - b),
-            refreshed: submitted.refreshedNodes,
-            unkeyed,
-            edges: submitted.edges,
-        }};
+        return {ok: true, commit};
     }
     
     private static reject(rejections: TransitionRejection[]): CommitResult {

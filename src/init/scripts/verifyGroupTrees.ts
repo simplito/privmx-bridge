@@ -75,12 +75,12 @@ async function go() {
             continue;
         }
         checked++;
-        const tree = await groupRepository.getTree(group);
+        const tree = await groupRepository.state.getTree(group);
         const problems: unknown[] = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
         // The statement chain: the latest statement must describe this exact state, every filled record must be
         // listed by the statement its `setBy` names, and each statement must verify with the key it names.
         const seqs = [group.treeCommitSeq ?? 0, ...tree.nodes.map(node => node.setBy ?? 0)];
-        const statements = new Map((await groupRepository.getTreeCommitsAt(group.id, seqs)).map(statement => [statement.seq, statement]));
+        const statements = new Map((await groupRepository.state.getTreeCommitsAt(group.id, seqs)).map(statement => [statement.seq, statement]));
         problems.push(...CommitStatement.checkStoredState(group, tree, statements).map(problem => ({kind: "STATEMENT", problem})));
         if (problems.length > 0) {
             broken++;

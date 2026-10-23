@@ -17,16 +17,13 @@ import { TreeHash } from "../../../service/cloud/keytree/TreeHash";
 
 export class GroupConverter {
     
-    /** Upper bound on what `servedHashes` keeps, counted as `HASH_ENTRY_BYTES` per cached hash. */
-    static readonly HASH_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-    
-    /** A 32-byte hash as a Buffer in a Map entry, with V8's object and Map overhead — an estimate, deliberately high. */
-    static readonly HASH_ENTRY_BYTES = 160;
+    /** Groups whose hashes `servedHashes` keeps. A full 16k-seat group's entry is ~2k hashes, ~320 KB with V8's
+     *  overhead, so the cache stays under ~64 MB whatever the groups' sizes. */
+    static readonly HASH_CACHE_MAX_GROUPS = 200;
     
     /** One entry per group, for its latest seen `treeCommitSeq`; a Map iterates in insertion order, so the first key
      *  is the least recently used. */
     private static readonly hashCache = new Map<types.group.GroupId, {seq: number, hashes: Map<number, Buffer>}>();
-    private static hashCacheBytes = 0;
     
     /**
      * The hashes of a served tree's nodes at bucket level and above, computed once per commit rather than once per
@@ -55,25 +52,12 @@ export class GroupConverter {
         if (cached && cached.seq > group.treeCommitSeq) {
             return hashes;
         }
-        GroupConverter.evictHashes(group.id);
-        const bytes = hashes.size * GroupConverter.HASH_ENTRY_BYTES;
-        if (bytes > GroupConverter.HASH_CACHE_MAX_BYTES) {
-            return hashes;
-        }
-        while (GroupConverter.hashCacheBytes + bytes > GroupConverter.HASH_CACHE_MAX_BYTES) {
-            GroupConverter.evictHashes(cache.keys().next().value!);
+        cache.delete(group.id);
+        while (cache.size >= GroupConverter.HASH_CACHE_MAX_GROUPS) {
+            cache.delete(cache.keys().next().value!);
         }
         cache.set(group.id, {seq: group.treeCommitSeq, hashes});
-        GroupConverter.hashCacheBytes += bytes;
         return hashes;
-    }
-    
-    private static evictHashes(groupId: types.group.GroupId) {
-        const entry = GroupConverter.hashCache.get(groupId);
-        if (entry) {
-            GroupConverter.hashCache.delete(groupId);
-            GroupConverter.hashCacheBytes -= entry.hashes.size * GroupConverter.HASH_ENTRY_BYTES;
-        }
     }
     
     /** The whole group: document plus state. `state` is passed in, not fetched, so a caller that does not need

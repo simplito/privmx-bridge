@@ -124,7 +124,6 @@ export interface GroupCreateModel {
      * exist yet, and the server files the entry against the group it is creating.
      */
     groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">;
-    policy?: types.cloud.ContainerPolicy;
     /**
      * The group's hidden key tree at epoch 1. Every group is tree-backed; members reach the grant key by climbing.
      *
@@ -165,7 +164,7 @@ export interface GroupAddMembersModel {
      *
      * `expectedKeyVersion` cannot stand in for it: an addition moves the roster without moving the epoch, so a
      * caller can hold the current epoch and still be planning against a roster that has already grown. The
-     * entry's `rosterTag` commits the version it lands at, so a write the bridge renumbered would carry a tag
+     * commit statement signs the version it lands at, so a write the bridge renumbered would carry a statement
      * no reader can verify — this is what makes the number the caller predicts the number it gets.
      *
      * Every roster-plane write carries one; the other two point here rather than restating this.
@@ -197,7 +196,7 @@ export interface GroupRemoveMembersModel {
     transition: types.cloud.GroupTreeTransition;
     /** The commit statement for this change, signed by the caller (see `types.cloud.GroupTreeCommitStatement`). */
     commit: types.cloud.GroupTreeCommitStatement;
-    rungs: types.cloud.GroupArchiveRung[];
+    rungs: types.cloud.GroupArchiveRungSubmission[];
     /**
      * The new metadata key wrapped once to the group's own grant public key at the epoch being created.
      *
@@ -272,12 +271,24 @@ export interface GroupPruneArchiveModel {
 }
 
 /**
+ * Appends one repair rung to a span an epoch already published: `rung` seals the key of `targetKeyVersion` to the
+ * grant key of `atKeyVersion`. Any seated member may call it; the bridge records the caller as the rung's author.
+ * Only canonical downward spans at or below the current epoch and at or above the floor are accepted, one rung per
+ * span per member, at most four per span; every call is charged to the caller's own repair budget.
+ */
+export interface GroupRepairRungModel {
+    id: types.group.GroupId;
+    rung: types.cloud.GroupArchiveRungSubmission;
+}
+
+/**
  * Fetches the Epoch Ladder. Kept out of `groupGet` because the archive grows with the group's whole history,
  * while a client needs it only when it is actually reaching for an older epoch.
  */
 export interface GroupGetKeyArchiveModel {
     id: types.group.GroupId;
-    /** Optional window; omitted bounds mean "everything reachable". */
+    /** Optional window. With either bound omitted the rungs come a page of at most 256 at a time, ascending by
+     *  `atKeyVersion`; ask again from the last one's `atKeyVersion` for the next page. */
     fromKeyVersion?: number;
     toKeyVersion?: number;
 }
@@ -322,16 +333,20 @@ export interface GroupUpdatePrivateMetaModel {
 }
 
 /**
- * Sets the group's container policy.
+ * Sets the group's container policy, as a signed commit (op `policy`): the rules that govern commits are part of the
+ * signed group state, so a policy change is chained, CAS-ed and checked like any other commit.
  *
- * No version and no CAS: the policy lives outside the client's signed envelope, so there is no counter a client
- * could know and nothing for it to re-verify. Last write wins, and neither metadata plane moves — deliberately,
- * or a policy change would strand the epoch of a plane it did not rewrite.
+ * Neither metadata plane moves and no epoch advances; the tree and roster stay as they are.
  */
 export interface GroupUpdatePolicyModel {
     id: types.group.GroupId;
-    /** Required. `{}` clears to the context defaults; absent would be a request that asks for nothing. */
-    policy: types.cloud.ContainerPolicy;
+    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new policy in
+     *  `commit.policy` (`{}` resets every rule to the v3 defaults the statements sign). */
+    commit: types.cloud.GroupTreeCommitStatement;
+    /** Current epoch (CAS). */
+    expectedKeyVersion: number;
+    /** Current roster version (CAS). */
+    expectedRosterVersion: number;
 }
 
 /**
@@ -339,19 +354,20 @@ export interface GroupUpdatePolicyModel {
  * the removal.
  *
  * Node keys are untouched, so this is `O(1)`: one new grant edge wrapping the new grant key to the unchanged
- * root, the rungs that keep the old epochs reachable, and the metadata key re-wrapped once to the new grant key.
+ * root, or to the sole member of a one-leaf tree, the rungs that keep the old epochs reachable, and the metadata key re-wrapped once to the new grant key.
  */
 export interface GroupGenerateNewKeyModel {
     id: types.group.GroupId;
     groupPubKey: types.cloud.GroupPubKey;
     data: types.group.GroupData;
     keyId: types.core.KeyId;
-    /** The new grant edge: the new grant key wrapped to the root node, at the epoch being created. */
+    /** The new grant edge: the new grant key wrapped to the root node, or to the sole member of a one-leaf tree
+     *  (whose root is that member's leaf), at the epoch being created. */
     grantEdge: types.cloud.GroupTreeEdge;
     /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
     commit: types.cloud.GroupTreeCommitStatement;
     /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. */
-    rungs: types.cloud.GroupArchiveRung[];
+    rungs: types.cloud.GroupArchiveRungSubmission[];
     /** The new metadata key wrapped once to the new grant public key. */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;
@@ -645,6 +661,7 @@ export interface IContextApi {
     groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
+    groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
 }
