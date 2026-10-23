@@ -255,6 +255,14 @@ export class GroupConverter {
         return res;
     }
     
+    convertEpochKeys(group: db.group.Group, epochKeys: db.group.GroupEpochKey[]): contextApi.GroupGetEpochKeysResult {
+        return {
+            keyVersion: group.keyVersion,
+            groupKeys: epochKeys.filter(row => row.groupKey).map(row => ({group: group.id, keys: [row.groupKey!]})),
+            keyHistory: epochKeys.filter(row => row.groupPubKey).map(row => ({keyVersion: row.keyVersion, groupPubKey: row.groupPubKey!})),
+        };
+    }
+    
     private convertHistoryEntry(entry: db.group.GroupHistoryEntry): contextApi.GroupHistoryEntryInfo {
         return {
             keyId: entry.keyId,

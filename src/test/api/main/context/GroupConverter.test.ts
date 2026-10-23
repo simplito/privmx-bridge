@@ -127,6 +127,14 @@ it("keyHistory and groupKeys come from the epoch rows: the past epochs' grant ke
     assert.deepStrictEqual(new GroupConverter().convertKeyArchive(group, [], epochKeys).keyHistory, converted.keyHistory);
 });
 
+it("the epoch rows found by groupGetEpochKeys come in groupGet's shapes, the current epoch's grant key included", async () => {
+    const converted = new GroupConverter().convertEpochKeys(group, epochKeys);
+    assert.strictEqual(converted.keyVersion, group.keyVersion);
+    assert.deepStrictEqual(converted.groupKeys, [{group: groupId, keys: [selfKey]}]);
+    assert.deepStrictEqual(converted.keyHistory, epochKeys.filter(row => row.groupPubKey).map(row => ({keyVersion: row.keyVersion, groupPubKey: row.groupPubKey})));
+    assert(converted.keyHistory.some(entry => entry.keyVersion === group.keyVersion), "the current epoch too");
+});
+
 it("a listing carries the epoch and the counters, and nothing that grows with membership or history", async () => {
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
     // No `publicMeta`/`privateMeta` (two envelopes per group), no roster and no statement (both grow with members).

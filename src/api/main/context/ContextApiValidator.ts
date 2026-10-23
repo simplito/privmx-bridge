@@ -14,6 +14,12 @@ import { TypesValidator } from "../../TypesValidator";
 
 export class ContextApiValidator extends BaseValidator {
     
+    /** Spans per `groupGetKeyArchive` call: a descent path is at most ~66 spans (2 log2 + 2 over 32-bit epochs),
+     *  with room for the alternatives a client asks for when one rung on it is broken. */
+    static readonly MAX_ARCHIVE_SPANS = 128;
+    /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
+    static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
+    
     constructor(
         private tv: TypesValidator,
     ) {
@@ -179,6 +185,15 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.groupId,
             fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
             toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            spans: this.builder.optional(this.builder.createListWithMaxLength(this.builder.createObject({
+                at: this.builder.min(this.builder.int, 1),
+                target: this.builder.min(this.builder.int, 1),
+            }), ContextApiValidator.MAX_ARCHIVE_SPANS)),
+        }));
+        this.registerMethod("groupGetEpochKeys", this.builder.createObject({
+            id: this.tv.groupId,
+            keyIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.keyId, ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS)),
+            groupPubKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupPubKey, ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS)),
         }));
         this.registerMethod("groupSendCustomEvent", this.builder.createObject({
             groupId: this.tv.groupId,

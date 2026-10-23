@@ -715,11 +715,14 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Serves the Epoch Ladder, optionally windowed.
+     * Serves the Epoch Ladder, optionally windowed, or only for the given `spans`.
      *
      * Read access is enough: every rung is a ciphertext only a holder of the epoch key above it can open.
      */
-    async getKeyArchive(executor: Executor, groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number) {
+    async getKeyArchive(executor: Executor, groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, spans?: {at: number, target: number}[]) {
+        if (spans !== undefined && (fromKeyVersion !== undefined || toKeyVersion !== undefined)) {
+            throw new AppException("INVALID_PARAMS", "spans and a window are exclusive");
+        }
         const group = await this.getGroup(executor, groupId, undefined);
         // The window is applied by the query, not to a loaded array: a client descending twenty epochs reads
         // twenty documents off the index, whatever the size of the group's archive.
@@ -727,11 +730,33 @@ export class GroupService extends BaseContainerService {
         // current one. Rungs pointing below the floor are never served, even if one were stored.
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const lastPast = group.keyVersion - 1;
+        const floor = Math.max(group.eraFloor, group.archivePrunedBelow ?? 0);
+        if (spans !== undefined) {
+            // A client walking one descent path: the rungs of those spans and the rows of the epochs they join.
+            const epochs = [...new Set(spans.flatMap(span => [span.at, span.target]))].filter(epoch => epoch <= lastPast);
+            const [rungs, epochKeys] = await Promise.all([
+                groupRepository.state.getArchiveRungsForSpans(groupId, spans, floor),
+                groupRepository.state.getEpochKeysAt(groupId, epochs),
+            ]);
+            return {group, rungs, epochKeys};
+        }
         const [rungs, epochKeys] = await Promise.all([
-            groupRepository.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, Math.max(group.eraFloor, group.archivePrunedBelow ?? 0)),
+            groupRepository.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion, floor),
             groupRepository.state.getEpochKeys(groupId, fromKeyVersion, Math.min(toKeyVersion ?? lastPast, lastPast)),
         ]);
         return {group, rungs, epochKeys};
+    }
+    
+    /**
+     * The epoch rows holding one of `keyIds` (a member envelope's key) or one of `groupPubKeys` (an anonymous
+     * envelope's grant key): how a client opens an envelope sealed under an epoch `groupGet` no longer serves.
+     * Same access as `groupGet`; the rows are ciphertexts only a holder of the epoch's grant key opens, and grant
+     * public keys every statement already carries. Unknown ids are simply not in the answer.
+     */
+    async getEpochKeys(executor: Executor, groupId: types.group.GroupId, keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]) {
+        const group = await this.getGroup(executor, groupId, undefined);
+        const epochKeys = await this.repositoryFactory.createGroupRepository().state.findEpochKeys(groupId, keyIds, groupPubKeys);
+        return {group, epochKeys};
     }
     
     /**

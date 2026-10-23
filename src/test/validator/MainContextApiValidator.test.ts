@@ -624,6 +624,23 @@ it("ContextApiValidator.groupGetKeyArchive valid with a window", () => {
     expect(result.success).toBe(true);
 });
 
+it("ContextApiValidator.groupGetKeyArchive takes a bounded list of spans", () => {
+    const span = {at: 8, target: 4};
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [span]})).success).toBe(true);
+    const full = Array.from({length: ContextApiValidator.MAX_ARCHIVE_SPANS}, () => span);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: full})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [...full, span]})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [{at: 0, target: 1}]})).success).toBe(false);
+});
+
+it("ContextApiValidator.groupGetEpochKeys takes bounded lists of keyIds and grant keys", () => {
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: ["k1"], groupPubKeys: [groupPubKey]})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId})).success).toBe(true);
+    const tooMany = Array.from({length: ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS + 1}, (_, i) => `k${i}`);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: tooMany})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, groupPubKeys: ["not a key"]})).success).toBe(false);
+});
+
 it("ContextApiValidator.groupSendCustomEvent valid without a recipient list", () => {
     const model: contextApi.GroupSendCustomEventModel = {
         groupId: groupId,

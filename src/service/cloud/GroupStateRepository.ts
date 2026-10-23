@@ -250,6 +250,26 @@ export class GroupStateRepository {
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
+    /**
+     * The rungs stored for the given spans only, ascending by `atKeyVersion`: what a client needs for the one path it
+     * descends, instead of every rung of a window. Each span holds at most `LadderMath.MAX_RUNGS_PER_SPAN` rungs, so
+     * the answer is bounded by the span count. `minTarget` leaves out rungs pointing below a floor, as in
+     * `getArchiveRungs`.
+     */
+    async getArchiveRungsForSpans(groupId: types.group.GroupId, spans: {at: number, target: number}[], minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
+        if (spans.length === 0) {
+            return [];
+        }
+        const rungs = await this.rungs.query(q => {
+            const conditions = [q.eq("groupId", groupId), q.orList(spans.map(span => q.and(q.eq("atKeyVersion", span.at), q.eq("targetKeyVersion", span.target))))];
+            if (minTarget !== undefined) {
+                conditions.push(q.gte("targetKeyVersion", minTarget));
+            }
+            return q.andList(conditions);
+        }).sort("atKeyVersion", true).array();
+        return rungs.map(rung => this.toArchiveRung(rung));
+    }
+    
     /** The rungs stored for one span, at most `LadderMath.MAX_RUNGS_PER_SPAN` of them. */
     async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
         const rungs = await this.rungs.query(q => q.and(q.eq("groupId", groupId), q.eq("atKeyVersion", atKeyVersion), q.eq("targetKeyVersion", targetKeyVersion))).array();
@@ -264,6 +284,34 @@ export class GroupStateRepository {
     async getEpochKeys(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<db.group.GroupEpochKey[]> {
         return this.epochKeys.query(q => q.andList([q.eq("groupId", groupId), ...GroupStateRepository.range(q, "keyVersion", fromKeyVersion, toKeyVersion)]))
             .sort("keyVersion", true).array();
+    }
+    
+    /** The epoch rows of the given epochs, ascending; one indexed `$in` read. */
+    async getEpochKeysAt(groupId: types.group.GroupId, keyVersions: number[]): Promise<db.group.GroupEpochKey[]> {
+        if (keyVersions.length === 0) {
+            return [];
+        }
+        return this.epochKeys.query(q => q.and(q.eq("groupId", groupId), q.in("keyVersion", keyVersions))).sort("keyVersion", true).array();
+    }
+    
+    /**
+     * The epoch rows whose self-addressed key carries one of `keyIds`, or whose grant key is one of `groupPubKeys`,
+     * ascending and without duplicates. One read per list, each off its own `{groupId, ...}` index (migration 076),
+     * so a lookup costs O(asked), never O(epochs).
+     */
+    async findEpochKeys(groupId: types.group.GroupId, keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]): Promise<db.group.GroupEpochKey[]> {
+        const [byKeyId, byPubKey] = await Promise.all([
+            keyIds.length === 0 ? [] : this.epochKeys.query(q => q.and(
+                q.eq("groupId", groupId),
+                q.in("groupKey.keyId" as keyof db.group.GroupEpochKey, keyIds as never),
+            )).array(),
+            groupPubKeys.length === 0 ? [] : this.epochKeys.query(q => q.and(q.eq("groupId", groupId), q.in("groupPubKey", groupPubKeys))).array(),
+        ]);
+        const rows = new Map<number, db.group.GroupEpochKey>();
+        for (const row of [...byKeyId, ...byPubKey]) {
+            rows.set(row.keyVersion, row);
+        }
+        return [...rows.values()].sort((a, b) => a.keyVersion - b.keyVersion);
     }
     
     /** Whether any statement of the group carries `groupPubKey` — every epoch it ever had, below the era floor

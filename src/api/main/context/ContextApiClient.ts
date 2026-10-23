@@ -99,6 +99,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupGetKeyArchive", model);
     }
     
+    groupGetEpochKeys(model: contextApi.GroupGetEpochKeysModel): Promise<contextApi.GroupGetEpochKeysResult> {
+        return this.request("context.groupGetEpochKeys", model);
+    }
+    
     groupSendCustomEvent(model: contextApi.GroupSendCustomEventModel): Promise<types.core.OK> {
         return this.request("context.groupSendCustomEvent", model);
     }

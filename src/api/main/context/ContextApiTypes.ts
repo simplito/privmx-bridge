@@ -291,6 +291,40 @@ export interface GroupGetKeyArchiveModel {
      *  `atKeyVersion`; ask again from the last one's `atKeyVersion` for the next page. */
     fromKeyVersion?: number;
     toKeyVersion?: number;
+    /**
+     * Instead of a window: only the rungs of these spans (every stored candidate of each, repairs included), and
+     * `keyHistory` only for the past epochs they join. At most 128 spans; exclusive with the window. A client
+     * descending to one epoch asks for its descent path, O(log distance) spans, not every rung in between.
+     */
+    spans?: GroupArchiveSpan[];
+}
+
+/** One span of the Epoch Ladder: the rungs sealing epoch `target`'s grant key to epoch `at`'s. */
+export interface GroupArchiveSpan {
+    at: number;
+    target: number;
+}
+
+/**
+ * Looks up past epochs by what an envelope names: a member envelope its `keyId`, an anonymous one its grant key.
+ * `groupGet` serves only the current epoch and the ones the metadata heads sit at, so this is how an envelope sealed
+ * under any other epoch is opened. At most 32 of each; ids the group never had are left out of the answer.
+ */
+export interface GroupGetEpochKeysModel {
+    id: types.group.GroupId;
+    keyIds?: types.core.KeyId[];
+    groupPubKeys?: types.cloud.GroupPubKey[];
+}
+
+/**
+ * The epochs found, in the shapes `groupGet` serves them: `groupKeys` the self-addressed key entries of those
+ * epochs, `keyHistory` their grant public keys. Unlike `groupGet`'s `keyHistory` it also lists the current epoch
+ * when asked for.
+ */
+export interface GroupGetEpochKeysResult {
+    keyVersion: number;
+    groupKeys: types.cloud.GroupKeysEntry[];
+    keyHistory: types.cloud.GroupPubKeyAtEpoch[];
 }
 
 export interface GroupGetKeyArchiveResult {
@@ -663,5 +697,6 @@ export interface IContextApi {
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
+    groupGetEpochKeys(model: GroupGetEpochKeysModel): Promise<GroupGetEpochKeysResult>;
     groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
 }

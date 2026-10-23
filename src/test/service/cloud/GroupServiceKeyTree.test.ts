@@ -1055,6 +1055,48 @@ it("getKeyArchive is readable by an ordinary member", async () => {
     expect(result.group.id).toBe(groupId);
 });
 
+it("getKeyArchive with spans reads only those spans' rungs and the past epochs they join, above the floor", async () => {
+    const {groupService, groupRepository, getArchiveWindow} = createGroupService({...treeBackedGroup(), eraFloor: 2}, {rungs: ladder});
+    let asked: {spans?: unknown, minTarget?: number, epochs?: number[]} = {};
+    mock(groupRepository.state, "getArchiveRungsForSpans", (async (_id: types.group.GroupId, spans: unknown, minTarget: number) => {
+        asked = {...asked, spans, minTarget};
+        return ladder.filter(rung => rung.atKeyVersion === 4);
+    }) as never);
+    mock(groupRepository.state, "getEpochKeysAt", (async (_id: types.group.GroupId, epochs: number[]) => {
+        asked = {...asked, epochs};
+        return [];
+    }) as never);
+    const spans = [{at: EPOCH, target: EPOCH - 1}, {at: 4, target: 3}];
+    const result = await groupService.getKeyArchive(aliceCloudUser, groupId, undefined, undefined, spans);
+    assert.deepStrictEqual(result.rungs.map(rung => rung.atKeyVersion), [4]);
+    assert.deepStrictEqual(asked, {spans, minTarget: 2, epochs: [4, 3]}, "the current epoch is not history");
+    assert.strictEqual(getArchiveWindow(), null, "no window read");
+});
+
+it("getKeyArchive refuses spans together with a window, and spans need read access", async () => {
+    const {groupService} = createGroupService();
+    await expectFailure("INVALID_PARAMS", () => groupService.getKeyArchive(janekCloudUser, groupId, 2, undefined, [{at: 3, target: 2}]));
+    const hidden = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    await expectFailure("ACCESS_DENIED", () => createGroupService(hidden).groupService.getKeyArchive(aliceCloudUser, groupId, undefined, undefined, [{at: 3, target: 2}]));
+});
+
+it("getEpochKeys looks the epochs up by keyId and grant key and needs read access to the group", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    const keyIds = ["k1" as types.core.KeyId];
+    const pubKeys = ["pk1" as types.cloud.GroupPubKey];
+    let asked: unknown[] = [];
+    mock(groupRepository.state, "findEpochKeys", (async (...args: unknown[]) => {
+        asked = args;
+        return [{keyVersion: 2}];
+    }) as never);
+    const result = await groupService.getEpochKeys(aliceCloudUser, groupId, keyIds, pubKeys);
+    assert.deepStrictEqual(asked, [groupId, keyIds, pubKeys]);
+    assert.deepStrictEqual(result.epochKeys, [{keyVersion: 2}]);
+    const hidden = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
+    await expectFailure("ACCESS_DENIED", () => createGroupService(hidden).groupService.getEpochKeys(aliceCloudUser, groupId, keyIds, []));
+    await expectFailure("GROUP_DOES_NOT_EXIST", () => groupService.getEpochKeys(aliceCloudUser, "NoSuchGroup" as types.group.GroupId, keyIds, []));
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // batches
 // ─────────────────────────────────────────────────────────────────────────────

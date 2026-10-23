@@ -346,6 +346,43 @@ it("a windowed archive read puts the window and the floor into the query", async
     assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$gte: 2}}, {keyVersion: {$lte: 5}}]});
 });
 
+it("a spans read asks for exactly those spans above the floor, and nothing for no spans", async () => {
+    const {repository, captured} = createStateRepository({rungs: []});
+    await repository.getArchiveRungsForSpans(groupId, [{at: 8, target: 4}, {at: 4, target: 3}], 2);
+    assert.deepStrictEqual(captured.rungs.filter, {$and: [
+        {groupId: groupId},
+        {$or: [{$and: [{atKeyVersion: 8}, {targetKeyVersion: 4}]}, {$and: [{atKeyVersion: 4}, {targetKeyVersion: 3}]}]},
+        {targetKeyVersion: {$gte: 2}},
+    ]});
+    const none = createStateRepository({rungs: []});
+    assert.deepStrictEqual(await none.repository.getArchiveRungsForSpans(groupId, []), []);
+    assert.strictEqual(none.captured.rungs.filter, null, "no query");
+});
+
+it("epoch rows are read by epoch list, and found by keyId and by grant key off their indexes", async () => {
+    const {repository, captured} = createStateRepository({epochKeys: []});
+    await repository.getEpochKeysAt(groupId, [3, 9]);
+    assert.deepStrictEqual(captured.epochKeys.filter, {$and: [{groupId: groupId}, {keyVersion: {$in: [3, 9]}}]});
+    const keyId = "k" as types.core.KeyId;
+    const pubKey = "pk" as types.cloud.GroupPubKey;
+    const byKeyId = createStateRepository({epochKeys: []});
+    await byKeyId.repository.findEpochKeys(groupId, [keyId], []);
+    assert.deepStrictEqual(byKeyId.captured.epochKeys.filter, {$and: [{groupId: groupId}, {"groupKey.keyId": {$in: [keyId]}}]});
+    const byPubKey = createStateRepository({epochKeys: []});
+    await byPubKey.repository.findEpochKeys(groupId, [], [pubKey]);
+    assert.deepStrictEqual(byPubKey.captured.epochKeys.filter, {$and: [{groupId: groupId}, {groupPubKey: {$in: [pubKey]}}]});
+    const neither = createStateRepository({epochKeys: []});
+    assert.deepStrictEqual(await neither.repository.findEpochKeys(groupId, [], []), []);
+    assert.strictEqual(neither.captured.epochKeys.filter, null, "no query");
+});
+
+it("an epoch found both by keyId and by grant key is served once, ascending", async () => {
+    const rows = [{keyVersion: 7}, {keyVersion: 2}] as db.group.GroupEpochKey[];
+    const {repository} = createStateRepository({epochKeys: rows});
+    const found = await repository.findEpochKeys(groupId, ["k" as types.core.KeyId], ["pk" as types.cloud.GroupPubKey]);
+    assert.deepStrictEqual(found.map(row => row.keyVersion), [2, 7]);
+});
+
 it("a repair rung is one insert under its author's id, and a second one by that author is AUTHOR_HAS_RUNG", async () => {
     const rung: types.cloud.GroupArchiveRungSubmission = {atKeyVersion: 6, targetKeyVersion: 5, data: "repair" as types.core.UserKeyData};
     const {repository, captured} = createStateRepository();

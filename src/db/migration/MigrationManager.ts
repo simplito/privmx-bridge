@@ -46,6 +46,7 @@ import { Migration072GroupTreeCommits } from "./Migration072GroupTreeCommits";
 import { Migration073GroupEpochKeys } from "./Migration073GroupEpochKeys";
 import { Migration074GroupIndexes } from "./Migration074GroupIndexes";
 import { Migration075GroupRungsWithoutEraLinks } from "./Migration075GroupRungsWithoutEraLinks";
+import { Migration076GroupEpochKeyLookups } from "./Migration076GroupEpochKeyLookups";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -97,6 +98,7 @@ export class MigrationManager {
         Migration073GroupEpochKeys,
         Migration074GroupIndexes,
         Migration075GroupRungsWithoutEraLinks,
+        Migration076GroupEpochKeyLookups,
     ];
     static DB_VERSION: string|null = null;
     

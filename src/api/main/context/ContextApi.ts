@@ -196,9 +196,17 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {group, rungs, epochKeys} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion);
+        const {group, rungs, epochKeys} = await this.groupService.getKeyArchive(cloudUser, model.id, model.fromKeyVersion, model.toKeyVersion, model.spans);
         this.requestLogger.setContextId(group.contextId);
         return this.groupConverter.convertKeyArchive(group, rungs, epochKeys);
+    }
+    
+    @ApiMethod({})
+    async groupGetEpochKeys(model: contextApi.GroupGetEpochKeysModel): Promise<contextApi.GroupGetEpochKeysResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {group, epochKeys} = await this.groupService.getEpochKeys(cloudUser, model.id, model.keyIds ?? [], model.groupPubKeys ?? []);
+        this.requestLogger.setContextId(group.contextId);
+        return this.groupConverter.convertEpochKeys(group, epochKeys);
     }
     
     @ApiMethod({})
