@@ -148,9 +148,18 @@ export class CommitStatement {
         return Crypto.sha256(Buffer.concat([CommitStatement.signedBytes(cs), Buffer.from(cs.signature, "base64")])).toString("hex");
     }
     
-    /** Against the key the statement names itself; whether that is the committer's key is the reader's check. */
+    /**
+     * Against the key the statement names itself; whether that is the committer's key is the reader's check.
+     * The header byte must be one the native Endpoint verifies (27..42, `ECCImpl::verify`), or one member's
+     * stored statement would freeze the group for every native client while web ones carry on. Honest signers
+     * emit 27 (native) or 27..30 (web).
+     */
     static verifySignature(cs: types.cloud.GroupTreeCommitStatement): boolean {
         try {
+            const header = Buffer.from(cs.signature, "base64")[0];
+            if (header < 27 || header > 42) {
+                return false;
+            }
             return ECUtils.verifySignature2(cs.committerPubKey, cs.signature, Crypto.sha256(CommitStatement.signedBytes(cs)));
         }
         catch {

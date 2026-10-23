@@ -96,6 +96,16 @@ describe("CommitStatement signature", () => {
         assert.strictEqual(CommitStatement.verifySignature({...statement, signature: "AAAA" as types.core.EccSignature}), false);
         assert.strictEqual(CommitStatement.verifySignature({...statement, committerPubKey: "notAKey" as types.cloud.UserPubKey}), false);
     });
+    
+    // H1: the native Endpoint throws on a header outside 27..42, so storing one would freeze the group for it.
+    each<[number, boolean]>([[0, false], [26, false], [27, true], [30, true], [31, true], [42, true], [43, false], [255, false]])
+        .it("SECURITY: a valid r||s under header %s verifies: %s", ([header, ok]) => {
+            const {statement} = honest();
+            assert.strictEqual(CommitStatement.verifySignature(statement), true);
+            const sig = Buffer.from(statement.signature, "base64");
+            sig[0] = header;
+            assert.strictEqual(CommitStatement.verifySignature({...statement, signature: sig.toString("base64") as types.core.EccSignature}), ok);
+        });
 });
 
 /** The vectors `test/fixtures/keytree/reference.py` in the endpoint writes from the spec; this is a byte-identical copy. */
