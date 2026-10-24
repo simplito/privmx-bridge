@@ -104,7 +104,18 @@ describe("CommitStatement signature", () => {
             assert.strictEqual(CommitStatement.verifySignature(statement), true);
             const sig = Buffer.from(statement.signature, "base64");
             sig[0] = header;
-            assert.strictEqual(CommitStatement.verifySignature({...statement, signature: sig.toString("base64") as types.core.EccSignature}), ok);
+            const relabelled = {...statement, signature: sig.toString("base64") as types.core.EccSignature};
+            assert.strictEqual(CommitStatement.verifySignature(relabelled), ok);
+            // The header check itself, whatever verifies r||s underneath: the native verifier (which another test file
+            // installs into ECUtils for the whole run) refuses a bad header on its own, the JS one does not.
+            const original = ECUtils.verifySignature2;
+            ECUtils.verifySignature2 = () => true;
+            try {
+                assert.strictEqual(CommitStatement.verifySignature(relabelled), ok);
+            }
+            finally {
+                ECUtils.verifySignature2 = original;
+            }
         });
 });
 
