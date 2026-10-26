@@ -337,7 +337,7 @@ export class PolicyService {
         return this.userMeetsPolicy(user, this.getPolicy2x(context, policy, func, func2));
     }
     
-    private userMeetsPolicy(user: PolicyUser, policy: types.cloud.PolicyEntry|undefined) {
+    userMeetsPolicy(user: PolicyUser, policy: types.cloud.PolicyEntry|undefined) {
         return (policy || "").split(",").some(fragment => fragment.split("&").every(atom => this.userMeetsPolicyAtom(user, atom)));
     }
     

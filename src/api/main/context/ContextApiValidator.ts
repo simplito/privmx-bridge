@@ -14,6 +14,12 @@ import { TypesValidator } from "../../TypesValidator";
 
 export class ContextApiValidator extends BaseValidator {
     
+    /** Spans per `groupGetKeyArchive` call: a descent path is at most ~66 spans (2 log2 + 2 over 32-bit epochs),
+     *  with room for the alternatives a client asks for when one rung on it is broken. */
+    static readonly MAX_ARCHIVE_SPANS = 128;
+    /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
+    static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
+    
     constructor(
         private tv: TypesValidator,
     ) {
@@ -42,7 +48,8 @@ export class ContextApiValidator extends BaseValidator {
         }));
         this.registerMethod("groupCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
-            resourceId: this.builder.optional(this.tv.uuidv4),
+            // Required: the first commit statement names the group by it, before the bridge assigns an id.
+            resourceId: this.tv.uuidv4,
             type: this.tv.optResourceType,
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
@@ -55,8 +62,9 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             // One: the group is a grantee of itself and has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySetForNewGroup),
-            policy: this.builder.optional(this.tv.containerPolicy),
+            // The policy is `commit.policy`, signed into the chain by `policyHash`.
             tree: this.tv.groupTreeState,
+            commit: this.tv.groupTreeCommitStatementWithPolicy,
         }));
         // One plane per method, and `createObject` is strict — so a request here structurally cannot carry the
         // other plane's envelope or the policy. That is what makes the per-plane ACL entry bound the effect
@@ -76,12 +84,13 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             version: this.builder.int,
         }));
-        // No version and no keyId: the policy is outside the signed envelope, so there is nothing to CAS and no
-        // key to write it under. A caller still sending either is on an API that no longer exists and has to be
-        // told. `policy` is required — on a dedicated method an absent one asks for nothing.
+        // A policy change is a signed commit like any other: the policy is `commit.policy`, CAS-ed on both
+        // counters. The old `{id, policy}` shape is refused.
         this.registerMethod("groupUpdatePolicy", this.builder.createObject({
             id: this.tv.groupId,
-            policy: this.tv.containerPolicy,
+            commit: this.tv.groupTreeCommitStatementWithPolicy,
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
         }));
         this.registerMethod("groupGenerateNewKey", this.builder.createObject({
             id: this.tv.groupId,
@@ -90,11 +99,11 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             // A rotation touches no node keys: one new grant edge, and the rungs that keep the old epochs reachable.
             grantEdge: this.tv.groupTreeEdge,
+            commit: this.tv.groupTreeCommitStatement,
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
-            confirmationTag: this.builder.optional(this.tv.base64),
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
             groupId: this.tv.groupId,
@@ -102,10 +111,10 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupGet", this.builder.createObject({
             groupId: this.tv.groupId,
             type: this.tv.optResourceType,
-            // Defaults to "path" — the caller's own climb. "full" is `O(n)` and only a client validating the whole
-            // structure for itself needs it.
-            scope: this.builder.optional(this.builder.createEnum(["path", "full"])),
-            // Serves the view needed to plan an operation on this member's seat, on top of the caller's own.
+            // Defaults to "path" — the caller's own climb. "plan" adds every node record, which planning a commit
+            // needs. "full" is `O(n)` and only a client validating the whole structure for itself needs it.
+            scope: this.builder.optional(this.builder.createEnum(["path", "plan", "full"])),
+            // Resolves these members' seats, which a removal names.
             forUserIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_BATCH)),
             // Have the bridge allocate the seats instead, so the caller never needs `leafAssignment` to find one.
             forNewMembers: this.builder.optional(this.builder.range(this.builder.int, 1, TypesValidator.MAX_GROUP_BATCH)),
@@ -127,6 +136,7 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             data: this.tv.groupData,
             transition: this.tv.groupTreeAdditionTransition,
+            commit: this.tv.groupTreeCommitStatement,
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
         }));
@@ -137,13 +147,25 @@ export class ContextApiValidator extends BaseValidator {
             keyId: this.tv.keyId,
             data: this.tv.groupData,
             transition: this.tv.groupTreeTransition,
+            commit: this.tv.groupTreeCommitStatement,
             // One epoch's worth of rungs: one mandatory unit rung plus the skip rungs, so O(log epoch) of them.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, 256),
             // One: the group is a grantee of itself, and it has exactly one grant key per epoch.
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
-            confirmationTag: this.builder.optional(this.tv.base64),
+            abandonHistory: this.builder.optional(this.builder.bool),
+        }));
+        this.registerMethod("groupSelfUpdate", this.builder.createObject({
+            id: this.tv.groupId,
+            transition: this.tv.groupTreeSelfUpdateTransition,
+            commit: this.tv.groupTreeCommitStatement,
+            expectedKeyVersion: this.builder.int,
+        }));
+        this.registerMethod("groupGetTreeCommits", this.builder.createObject({
+            groupId: this.tv.groupId,
+            fromSeq: this.tv.intNonNegative,
+            toSeq: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
         this.registerMethod("groupCutEra", this.builder.createObject({
             id: this.tv.groupId,
@@ -159,6 +181,15 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.groupId,
             fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
             toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            spans: this.builder.optional(this.builder.createListWithMaxLength(this.builder.createObject({
+                at: this.builder.min(this.builder.int, 1),
+                target: this.builder.min(this.builder.int, 1),
+            }), ContextApiValidator.MAX_ARCHIVE_SPANS)),
+        }));
+        this.registerMethod("groupGetEpochKeys", this.builder.createObject({
+            id: this.tv.groupId,
+            keyIds: this.builder.optional(this.builder.createListWithMaxLength(this.tv.keyId, ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS)),
+            groupPubKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupPubKey, ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS)),
         }));
         this.registerMethod("groupSendCustomEvent", this.builder.createObject({
             groupId: this.tv.groupId,

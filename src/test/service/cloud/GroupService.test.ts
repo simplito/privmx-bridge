@@ -13,13 +13,13 @@ limitations under the License.
 /* eslint-disable @typescript-eslint/no-empty-function */
 
 import "q2-test";
+import * as assert from "assert";
 import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { CloudKeyService } from "../../../service/cloud/CloudKeyService";
 import { GroupNotificationService } from "../../../service/cloud/GroupNotificationService";
-import { GroupRepository } from "../../../service/cloud/GroupRepository";
 import { ThreadRepository } from "../../../service/cloud/ThreadRepository";
 import { GroupService } from "../../../service/cloud/GroupService";
-import { createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { createGroupRepositoryMock, createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import * as mongodb from "mongodb";
@@ -32,10 +32,10 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
-import { buildTree, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
+import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
+import { buildTree, creationStatement, policyStatement, rotationGrantEdge, rotationStatement, rungsFor, signStatement, userKeys } from "../../testUtils/TreeFixtures";
 
 // Signing and verification are the endpoint's, committed inside the opaque `data`. These tests exercise the
 // bridge's storage, ACL, coverage, version-CAS and referential-integrity logic only.
@@ -48,13 +48,12 @@ const resourceId = "MyGroupResourceId" as types.core.ClientResourceId;
 const keyId = "SomeKeyId" as types.core.KeyId;
 const data = "SomeGroupData" as types.group.GroupData;
 
-const janekKeys = ECUtils.generateKeyPair();
-const janekPub = janekKeys.pub58 as types.cloud.UserPubKey;
+// The keys the fixtures sign commit statements with.
+const janekPub = userKeys("janek").pub58;
 const groupPubKey = janekPub as unknown as types.cloud.GroupPubKey;
 const janek = "janek" as types.cloud.UserId;
 const alice = "alice" as types.cloud.UserId;
-const aliceKeys = ECUtils.generateKeyPair();
-const alicePub = aliceKeys.pub58 as types.cloud.UserPubKey;
+const alicePub = userKeys("alice").pub58;
 const janekCloudUser = new CloudUser(janekPub);
 const aliceCloudUser = new CloudUser(alicePub);
 const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
@@ -104,9 +103,35 @@ const carolUser: db.context.ContextUser = {
 };
 // Every group is tree-backed, so even the plumbing fixture carries one.
 const tree = buildTree([janek, alice], 1);
-/** What an honest client submits to rotate the grant key at `newKeyVersion`. */
-function rotation(newKeyVersion: number) {
-    return {grantEdge: rotationGrantEdge(tree, newKeyVersion), rungs: rungsFor(newKeyVersion, 1)};
+/** What an honest client submits to rotate the grant key at `newKeyVersion`, on a group created with `policy`. */
+function rotation(newKeyVersion: number, committer = "janek", policy: types.cloud.ContainerPolicy = {}) {
+    return {
+        grantEdge: rotationGrantEdge(tree, newKeyVersion),
+        rungs: rungsFor(newKeyVersion, 1),
+        commit: rotationStatement(tree, 2, newKeyVersion, committer, {groupId, groupPubKey, rosterVersion: 2, users: [janek, alice], managers: [janek], previous: creationWith(policy)}),
+    };
+}
+
+const creations = new Map<string, types.cloud.GroupTreeCommitStatement>();
+/** The creation statement janek signs for `tree` with the roster this file creates and the group policy `policy`. */
+function creationWith(policy: types.cloud.ContainerPolicy) {
+    const key = JSON.stringify(policy);
+    if (!creations.has(key)) {
+        creations.set(key, creationStatement(tree, "janek", {groupId: resourceId, groupPubKey, users: [janek, alice], managers: [janek], policy}));
+    }
+    return creations.get(key)!;
+}
+const creation = creationWith({});
+
+/** The policy commit `committer` signs to set `next` on a group created with `policy`. */
+function policyChange(next: types.cloud.ContainerPolicy, committer = "janek", policy: types.cloud.ContainerPolicy = {}) {
+    return {
+        id: groupId,
+        commit: policyStatement(tree, 2, 1, committer, next, {groupId, groupPubKey, rosterVersion: 1, users: [janek, alice], managers: [janek],
+            previous: creationWith(policy), creator: "janek"}),
+        expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
+    };
 }
 
 const group: db.group.Group = {
@@ -130,18 +155,20 @@ const group: db.group.Group = {
     policy: {},
     keyVersion: 1,
     eraFloor: 1,
+    treeVersion: TreeMath.TREE_VERSION,
+    treeCommitSeq: 1,
     numLeaves: tree.numLeaves,
     leafAssignment: tree.leafAssignment,
 };
 
 const listParams: types.core.ListModel = {skip: 0, limit: 10, sortOrder: "asc"};
 
-function createGroupService(groupReferenced = false, contextPolicy: types.context.ContextPolicy = {}) {
+function createGroupService(groupReferenced = false, contextPolicy: types.context.ContextPolicy = {}, groupPolicy: types.cloud.ContainerPolicy = {}) {
     const usedContext = {...myContext, policy: contextPolicy};
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
     const groupNotificationService = createMock<GroupNotificationService>({});
-    const groupRepository = createMock<GroupRepository>({});
+    const groupRepository = createGroupRepositoryMock();
     const threadRepository = createMock<ThreadRepository>({});
     const contextUserRepository = createMock<ContextUserRepository>({});
     const cloudAclChecker = new CloudAclChecker();
@@ -149,10 +176,8 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     const cloudAccessValidator = createMock<CloudAccessValidator>({});
     const activeUsersMap = createMock<ActiveUsersMap>({});
     const host = "localhost" as types.core.Host;
-    const groupRotationRateLimiter = createMock<GroupRotationRateLimiter>({});
-    mock(groupRotationRateLimiter, "check", async () => ({allowed: true}));
-    mock(groupRotationRateLimiter, "record", async () => {});
-    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS} as Config);
+    const groupRotationRateLimiter = fakeRateLimiter();
+    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config);
     
     const containerRepo = {isGroupReferenced: async () => groupReferenced};
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
@@ -169,19 +194,20 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     mock(cloudKeyService, "checkKeysAndUsersDuringCreation", async () => []);
     mock(cloudKeyService, "checkKeysAndClients", async () => []);
     
-    mock(groupRepository, "get", async (id) => id === groupId ? group : null);
+    const served = Object.keys(groupPolicy).length === 0 ? group : {...group, policy: groupPolicy};
+    mock(groupRepository, "get", async (id) => id === groupId ? served : null);
+    mock(groupRepository.state, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs.includes(1) ? [creationWith(groupPolicy)] : []) as never);
     mock(groupRepository, "createGroup", async () => group);
     mock(groupRepository, "updatePublicMeta", async () => group);
     mock(groupRepository, "updatePrivateMeta", async () => group);
-    mock(groupRepository, "updatePolicy", async () => group);
+    mock(groupRepository, "updatePolicyWithStatement", async () => group);
     mock(groupRepository, "deleteGroup", async () => {});
     mock(groupRepository, "getPage", async () => ({list: [group], count: 1}));
     // Phase 2 (epochs/CAS): default mocks — success path.
-    mock(groupRepository, "getHistoryKeyIds", async () => [keyId]);
     // A lost CAS race reads the winning version's history entry for its confirmation tag.
-    mock(groupRepository, "getHistory", (async () => []) as never);
-    mock(groupRepository, "getTree", async () => tree);
-    mock(groupRepository, "getRootNode", (async () => tree.nodes[tree.nodes.length - 1]) as never);
+    mock(groupRepository.state, "hasEpochWithGroupPubKey", (async () => false) as never);
+    mock(groupRepository.state, "getNodesAt", (async () => [tree.nodes[tree.nodes.length - 1]]) as never);
+    mock(groupRepository.state, "getNodes", (async () => tree.nodes) as never);
     mock(groupRepository, "casRotate", (async () => true) as never);
     mock(groupRepository, "generateNewGroupKey", (async () => ({...group, keyVersion: 2}) as db.group.Group) as never);
     
@@ -217,7 +243,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
 
 it("Should create group", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree);
+    const res = await groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree, creation);
     expect(res).not.toBeNull();
     hasOneCall(groupRepository.createGroup);
     hasOneCall(groupNotificationService.sendCreatedGroup);
@@ -226,7 +252,7 @@ it("Should create group", async () => {
 it("Should fail to create group as an unknown user", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree);
+        await groupService.createGroup(bobCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, {}, tree, creation);
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -237,7 +263,7 @@ it("Should fail to create group as an unknown user", async () => {
 });
 
 it("groupList narrows to the caller's own groups unless the policy says otherwise", async () => {
-    // A summary carries the roster, so listing every group in a context hands out its membership graph. The
+    // Which groups a user is listed in is the context's membership graph. The
     // default policy allows the narrowed view (`listMy`) and not the unnarrowed one (`listAll`), and the
     // narrowing has to reach the query — filtering after the page is drawn would silently shorten it.
     const {groupService, groupRepository} = createGroupService();
@@ -281,6 +307,13 @@ it("Should fail to get a not existing group", async () => {
         return;
     }
     expect(true).toBeFalsy();
+});
+
+it("SECURITY: a member removed by a commit landing during groupGet does not get the newer document", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    const afterRemoval = {...group, users: [janek], treeCommitSeq: (group.treeCommitSeq ?? 0) + 1};
+    mock(groupRepository, "getFullState", (async () => ({group: afterRemoval, state: {}})) as never);
+    await assert.rejects(() => groupService.getGroupWithState(aliceCloudUser, groupId, undefined), e => AppException.is(e, "ACCESS_DENIED"));
 });
 
 const publicMetaModel = (version: number) => ({id: groupId, data, keyId, version: version as types.group.GroupVersion});
@@ -356,8 +389,8 @@ it("a metadata update must use the current epoch's key", async () => {
 
 it("Should update the policy without touching either metadata plane", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService();
-    await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {get: "all"} as types.cloud.ContainerPolicy});
-    hasOneCall(groupRepository.updatePolicy);
+    await groupService.updatePolicy(janekCloudUser, policyChange({get: "all"}));
+    hasOneCall(groupRepository.updatePolicyWithStatement);
     hasNoCalls(groupRepository.updatePublicMeta);
     hasNoCalls(groupRepository.updatePrivateMeta);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
@@ -366,11 +399,11 @@ it("Should update the policy without touching either metadata plane", async () =
 it("a policy that is not valid at container level is refused before any write", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {
-        await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {listMy: "all"} as types.cloud.ContainerPolicy});
+        await groupService.updatePolicy(janekCloudUser, policyChange({listMy: "all"}));
     }
     catch (e) {
         expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
-        hasNoCalls(groupRepository.updatePolicy);
+        hasNoCalls(groupRepository.updatePolicyWithStatement);
         return;
     }
     expect(true).toBeFalsy();
@@ -409,10 +442,15 @@ it("a metadata write touches its own plane only, never the roster and never the 
     hasNoCalls(groupRepository.casRotate);
 });
 
-it("a policy write rotates nothing either", async () => {
+it("a policy write rotates nothing either, but moves treeCommitSeq", async () => {
     const {groupService, groupRepository} = createGroupService();
-    await groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
+    await groupService.updatePolicy(janekCloudUser, policyChange({}));
     hasNoCalls(groupRepository.casRotate);
+    hasNoCalls(groupRepository.generateNewGroupKey);
+    const [oldGroup, , stored, statement] = groupRepository.updatePolicyWithStatement.mock.calls[0];
+    assert.strictEqual(oldGroup.keyVersion, 1);
+    assert.deepStrictEqual(stored, {});
+    assert.strictEqual(statement.seq, 2, "the statement the repository CASes treeCommitSeq onto");
 });
 
 it("Should generate a new group key (rotation without membership change)", async () => {
@@ -423,6 +461,52 @@ it("Should generate a new group key (rotation without membership change)", async
     expect(res.keyVersion).toBe(2);
     hasOneCall(groupRepository.generateNewGroupKey);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("a rotation is a step of the statement chain: its statement goes to storage, at the next seq", async () => {
+    const {groupService, groupRepository} = createGroupService();
+    const model = {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1};
+    await groupService.generateNewGroupKey(janekCloudUser, model);
+    const params = (groupRepository.generateNewGroupKey as unknown as {mock: {calls: {statement: unknown}[][]}}).mock.calls[0][0];
+    assert.strictEqual(params.statement, model.commit);
+    assert.deepStrictEqual([model.commit.seq, model.commit.op, model.commit.path], [2, "rotate", []]);
+});
+
+it("SECURITY: a rotation whose statement is wrong or signed by somebody else is refused, and charged as a refusal", async () => {
+    const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
+    const base = {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1};
+    for (const commit of [
+        signStatement(base.commit, "alice"),
+        signStatement({...base.commit, keyVersion: 1}, "janek"),
+        signStatement({...base.commit, treeHash: "00".repeat(32)}, "janek"),
+        signStatement({...base.commit, path: [{nodeIndex: 1, generation: 1, publicKey: janekPub as unknown as types.core.EccPubKey, subtreeHash: "00".repeat(32)}]}, "janek"),
+    ]) {
+        try {
+            await groupService.generateNewGroupKey(janekCloudUser, {...base, commit});
+            assert.fail("expected a refusal");
+        }
+        catch (e) {
+            expect(AppException.is(e, "GROUP_TREE_INVALID")).toBe(true);
+        }
+    }
+    hasNoCalls(groupRepository.generateNewGroupKey);
+    // Checking each one hashed the whole tree.
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, Array(4).fill(`refused|${groupId}|janek`));
+});
+
+it("SECURITY: a rotation refuses a new epoch under the grant key of an earlier one", async () => {
+    // The rotation twin of the removal check: the key republished would reopen the epoch to whoever held it.
+    const {groupService, groupRepository} = createGroupService();
+    mock(groupRepository.state, "hasEpochWithGroupPubKey", (async (_id: types.group.GroupId, key: types.cloud.GroupPubKey) => key === groupPubKey) as never);
+    try {
+        await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
+        assert.fail("expected a refusal");
+    }
+    catch (e) {
+        expect(AppException.is(e, "INVALID_PARAMS")).toBe(true);
+        assert.strictEqual((e as AppException).data, "groupPubKey of an earlier epoch");
+    }
+    hasNoCalls(groupRepository.generateNewGroupKey);
 });
 
 it("Should reject generateNewGroupKey with a stale expectedKeyVersion (ROTATED_ALREADY)", async () => {
@@ -453,9 +537,15 @@ it("Should return ROTATED_ALREADY when the rotation CAS loses mid-write", async 
     expect(true).toBeFalsy();
 });
 
+it("a rotation is charged to the rotating member's own budget, which no removal shares", async () => {
+    const {groupService, groupRotationRateLimiter} = createGroupService();
+    await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
+    assert.deepStrictEqual(groupRotationRateLimiter.kept, [`rotate|${groupId}|${janek}`]);
+});
+
 it("Should reject a rotation when the (IPC) rate limiter denies it", async () => {
     const {groupService, groupRotationRateLimiter} = createGroupService();
-    mock(groupRotationRateLimiter, "check", async () => ({allowed: false}));
+    groupRotationRateLimiter.allow = () => false;
     try {
         await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
@@ -470,12 +560,12 @@ it("Should reject generateNewGroupKey from a non-manager (context ACL alone is i
     const {groupService, groupRepository, groupRotationRateLimiter} = createGroupService();
     // alice has ALLOW ALL context ACL and is a group member, but is NOT a group manager.
     try {
-        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2, "alice"), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
         hasNoCalls(groupRepository.generateNewGroupKey);
-        hasNoCalls(groupRotationRateLimiter.record); // budget not charged when the gate rejects
+        assert.deepStrictEqual(groupRotationRateLimiter.kept, []); // budget not charged when the gate rejects
         return;
     }
     expect(true).toBeFalsy();
@@ -486,7 +576,7 @@ it("gates generateNewGroupKey on the rotateKeys policy, not on update", async ()
     // operator who widened `update` handed out key rotation with it. alice is a member and not a manager.
     const {groupService, groupRepository} = createGroupService(false, {group: {update: "all"}});
     try {
-        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
+        await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2, "alice"), expectedKeyVersion: 1, expectedRosterVersion: 1});
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
@@ -496,12 +586,17 @@ it("gates generateNewGroupKey on the rotateKeys policy, not on update", async ()
     expect(true).toBeFalsy();
 });
 
-it("lets a context widen rotateKeys for groups", async () => {
-    // The other direction: the knob has to actually reach the gate, or the test above would also pass with
-    // rotation still hardwired to manager-only.
-    const {groupService, groupRepository} = createGroupService(false, {group: {rotateKeys: "user"}});
-    await groupService.generateNewGroupKey(aliceCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
-    hasOneCall(groupRepository.generateNewGroupKey);
+it("SECURITY: a context cannot widen rotateKeys for groups, the group's signed policy can", async () => {
+    // inherit resolves to the frozen v3 rule (manager), so the context only vetoes; the knob that widens is the
+    // group's own policy, which its statements sign.
+    const widened = createGroupService(false, {group: {rotateKeys: "user"}});
+    await expectRefusal("ACCESS_DENIED", () => widened.groupService.generateNewGroupKey(aliceCloudUser,
+        {id: groupId, groupPubKey, data, keyId, ...rotation(2, "alice"), expectedKeyVersion: 1, expectedRosterVersion: 1}));
+    hasNoCalls(widened.groupRepository.generateNewGroupKey);
+    const signed = createGroupService(false, {}, {rotateKeys: "user"});
+    await signed.groupService.generateNewGroupKey(aliceCloudUser,
+        {id: groupId, groupPubKey, data, keyId, ...rotation(2, "alice", {rotateKeys: "user"}), expectedKeyVersion: 1, expectedRosterVersion: 1});
+    hasOneCall(signed.groupRepository.generateNewGroupKey);
 });
 
 // ---------- the granularity the split exists for ----------
@@ -520,36 +615,54 @@ it("rejects a metadata write from a non-manager (context ACL alone is insufficie
     hasNoCalls(privateSide.groupRepository.updatePrivateMeta);
 });
 
-it("lets a context widen update for both metadata planes", async () => {
+it("SECURITY: the group's signed update rule opens both metadata planes; a context's does not", async () => {
     // The other direction: the knob has to reach the gate, or the test above would pass with the gate hardwired.
-    const publicSide = createGroupService(false, {group: {update: "all"}});
+    const publicSide = createGroupService(false, {}, {update: "all"});
     await publicSide.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1));
     hasOneCall(publicSide.groupRepository.updatePublicMeta);
     
-    const privateSide = createGroupService(false, {group: {update: "all"}});
+    const privateSide = createGroupService(false, {}, {update: "all"});
     await privateSide.groupService.updatePrivateMeta(aliceCloudUser, privateMetaModel(5));
     hasOneCall(privateSide.groupRepository.updatePrivateMeta);
+    
+    const contextOnly = createGroupService(false, {group: {update: "all"}});
+    await expectRefusal("ACCESS_DENIED", () => contextOnly.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1)));
+    hasNoCalls(contextOnly.groupRepository.updatePublicMeta);
+});
+
+it("the context policy still denies (deny-only veto)", async () => {
+    // The group's signed rule lets every member write; the operator's context narrows it back to managers.
+    const vetoed = createGroupService(false, {group: {update: "manager"}}, {update: "user"});
+    await expectRefusal("ACCESS_DENIED", () => vetoed.groupService.updatePublicMeta(aliceCloudUser, publicMetaModel(1)));
+    hasNoCalls(vetoed.groupRepository.updatePublicMeta);
+    const rotate = createGroupService(false, {group: {rotateKeys: "manager"}}, {rotateKeys: "user"});
+    await expectRefusal("ACCESS_DENIED", () => rotate.groupService.generateNewGroupKey(aliceCloudUser,
+        {id: groupId, groupPubKey, data, keyId, ...rotation(2, "alice", {rotateKeys: "user"}), expectedKeyVersion: 1, expectedRosterVersion: 1}));
+    hasNoCalls(rotate.groupRepository.generateNewGroupKey);
 });
 
 it("gates updatePolicy on the updatePolicy policy, not on update", async () => {
     // The same invariant the rotation split established, transplanted: an operator who widens `update` must not
     // hand out policy rewriting along with it. This is the whole point of giving the policy its own method.
-    const {groupService, groupRepository} = createGroupService(false, {group: {update: "all"}});
+    const {groupService, groupRepository} = createGroupService(false, {}, {update: "all"});
     try {
-        await groupService.updatePolicy(aliceCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
+        await groupService.updatePolicy(aliceCloudUser, policyChange({}, "alice", {update: "all"}));
     }
     catch (e) {
         expect(AppException.is(e, "ACCESS_DENIED")).toBe(true);
-        hasNoCalls(groupRepository.updatePolicy);
+        hasNoCalls(groupRepository.updatePolicyWithStatement);
         return;
     }
     expect(true).toBeFalsy();
 });
 
-it("lets a context widen updatePolicy for groups", async () => {
-    const {groupService, groupRepository} = createGroupService(false, {group: {updatePolicy: "user"}});
-    await groupService.updatePolicy(aliceCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy});
-    hasOneCall(groupRepository.updatePolicy);
+it("SECURITY: updatePolicy follows the group's signed updatePolicy rule, not a context's", async () => {
+    const widened = createGroupService(false, {group: {updatePolicy: "user"}});
+    await expectRefusal("ACCESS_DENIED", () => widened.groupService.updatePolicy(aliceCloudUser, policyChange({}, "alice")));
+    hasNoCalls(widened.groupRepository.updatePolicyWithStatement);
+    const signed = createGroupService(false, {}, {updatePolicy: "user"});
+    await signed.groupService.updatePolicy(aliceCloudUser, policyChange({updatePolicy: "user"}, "alice", {updatePolicy: "user"}));
+    hasOneCall(signed.groupRepository.updatePolicyWithStatement);
 });
 
 it("widening rotateKeys does not hand out metadata writes", async () => {
@@ -564,8 +677,8 @@ it("a context that forbids overwriting its policy still allows metadata writes",
     // than staying reachable from it.
     const policySide = createGroupService(false, {group: {canOverwriteContextPolicy: "no"}});
     await expectRefusal("ACCESS_DENIED",
-        () => policySide.groupService.updatePolicy(janekCloudUser, {id: groupId, policy: {} as types.cloud.ContainerPolicy}));
-    hasNoCalls(policySide.groupRepository.updatePolicy);
+        () => policySide.groupService.updatePolicy(janekCloudUser, policyChange({})));
+    hasNoCalls(policySide.groupRepository.updatePolicyWithStatement);
     
     const metaSide = createGroupService(false, {group: {canOverwriteContextPolicy: "no"}});
     await metaSide.groupService.updatePublicMeta(janekCloudUser, publicMetaModel(1));
@@ -575,7 +688,7 @@ it("a context that forbids overwriting its policy still allows metadata writes",
 it("charges the rotation rate-limit budget only after a successful rotation", async () => {
     const {groupService, groupRotationRateLimiter} = createGroupService();
     await groupService.generateNewGroupKey(janekCloudUser, {id: groupId, groupPubKey, data, keyId, ...rotation(2), expectedKeyVersion: 1, expectedRosterVersion: 1});
-    hasOneCall(groupRotationRateLimiter.record);
+    assert.strictEqual(groupRotationRateLimiter.kept.length, 1);
 });
 
 it("does NOT charge the rate-limit budget on a lost CAS race (ROTATED_ALREADY)", async () => {
@@ -586,7 +699,7 @@ it("does NOT charge the rate-limit budget on a lost CAS race (ROTATED_ALREADY)",
     }
     catch (e) {
         expect(AppException.is(e, "ROTATED_ALREADY")).toBe(true);
-        hasNoCalls(groupRotationRateLimiter.record);
+        assert.deepStrictEqual(groupRotationRateLimiter.kept, []);
         return;
     }
     expect(true).toBeFalsy();
@@ -630,6 +743,15 @@ it("a custom event cannot be aimed at somebody outside the group", async () => {
     expect(true).toBeFalsy();
 });
 
+it("a custom event can address a 16k roster", async () => {
+    // `includes` per recipient blocked the event loop for ~1 s at 16k; any member could trigger it.
+    const roster = Array.from({length: 16384}, (_, i) => `member-${i}` as types.cloud.UserId);
+    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+    mock(groupRepository, "get", async () => ({...group, users: [...roster, alice]}));
+    await groupService.sendCustomNotification(aliceCloudUser, groupId, "base64Envelope", typing, roster);
+    hasOneCall(groupNotificationService.sendGroupCustomEvent);
+});
+
 it("a custom event on a group that does not exist is refused", async () => {
     const {groupService, groupNotificationService} = createGroupService();
     try {
@@ -660,7 +782,7 @@ it("a custom event never reads the group's tree or history", async () => {
     // A notification does not need the state, and reading it would put the cost of a keystroke back on the
     // size of the group.
     const {groupService, groupRepository} = createGroupService();
+    mock(groupRepository, "getFullState");
     await groupService.sendCustomNotification(janekCloudUser, groupId, "base64Envelope", typing);
-    hasNoCalls(groupRepository.getTree);
-    hasNoCalls(groupRepository.getHistoryKeyIds);
+    hasNoCalls(groupRepository.getFullState);
 });

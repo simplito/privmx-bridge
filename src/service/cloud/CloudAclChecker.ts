@@ -17,6 +17,7 @@ export type AclFunctionNameX =
     | "context/contextSendCustomNotification"
     | "context/groupGet"
     | "context/groupList"
+    | "context/groupGetTreeCommits"
     | "context/groupCreate"
     | "context/groupUpdatePublicMeta"
     | "context/groupUpdatePrivateMeta"
@@ -24,6 +25,7 @@ export type AclFunctionNameX =
     | "context/groupRotateKeys"
     | "context/groupAddMembers"
     | "context/groupRemoveMembers"
+    | "context/groupSelfUpdate"
     | "context/groupCutEra"
     | "context/groupPruneArchive"
     | "context/groupDelete"
@@ -148,6 +150,7 @@ export class CloudAclChecker {
             "context/contextListUsers": ["contextId"],
             "context/groupGet": ["groupId"],
             "context/groupList": [],
+            "context/groupGetTreeCommits": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {
@@ -159,6 +162,7 @@ export class CloudAclChecker {
             "context/groupRotateKeys": ["groupId"],
             "context/groupAddMembers": ["groupId"],
             "context/groupRemoveMembers": ["groupId"],
+            "context/groupSelfUpdate": ["groupId"],
             "context/groupCutEra": ["groupId"],
             "context/groupPruneArchive": ["groupId"],
             "context/groupDelete": ["groupId"],

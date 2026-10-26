@@ -125,7 +125,7 @@ export class RepositoryFactory {
         return new GroupRepository(this.createObjectRepositoryFor(GroupRepository, session), this.createGroupStateRepository(session));
     }
     
-    /** The six collections a group's state lives in outside its document — always in the caller's session. */
+    /** The nine collections a group's state lives in outside its document — always in the caller's session. */
     createGroupStateRepository(session?: mongodb.ClientSession) {
         const idProp = GroupStateRepository.COLLECTION_ID_PROP;
         return new GroupStateRepository(
@@ -135,6 +135,9 @@ export class RepositoryFactory {
             this.mongoDbManager.getRepository<db.group.GroupPublicMetaEntryId, db.group.GroupPublicMetaEntry>(GroupStateRepository.PUBLIC_META_ENTRY_COLLECTION_NAME, idProp, session),
             this.mongoDbManager.getRepository<db.group.GroupPrivateMetaEntryId, db.group.GroupPrivateMetaEntry>(GroupStateRepository.PRIVATE_META_ENTRY_COLLECTION_NAME, idProp, session),
             this.mongoDbManager.getRepository<db.group.GroupArchiveRungId, db.group.GroupArchiveRung>(GroupStateRepository.ARCHIVE_RUNG_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupTreeCommitId, db.group.GroupTreeCommit>(GroupStateRepository.TREE_COMMIT_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<db.group.GroupEpochKeyId, db.group.GroupEpochKey>(GroupStateRepository.EPOCH_KEY_COLLECTION_NAME, idProp, session),
+            this.mongoDbManager.getRepository<types.group.GroupId, db.group.GroupTombstone>(GroupStateRepository.TOMBSTONE_COLLECTION_NAME, idProp, session),
         );
     }
     

@@ -15,6 +15,8 @@ import { AppException } from "../../api/AppException";
 import { ContextApiValidator } from "../../api/main/context/ContextApiValidator";
 import { TypesValidator } from "../../api/TypesValidator";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { signStatement, userKeys } from "../testUtils/TreeFixtures";
+import * as types from "../../types";
 
 /**
  * The limits that decide how large a group may be. They all derive from `MAX_GROUP_MEMBERS`; these tests are
@@ -25,6 +27,7 @@ const MAX = TypesValidator.MAX_GROUP_MEMBERS;
 const validator = new ContextApiValidator(new TypesValidator());
 
 const KEY_ID = "0fb486f81eee410d01972358a919f347";
+const RESOURCE_ID = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f";
 const PUB_KEY = ECUtils.generateKeyPair().pub58;
 
 function users(count: number) {
@@ -45,6 +48,7 @@ function tree(numLeaves: number, options: {nodes?: number, edges?: number, seats
 function createModel(overrides: Record<string, unknown> = {}) {
     return {
         contextId: "657838db3359f5a16f93fbc0",
+        resourceId: RESOURCE_ID,
         groupPubKey: PUB_KEY,
         users: users(3),
         managers: ["manager"],
@@ -53,6 +57,12 @@ function createModel(overrides: Record<string, unknown> = {}) {
         privateMeta: "group-private-meta",
         keyId: KEY_ID,
         tree: tree(4, {seats: 4}),
+        // Shape only: what the statement says is the service's to check, and none of these limits are about it.
+        commit: signStatement({
+            seq: 1, prevDigest: "", op: "create", groupId: RESOURCE_ID, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: PUB_KEY as unknown as types.cloud.GroupPubKey,
+            rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: "manager" as types.cloud.UserId,
+            committerPubKey: userKeys("manager").pub58, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], policy: {},
+        }),
         ...overrides,
     };
 }

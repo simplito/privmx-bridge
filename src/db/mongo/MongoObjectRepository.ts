@@ -339,25 +339,24 @@ export class MongoObjectRepository<K extends string|number, V> implements Object
         });
     }
     
-    /** Perform given stages with sort, skip and limit and returns list of found elements and count of all matched elements */
+    /**
+     * Perform given stages with sort, skip and limit and returns list of found elements and count of all matched elements.
+     *
+     * Two pipelines, not one `$facet`: a `$facet` returns the whole page as a single document, so a page of large
+     * documents fails with `BSONObjectTooLarge` at 16 MB. Separately, each page document only has to fit on its own.
+     */
     async aggregationX<X = V>(stages: any[], listParams: types.core.ListModel, sortBy: keyof V): Promise<ListWithCount<X>> {
         const theSortBy = sortBy == this.idProperty ? "_id" : sortBy || "_id";
-        const pipeline = [
-            ...stages,
-            {
-                $sort: {
-                    [theSortBy]: listParams.sortOrder === "asc" ? 1 : -1,
-                },
-            },
-            {
-                $facet: {
-                    totalData: [{$skip: listParams.skip}, {$limit: listParams.limit}],
-                    totalCount: [{$count: "count"}],
-                },
-            },
-        ];
-        const result = <{totalData: X[], totalCount: {count: number}[]}[]> await this.collection.aggregate(pipeline).toArray();
-        return {list: result[0].totalData.map(x => this.convertFromDbObjEx(x)), count: result[0].totalCount.length === 0 ? 0 : result[0].totalCount[0].count};
+        const [list, counted] = await Promise.all([
+            this.collection.aggregate<X&mongodb.Document>([
+                ...stages,
+                {$sort: {[theSortBy]: listParams.sortOrder === "asc" ? 1 : -1}},
+                {$skip: listParams.skip},
+                {$limit: listParams.limit},
+            ]).toArray(),
+            this.collection.aggregate<{count: number}>([...stages, {$count: "count"}]).toArray(),
+        ]);
+        return {list: list.map(x => this.convertFromDbObjEx(x)), count: counted.length === 0 ? 0 : counted[0].count};
     }
     
     async matchX2(match: any, listParams: types.core.ListModel2<K>) {

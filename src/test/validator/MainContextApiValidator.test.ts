@@ -16,12 +16,26 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
-import { buildTree, rotationGrantEdge, rungsFor } from "../testUtils/TreeFixtures";
+import { Base58 } from "../../utils/crypto/Base58";
+import { buildTree, rotationGrantEdge, rungsFor, signStatement, userKeys } from "../testUtils/TreeFixtures";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "MyKeyId" as types.core.KeyId;
+const resourceId = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f" as types.core.ClientResourceId;
+
+/** A well-shaped statement — the validator checks shape only; what it says is the service's to check. */
+function validStatement(op: types.cloud.GroupTreeCommitOp = "add"): types.cloud.GroupTreeCommitStatement {
+    return signStatement({
+        seq: 2, prevDigest: "12".repeat(32), op, groupId: groupId, treeVersion: 2, date: 1760000000000, keyVersion: 1, groupPubKey: groupPubKey, rosterVersion: 2,
+        rosterHash: "ab".repeat(32), treeHash: "cd".repeat(32), policyHash: "99".repeat(32), committer: "janek" as types.cloud.UserId,
+        committerPubKey: userKeys("janek").pub58, committerSeat: 0,
+        path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey, subtreeHash: "ef".repeat(32)}],
+        addedUsers: ["nowy" as types.cloud.UserId], addedManagers: [], removed: [],
+        ...(op === "create" || op === "policy" ? {policy: {update: "user"}} : {}),
+    });
+}
 
 function validator() {
     return new ContextApiValidator(new TypesValidator());
@@ -30,6 +44,7 @@ function validator() {
 function validGroupCreate(): contextApi.GroupCreateModel {
     return {
         contextId: contextId,
+        resourceId: resourceId,
         groupPubKey: groupPubKey,
         users: ["janek"] as types.cloud.UserId[],
         managers: ["janek"] as types.cloud.UserId[],
@@ -38,12 +53,29 @@ function validGroupCreate(): contextApi.GroupCreateModel {
         privateMeta: "somePrivateMeta" as types.group.GroupData,
         keyId: keyId,
         tree: buildTree(["janek"], 1),
+        commit: validStatement("create"),
     };
 }
 
 it("ContextApiValidator.groupCreate valid", () => {
     const result = Utils.try(() => validator().validate("groupCreate", validGroupCreate()));
     expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupCreate requires a resourceId, which the first statement names the group by", () => {
+    const model: Partial<contextApi.GroupCreateModel> = validGroupCreate();
+    delete model.resourceId;
+    const result = Utils.try(() => validator().validate("groupCreate", model));
+    expect(result.success).toBe(false);
+});
+
+it("groupCreate and groupUpdatePolicy refuse a statement without its policy", () => {
+    const create = validGroupCreate();
+    delete create.commit.policy;
+    expect(Utils.try(() => validator().validate("groupCreate", create)).success).toBe(false);
+    const commit = validStatement("policy");
+    delete commit.policy;
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
 });
 
 it("ContextApiValidator.groupCreate accepts the data a group of sixteen thousand needs", () => {
@@ -65,6 +97,47 @@ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
     const model = {...validGroupCreate(), groupPubKey: "not-a-valid-ecc-key!!!" as types.cloud.GroupPubKey};
     const result = Utils.try(() => validator().validate("groupCreate", model));
     expect(result.success).toBe(false);
+});
+
+/** The same point spelled every way but compressed, plus a point off the curve; elliptic decodes them all. */
+function nonCanonicalSpellings(key: types.cloud.GroupPubKey): Record<string, types.cloud.GroupPubKey> {
+    const point = ECUtils.publicFromBase58DER(key as unknown as types.core.EccPubKey)!;
+    const uncompressed = Buffer.from(point.getPublic(false, "hex"), "hex");
+    const hybrid = Buffer.from(uncompressed);
+    hybrid[0] = 0x06 + uncompressed[64] % 2;
+    const offCurve = Buffer.from(uncompressed);
+    offCurve[64] = offCurve[64] % 2 === 0 ? offCurve[64] + 1 : offCurve[64] - 1;
+    const encode = (bytes: Buffer) => Base58.encodeWithChecksum(bytes) as unknown as types.cloud.GroupPubKey;
+    return {uncompressed: encode(uncompressed), hybrid: encode(hybrid), offCurve: encode(offCurve)};
+}
+
+it("SECURITY: a group public key in any encoding but the compressed one is refused", () => {
+    // Keys are compared as strings (the statement's key against the model's): the same key re-encoded
+    // would pass for a new one everywhere.
+    const tree = buildTree(["janek"], 1);
+    const calls: [string, (key: types.cloud.GroupPubKey) => unknown][] = [
+        ["groupCreate", key => ({...validGroupCreate(), groupPubKey: key, commit: {...validStatement("create"), groupPubKey: key}})],
+        ["groupGenerateNewKey", key => ({
+            id: groupId, groupPubKey: key, data: "someData", keyId: keyId, grantEdge: rotationGrantEdge(tree, 2),
+            commit: {...validStatement("rotate"), groupPubKey: key}, rungs: rungsFor(2, 1), expectedKeyVersion: 1, expectedRosterVersion: 1,
+        })],
+        ["groupRemoveMembers", key => ({
+            id: groupId, userIds: ["ola"], groupPubKey: key, keyId: keyId, data: "someData", transition: validRemovalTransition(),
+            commit: {...validStatement("remove"), groupPubKey: key}, rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung"}],
+            expectedKeyVersion: 1, expectedRosterVersion: 1,
+        })],
+    ];
+    for (const [method, model] of calls) {
+        expect(Utils.try(() => validator().validate(method, model(groupPubKey))).success).toBe(true);
+        // The models differ from the accepted one in the key alone, so the key is what is refused.
+        for (const key of Object.values(nonCanonicalSpellings(groupPubKey))) {
+            expect(Utils.try(() => validator().validate(method, model(key))).success).toBe(false);
+        }
+        // The statement's own key is checked too, not only the model's.
+        const statementOnly = model(groupPubKey) as {commit: types.cloud.GroupTreeCommitStatement};
+        statementOnly.commit = {...statementOnly.commit, groupPubKey: nonCanonicalSpellings(groupPubKey).uncompressed};
+        expect(Utils.try(() => validator().validate(method, statementOnly)).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupCreate rejects a leftover meta field", () => {
@@ -99,9 +172,22 @@ it("ContextApiValidator.groupUpdatePrivateMeta valid", () => {
 });
 
 it("ContextApiValidator.groupUpdatePolicy valid", () => {
-    const model: contextApi.GroupUpdatePolicyModel = {id: groupId, policy: {}};
+    const model: contextApi.GroupUpdatePolicyModel = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2};
     const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
     expect(result.success).toBe(true);
+});
+
+it("SECURITY: groupUpdatePolicy without a statement, the old {id, policy} shape, is refused", () => {
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, policy: {}})).success).toBe(false);
+    const model = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2, policy: {}};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", model)).success).toBe(false);
+});
+
+it("a statement's policy is shaped like a container policy, and its policyHash is a hash", () => {
+    const badPolicy = {...validStatement("policy"), policy: {update: 5}};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit: badPolicy, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+    const badHash = {...validStatement("policy"), policyHash: "XY"};
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit: badHash, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
 });
 
 // These are the load-bearing rejections: each one is why the per-plane ACL entry bounds what a call can *do*
@@ -121,20 +207,25 @@ it("a metadata update structurally cannot carry the other plane, or the policy",
     }
 });
 
-it("groupUpdatePolicy carries neither an envelope nor a version", () => {
-    // No envelope and no CAS on this method: there is nothing to write under a key and no counter to compare.
+it("groupUpdatePolicy carries no envelope and no metadata version", () => {
+    // A policy commit writes neither plane: nothing to write under a key and no metadata counter to compare.
     for (const field of ["data", "keyId", "version"]) {
-        const model = {id: groupId, policy: {}, [field]: "x"};
+        const model = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2, [field]: "x"};
         const result = Utils.try(() => validator().validate("groupUpdatePolicy", model));
         expect(result.success).toBe(false);
     }
 });
 
-it("groupUpdatePolicy requires a policy", () => {
-    // It used to be optional, where absent meant "leave the policy alone". On a method that does nothing else,
-    // an absent policy is a request that asks for nothing and has passed a policy gate for it.
-    const result = Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId}));
-    expect(result.success).toBe(false);
+it("groupUpdatePolicy requires its statement and both CAS counters", () => {
+    for (const field of ["commit", "expectedKeyVersion", "expectedRosterVersion"]) {
+        const model: Record<string, unknown> = {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2};
+        delete model[field];
+        expect(Utils.try(() => validator().validate("groupUpdatePolicy", model)).success).toBe(false);
+    }
+});
+
+it("groupCreate takes no policy beside its statement", () => {
+    expect(Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), policy: {}})).success).toBe(false);
 });
 
 it("a metadata update cannot omit its version or its keyId", () => {
@@ -210,6 +301,7 @@ it("ContextApiValidator.groupGenerateNewKey valid", () => {
         data: "someData" as types.group.GroupData,
         keyId: keyId,
         grantEdge: rotationGrantEdge(tree, 2),
+        commit: validStatement("rotate"),
         rungs: rungsFor(2, 1),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
@@ -307,6 +399,7 @@ it("ContextApiValidator.groupAddMembers valid", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
+        commit: validStatement("add"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
@@ -321,6 +414,7 @@ it("ContextApiValidator.groupAddMembers rejects an unknown role", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validAdditionTransition(),
+        commit: validStatement("add"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
@@ -336,12 +430,29 @@ it("ContextApiValidator.groupRemoveMembers valid", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(true);
+});
+
+it("SECURITY: a tree node public key in any encoding but the compressed one is refused", () => {
+    // NODE_NOT_NEW compares node keys as strings: a replaced node key re-encoded would pass for a fresh one.
+    const removal = (publicKey: types.core.EccPubKey) => {
+        const transition = validRemovalTransition();
+        transition.refreshedNodes[0].publicKey = publicKey;
+        return {
+            id: groupId, userIds: ["ola"], groupPubKey: groupPubKey, keyId: keyId, data: "someData", transition: transition,
+            commit: validStatement("remove"), rungs: [{atKeyVersion: 2, targetKeyVersion: 1, data: "rung"}],
+            expectedKeyVersion: 1, expectedRosterVersion: 1,
+        };
+    };
+    expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(nodePubKey))).success).toBe(true);
+    const uncompressed = ECUtils.publicToBase58DER(ECUtils.publicFromBase58DER(nodePubKey)!, false);
+    expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(uncompressed))).success).toBe(false);
 });
 
 it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () => {
@@ -352,11 +463,49 @@ it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () =
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         rungs: [{atKeyVersion: 0, targetKeyVersion: 0, data: "rung" as types.core.UserKeyData}],
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
+    expect(result.success).toBe(false);
+});
+
+it("SECURITY: groupRemoveMembers refuses a rung naming a recipientKind", () => {
+    // An era link `{recipientKind: "user", recipient}` sealed to anybody's key would pass as the unit rung, which
+    // clients never open, so the epoch would be born unreachable from below. Every rung is an epoch rung.
+    const model = {
+        id: groupId,
+        userIds: ["ola" as types.cloud.UserId],
+        groupPubKey: groupPubKey,
+        keyId: keyId,
+        data: "someData" as types.group.GroupData,
+        transition: validRemovalTransition(),
+        commit: validStatement("remove"),
+        rungs: [{atKeyVersion: 2, targetKeyVersion: 1, recipientKind: "user", recipient: "ola", data: "rung" as types.core.UserKeyData}],
+        expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
+    expect(result.success).toBe(false);
+});
+
+it("SECURITY: groupGenerateNewKey refuses a rung naming an author", () => {
+    // The author of a stored rung is whoever stored it, set by the bridge; a client cannot name somebody else.
+    const tree = buildTree(["janek"], 1);
+    const model = {
+        id: groupId,
+        groupPubKey: groupPubKey,
+        data: "someData" as types.group.GroupData,
+        keyId: keyId,
+        grantEdge: rotationGrantEdge(tree, 2),
+        commit: validStatement("rotate"),
+        rungs: rungsFor(2, 1).map(rung => ({...rung, author: "ola"})),
+        expectedKeyVersion: 1,
+        expectedRosterVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupGenerateNewKey", model));
     expect(result.success).toBe(false);
 });
 
@@ -369,11 +518,75 @@ it("ContextApiValidator.groupRemoveMembers rejects a missing rung list", () => {
         keyId: keyId,
         data: "someData" as types.group.GroupData,
         transition: validRemovalTransition(),
+        commit: validStatement("remove"),
         expectedKeyVersion: 1,
         expectedRosterVersion: 1,
     };
     const result = Utils.try(() => validator().validate("groupRemoveMembers", model));
     expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupSelfUpdate valid, with a node minted from no record", () => {
+    const model: contextApi.GroupSelfUpdateModel = {
+        id: groupId,
+        commit: validStatement("selfUpdate"),
+        transition: {
+            baseKeyVersion: 1,
+            refreshedNodes: [
+                {nodeIndex: 31, generation: 0, publicKey: nodePubKey},
+                {nodeIndex: 63, fromGeneration: 4, generation: 5, publicKey: nodePubKey},
+            ],
+            edges: [
+                {parentIndex: 63, parentGeneration: 5, childKind: "node", childIndex: 31, childGeneration: 0, data: "w1" as types.core.UserKeyData},
+                {isGrantEdge: true, parentGeneration: 1, childKind: "node", childIndex: 63, childGeneration: 5, data: "w2" as types.core.UserKeyData},
+            ],
+        },
+        expectedKeyVersion: 1,
+    };
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator.groupSelfUpdate refuses anything but its own fields", () => {
+    // No seats, no rungs, no keys: a self-update moves nothing but the caller's own path.
+    const model = {id: groupId, transition: {...validRemovalTransition()}, expectedKeyVersion: 1};
+    const result = Utils.try(() => validator().validate("groupSelfUpdate", model));
+    expect(result.success).toBe(false);
+});
+
+it("ContextApiValidator.groupGet accepts the planning scope", () => {
+    const result = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "plan"}));
+    expect(result.success).toBe(true);
+    const unknown = Utils.try(() => validator().validate("groupGet", {groupId: groupId, scope: "everything"}));
+    expect(unknown.success).toBe(false);
+});
+
+it("ContextApiValidator.groupGetTreeCommits valid, with and without an upper bound", () => {
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 0})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 4, toSeq: 9})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: -1})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetTreeCommits", {groupId, fromSeq: 0, toSeq: 0})).success).toBe(false);
+});
+
+it("ContextApiValidator refuses a tree commit without its statement, or with a malformed one", () => {
+    const withoutCommit: Partial<contextApi.GroupCreateModel> = validGroupCreate();
+    delete withoutCommit.commit;
+    expect(Utils.try(() => validator().validate("groupCreate", withoutCommit)).success).toBe(false);
+    const malformed: Partial<types.cloud.GroupTreeCommitStatement>[] = [
+        {treeHash: "AB".repeat(32)},
+        {rosterHash: "ab".repeat(31)},
+        {signature: "AAAA" as types.core.EccSignature},
+        {op: "merge" as types.cloud.GroupTreeCommitOp},
+        {seq: 0},
+        {prevDigest: "AB".repeat(32)},
+        {prevDigest: "ab"},
+        {committerSeat: -1},
+        {path: [{...validStatement().path[0], subtreeHash: "ab"}]},
+    ];
+    for (const patch of malformed) {
+        const model = {...validGroupCreate(), commit: {...validStatement("create"), ...patch}};
+        expect(Utils.try(() => validator().validate("groupCreate", model)).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupCutEra valid", () => {
@@ -402,6 +615,36 @@ it("ContextApiValidator.groupGetKeyArchive valid with a window", () => {
     const model: contextApi.GroupGetKeyArchiveModel = {id: groupId, fromKeyVersion: 2, toKeyVersion: 8};
     const result = Utils.try(() => validator().validate("groupGetKeyArchive", model));
     expect(result.success).toBe(true);
+});
+
+it("ContextApiValidator's lookup limits are the ones the Endpoint is built with", () => {
+    // Endpoint GroupApiImpl::MAX_ARCHIVE_SPANS asks for at most 128 spans; a lower limit here refuses its asks.
+    expect(ContextApiValidator.MAX_ARCHIVE_SPANS).toBe(128);
+    expect(ContextApiValidator.MAX_EPOCH_KEY_LOOKUPS).toBe(32);
+});
+
+it("ContextApiValidator.groupGetKeyArchive takes a bounded list of spans", () => {
+    const span = {at: 8, target: 4};
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [span]})).success).toBe(true);
+    const full = Array.from({length: 128}, () => span);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: full})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [...full, span]})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetKeyArchive", {id: groupId, spans: [{at: 0, target: 1}]})).success).toBe(false);
+});
+
+it("ContextApiValidator.groupGetEpochKeys takes bounded lists of keyIds and grant keys", () => {
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: ["k1"], groupPubKeys: [groupPubKey]})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId})).success).toBe(true);
+    const full = Array.from({length: 32}, (_, i) => `k${i}`);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: full})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: [...full, "k32"]})).success).toBe(false);
+    const keys = Array.from({length: 32}, () => groupPubKey);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, groupPubKeys: keys})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, groupPubKeys: [...keys, groupPubKey]})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, groupPubKeys: ["not a key"]})).success).toBe(false);
+    // Each keyId is a keyId: not empty, not longer than one may be.
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: [""]})).success).toBe(false);
+    expect(Utils.try(() => validator().validate("groupGetEpochKeys", {id: groupId, keyIds: ["k".repeat(129)]})).success).toBe(false);
 });
 
 it("ContextApiValidator.groupSendCustomEvent valid without a recipient list", () => {

@@ -75,6 +75,14 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupRemoveMembers", model);
     }
     
+    groupSelfUpdate(model: contextApi.GroupSelfUpdateModel): Promise<types.core.OK> {
+        return this.request("context.groupSelfUpdate", model);
+    }
+    
+    groupGetTreeCommits(model: contextApi.GroupGetTreeCommitsModel): Promise<contextApi.GroupGetTreeCommitsResult> {
+        return this.request("context.groupGetTreeCommits", model);
+    }
+    
     groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
         return this.request("context.groupCutEra", model);
     }
@@ -85,6 +93,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     
     groupGetKeyArchive(model: contextApi.GroupGetKeyArchiveModel): Promise<contextApi.GroupGetKeyArchiveResult> {
         return this.request("context.groupGetKeyArchive", model);
+    }
+    
+    groupGetEpochKeys(model: contextApi.GroupGetEpochKeysModel): Promise<contextApi.GroupGetEpochKeysResult> {
+        return this.request("context.groupGetEpochKeys", model);
     }
     
     groupSendCustomEvent(model: contextApi.GroupSendCustomEventModel): Promise<types.core.OK> {

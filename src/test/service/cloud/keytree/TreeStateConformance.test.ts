@@ -16,6 +16,10 @@ import * as path from "path";
 import * as types from "../../../../types";
 import { LadderMath } from "../../../../service/cloud/keytree/LadderMath";
 import { TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
+import { CommitOp, TreeTransitionValidator } from "../../../../service/cloud/keytree/TreeTransitionValidator";
+import { CommitStatement } from "../../../../service/cloud/keytree/CommitStatement";
+import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
+import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 
 /**
  * Runs the bridge's production validator over tree states produced by the **C++ endpoint**, so a divergence
@@ -25,13 +29,16 @@ import { TreeValidator } from "../../../../service/cloud/keytree/TreeValidator";
  * regenerate). Wrapped blobs appear as `b64:<length>:<digest>` — a digest rather than a prefix, because the
  * first 46 characters of an ECIES blob are a fixed header and looked identical on every edge.
  *
+ * Every case is checked twice: the state the commit leaves behind against `validateState`, and the commit itself —
+ * the endpoint's re-keyed path and edges — against `validateCommit`, the very check the bridge runs on a request.
+ *
  * If this file fails, one of the two implementations changed its idea of what a well-formed state is.
  */
 
 interface WireTree {
     numLeaves: number;
     leafAssignment: string[];
-    nodes: {nodeIndex: number, generation: number, publicKey: string}[];
+    nodes: {nodeIndex: number, generation: number, publicKey?: string, setBy?: number}[];
     edges: {
         isGrantEdge?: boolean,
         parentIndex?: number,
@@ -44,10 +51,19 @@ interface WireTree {
     }[];
 }
 
+/** A node the commit re-keyed, as the endpoint planned it; its new public key is in the resulting tree. */
+interface RefreshedEntry {
+    nodeIndex: number;
+    fromGeneration?: number;
+    generation: number;
+}
+
 interface CreateCase {
     kind: "create";
     epoch: number;
+    creator: string;
     members: string[];
+    refreshed: RefreshedEntry[];
     tree: WireTree;
 }
 
@@ -55,11 +71,17 @@ interface RemoveCase {
     kind: "remove";
     beforeEpoch: number;
     afterEpoch: number;
-    removed: string;
-    position: number;
+    remover: string;
+    removed: string[];
+    positions: number[];
     members: string[];
     remaining: string[];
+    refreshed: RefreshedEntry[];
     rungs: {at: number, target: number}[];
+    /** Committer of each statement `before`'s filled nodes cite. */
+    setters: Record<string, string>;
+    /** `B \ R`, ascending: the knowledge closure of the removed members minus the remover's path. */
+    blanked: number[];
     before: WireTree;
     after: WireTree;
 }
@@ -67,15 +89,58 @@ interface RemoveCase {
 interface AddCase {
     kind: "add";
     epoch: number;
-    added: string;
-    position: number;
+    adder: string;
+    added: string[];
+    positions: number[];
     members: string[];
     after_members: string[];
+    refreshed: RefreshedEntry[];
+    /** Always empty: an addition fills the newcomers' paths instead of blanking them. */
+    blanked: number[];
     before: WireTree;
     after: WireTree;
 }
 
-type Fixture = {cases: (CreateCase|RemoveCase|AddCase)[]};
+interface SelfUpdateCase {
+    kind: "selfUpdate";
+    epoch: number;
+    member: string;
+    members: string[];
+    refreshed: RefreshedEntry[];
+    before: WireTree;
+    after: WireTree;
+}
+
+/** A policy commit: no node moves, so `before` and `after` are the same tree and nothing is refreshed. */
+interface PolicyCase {
+    kind: "policy";
+    epoch: number;
+    member: string;
+    members: string[];
+    /** The policy the commit sets, as its statement carries it. */
+    policy: types.cloud.ContainerPolicy;
+    refreshed: RefreshedEntry[];
+    before: WireTree;
+    after: WireTree;
+}
+
+/** The commit statement every case carries, and what it is checked against. */
+interface StatementFields {
+    /** The group's policy and creator after the commit: what the statement's `policyHash` signs. */
+    groupPolicy: types.cloud.ContainerPolicy;
+    groupCreator: string;
+    commit: types.cloud.GroupTreeCommitStatement;
+    /** Hex digest of `commit` as the endpoint computes it — what the next statement names as `prevDigest`. */
+    digest: string;
+    /** Hex tree hash of the state the commit leaves behind. */
+    treeHash: string;
+    /** The post-commit roster. */
+    users: string[];
+    managers: string[];
+}
+
+type FixtureCase = (CreateCase|RemoveCase|AddCase|SelfUpdateCase|PolicyCase) & StatementFields;
+type Fixture = {treeVersion: number, bucketLevel: number, cases: FixtureCase[], userPubKeys: Record<string, string>};
 
 function loadFixture(): Fixture {
     // Read from `src`, not `out`: the build copies TypeScript only, and a JSON test vector belongs with the test
@@ -93,24 +158,75 @@ function roster(members: string[]) {
 }
 
 /** Every tree a case carries, labelled — a transition has two, a creation one. */
-function collectTrees(testCase: CreateCase|RemoveCase|AddCase): Record<string, WireTree> {
+function collectTrees(testCase: FixtureCase): Record<string, WireTree> {
     return testCase.kind === "create"
         ? {tree: testCase.tree}
         : {before: testCase.before, after: testCase.after};
 }
 
+/** The request the endpoint would have sent: its re-keyed path with the minted public keys, and the edges out of
+ *  that path plus the grant edge — read back from the tree the commit produced. */
+function submittedCommit(refreshed: RefreshedEntry[], after: WireTree, baseKeyVersion: number) {
+    const minted = new Map(after.nodes.map(node => [node.nodeIndex, node.publicKey]));
+    const onPath = new Set(refreshed.map(node => node.nodeIndex));
+    return {
+        baseKeyVersion,
+        refreshedNodes: refreshed.map(node => ({...node, publicKey: minted.get(node.nodeIndex) as types.core.EccPubKey})),
+        edges: after.edges.filter(edge => edge.isGrantEdge || onPath.has(edge.parentIndex ?? -1)) as unknown as types.cloud.GroupTreeEdge[],
+    };
+}
+
+/** The stored state and operation the bridge would have checked that request against. */
+function commitInput(testCase: Exclude<FixtureCase, PolicyCase>) {
+    const users = (ids: string[]) => ids as types.cloud.UserId[];
+    if (testCase.kind === "create") {
+        const stored = {numLeaves: testCase.tree.numLeaves, leafAssignment: users(testCase.tree.leafAssignment), keyVersion: 0, nodes: []};
+        const op: CommitOp = {kind: "create", committer: testCase.creator as types.cloud.UserId};
+        return {stored, op, submitted: submittedCommit(testCase.refreshed, testCase.tree, 0)};
+    }
+    const before = testCase.before;
+    const keyVersion = testCase.kind === "remove" ? testCase.beforeEpoch : testCase.epoch;
+    const stored = {
+        numLeaves: before.numLeaves,
+        leafAssignment: users(before.leafAssignment),
+        keyVersion,
+        nodes: before.nodes as unknown as types.cloud.GroupTreeNode[],
+        ...(testCase.kind === "remove"
+            ? {setters: new Map(Object.entries(testCase.setters).map(([seq, committer]) => [Number(seq), committer as types.cloud.UserId]))}
+            : {}),
+    };
+    const op: CommitOp = testCase.kind === "remove"
+        ? {kind: "remove", committer: testCase.remover as types.cloud.UserId, removedUsers: users(testCase.removed), blankedPositions: testCase.positions}
+        : testCase.kind === "add"
+            ? {kind: "add", committer: testCase.adder as types.cloud.UserId, addedUsers: users(testCase.added), positions: testCase.positions}
+            : {kind: "selfUpdate", committer: testCase.member as types.cloud.UserId};
+    return {stored, op, submitted: submittedCommit(testCase.refreshed, testCase.after, keyVersion)};
+}
+
 const fixture = loadFixture();
 
 describe("tree states produced by the endpoint", () => {
-    it("the fixture covers creation, removal and addition", () => {
+    it("the fixture is the current tree version and covers every kind of commit", () => {
+        assert.strictEqual(fixture.treeVersion, TreeMath.TREE_VERSION);
         const kinds = new Set(fixture.cases.map(c => c.kind));
-        assert.ok(kinds.has("create"), "no creation cases");
-        assert.ok(kinds.has("remove"), "no removal cases");
-        assert.ok(kinds.has("add"), "no addition cases");
+        for (const kind of ["create", "remove", "add", "selfUpdate", "policy"]) {
+            assert.ok(kinds.has(kind as FixtureCase["kind"]), `no ${kind} cases`);
+        }
         assert.ok(fixture.cases.length >= 20, `only ${fixture.cases.length} cases`);
     });
     
-    const creates = fixture.cases.filter((c): c is CreateCase => c.kind === "create");
+    const transitions = fixture.cases.filter((c): c is Exclude<FixtureCase, PolicyCase> => c.kind !== "policy");
+    each<[Exclude<FixtureCase, PolicyCase>]>(transitions.map(c => [c])).it("the bridge accepts the endpoint's commit %#", ([testCase]) => {
+        const {stored, op, submitted} = commitInput(testCase);
+        const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
+        assert.ok(result.ok, `${testCase.kind}: ${result.ok ? "" : JSON.stringify(result.rejections)}`);
+        if (testCase.kind === "remove" || testCase.kind === "add") {
+            // The blank set is the bridge's own derivation; the endpoint planned against the same one.
+            assert.deepStrictEqual(result.commit.blanked, testCase.blanked);
+        }
+    });
+    
+    const creates = fixture.cases.filter((c): c is CreateCase & StatementFields => c.kind === "create");
     each<[CreateCase]>(creates.map(c => [c])).it("a freshly built tree of %#", ([testCase]) => {
         const problems = TreeValidator.validateState(asTree(testCase.tree), roster(testCase.members), testCase.epoch);
         assert.deepStrictEqual(
@@ -119,14 +235,14 @@ describe("tree states produced by the endpoint", () => {
         );
     });
     
-    const removals = fixture.cases.filter((c): c is RemoveCase => c.kind === "remove");
+    const removals = fixture.cases.filter((c): c is RemoveCase & StatementFields => c.kind === "remove");
     each<[RemoveCase]>(removals.map(c => [c])).it("a removal of %#", ([testCase]) => {
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.remaining), testCase.afterEpoch,
         );
         assert.deepStrictEqual(
             state, [],
-            `N=${testCase.before.numLeaves} after removing ${testCase.removed}: ${JSON.stringify(state)}`,
+            `N=${testCase.before.numLeaves} after removing ${testCase.removed.join(",")}: ${JSON.stringify(state)}`,
         );
     });
     
@@ -141,15 +257,21 @@ describe("tree states produced by the endpoint", () => {
         );
     });
     
-    const additions = fixture.cases.filter((c): c is AddCase => c.kind === "add");
+    const additions = fixture.cases.filter((c): c is AddCase & StatementFields => c.kind === "add");
     each<[AddCase]>(additions.map(c => [c])).it("an addition of %#", ([testCase]) => {
         const state = TreeValidator.validateState(
             asTree(testCase.after), roster(testCase.after_members), testCase.epoch,
         );
         assert.deepStrictEqual(
             state, [],
-            `N=${testCase.before.numLeaves} after adding at ${testCase.position}: ${JSON.stringify(state)}`,
+            `N=${testCase.before.numLeaves} after adding at ${testCase.positions.join(",")}: ${JSON.stringify(state)}`,
         );
+    });
+    
+    const selfUpdates = fixture.cases.filter((c): c is SelfUpdateCase & StatementFields => c.kind === "selfUpdate");
+    each<[SelfUpdateCase]>(selfUpdates.map(c => [c])).it("a self-update of %#", ([testCase]) => {
+        const state = TreeValidator.validateState(asTree(testCase.after), roster(testCase.members), testCase.epoch);
+        assert.deepStrictEqual(state, [], `self-update by ${testCase.member}: ${JSON.stringify(state)}`);
     });
     
     it("SECURITY: no state reuses one ciphertext across edges", () => {
@@ -185,20 +307,20 @@ describe("tree states produced by the endpoint", () => {
         }
     });
     
-    it("an addition re-keys the new leaf's path and files it under a new generation", () => {
-        // The client cannot wrap to a node it has no key for, so seating anybody below an existing node means
-        // re-keying the path to it. What must not happen is the re-keyed node arriving *alongside* the one it
-        // replaces: the state would then hold two entries for one index, one of them a key nobody holds.
+    it("an addition files every re-keyed node under a new generation", () => {
+        // What must not happen is a re-keyed node arriving *alongside* the one it replaces: the state would then
+        // hold two entries for one index, one of them a key nobody holds. A blanked node keeps its generation and
+        // simply loses its key.
         for (const testCase of additions) {
             const indices = testCase.after.nodes.map(n => n.nodeIndex);
             assert.strictEqual(
                 new Set(indices).size, indices.length,
-                `addition at ${testCase.position} left duplicate node entries: ${JSON.stringify(indices)}`,
+                `addition at ${testCase.positions.join(",")} left duplicate node entries: ${JSON.stringify(indices)}`,
             );
             const before = new Map(testCase.before.nodes.map(n => [n.nodeIndex, n]));
             for (const node of testCase.after.nodes) {
                 const previous = before.get(node.nodeIndex);
-                if (previous && previous.publicKey !== node.publicKey) {
+                if (previous && node.publicKey && previous.publicKey !== node.publicKey) {
                     assert.ok(
                         node.generation > previous.generation,
                         `node ${node.nodeIndex} changed key without advancing its generation`,
@@ -208,7 +330,7 @@ describe("tree states produced by the endpoint", () => {
         }
     });
     
-    it("SECURITY: a removal refreshes every node on the departing leaf's path and no other", () => {
+    it("SECURITY: a removal re-keys something, and never under the key it replaces", () => {
         for (const testCase of removals) {
             const before = new Map(testCase.before.nodes.map(n => [n.nodeIndex, n]));
             let refreshed = 0;
@@ -225,11 +347,100 @@ describe("tree states produced by the endpoint", () => {
                     );
                 }
             }
-            // Which nodes those are is checked by validateRemoval above; here we only insist that a removal in a
-            // tree with internal nodes actually refreshed something.
+            // Which nodes those are is checked by `validateCommit`; here we only insist that a removal in a tree
+            // with internal nodes actually re-keyed something — at the least the root, under the new grant key.
             if (testCase.before.nodes.length > 0) {
                 assert.ok(refreshed > 0, `removal in N=${testCase.before.numLeaves} refreshed nothing`);
             }
         }
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// commit statements (addendum spec §6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The state a case's commit leaves behind, and the roster after it. */
+function postOf(testCase: FixtureCase) {
+    return {tree: testCase.kind === "create" ? testCase.tree : testCase.after, users: testCase.users, managers: testCase.managers};
+}
+
+function committerOf(testCase: FixtureCase): string {
+    switch (testCase.kind) {
+        case "create": return testCase.creator;
+        case "add": return testCase.adder;
+        case "remove": return testCase.remover;
+        case "selfUpdate": return testCase.member;
+        case "policy": return testCase.member;
+    }
+}
+
+describe("commit statements produced by the endpoint", () => {
+    const signed = fixture.cases.map(c => [c] as [FixtureCase]);
+    
+    each<[FixtureCase]>(signed).it("SECURITY: the statement of %# is signed by its committer", ([testCase]) => {
+        const commit = testCase.commit;
+        assert.strictEqual(commit.committer, committerOf(testCase));
+        assert.ok(fixture.userPubKeys[commit.committer], `no public key for ${commit.committer}`);
+        assert.strictEqual(commit.committerPubKey, fixture.userPubKeys[commit.committer], `${testCase.kind}: names another key than its committer's`);
+        assert.ok(CommitStatement.verifySignature(commit), `${testCase.kind}: signature does not verify`);
+    });
+    
+    each<[FixtureCase]>(signed).it("SECURITY: the digest of %# is the endpoint's, so statements chain across the two", ([testCase]) => {
+        assert.strictEqual(CommitStatement.digest(testCase.commit), testCase.digest);
+        assert.strictEqual(testCase.commit.prevDigest === "", testCase.commit.seq === 1);
+    });
+    
+    each<[FixtureCase]>(signed).it("the tree and roster of %# hash to what the statement says", ([testCase]) => {
+        const {tree, users, managers} = postOf(testCase);
+        const treeHash = TreeHash.treeHash(TreeHash.of(asTree(tree))).toString("hex");
+        assert.strictEqual(treeHash, testCase.commit.treeHash, `${testCase.kind}: TH(post state) != commit.treeHash`);
+        assert.strictEqual(treeHash, testCase.treeHash, `${testCase.kind}: TH(post state) != case.treeHash`);
+        assert.strictEqual(TreeHash.rosterHash(users, managers).toString("hex"), testCase.commit.rosterHash, `${testCase.kind}: rosterHash`);
+        for (const node of tree.nodes.filter(record => record.publicKey)) {
+            assert.ok(node.setBy !== undefined && node.setBy <= testCase.commit.seq, `node ${node.nodeIndex} has no valid setBy`);
+        }
+    });
+    
+    each<[FixtureCase]>(signed).it("the bridge accepts the statement of %#", ([testCase]) => {
+        // The same check `GroupService` runs on a request, with what the bridge would derive. The fixture has no
+        // stored group around the case, so the group id, grant key, roster version and seq are taken from the
+        // statement itself; everything else — epoch, committer, seat, path, deltas, both hashes — is derived.
+        const commit = testCase.commit;
+        // A policy commit moves no node: the tree is the one before it, and its path is empty.
+        const transition = testCase.kind === "policy" ? undefined : (() => {
+            const {stored, op, submitted} = commitInput(testCase);
+            const result = TreeTransitionValidator.validateCommit(stored, op, submitted);
+            assert.ok(result.ok, JSON.stringify(!result.ok && result.rejections));
+            return {tree: TreeHash.afterCommit(stored.nodes, result.commit, commit.seq), path: submitted.refreshedNodes,
+                leafAssignment: result.commit.leafAssignment};
+        })();
+        const tree = transition?.tree ?? TreeHash.of(asTree((testCase as PolicyCase).after));
+        const leafAssignment = transition?.leafAssignment ?? asTree((testCase as PolicyCase).after).leafAssignment;
+        const {users, managers} = postOf(testCase);
+        // A creation has no deltas: its `rosterHash` binds the genesis roster.
+        const added = testCase.kind === "add" ? testCase.added : [];
+        const problems = CommitStatement.validate(commit, {
+            seq: commit.seq,
+            prevDigest: commit.prevDigest,
+            notBefore: 0,
+            op: testCase.kind,
+            groupId: commit.groupId,
+            treeVersion: TreeMath.TREE_VERSION,
+            keyVersion: testCase.kind === "remove" ? testCase.afterEpoch : testCase.epoch,
+            groupPubKey: commit.groupPubKey,
+            rosterVersion: commit.rosterVersion,
+            rosterHash: TreeHash.rosterHash(users, managers),
+            policyHash: CommitStatement.policyHash(testCase.groupPolicy, testCase.groupCreator as types.cloud.UserId),
+            tree,
+            committer: committerOf(testCase) as types.cloud.UserId,
+            committerPubKey: fixture.userPubKeys[commit.committer] as types.cloud.UserPubKey,
+            committerSeat: leafAssignment.indexOf(committerOf(testCase) as types.cloud.UserId),
+            path: transition?.path ?? [],
+            addedUsers: added.filter(u => !managers.includes(u)) as types.cloud.UserId[],
+            addedManagers: added.filter(u => managers.includes(u)) as types.cloud.UserId[],
+            removed: (testCase.kind === "remove" ? testCase.removed : []) as types.cloud.UserId[],
+        }, commit.date);
+        assert.deepStrictEqual(problems, [], `${testCase.kind}: ${JSON.stringify(problems)}`);
     });
 });
