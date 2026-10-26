@@ -15,7 +15,7 @@ import { Migration074GroupIndexes } from "../../../db/migration/Migration074Grou
 import { IOC } from "../../../service/ioc/IOC";
 import { createFake } from "../../testUtils/TestUtils";
 
-it("indexes statement keys and tombstones by context", async () => {
+it("indexes statement keys, tombstones by context and stream rooms by granted group", async () => {
     const indexes: [string, unknown][] = [];
     const ioc = createFake<IOC>({
         getMongoDbManager: (() => ({createOrGetCollection: async (name: string) => ({createIndex: async (spec: unknown) => {
@@ -23,5 +23,6 @@ it("indexes statement keys and tombstones by context", async () => {
         }})})) as never,
     });
     await Migration074GroupIndexes.go(ioc);
-    assert.deepStrictEqual(indexes.map(([, spec]) => spec), [{groupId: 1, "statement.groupPubKey": 1}, {contextId: 1}]);
+    assert.deepStrictEqual(indexes.map(([, spec]) => spec), [{groupId: 1, "statement.groupPubKey": 1}, {contextId: 1}, {"groups.groupId": 1}]);
+    assert.strictEqual(indexes[2][0], "streamRoom");
 });
