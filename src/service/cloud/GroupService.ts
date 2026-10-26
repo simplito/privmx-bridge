@@ -1179,7 +1179,7 @@ export class GroupService extends BaseContainerService {
             if (referenced) {
                 throw new AppException("GROUP_IN_USE");
             }
-            await groupRepository.deleteGroup(oldGroup.id);
+            await groupRepository.deleteGroup(oldGroup);
             return {oldGroup, context: usedContext};
         });
         this.groupNotificationService.sendDeletedGroup(result.oldGroup);
@@ -1223,6 +1223,8 @@ export class GroupService extends BaseContainerService {
         await groupRepository.deleteOneByOneByContext(contextId, async group => {
             this.groupNotificationService.sendDeletedGroup(group);
         });
+        // One delete for the tombstones just written and those of groups deleted earlier one by one.
+        await groupRepository.state.deleteTombstonesOfContext(contextId);
     }
     
 }
