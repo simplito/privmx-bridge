@@ -45,8 +45,6 @@ export class Migration073GroupEpochKeys {
         const epochKeys = await dbManager.createOrGetCollection<Omit<db.group.GroupEpochKey, "id">>(GroupStateRepository.EPOCH_KEY_COLLECTION_NAME);
         // Reading a group's rows and cutting an era (a range delete below the floor).
         await epochKeys.createIndex({groupId: 1, keyVersion: 1});
-        // A new epoch's key checked against every earlier one's (T4-24) without scanning the group's rows.
-        await epochKeys.createIndex({groupId: 1, groupPubKey: 1});
         const groups = await dbManager.createOrGetCollection<LegacyGroup>("group");
         const legacy = groups.find({}, {session, projection: {groupPubKey: 1, keyVersion: 1, keyHistory: 1, groupKeys: 1}});
         for await (const group of legacy) {

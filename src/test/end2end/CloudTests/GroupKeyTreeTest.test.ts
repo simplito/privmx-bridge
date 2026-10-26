@@ -14,7 +14,8 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, policyCommitAgainst, registerUserKey, removalOf, rotationGrantEdge, rotationStatement, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 
@@ -172,6 +173,28 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldTakeAPolicyChangeAsASignedCommit() {
+        // A policy change is a commit: the chain moves, the stored policy is the one the statement carries and
+        // signs, and nothing else moves.
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        const groupId = this.requireGroupId();
+        const served = (await this.apis.contextApi.groupGet({groupId, scope: "plan"})).group as unknown as ServedGroup;
+        const request = policyCommitAgainst(served, testData.userId, {update: "user", get: "all"});
+        assert(await this.apis.contextApi.groupUpdatePolicy(request) === "OK", "groupUpdatePolicy did not return OK");
+        const {group} = await this.apis.contextApi.groupGet({groupId});
+        assert(group.treeCommit?.seq === 2 && group.treeCommit.op === "policy", "the policy statement is the latest");
+        assert.deepStrictEqual(group.policy, {update: "user", get: "all"}, "the stored policy is the one it carries");
+        assert(group.treeCommit.policyHash === CommitStatement.policyHash(group.policy, group.creator).toString("hex"), "and signs");
+        assert(group.keyVersion === 1 && group.rosterVersion === 1, "no epoch and no roster moved");
+        const {commits} = await this.apis.contextApi.groupGetTreeCommits({groupId, fromSeq: 0});
+        assert.deepStrictEqual(commits.map(c => [c.seq, c.op]), [[1, "create"], [2, "policy"]]);
+        assert(commits[1].prevDigest === CommitStatement.digest(commits[0]), "chained to the creation");
+        // The same request again extends a head that is gone: a lost race, nothing stored.
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePolicy(request), "ROTATED_ALREADY");
+    }
+    
+    @Test()
     async shouldRefuseRemovingYourself() {
         // SECURITY: the remover mints the new grant key, so the member meant to lose the epoch would choose it.
         await this.addMembersToContext([alice, bob, carol]);
@@ -267,6 +290,25 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.verifyDeletingTheGroupEmptiesEveryCollection();
     }
     
+    /** A one-member group rotates, its grant edge going straight to the sole member, whose leaf is the
+     *  root; growing to two moves it to node 1, and every later rotation keeps exactly one grant edge. */
+    @Test()
+    async shouldRotateAOneMemberGroupAndKeepOneGrantEdgeThroughGrowingAndShrinking() {
+        await this.addMembersToContext([alice]);
+        await this.createTreeBackedGroup([testData.userId], []);
+        await this.rotate();
+        await this.verifyTheOnlyGrantEdge(`user:${testData.userId}`, 2);
+        await this.addMember(alice, 1);
+        await this.verifyTheOnlyGrantEdge("node:1", 2);
+        await this.rotate();
+        await this.verifyTheOnlyGrantEdge("node:1", 3);
+        await this.removeMember(alice);
+        assert((await this.readGroupDocument()).numLeaves === 2, "a removal blanks the seat, it does not shrink the tree");
+        await this.verifyTheOnlyGrantEdge("node:1", 4);
+        await this.rotate();
+        await this.verifyTheOnlyGrantEdge("node:1", 5);
+    }
+    
     // ── the group under test ─────────────────────────────────────────────────────────────────────────────────
     
     private async addMembersToContext(users: types.cloud.UserId[]) {
@@ -282,21 +324,21 @@ export class GroupKeyTreeTests extends BaseTestSet {
         }
     }
     
-    private async createTreeBackedGroup() {
-        const tree = buildTree(SEATING, 1);
+    private async createTreeBackedGroup(seating: string[] = SEATING, users: types.cloud.UserId[] = [alice, bob, carol]) {
+        const tree = buildTree(seating, 1);
         const resourceId = this.helpers.generateResourceId();
         const res = await this.apis.contextApi.groupCreate({
             contextId: testData.contextId,
             resourceId: resourceId,
             groupPubKey: epochKey(1),
-            users: [alice, bob, carol],
+            users: users,
             managers: [testData.userId],
             data: "group-data" as types.group.GroupData,
             publicMeta: "group-public-meta" as types.group.GroupData,
             privateMeta: "group-private-meta" as types.group.GroupData,
             keyId: keyIdAt(1),
             tree: tree,
-            commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey: epochKey(1), users: [alice, bob, carol], managers: [testData.userId]}),
+            commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey: epochKey(1), users: users, managers: [testData.userId]}),
         });
         assert(!!res.groupId, "groupCreate did not return a groupId");
         this.groupId = res.groupId;
@@ -459,14 +501,46 @@ export class GroupKeyTreeTests extends BaseTestSet {
         this.rosterVersion += 1;
     }
     
+    /** Rotates the grant key as the test user, planned against what the bridge serves. Shared with Track F
+     *  (03/04/09/11 extend its statement, not the edge). */
+    private async rotate() {
+        const groupId = this.requireGroupId();
+        const served = (await this.apis.contextApi.groupGet({groupId, scope: "full"})).group as unknown as ServedGroup;
+        const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+        const newEpoch = this.keyVersion + 1;
+        const res = await this.apis.contextApi.groupGenerateNewKey({
+            id: groupId,
+            groupPubKey: epochKey(newEpoch),
+            keyId: keyIdAt(newEpoch),
+            data: "group-data" as types.group.GroupData,
+            grantEdge: rotationGrantEdge(tree, newEpoch),
+            commit: rotationStatement(tree, (served.treeCommit?.seq ?? 0) + 1, newEpoch, testData.userId, {
+                groupId, groupPubKey: epochKey(newEpoch), rosterVersion: served.rosterVersion + 1,
+                users: served.users, managers: served.managers, ...(served.treeCommit ? {previous: served.treeCommit} : {}),
+            }),
+            rungs: this.rungsFor(newEpoch),
+            expectedKeyVersion: this.keyVersion,
+            expectedRosterVersion: this.rosterVersion,
+        });
+        assert(res === "OK", "groupGenerateNewKey did not return OK");
+        this.keyVersion = newEpoch;
+        this.rosterVersion += 1;
+    }
+    
+    /** Exactly one grant edge is stored, to `child`, at `epoch`, and the group document is at that epoch. */
+    private async verifyTheOnlyGrantEdge(child: string, epoch: number) {
+        const grants = (await this.readEdges()).filter(edge => edge.isGrantEdge);
+        assert.deepStrictEqual(grants.map(edge => [edge._id.slice(edge._id.indexOf("|") + 1), edge.parentGeneration]), [[`grant>${child}`, epoch]],
+            `one grant edge to ${child} at epoch ${epoch}`);
+        assert((await this.readGroupDocument()).keyVersion === epoch, `the group is at epoch ${epoch}`);
+    }
+    
     /** One epoch's worth of rungs: the mandatory unit rung down to the previous epoch, plus the skips. */
-    private rungsFor(newEpoch: number, floor = 1): types.cloud.GroupArchiveRung[] {
+    private rungsFor(newEpoch: number, floor = 1): types.cloud.GroupArchiveRungSubmission[] {
         return LadderMath.rungSpansFor(newEpoch, floor).map(span => ({
             atKeyVersion: span.at,
             targetKeyVersion: span.target,
-            recipientKind: "epoch" as const,
             data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
-            author: testData.userId,
         }));
     }
     

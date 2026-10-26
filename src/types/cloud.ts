@@ -92,7 +92,7 @@ export interface GroupKeysEntry {
 
 export interface GroupKeyEntrySet {
     group: types.group.GroupId;
-    groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion (Phase 2, BR-5)
+    groupEpoch: number;  // required: the group epoch the CK was wrapped to; must equal the group's current keyVersion
     keyId: types.core.KeyId;
     data: types.core.UserKeyData;
 }
@@ -205,7 +205,7 @@ export interface GroupTreeSelfUpdateTransition {
     edges: GroupTreeEdge[];
 }
 
-export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate";
+export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy";
 
 /** One node a commit re-keyed, as the committer signed it. */
 export interface GroupTreeCommitPathEntry {
@@ -241,6 +241,8 @@ export interface GroupTreeCommitStatement {
     rosterHash: string;
     /** Hex SHA-256 of the tree after the commit. */
     treeHash: string;
+    /** Hex `CommitStatement.policyHash` of the group's policy after the commit: the four commit rules and the creator. */
+    policyHash: string;
     committer: UserId;
     /** The committer's context public key when it signed — what the signature verifies against. */
     committerPubKey: UserPubKey;
@@ -250,6 +252,9 @@ export interface GroupTreeCommitStatement {
     addedUsers: UserId[];
     addedManagers: UserId[];
     removed: UserId[];
+    /** The group's whole policy after the commit, present exactly on `create` and `policy`. Not signed itself: bound
+     *  by `policyHash`, which covers the rules that govern commits. */
+    policy?: ContainerPolicy;
     /** Base64 compact ECDSA (65 bytes) over SHA-256 of the signed bytes. */
     signature: types.core.EccSignature;
 }
@@ -265,17 +270,25 @@ export interface GroupTreeState {
 // ── Epoch Ladder ────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * One rung: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
+ * One rung as a client submits it: `wrap(sk_targetKeyVersion -> pk_atKeyVersion)`.
  *
  * `targetKeyVersion < atKeyVersion` always — an upward rung would hand a removed member a key from after their
- * removal. Enforced on every write.
+ * removal. Enforced on every write. Every rung is sealed to the grant key of `atKeyVersion`: there is no other
+ * kind of recipient, so an era-crossing link sealed to somebody's own key cannot pass as the unit rung.
  */
-export interface GroupArchiveRung {
+export interface GroupArchiveRungSubmission {
     atKeyVersion: number;
     targetKeyVersion: number;
-    recipientKind?: "epoch"|"user"|"group";
-    recipient?: string;
     data: types.core.UserKeyData;
+}
+
+/**
+ * One rung as the bridge serves it: the submission plus who stored it. `author` is set by the bridge to the caller
+ * of the operation that stored the rung (a commit or `groupRepairRung`), never taken from the client. It is the
+ * bridge's word, so clients use it as a label only; blame comes from the signed statement that opened the epoch.
+ * Rows stored before the field was server-set may lack it.
+ */
+export interface GroupArchiveRung extends GroupArchiveRungSubmission {
     author?: UserId;
 }
 

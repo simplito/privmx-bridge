@@ -394,9 +394,4 @@ describe("TreeMath.isKeyed / keyedPath — shared expectations with the endpoint
         // though 95's own right subtree is a single leaf.
         assert.deepStrictEqual(TreeMath.keyedPath(48, 49), [95, 63]);
     });
-    
-    it("version constants", () => {
-        assert.strictEqual(TreeMath.TREE_VERSION, 3);
-        assert.strictEqual(TreeMath.BUCKET_LEVEL, 4);
-    });
 });

@@ -259,8 +259,14 @@ describe("LadderMath.validateRungSet", () => {
         ok(LadderMath.validateRungSet([{at: 8, target: 7}], 8, 1));
     });
     
-    it("accepts a non-aligned skip — alignment is advisory, not enforced", () => {
-        ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1));
+    it("refuses a span the epoch does not owe, so a commit's rungs stay within the canonical ~33 spans", () => {
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1), "NOT_CANONICAL");
+        // A skip below the effective floor is not owed either, whichever of the two floors it is.
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5), "BELOW_PRUNE_WATERMARK");
+        ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 6}], 8, 1));
+        // Never more than the owed spans: one commit cannot file 256 rungs at targets of its choosing.
+        const many = Array.from({length: 200}, (_, i) => ({at: 1024, target: 1023 - i}));
+        problem(LadderMath.validateRungSet(many, 1024, 1), "NOT_CANONICAL");
     });
     
     /** SECURITY — the single check that stops a removed member reading forward. */
@@ -314,5 +320,60 @@ describe("LadderMath.validateRungSet", () => {
         for (let epoch = floor; epoch <= floor + 200; epoch++) {
             ok(LadderMath.validateRungSet(LadderMath.rungSpansFor(epoch, floor), epoch, floor));
         }
+    });
+});
+
+describe("LadderMath.validateRepairSpan", () => {
+    const ok = (r: ReturnType<typeof LadderMath.validateRepairSpan>) => {
+        assert.strictEqual(r.ok, true, `expected ok, got ${JSON.stringify(r)}`);
+    };
+    const problem = (r: ReturnType<typeof LadderMath.validateRepairSpan>, kind: string) => {
+        assert.strictEqual(r.ok, false);
+        assert.strictEqual((r as {ok: false, problem: {kind: string}}).problem.kind, kind);
+    };
+    
+    it("accepts the unit and aligned skip spans of any epoch up to the current one", () => {
+        for (let at = 2; at <= 64; at++) {
+            for (const span of LadderMath.rungSpansFor(at, 1)) {
+                ok(LadderMath.validateRepairSpan(span, 64, 1));
+            }
+        }
+        ok(LadderMath.validateRepairSpan({at: 8, target: 4}, 8, 1));
+    });
+    
+    it("refuses a span at an epoch that does not exist yet", () => {
+        problem(LadderMath.validateRepairSpan({at: 9, target: 8}, 8, 1), "FUTURE_EPOCH");
+    });
+    
+    it("refuses a span no epoch owes, such as a non-aligned skip", () => {
+        problem(LadderMath.validateRepairSpan({at: 8, target: 5}, 8, 1), "NOT_CANONICAL");
+        problem(LadderMath.validateRepairSpan({at: 7, target: 5}, 8, 1), "NOT_CANONICAL");
+    });
+    
+    /** SECURITY — a repair, like a commit rung, never hands a holder of an old key a later one. */
+    each<[number, number]>([[6, 6], [6, 7], [2, 8]]).it(
+        "SECURITY: refuses an upward or self span at=%s target=%s",
+        ([at, target]) => {
+            problem(LadderMath.validateRepairSpan({at, target}, 8, 1), "DIRECTION");
+        },
+    );
+    
+    it("SECURITY: refuses a span below the era floor, also one at the floor epoch itself", () => {
+        problem(LadderMath.validateRepairSpan({at: 8, target: 4}, 8, 5), "BELOW_ERA_FLOOR");
+        problem(LadderMath.validateRepairSpan({at: 5, target: 4}, 8, 5), "BELOW_ERA_FLOOR");
+    });
+    
+    it("SECURITY: refuses a span below the prune watermark", () => {
+        problem(LadderMath.validateRepairSpan({at: 8, target: 4}, 8, 1, 5), "BELOW_PRUNE_WATERMARK");
+    });
+    
+    it("a skip clamped away by the floor is not canonical either", () => {
+        // At floor 5, epoch 8 owes (8,7) and (8,6); (8,4) is below the floor, so nothing else.
+        ok(LadderMath.validateRepairSpan({at: 8, target: 6}, 8, 5));
+        problem(LadderMath.validateRepairSpan({at: 16, target: 8}, 16, 1, 9), "BELOW_PRUNE_WATERMARK");
+    });
+    
+    it("refuses non-integer epoch numbers", () => {
+        problem(LadderMath.validateRepairSpan({at: 8, target: 7.5}, 8, 1), "NON_INTEGER");
     });
 });

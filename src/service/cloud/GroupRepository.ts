@@ -60,7 +60,8 @@ export class GroupRepository {
     
     constructor(
         private repository: MongoObjectRepository<types.group.GroupId, db.group.Group>,
-        private state: GroupStateRepository,
+        /** The group's out-of-document state, in the same session. */
+        readonly state: GroupStateRepository,
     ) {
     }
     
@@ -81,7 +82,7 @@ export class GroupRepository {
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         // `onlyForUser` narrows to the caller's own groups, served off the `{contextId, users}` /
-        // `{contextId, managers}` indexes from Migration072. In the same `$match` as `contextId`, so no query
+        // `{contextId, managers}` indexes from Migration071. In the same `$match` as `contextId`, so no query
         // from `listParams` can widen it back.
         const match = onlyForUser === undefined
             ? {contextId: contextId}
@@ -153,49 +154,32 @@ export class GroupRepository {
                 return;
             }
             for (const group of groups) {
-                await this.deleteGroup(group.id);
+                await this.deleteGroup(group);
                 await func(group);
             }
         }
     }
     
-    // ── out-of-document state (see GroupStateRepository) ──────────────────────────────────────────────────────
-    
-    /** The hidden key tree, assembled in the shape the validator and the API have always seen. */
-    async getTree(group: db.group.Group): Promise<types.cloud.GroupTreeState> {
-        return this.state.getTree(group);
-    }
-    
-    async getHistory(groupId: types.group.GroupId, fromRosterVersion?: number): Promise<db.group.GroupHistoryEntry[]> {
-        return this.state.getHistory(groupId, fromRosterVersion);
-    }
-    
-    /** The epoch each plane's head entry is keyed at — what `cutEra`/`pruneArchive` must not cut below. */
-    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
-        return this.state.getMetaHeadKeyVersions(groupId);
-    }
-    
-    /** Every keyId the group has ever used — what a submitted key entry is checked against. */
-    async getHistoryKeyIds(groupId: types.group.GroupId): Promise<types.core.KeyId[]> {
-        return this.state.getHistoryKeyIds(groupId);
-    }
-    
-    /** Every epoch row of the group, ascending (see `db.group.GroupEpochKey`). */
-    async getEpochKeys(groupId: types.group.GroupId): Promise<db.group.GroupEpochKey[]> {
-        return this.state.getEpochKeys(groupId);
-    }
-    
-    async hasEpochWithGroupPubKey(groupId: types.group.GroupId, groupPubKey: types.cloud.GroupPubKey): Promise<boolean> {
-        return this.state.hasEpochWithGroupPubKey(groupId, groupPubKey);
-    }
-    
-    async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        return this.state.getArchiveRungs(groupId, fromKeyVersion, toKeyVersion);
+    /**
+     * Serialises a repair on the group document: bumps `ladderRev` only while the floors are still those `oldGroup`
+     * was read with. Every floor change and every commit writes the same document, so inside a transaction a
+     * concurrent one is a write conflict and the repair is re-run against the state that won. The epoch is
+     * deliberately not in the filter: a new epoch does not invalidate a repair at an older one.
+     *
+     * @returns false when the floors moved (nothing written)
+     */
+    async touchLadder(oldGroup: db.group.Group): Promise<boolean> {
+        const filter = {
+            _id: oldGroup.id,
+            eraFloor: oldGroup.eraFloor,
+            archivePrunedBelow: oldGroup.archivePrunedBelow ?? {$exists: false},
+        };
+        const result = await this.repository.collection.updateOne(filter, {$inc: {ladderRev: 1}}, this.repository.getOptions());
+        return result.matchedCount > 0;
     }
     
     /** At most this many reads of a group's state while commits keep landing under it (`getFullState`). */
     static readonly FULL_STATE_ATTEMPTS = 3;
-    
     /**
      * Tree, roster history, both metadata heads and the latest commit statement — what a read path needs to serve
      * a whole group — together with the group document they belong to.
@@ -224,13 +208,12 @@ export class GroupRepository {
     }
     
     private async readFullState(group: db.group.Group, fromRosterVersion?: number): Promise<db.group.GroupState> {
-        const [tree, history, publicMeta, privateMeta, [treeCommit], epochKeys] = await Promise.all([
+        const [tree, history, publicMeta, privateMeta, [treeCommit]] = await Promise.all([
             this.state.getTree(group),
             this.state.getHistory(group.id, fromRosterVersion),
             this.state.getPublicMetaHead(group.id),
             this.state.getPrivateMetaHead(group.id),
             group.treeCommitSeq === undefined ? Promise.resolve([]) : this.state.getTreeCommitsAt(group.id, [group.treeCommitSeq]),
-            this.state.getEpochKeys(group.id),
         ]);
         // An invariant, not a client error: `createGroup` writes the document and both entries in one
         // transaction, so only a group left over from an older build of this branch can be missing either.
@@ -245,17 +228,11 @@ export class GroupRepository {
         if (!privateMeta) {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no private metadata entry; it predates the metadata planes and must be recreated`);
         }
+        // Only the epochs a read of the group needs: the current one (the roster head's key) and the ones both
+        // metadata heads sit at. Any other epoch only opens an old envelope; `groupGetEpochKeys` serves it by keyId or
+        // grant key, so a member's `groupGet` stays O(1) in the group's age.
+        const epochKeys = await this.state.getEpochKeysAt(group.id, [...new Set([group.keyVersion, publicMeta.keyVersion, privateMeta.keyVersion])]);
         return {tree, history, publicMeta, privateMeta, treeCommit: treeCommit ?? null, epochKeys};
-    }
-    
-    /** The statements at the given seqs — what vouches for the node records a response serves. */
-    async getTreeCommitsAt(groupId: types.group.GroupId, seqs: number[]): Promise<types.cloud.GroupTreeCommitStatement[]> {
-        return this.state.getTreeCommitsAt(groupId, seqs);
-    }
-    
-    /** Statements with `fromSeq < seq <= toSeq`, ascending, one page. */
-    async getTreeCommitRange(groupId: types.group.GroupId, fromSeq: number, toSeq: number): Promise<db.group.GroupTreeCommit[]> {
-        return this.state.getTreeCommitRange(groupId, fromSeq, toSeq);
     }
     
     // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -341,17 +318,6 @@ export class GroupRepository {
         return group;
     }
     
-    /** Every node record of the group — what a commit is checked against. One per keyed node at most, so a
-     *  few dozen documents for the largest group. */
-    async getNodes(group: db.group.Group): Promise<types.cloud.GroupTreeNode[]> {
-        return this.state.getNodes(group.id);
-    }
-    
-    /** The root node alone, which is all a rotation is checked against. */
-    async getRootNode(group: db.group.Group): Promise<types.cloud.GroupTreeNode|undefined> {
-        return (await this.state.getNodesAt(group.id, [TreeMath.root(group.numLeaves)]))[0];
-    }
-    
     /**
      * Removes one or more members: blank their leaves and paths, re-key the remover's path, advance the epoch
      * once, append the rungs. All under one compare-and-swap on `keyVersion`, so two managers removing
@@ -369,7 +335,7 @@ export class GroupRepository {
         newGroupPubKey: types.cloud.GroupPubKey,
         keyId: types.core.KeyId,
         data: types.group.GroupData,
-        rungs: types.cloud.GroupArchiveRung[],
+        rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
         /** Close the era at the new epoch in the same write, as `cutEra` would. */
         abandonHistory?: boolean,
@@ -410,7 +376,7 @@ export class GroupRepository {
             author: modifier,
         });
         await this.state.applyCommit(oldGroup.id, oldGroup, commit, params.statement);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         if (params.abandonHistory) {
             await this.state.deleteRungsTargetingBelow(oldGroup.id, expectedKeyVersion + 1);
@@ -433,14 +399,15 @@ export class GroupRepository {
         commit: TreeCommit,
         statement: types.cloud.GroupTreeCommitStatement,
         modifier: types.cloud.UserId,
-        addedMembers: {userId: types.cloud.UserId, role: types.cloud.ContainerRole}[],
+        newUsers: types.cloud.UserId[],
+        newManagers: types.cloud.UserId[],
         keyId: types.core.KeyId,
         data: types.group.GroupData,
     }): Promise<db.group.Group|null> {
-        const {oldGroup, modifier, addedMembers, commit} = params;
+        const {oldGroup, modifier, commit} = params;
         const now = DateUtils.now();
-        const users = Utils.unique([...oldGroup.users, ...addedMembers.filter(m => m.role === "user").map(m => m.userId)]);
-        const managers = Utils.unique([...oldGroup.managers, ...addedMembers.filter(m => m.role === "manager").map(m => m.userId)]);
+        const users = Utils.unique([...oldGroup.users, ...params.newUsers]);
+        const managers = Utils.unique([...oldGroup.managers, ...params.newManagers]);
         const expectedKeyVersion = oldGroup.keyVersion;
         // Roster plane only — seating a member is not a metadata edit.
         const version = this.nextVersionOf(oldGroup, "rosterVersion");
@@ -602,37 +569,30 @@ export class GroupRepository {
     }
     
     /**
-     * The policy alone, and no CAS.
+     * A policy commit: the new policy and its statement, under the same CAS on epoch, roster version and
+     * `treeCommitSeq` as every other commit, so it lands only on the state its statement extends.
      *
-     * The policy lives outside the client's signed envelope, so there is no version a client could send and
-     * nothing to compare — `_id` alone, last write wins. It appends **no** entry in either plane: that is the
-     * load-bearing part, because moving a counter a client's envelope pins without writing the entry that
-     * commits it would leave the group unreadable.
+     * It moves neither metadata counter and appends no entry in either plane: moving a counter a client's envelope
+     * pins without writing the entry that commits it would leave the group unreadable. The policy's history is the
+     * statements themselves (create and policy ops carry it).
      *
-     * `null` means the group was deleted between the caller's read and here, not a lost race.
+     * @returns null on a CAS miss, in which case nothing has been written
      */
-    async updatePolicy(oldGroup: db.group.Group, modifier: types.cloud.UserId,
-        policy: types.cloud.ContainerPolicy): Promise<db.group.Group|null> {
+    async updatePolicyWithStatement(oldGroup: db.group.Group, modifier: types.cloud.UserId,
+        policy: types.cloud.ContainerPolicy, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
         const changes: Partial<db.group.Group> = {
             policy: policy,
+            treeCommitSeq: statement.seq,
             lastModifier: modifier,
             lastModificationDate: DateUtils.now(),
         };
-        const result = await this.repository.collection.updateOne(
-            {_id: oldGroup.id},
-            {$set: this.toDbChanges(changes)},
-            this.repository.getOptions(),
-        );
-        return result.matchedCount === 0 ? null : {...oldGroup, ...changes};
+        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
+            return null;
+        }
+        await this.state.insertTreeCommit(oldGroup.id, statement);
+        return {...oldGroup, ...changes};
     }
     
-    /**
-     * `updateOne` through the raw driver, with 11000 mapped to `DbDuplicateError`.
-     *
-     * `MongoObjectRepository` wraps duplicates only for `insert`/`update`, and these writes need a filter it
-     * cannot express — so without this the service's `DbDuplicateError` catch would be decorative and a
-     * duplicate `clientResourceId` would surface as a raw driver error.
-     */
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
         try {
             return await this.repository.collection.updateOne(
@@ -649,10 +609,10 @@ export class GroupRepository {
         }
     }
     
-    async deleteGroup(id: types.group.GroupId) {
-        await this.repository.delete(id);
-        await this.state.deleteState(id);
-        await this.state.markDeleted(id);
+    async deleteGroup(group: Pick<db.group.Group, "id"|"contextId">) {
+        await this.repository.delete(group.id);
+        await this.state.deleteState(group.id);
+        await this.state.markDeleted(group.id, group.contextId);
     }
     
     /**
@@ -684,9 +644,9 @@ export class GroupRepository {
      *
      * `expectedRosterVersion` is what the writers of a roster entry pass, and it is not redundant with the
      * epoch: an addition moves `rosterVersion` without moving `keyVersion`, so two concurrent additions both
-     * match on the epoch alone. Without it, a transaction retried on a write conflict would recompute
-     * `nextRosterVersion` server-side and land the entry at a version the caller's `rosterTag` never committed
-     * to — unverifiable forever. A cut or a prune writes no entry and passes nothing.
+     * match on the epoch alone. Without it, a transaction retried on a write conflict would recompute the roster
+     * version server-side and land the entry at a version the caller's statement never signed — unverifiable
+     * forever. A cut or a prune writes no entry and passes nothing.
      *
      * `expectedTreeCommitSeq` is what every tree commit passes: its statement is signed as the next seq, and
      * landing it on a chain that has moved on would leave two statements claiming one number.
@@ -718,7 +678,7 @@ export class GroupRepository {
         keyId: types.core.KeyId,
         grantEdge: types.cloud.GroupTreeEdge,
         statement: types.cloud.GroupTreeCommitStatement,
-        rungs: types.cloud.GroupArchiveRung[],
+        rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
     }): Promise<db.group.Group | null> {
         const {oldGroup, modifier} = params;
@@ -751,7 +711,7 @@ export class GroupRepository {
         });
         await this.state.replaceGrantEdge(oldGroup.id, params.grantEdge);
         await this.state.insertTreeCommit(oldGroup.id, params.statement);
-        await this.state.insertRungs(oldGroup.id, params.rungs);
+        await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
         return {...oldGroup, ...changes};
     }

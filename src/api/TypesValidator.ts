@@ -41,6 +41,8 @@ export class TypesValidator {
     
     byteBuffer: CustomValidatorWithLength;
     eccPub: Validator;
+    /** The canonical public key: one string per point. Use it for every public key the Bridge compares as a string. */
+    eccPubCompressed: Validator;
     base64: CustomValidatorWithLength;
     bi10: Validator;
     bi16: Validator;
@@ -81,10 +83,10 @@ export class TypesValidator {
     groupTreeState: Validator;
     groupTreeRefreshedNode: Validator;
     groupTreeTransition: Validator;
-    groupTreeSeatedNode: Validator;
     groupTreeAdditionTransition: Validator;
     groupTreeSelfUpdateTransition: Validator;
-    groupTreeCommitStatement: Validator;
+    groupTreeCommitStatement: ObjectValidator;
+    groupTreeCommitStatementWithPolicy: ObjectValidator;
     groupArchiveRung: Validator;
     groupGrant: Validator;
     cloudGroupKeyEntrySet: Validator;
@@ -161,6 +163,17 @@ export class TypesValidator {
                 throw new Error("Expected Ecc public key");
             }
             return;
+        });
+        this.eccPubCompressed = this.builder.createCustom(value => {
+            if (typeof(value) !== "string") {
+                throw new Error("Expected string");
+            }
+            // One string per key: the grant-key reuse check compares keys as strings, and a re-encoded key (uncompressed, hybrid) passes
+            // for a new one. A throw from the decode (a compressed x with no point) is a refusal too, as in `eccPub`.
+            const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
+            if (ecc === null || ECUtils.publicToBase58DER(ecc) !== value) {
+                throw new Error("Expected a compressed Ecc public key");
+            }
         });
         this.base64 = this.builder.createCustom((value, validator, checker) => {
             if (typeof(value) !== "string") {
@@ -274,11 +287,11 @@ export class TypesValidator {
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
-        this.groupPubKey = this.eccPub;
+        this.groupPubKey = this.eccPubCompressed;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
             generation: this.intNonNegative,
-            publicKey: this.eccPub,
+            publicKey: this.eccPubCompressed,
             // Accepted for symmetry with what `groupGet` serves, and ignored: the bridge sets it to the seq of the
             // statement the node arrives with.
             setBy: this.builder.optional(this.intNonNegative),
@@ -325,9 +338,8 @@ export class TypesValidator {
             // Absent when the node has no record yet: there is no generation it was read at.
             fromGeneration: this.builder.optional(this.intNonNegative),
             generation: this.intNonNegative,
-            publicKey: this.eccPub,
+            publicKey: this.eccPubCompressed,
         });
-        this.groupTreeSeatedNode = this.groupTreeRefreshedNode;
         // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
         // newcomers' paths. Its edges are what those nodes owe, and a node whose sibling subtree is all blank wraps
         // to every member under it — so the edge cap is the whole-tree one, not `O(log n)`.
@@ -342,7 +354,7 @@ export class TypesValidator {
         this.groupTreeAdditionTransition = this.builder.createObject({
             baseKeyVersion: this.builder.min(this.builder.int, 0),
             positions: this.builder.createListWithMaxLength(this.intNonNegative, TypesValidator.MAX_GROUP_BATCH),
-            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeSeatedNode, maxCommitNodes),
+            seatedNodes: this.builder.createListWithMaxLength(this.groupTreeRefreshedNode, maxCommitNodes),
             edges: this.builder.createListWithMaxLength(this.groupTreeEdge, maxCommitEdges),
         });
         this.groupTreeSelfUpdateTransition = this.builder.createObject({
@@ -361,7 +373,7 @@ export class TypesValidator {
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
             prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
-            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate"]),
+            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,
             date: this.intNonNegative,
@@ -370,13 +382,14 @@ export class TypesValidator {
             rosterVersion: this.builder.min(this.builder.int, 1),
             rosterHash: sha256Hex,
             treeHash: sha256Hex,
+            policyHash: sha256Hex,
             committer: this.cloudUserId,
             committerPubKey: this.cloudUserPubKey,
             committerSeat: this.intNonNegative,
             path: this.builder.createListWithMaxLength(this.builder.createObject({
                 nodeIndex: this.intNonNegative,
                 generation: this.intNonNegative,
-                publicKey: this.eccPub,
+                publicKey: this.eccPubCompressed,
                 subtreeHash: sha256Hex,
             }), maxCommitNodes),
             addedUsers: memberList,
@@ -387,10 +400,7 @@ export class TypesValidator {
         this.groupArchiveRung = this.builder.createObject({
             atKeyVersion: this.builder.min(this.builder.int, 1),
             targetKeyVersion: this.builder.min(this.builder.int, 1),
-            recipientKind: this.builder.optional(this.builder.createEnum(["epoch", "user", "group"])),
-            recipient: this.builder.optional(this.builder.maxLength(this.builder.string, 128)),
             data: this.userKeyData,
-            author: this.builder.optional(this.cloudUserId),
         });
         this.groupGrant = this.builder.createObject({
             groupId: this.groupId,
@@ -518,6 +528,15 @@ export class TypesValidator {
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
+        });
+        // A creation's and a policy commit's statement carries the policy it signs (`policyHash`); defined here
+        // because the policy validators are.
+        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.builder.optional(this.containerPolicy),
+        });
+        // Required where the op is `create` or `policy`, so the service never hashes a policy nobody sent.
+        this.groupTreeCommitStatementWithPolicy = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.containerPolicy,
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),

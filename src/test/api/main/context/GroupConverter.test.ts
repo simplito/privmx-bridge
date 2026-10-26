@@ -12,11 +12,16 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { GroupConverter } from "../../../../api/main/context/GroupConverter";
+import { ContextApi } from "../../../../api/main/context/ContextApi";
+import { ContextApiValidator } from "../../../../api/main/context/ContextApiValidator";
+import { TypesValidator } from "../../../../api/TypesValidator";
+import type { ContextService } from "../../../../service/cloud/ContextService";
+import type { SessionService } from "../../../../api/session/SessionService";
+import type { GroupService } from "../../../../service/cloud/GroupService";
+import type { RequestLogger } from "../../../../service/log/RequestLogger";
 import { buildTree, planCommit } from "../../../testUtils/TreeFixtures";
-import { ByteWriter } from "../../../../service/cloud/keytree/ByteWriter";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
-import { Crypto } from "../../../../utils/crypto/Crypto";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
 
@@ -129,6 +134,14 @@ it("keyHistory and groupKeys come from the epoch rows: the past epochs' grant ke
     assert.deepStrictEqual(new GroupConverter().convertKeyArchive(group, [], epochKeys).keyHistory, converted.keyHistory);
 });
 
+it("the epoch rows found by groupGetEpochKeys come in groupGet's shapes, the current epoch's grant key included", async () => {
+    const converted = new GroupConverter().convertEpochKeys(group, epochKeys);
+    assert.strictEqual(converted.keyVersion, group.keyVersion);
+    assert.deepStrictEqual(converted.groupKeys, [{group: groupId, keys: [selfKey]}]);
+    assert.deepStrictEqual(converted.keyHistory, epochKeys.filter(row => row.groupPubKey).map(row => ({keyVersion: row.keyVersion, groupPubKey: row.groupPubKey})));
+    assert(converted.keyHistory.some(entry => entry.keyVersion === group.keyVersion), "the current epoch too");
+});
+
 it("a listing carries the epoch and the counters, and nothing that grows with membership or history", async () => {
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
     // No `publicMeta`/`privateMeta` (two envelopes per group), no roster and no statement (both grow with members).
@@ -204,7 +217,7 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// history windowing (BR-09)
+// history windowing
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("serves the whole history, from genesis, when the caller does not say what it has", async () => {
@@ -312,7 +325,7 @@ it("a path view carries the copath hashes that, with the caller's own path, rebu
         const sibling = Buffer.from(copathHash, "hex");
         const [left] = TreeMath.children(parent, 64);
         // The parent's own fields come from the served record (keyed) or its index alone (unkeyed).
-        hash = left === current ? rehash(served, parent, hash, sibling) : rehash(served, parent, sibling, hash);
+        hash = left === current ? TreeHash.nodeHash(served, parent, hash, sibling) : TreeHash.nodeHash(served, parent, sibling, hash);
         current = parent;
     }
     assert.strictEqual(hash.toString("hex"), TreeHash.childHash(TreeHash.of(wide), TreeMath.root(64)).toString("hex"));
@@ -346,21 +359,18 @@ it("the hash cache keeps one entry per group, its latest seq, and only the nodes
     assert([...cache.get(id)!.hashes.keys()].every(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL));
 });
 
-it("the hash cache stays within its byte bound", async () => {
+it("the hash cache stays within its entry bound, least recently used out first", async () => {
     const {wide, groupWide} = wideGroup();
-    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_BYTES: number, hashCacheBytes: number, hashCache: Map<string, unknown>};
-    const saved = limits.HASH_CACHE_MAX_BYTES;
-    // Room for exactly one 64-seat tree's entry.
-    const one = [...TreeHash.childHashes(TreeHash.of(wide)).keys()].filter(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL).length * GroupConverter.HASH_ENTRY_BYTES;
-    limits.HASH_CACHE_MAX_BYTES = one;
+    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_GROUPS: number, hashCache: Map<string, unknown>};
+    const saved = limits.HASH_CACHE_MAX_GROUPS;
+    limits.HASH_CACHE_MAX_GROUPS = 1;
     try {
         new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundA" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
         new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundB" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
-        assert(limits.hashCacheBytes <= limits.HASH_CACHE_MAX_BYTES);
-        assert(limits.hashCache.has("BoundB") && !limits.hashCache.has("BoundA"), "the least recently used goes first");
+        assert.deepStrictEqual([...limits.hashCache.keys()], ["BoundB"]);
     }
     finally {
-        limits.HASH_CACHE_MAX_BYTES = saved;
+        limits.HASH_CACHE_MAX_GROUPS = saved;
     }
 });
 
@@ -381,21 +391,25 @@ it("the latest statement is served as is; vouching statements are named by the s
     assert.deepStrictEqual(GroupConverter.vouchingSeqs([...converted.treeNodes, {nodeIndex: 95, generation: 0}]), [1, 2], "a blank record vouches for nothing");
 });
 
-/** `NH`/`CH` of an internal node from its two children's hashes — the step a client repeats up its path. */
-function rehash(view: ReturnType<typeof TreeHash.of>, nodeIndex: number, left: Buffer, right: Buffer): Buffer {
-    const writer = new ByteWriter();
-    if (TreeMath.isKeyed(nodeIndex, view.numLeaves)) {
-        const record = view.nodes.get(nodeIndex);
-        writer.tag("pmx-tree-node").u32(nodeIndex).u8(record ? 1 : 0);
-        if (record) {
-            writer.u32(record.generation).u8(record.publicKey ? 1 : 0);
-            if (record.publicKey) {
-                writer.lp(record.publicKey).u64(record.setBy ?? 0);
-            }
-        }
-    }
-    else {
-        writer.tag("pmx-tree-inner").u32(nodeIndex);
-    }
-    return Crypto.sha256(writer.raw(left).raw(right).bytes());
-}
+it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by keyId", async () => {
+    const asked: {keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]}[] = [];
+    const groupService = {
+        getEpochKeys: (_user: unknown, _id: types.group.GroupId, keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]) => {
+            asked.push({keyIds, groupPubKeys});
+            const rows = epochKeys.filter(row => keyIds.includes(row.groupKey?.keyId as types.core.KeyId) || groupPubKeys.includes(row.groupPubKey as types.cloud.GroupPubKey));
+            return Promise.resolve({group, epochKeys: rows});
+        },
+    };
+    const api = new ContextApi(
+        new ContextApiValidator(new TypesValidator()),
+        {} as unknown as ContextService,
+        {validateContextSessionAndGetCloudUser: () => ({})} as unknown as SessionService,
+        groupService as unknown as GroupService,
+        new GroupConverter(),
+        {setContextId: () => undefined} as unknown as RequestLogger,
+    );
+    const pub2 = "Pub2" as unknown as types.cloud.GroupPubKey;
+    const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});
+    assert.deepStrictEqual(asked, [{keyIds: [], groupPubKeys: [pub2]}]);
+    assert.deepStrictEqual(result.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}]);
+});

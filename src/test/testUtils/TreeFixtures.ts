@@ -277,15 +277,29 @@ export interface StatementContext {
     date?: number;
     /** The statement this one extends; none at seq 1. */
     previous?: types.cloud.GroupTreeCommitStatement;
+    /** The group's policy after a creation (default `{}`). A policy commit carries its op's. */
+    policy?: types.cloud.ContainerPolicy;
+    /** The group's creator, for `policyHash` (default: the committer at creation, else the committer). */
+    creator?: string;
+    /** Overrides the derived `policyHash` (default: a creation's or policy op's own policy, else the extended
+     *  statement's, else `{}` with the creator). */
+    policyHash?: string;
 }
 
+/** Every op a statement can name: the planned ones, plus those that move no node. */
+export type StatementOp = PlanOp|{kind: "rotate", committer: string}|{kind: "policy", committer: string, policy: types.cloud.ContainerPolicy};
+
 /** The signed statement an honest committer sends with `plan`. */
-export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: string}, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
+export function statementFor(plan: Plan, op: StatementOp, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
     const sorted = (values: string[]) => TreeHash.sortedUnique(values.map(userId));
     // A creation has no deltas: its `rosterHash` binds the genesis roster.
     const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : [];
     const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : [];
     const hashes = TreeHash.childHashes(TreeHash.of(plan.after));
+    const creator = userId(ctx.creator ?? op.committer);
+    const policy = op.kind === "create" ? (ctx.policy ?? {}) : op.kind === "policy" ? op.policy : undefined;
+    const policyHash = ctx.policyHash
+        ?? (policy !== undefined || !ctx.previous ? CommitStatement.policyHash(policy ?? {}, creator).toString("hex") : ctx.previous.policyHash);
     return signStatement({
         seq: plan.seq,
         prevDigest: ctx.previous ? CommitStatement.digest(ctx.previous) : "",
@@ -298,6 +312,7 @@ export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: 
         rosterVersion: ctx.rosterVersion,
         rosterHash: TreeHash.rosterHash(ctx.users, ctx.managers).toString("hex"),
         treeHash: TreeHash.treeHash(TreeHash.of(plan.after)).toString("hex"),
+        policyHash,
         committer: userId(op.committer),
         committerPubKey: userKeys(op.committer).pub58,
         committerSeat: plan.after.leafAssignment.indexOf(userId(op.committer)),
@@ -306,6 +321,7 @@ export function statementFor(plan: Plan, op: PlanOp|{kind: "rotate", committer: 
         addedUsers: sorted(addedUsers),
         addedManagers: sorted(addedManagers),
         removed: sorted(op.kind === "remove" ? op.removed : []),
+        ...(policy !== undefined ? {policy} : {}),
     });
 }
 
@@ -320,6 +336,12 @@ export function creationStatement(tree: types.cloud.GroupTreeState, creator: str
 /** A rotation's statement: the tree as it stands, an empty path, the next seq and epoch. */
 export function rotationStatement(tree: types.cloud.GroupTreeState, seq: number, newKeyVersion: number, committer: string, ctx: StatementContext) {
     return statementFor({refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion: newKeyVersion, seq}, {kind: "rotate", committer}, ctx);
+}
+
+/** A policy commit's statement: the tree, epoch and roster as they stand, an empty path, the next seq. `ctx.creator`
+ *  is the group's creator, which the new `policyHash` names. */
+export function policyStatement(tree: types.cloud.GroupTreeState, seq: number, keyVersion: number, committer: string, policy: types.cloud.ContainerPolicy, ctx: StatementContext) {
+    return statementFor({refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion, seq}, {kind: "policy", committer, policy}, ctx);
 }
 
 /** The bridge's description of `op` — the caller and the subjects, nothing the client computed. */
@@ -375,21 +397,6 @@ export function selfUpdateOf(plan: Plan, keyVersion: number): types.cloud.GroupT
     return {baseKeyVersion: keyVersion, refreshedNodes: plan.refreshedNodes, edges: plan.edges};
 }
 
-/** The addition delta an honest adder submits. */
-export function additionTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, members: string[], positions: number[]) {
-    return additionOf(planCommit(tree, keyVersion, {kind: "add", committer, members, positions}), keyVersion, positions);
-}
-
-/** The removal delta an honest remover submits. */
-export function removalTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string, removed: string[]) {
-    return removalOf(planCommit(tree, keyVersion, {kind: "remove", committer, removed}), keyVersion);
-}
-
-/** The self-update an honest member submits. */
-export function selfUpdateTransition(tree: types.cloud.GroupTreeState, keyVersion: number, committer: string) {
-    return selfUpdateOf(planCommit(tree, keyVersion, {kind: "selfUpdate", committer}), keyVersion);
-}
-
 /** What `groupGet` serves, as far as planning a commit against it goes. */
 export interface ServedGroup {
     id: string;
@@ -402,6 +409,7 @@ export interface ServedGroup {
     rosterVersion: number;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
+    creator?: types.cloud.UserId;
     treeCommit?: types.cloud.GroupTreeCommitStatement;
 }
 
@@ -424,14 +432,35 @@ export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: typ
     return {plan, commit};
 }
 
+/** The `groupUpdatePolicy` request `committer` sends to set `policy` on a served group (scope `"plan"` or `"full"`). */
+export function policyCommitAgainst(served: ServedGroup, committer: string, policy: types.cloud.ContainerPolicy) {
+    const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+    const commit = policyStatement(tree, (served.treeCommit?.seq ?? 0) + 1, served.keyVersion, committer, policy, {
+        groupId: served.id,
+        groupPubKey: served.groupPubKey,
+        rosterVersion: served.rosterVersion,
+        users: served.users,
+        managers: served.managers,
+        ...(served.creator ? {creator: served.creator} : {}),
+        ...(served.treeCommit ? {previous: served.treeCommit, date: Math.max(DateUtils.now(), served.treeCommit.date)} : {}),
+    });
+    return {id: served.id as types.group.GroupId, commit, expectedKeyVersion: served.keyVersion, expectedRosterVersion: served.rosterVersion};
+}
+
 /**
- * The one edge a rotation writes: the new grant key wrapped to the root, which the rotation does not move.
+ * The one edge a rotation writes: the new grant key wrapped to the root, which the rotation does not move — or,
+ * in a one-leaf tree whose root is the member's leaf, straight to the sole member (`TreeValidator.grantExpectation`).
+ * Shared with Track F (03/04/09/11 extend the statement, not this edge).
  *
  * `childGeneration` is taken from the tree rather than assumed, so a fixture built against a refreshed root
  * stays honest — that is exactly the staleness the bridge checks for.
  */
 export function rotationGrantEdge(tree: types.cloud.GroupTreeState, newKeyVersion: number): types.cloud.GroupTreeEdge {
     const rootIndex = TreeMath.root(tree.numLeaves);
+    if (TreeMath.isLeaf(rootIndex)) {
+        return {isGrantEdge: true, parentGeneration: newKeyVersion, childKind: "user", childUserId: tree.leafAssignment[0],
+            data: "wrap:grant->user" as types.core.UserKeyData};
+    }
     const root = tree.nodes.find(node => node.nodeIndex === rootIndex);
     return {
         isGrantEdge: true,
@@ -444,14 +473,10 @@ export function rotationGrantEdge(tree: types.cloud.GroupTreeState, newKeyVersio
 }
 
 /** One epoch's worth of well-formed rungs, as an honest client would submit them. */
-export function rungsFor(newKeyVersion: number, eraFloor: number): types.cloud.GroupArchiveRung[] {
+export function rungsFor(newKeyVersion: number, eraFloor: number): types.cloud.GroupArchiveRungSubmission[] {
     return LadderMath.rungSpansFor(newKeyVersion, eraFloor).map(span => ({
         atKeyVersion: span.at,
         targetKeyVersion: span.target,
-        // `epoch`: addressed to the grant key at `at` and naming nobody, which is the ordinary rung and the one
-        // ciphertext that serves the whole group. `user`/`group` are the era-crossing kinds, and those have to
-        // name their recipient.
-        recipientKind: "epoch" as const,
         data: `rung:${span.at}->${span.target}` as types.core.UserKeyData,
     }));
 }

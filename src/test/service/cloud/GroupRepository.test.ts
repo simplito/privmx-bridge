@@ -20,7 +20,7 @@ import { GroupStateRepository } from "../../../service/cloud/GroupStateRepositor
 import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { MongoObjectRepository } from "../../../db/mongo/MongoObjectRepository";
 import { API_ERROR_CODES, AppException } from "../../../api/AppException";
-import { createFake, createMock, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { createFake, createMock, hasNoCalls, hasOneCall, hasOneCallWithArguments, mock } from "../../testUtils/TestUtils";
 import { acceptedCommit, buildTree, rotationGrantEdge, rungsFor } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
@@ -86,8 +86,8 @@ function createRepository(options: {casMiss?: boolean, rereads?: db.group.Group[
     const replacements: unknown[] = [];
     const inserted: db.group.Group[] = [];
     const collection = createFake<mongodb.Collection>({
-        updateOne: (async (filter: Record<string, unknown>, update: {$set: Record<string, unknown>}) => {
-            updates.push({filter, set: update.$set});
+        updateOne: (async (filter: Record<string, unknown>, update: {$set: Record<string, unknown>, $inc?: Record<string, number>}) => {
+            updates.push({filter, set: update.$set ?? update.$inc});
             return {matchedCount: options.casMiss ? 0 : 1};
         }) as never,
         // Nothing here may call it: a removal is a `$set`, never a whole-document replace.
@@ -129,7 +129,7 @@ function createRepository(options: {casMiss?: boolean, rereads?: db.group.Group[
 function statement(seq: number, op: types.cloud.GroupTreeCommitOp = "remove"): types.cloud.GroupTreeCommitStatement {
     return {
         seq, prevDigest: "", op, groupId: groupId, treeVersion: 2, date: 0, keyVersion: EPOCH + 1, groupPubKey: nextGroupPubKey, rosterVersion: 6,
-        rosterHash: "00".repeat(32), treeHash: "00".repeat(32), committer: janek,
+        rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: janek,
         committerPubKey: "pub" as types.cloud.UserPubKey, committerSeat: 0, path: [],
         addedUsers: [], addedManagers: [], removed: [], signature: "sig" as types.core.EccSignature,
     };
@@ -281,7 +281,8 @@ it("an addition advances the roster version without advancing the epoch", async 
         commit: acceptedCommit(buildTree(SEATING, EPOCH), EPOCH, {kind: "add", committer: "janek", members: ["dave"], positions: [4]}).commit,
         statement: statement(4, "add"),
         modifier: janek,
-        addedMembers: [{userId: "dave" as types.cloud.UserId, role: "user"}],
+        newUsers: ["dave" as types.cloud.UserId],
+        newManagers: [],
         keyId: keyId,
         data: data,
     });
@@ -291,6 +292,20 @@ it("an addition advances the roster version without advancing the epoch", async 
     assert.strictEqual(result?.keyVersion, EPOCH);
     assert.strictEqual("keyVersion" in updates[0].set, false);
     assert.strictEqual(historyEntry(state).version, 6);
+});
+
+it("a one-leaf self-update advances treeCommitSeq and leaves the epoch alone", async () => {
+    // A sole member renewing its leaf after an identity key change: one statement, no epoch, no roster move.
+    const {repository, state, updates} = createRepository();
+    const tree = buildTree(["janek"], EPOCH);
+    const oldGroup = group({users: [], numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment});
+    const commit = acceptedCommit(tree, EPOCH, {kind: "selfUpdate", committer: "janek"}).commit;
+    assert.strictEqual(await repository.selfUpdateWithTransition(oldGroup, commit, statement(4, "selfUpdate")), true);
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5, treeCommitSeq: 3});
+    assert.strictEqual(updates[0].set.treeCommitSeq, 4);
+    assert.strictEqual("keyVersion" in updates[0].set, false, "a self-update is not a rotation");
+    assert.strictEqual("rosterVersion" in updates[0].set, false);
+    hasOneCall(state.applyCommit);
 });
 
 it("a public-metadata update writes its own counter and nothing else", async () => {
@@ -357,7 +372,7 @@ it("a group with a metadata plane missing is an internal invariant, not a client
         const {repository, state} = createRepository();
         mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
         mock(state, "getHistory", async () => [] as never);
-        mock(state, "getEpochKeys", async () => [] as never);
+        mock(state, "getEpochKeysAt", async () => [] as never);
         mock(state, "getPublicMetaHead", async () => ({}) as never);
         mock(state, "getPrivateMetaHead", async () => ({}) as never);
         mock(state, "getTreeCommitsAt", async () => [] as never);
@@ -375,7 +390,7 @@ function fullStateRepository(rereads: db.group.Group[]) {
     const {repository, state} = createRepository({rereads});
     mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
     mock(state, "getHistory", async () => [] as never);
-    mock(state, "getEpochKeys", async () => [] as never);
+    mock(state, "getEpochKeysAt", async () => [] as never);
     mock(state, "getPublicMetaHead", async () => ({}) as never);
     mock(state, "getPrivateMetaHead", async () => ({}) as never);
     mock(state, "getTreeCommitsAt", (async (_id: types.group.GroupId, seqs: number[]) => seqs.map(seq => statement(seq))) as never);
@@ -408,29 +423,52 @@ it("a group that keeps moving is refused after a bounded number of reads", async
     assert.strictEqual((state.getTree as unknown as {mock: {calls: unknown[]}}).mock.calls.length, GroupRepository.FULL_STATE_ATTEMPTS);
 });
 
-it("a policy update sets the policy, moves no counter and appends no entry", async () => {
+it("groupGet serves only the current epoch and the ones the metadata heads sit at, in one indexed read", async () => {
+    // Any other epoch only opens an old envelope, and comes from groupGetEpochKeys by keyId or grant key.
+    const current = group({keyVersion: 2000});
+    const {repository, state} = fullStateRepository([current]);
+    mock(state, "getEpochKeysAt", (async (_id: types.group.GroupId, keyVersions: number[]) =>
+        [...keyVersions].sort((a, b) => a - b).map(keyVersion => ({keyVersion}) as db.group.GroupEpochKey)) as never);
+    mock(state, "getPublicMetaHead", async () => ({keyVersion: 3}) as never);
+    mock(state, "getPrivateMetaHead", async () => ({keyVersion: 1500}) as never);
+    const {state: full} = await repository.getFullState(current);
+    assert.deepStrictEqual(full.epochKeys.map(row => row.keyVersion), [3, 1500, 2000]);
+    hasOneCall(state.getEpochKeysAt);
+    
+    // Both heads at the current epoch: one row, asked for once.
+    const fresh = fullStateRepository([group({keyVersion: 7})]);
+    mock(fresh.state, "getEpochKeysAt", (async () => []) as never);
+    mock(fresh.state, "getPublicMetaHead", async () => ({keyVersion: 7}) as never);
+    mock(fresh.state, "getPrivateMetaHead", async () => ({keyVersion: 7}) as never);
+    await fresh.repository.getFullState(group({keyVersion: 7}));
+    assert.deepStrictEqual(fresh.state.getEpochKeysAt.mock.calls[0][1], [7]);
+});
+
+it("a policy commit stores the policy and its statement under the commit CAS, and moves no other counter", async () => {
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
-    // entry that commits it would leave the group unreadable. So: neither.
+    // entry that commits it would leave the group unreadable. So: neither. The statement chain moves.
     const {repository, state, updates, replacements} = createRepository();
-    const result = await repository.updatePolicy(group(), janek, {get: "all"} as types.cloud.ContainerPolicy);
+    const result = await repository.updatePolicyWithStatement(group(), janek, {get: "all"} as types.cloud.ContainerPolicy, statement(4, "policy"));
     assert.ok(result);
     assert.strictEqual(replacements.length, 0);
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
-        "lastModificationDate", "lastModifier", "policy",
+        "lastModificationDate", "lastModifier", "policy", "treeCommitSeq",
     ]);
-    // No CAS: the policy is outside the signed envelope, so there is no version a client could send.
-    assert.deepStrictEqual(updates[0].filter, {_id: groupId});
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, keyVersion: EPOCH, rosterVersion: 5, treeCommitSeq: 3});
     assert.strictEqual(result.publicMetaVersion, 7);
     assert.strictEqual(result.privateMetaVersion, 11);
+    assert.strictEqual(result.treeCommitSeq, 4);
+    hasOneCall(state.insertTreeCommit);
     hasNoCalls(state.writePublicMetaEntry);
     hasNoCalls(state.writePrivateMetaEntry);
     hasNoCalls(state.insertHistoryEntry);
 });
 
-it("a policy update on a group that has gone away reports it", async () => {
-    const {repository} = createRepository({casMiss: true});
-    const result = await repository.updatePolicy(group(), janek, {} as types.cloud.ContainerPolicy);
-    assert.strictEqual(result, null, "the caller turns this into GROUP_DOES_NOT_EXIST");
+it("a policy commit that loses the CAS stores nothing", async () => {
+    const {repository, state} = createRepository({casMiss: true});
+    const result = await repository.updatePolicyWithStatement(group(), janek, {} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    assert.strictEqual(result, null, "the caller turns this into ROTATED_ALREADY");
+    hasNoCalls(state.insertTreeCommit);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -462,6 +500,21 @@ it("cutting an era drops the key material for the epochs it closes", async () =>
     const calls = state.deleteEpochKeysBelow.mock.calls;
     assert.deepStrictEqual(calls.map(call => [...call]), [[groupId, 4]]);
     hasOneCall(state.deleteRungsTargetingBelow);
+});
+
+it("SECURITY: cutting an era or abandoning history leaves every statement in place", async () => {
+    // The grant-key reuse check reads the statements for every key the group ever had; if either of these took statements
+    // with it, the keys below the floor would be forgotten again.
+    const deletes = (state: ReturnType<typeof createRepository>["state"]) => (Object.keys(state) as (keyof typeof state)[])
+        .filter(name => /^delete|^markDeleted$/.test(name) && state[name].mock.calls.length > 0).sort();
+    const cut = createRepository();
+    await cut.repository.cutEra(group(), 4);
+    assert.deepStrictEqual(deletes(cut.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
+    const abandoned = createRepository();
+    await abandoned.repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
+    assert.deepStrictEqual(deletes(abandoned.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
+    hasNoCalls(cut.state.deleteState);
+    hasNoCalls(abandoned.state.deleteState);
 });
 
 it("pruning the archive touches no key material", async () => {
@@ -511,9 +564,10 @@ it("a new tree-backed group keeps its seating and writes the rest beside the doc
 it("deleting a group takes its state with it", async () => {
     // Keyed by groupId, so leaving them behind leaks the group's shape and never reclaims the space.
     const {repository, state} = createRepository();
-    await repository.deleteGroup(groupId);
+    await repository.deleteGroup({id: groupId, contextId});
     hasOneCall(state.deleteState);
     hasOneCall(state.markDeleted);
+    assert.deepStrictEqual([...state.markDeleted.mock.calls[0]], [groupId, contextId], "the tombstone is filed under the group's context");
 });
 
 it("SECURITY: a deleted group's id cannot be created again", async () => {
@@ -551,6 +605,32 @@ it("a rotation advances the epoch and writes exactly one edge", async () => {
     hasOneCall(state.replaceGrantEdge);
     hasOneCall(state.insertRungs);
     hasNoCalls(state.writeTree);
+});
+
+it("commit rungs are stored with the committer as author", async () => {
+    // The author of a stored rung is the bridge's word, never a field the client sent: whoever made the commit.
+    const {repository, state} = createRepository();
+    const removed = removal(group());
+    await repository.removeMembersWithTransition(removed);
+    hasOneCallWithArguments(state.insertRungs, [groupId, janek, removed.rungs]);
+    const rotation = createRepository();
+    const rungs = rungsFor(EPOCH + 1, 1);
+    await rotation.repository.generateNewGroupKey({
+        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
+        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs,
+    });
+    hasOneCallWithArguments(rotation.state.insertRungs, [groupId, janek, rungs]);
+});
+
+it("a repair serialises on the group document, conditioned on the floors it was validated against", async () => {
+    // Every floor change writes this document too, so inside a transaction a racing one is a write conflict.
+    const {repository, updates} = createRepository();
+    assert.strictEqual(await repository.touchLadder(group({eraFloor: 3})), true);
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: {$exists: false}});
+    await repository.touchLadder(group({eraFloor: 3, archivePrunedBelow: 4}));
+    assert.deepStrictEqual(updates[1].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: 4});
+    // A floor that moved: nothing written, reported to the caller.
+    assert.strictEqual(await createRepository({casMiss: true}).repository.touchLadder(group()), false);
 });
 
 it("a rotation that loses the race writes nothing beside the document either", async () => {

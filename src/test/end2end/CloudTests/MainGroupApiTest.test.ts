@@ -12,7 +12,7 @@ limitations under the License.
 import { BaseTestSet, shouldThrowErrorWithCode2, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
-import { buildTree, creationStatement, registerUserKey } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, policyCommitAgainst, registerUserKey, ServedGroup } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 
@@ -67,7 +67,7 @@ export class GroupApiTests extends BaseTestSet {
     async shouldRejectDeletingGroupReferencedByThread() {
         await this.createGroup();
         const groupId = this.requireGroupId();
-        // Read the epoch rather than assume one: a grant must name the group's current keyVersion (BR-5).
+        // Read the epoch rather than assume one: a grant must name the group's current keyVersion.
         const {group} = await this.apis.contextApi.groupGet({groupId});
         await this.apis.threadApi.threadCreate({
             contextId: testData.contextId,
@@ -215,19 +215,22 @@ export class GroupApiTests extends BaseTestSet {
         }), "GROUP_VERSION_MISMATCH");
     }
     
+    /** The `groupUpdatePolicy` request the test user signs against the group as it stands now. */
+    private async policyCommit(groupId: types.group.GroupId, policy: types.cloud.ContainerPolicy) {
+        const {group} = await this.apis.contextApi.groupGet({groupId, scope: "plan"});
+        return policyCommitAgainst(group as unknown as ServedGroup, testData.userId, policy);
+    }
+    
     /**
-     * The policy has a method of its own, and it disturbs neither signed envelope.
-     *
-     * No version is submitted and none is checked, so two writes in a row both land — there is no counter for a
-     * client to know, because the policy has never been inside an envelope a reader verifies.
+     * The policy has a method of its own, and it disturbs neither signed envelope. It is a signed commit:
+     * the chain moves, the metadata counters do not, and a commit planned on the old head is a lost race.
      */
     private async updatePolicyWithoutTouchingMetadata() {
         const groupId = this.requireGroupId();
         const before = (await this.apis.contextApi.groupGet({groupId})).group;
         
-        assert(await this.apis.contextApi.groupUpdatePolicy({
-            id: groupId, policy: {get: "all" as types.cloud.PolicyEntry},
-        }) === "OK", "groupUpdatePolicy did not return OK");
+        const first = await this.policyCommit(groupId, {get: "all" as types.cloud.PolicyEntry});
+        assert(await this.apis.contextApi.groupUpdatePolicy(first) === "OK", "groupUpdatePolicy did not return OK");
         const after = (await this.apis.contextApi.groupGet({groupId})).group;
         assert(after.policy.get === "all", `policy did not land, got ${String(after.policy.get)}`);
         assert(after.publicMetaVersion === before.publicMetaVersion, "a policy write moved the public counter");
@@ -236,10 +239,10 @@ export class GroupApiTests extends BaseTestSet {
         assert(after.publicMeta.data === before.publicMeta.data, "a policy write rewrote the public envelope");
         assert(after.privateMeta.data === before.privateMeta.data, "a policy write rewrote the private envelope");
         
-        // No CAS: the second write is not a lost race, it simply wins.
-        assert(await this.apis.contextApi.groupUpdatePolicy({
-            id: groupId, policy: {get: "user" as types.cloud.PolicyEntry},
-        }) === "OK", "a second policy write in a row must not be refused");
+        // The same statement again extends a head that is gone: a lost race, not a second write.
+        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePolicy(first), "ROTATED_ALREADY");
+        assert(await this.apis.contextApi.groupUpdatePolicy(await this.policyCommit(groupId, {get: "user" as types.cloud.PolicyEntry})) === "OK",
+            "a second policy commit planned on the new head must land");
         const twice = (await this.apis.contextApi.groupGet({groupId})).group;
         assert(twice.policy.get === "user", "the later policy write must win");
         assert(twice.publicMetaVersion === before.publicMetaVersion, "still no counter moved");
