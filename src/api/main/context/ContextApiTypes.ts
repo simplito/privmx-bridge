@@ -288,8 +288,11 @@ export interface GroupRepairRungModel {
 export interface GroupGetKeyArchiveModel {
     id: types.group.GroupId;
     /** Optional window, open or closed. The rungs come a page of at most 256 at a time, ascending by `atKeyVersion`
-     *  (a full page means there may be more: ask again from the last one's `atKeyVersion`), and `keyHistory` a page
-     *  of at most 256 epochs from `fromKeyVersion`. */
+     *  (a full page means there may be more: ask again from the last one's `atKeyVersion`; that epoch's rungs then
+     *  come again whole). A database written before the canonical-rung rule may hold more than 256 non-canonical
+     *  rungs at one epoch: its page never moves on, so a client stops when a page's last `atKeyVersion` is not past
+     *  the one it asked from, and takes what it was served. `keyHistory` is a page of at most 256 epochs from
+     *  `fromKeyVersion`, paged by epoch and not aligned with the rung pages: read it on by its own last epoch. */
     fromKeyVersion?: number;
     toKeyVersion?: number;
     /**

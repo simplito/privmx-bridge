@@ -12,6 +12,13 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { GroupConverter } from "../../../../api/main/context/GroupConverter";
+import { ContextApi } from "../../../../api/main/context/ContextApi";
+import { ContextApiValidator } from "../../../../api/main/context/ContextApiValidator";
+import { TypesValidator } from "../../../../api/TypesValidator";
+import type { ContextService } from "../../../../service/cloud/ContextService";
+import type { SessionService } from "../../../../api/session/SessionService";
+import type { GroupService } from "../../../../service/cloud/GroupService";
+import type { RequestLogger } from "../../../../service/log/RequestLogger";
 import { buildTree, planCommit } from "../../../testUtils/TreeFixtures";
 import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
@@ -384,3 +391,25 @@ it("the latest statement is served as is; vouching statements are named by the s
     assert.deepStrictEqual(GroupConverter.vouchingSeqs([...converted.treeNodes, {nodeIndex: 95, generation: 0}]), [1, 2], "a blank record vouches for nothing");
 });
 
+it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by keyId", async () => {
+    const asked: {keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]}[] = [];
+    const groupService = {
+        getEpochKeys: (_user: unknown, _id: types.group.GroupId, keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]) => {
+            asked.push({keyIds, groupPubKeys});
+            const rows = epochKeys.filter(row => keyIds.includes(row.groupKey?.keyId as types.core.KeyId) || groupPubKeys.includes(row.groupPubKey as types.cloud.GroupPubKey));
+            return Promise.resolve({group, epochKeys: rows});
+        },
+    };
+    const api = new ContextApi(
+        new ContextApiValidator(new TypesValidator()),
+        {} as unknown as ContextService,
+        {validateContextSessionAndGetCloudUser: () => ({})} as unknown as SessionService,
+        groupService as unknown as GroupService,
+        new GroupConverter(),
+        {setContextId: () => undefined} as unknown as RequestLogger,
+    );
+    const pub2 = "Pub2" as unknown as types.cloud.GroupPubKey;
+    const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});
+    assert.deepStrictEqual(asked, [{keyIds: [], groupPubKeys: [pub2]}]);
+    assert.deepStrictEqual(result.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}]);
+});
