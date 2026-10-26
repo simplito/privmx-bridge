@@ -428,7 +428,10 @@ export class StreamService extends BaseContainerService {
                     body: { request: JanusConstants.REQUEST.CONFIGURE, restart: true },
                 });
             }
-            catch {
+            catch (e) {
+                if (e instanceof AppException) {
+                    throw e;
+                }
                 throw new AppException("MEDIA_SERVER_ERROR", "Failed to restart subscriber ICE");
             }
             // Janus may answer with the new offer in place, or send it afterwards as a reoffer event
@@ -465,7 +468,12 @@ export class StreamService extends BaseContainerService {
                 res = await ctx.ws.janusVideoRoomPluginApi.unsubscribeOnExisting(baseRequest as UnsubscribeOnExistingRequest);
             }
         }
-        catch {
+        catch (e) {
+            // the plugin api already turned the Janus error into a specific one, so keep it instead of
+            // flattening every cause into the same message
+            if (e instanceof AppException) {
+                throw e;
+            }
             throw new AppException("MEDIA_SERVER_ERROR", "Modify subscription failed");
         }
         
@@ -756,6 +764,9 @@ export class StreamService extends BaseContainerService {
             for (const published of [...current.publishedStreams]) {
                 current.removePublishedStream(published.id as unknown as WebRtcTypes.StreamId);
             }
+            // unpublishing tears the publisher's PeerConnection down on the media server, so the next
+            // publication has to wait for webrtcup again before it is announced as published
+            current.peerConnectionEstablished = false;
             
             this.streamNotificationService.sendStreamUnpublishedEvent(streamRoom, {
                 streamRoomId: streamRoom.id,
