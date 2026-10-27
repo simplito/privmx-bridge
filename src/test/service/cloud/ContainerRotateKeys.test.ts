@@ -15,7 +15,9 @@ limitations under the License.
  * A rotation carries no re-signed `data`, so the head of the history has to stay the one `lastModifier` and
  * `lastModificationDate` describe — the endpoint checks that pairing in `assertContainerDIOIntegrity`, with a
  * five-minute window on the timestamp. Touch either field and every client read of the container fails
- * verification: invisible here, invisible on the write path, reported by the client as corrupt data.
+ * verification: invisible here, invisible on the write path, reported by the client as corrupt data. An Inbox
+ * rotation changes one thing more: the entries public key in the head's public data, which no signature
+ * covers.
  */
 
 import "q2-test";
@@ -104,7 +106,7 @@ const INBOX_DATA = {
     storeId: "MyStoreId",
     fileConfig: {minCount: 0, maxCount: 5, maxFileSize: 100, maxWholeUploadSize: 500},
     meta: "inbox-meta",
-    publicData: "inbox-public",
+    publicData: {version: 5, publicMeta: "signed-public-meta", authorPubKey: "janek-pub", inboxPubKey: "old-entries-pub", inboxKeyId: oldKeyId},
 };
 
 interface Rotated {
@@ -184,18 +186,6 @@ const CASES: Case[] = [
             return {written, result: result as unknown as Rotated};
         },
     },
-    {
-        name: "inbox",
-        // The one module where the two differ, which is why the entry's data is read from the history.
-        documentData: INBOX_DATA.meta,
-        historyData: INBOX_DATA,
-        rotate: async (grantees, overrides) => {
-            const {written, repository} = fakeRepository<db.inbox.Inbox>();
-            const old = {...containerFields(INBOX_DATA, INBOX_DATA.meta), ...overrides} as unknown as db.inbox.Inbox;
-            const result = await new InboxRepository(repository as never).rotateKeys(old, rotator, newKeyId, NEW_KEYS, grantees);
-            return {written, result: result as unknown as Rotated};
-        },
-    },
 ];
 
 const grantees = (): types.cloud.ContainerGrantees => ({groups: GRANTS, groupKeys: NEW_GROUP_KEYS});
@@ -264,13 +254,54 @@ for (const testCase of CASES) {
     });
 }
 
-it("inbox: the new head keeps the fields `send` reads, not just the meta", async () => {
-    const {result} = await CASES[CASES.length - 1].rotate(grantees());
+const NEW_ENTRIES_PUB = "new-entries-pub" as types.core.EccPubKey;
+
+async function rotateInbox(rotationGrantees?: types.cloud.ContainerGrantees) {
+    const {written, repository} = fakeRepository<db.inbox.Inbox>();
+    const old = containerFields(INBOX_DATA, INBOX_DATA.meta) as unknown as db.inbox.Inbox;
+    const result = await new InboxRepository(repository as never).rotateKeys(
+        old, rotator, newKeyId, NEW_KEYS, NEW_ENTRIES_PUB, rotationGrantees);
+    return {written, result: result as unknown as Rotated};
+}
+
+it("inbox: installs the new key and writes the document once", async () => {
+    const {written, result} = await rotateInbox(grantees());
+    assert.strictEqual(written.length, 1, "one write");
+    assert.strictEqual(result.keyId, newKeyId);
+    assert.deepStrictEqual(result.keys, NEW_KEYS);
+    assert.deepStrictEqual(result.groupKeys, NEW_GROUP_KEYS);
+});
+
+it("SECURITY inbox: the new head seals entries to the new key", async () => {
+    // Kept as it was, the head's public data would keep senders sealing entries to the replaced key, which a
+    // member removed before the re-key still holds.
+    const {result} = await rotateInbox(grantees());
+    assert.strictEqual(result.history.length, 2);
     const head = result.history[result.history.length - 1] as {data: typeof INBOX_DATA};
-    assert.strictEqual(head.data.threadId, INBOX_DATA.threadId);
-    assert.strictEqual(head.data.storeId, INBOX_DATA.storeId);
-    assert.deepStrictEqual(head.data.fileConfig, INBOX_DATA.fileConfig);
+    assert.deepStrictEqual(head.data.publicData, {...INBOX_DATA.publicData, inboxPubKey: NEW_ENTRIES_PUB, inboxKeyId: newKeyId});
+});
+
+it("SECURITY inbox: a rotation changes nothing but the entries key, so a plain user cannot rewrite the inbox", async () => {
+    // rotateKeys defaults to "user", update to "manager": a rotation that took the rotator's data let a plain
+    // user replace the metadata, the file limits `send` enforces and the entries key managers set.
+    const {result} = await rotateInbox(grantees());
+    const head = result.history[result.history.length - 1] as {keyId: types.core.KeyId, data: typeof INBOX_DATA};
+    assert.strictEqual(head.keyId, oldKeyId, "the head still names the key its meta was signed under");
+    assert.deepStrictEqual({...head.data, publicData: undefined}, {...INBOX_DATA, publicData: undefined});
+    assert.strictEqual(head.data.publicData.publicMeta, INBOX_DATA.publicData.publicMeta);
+    assert.strictEqual(head.data.publicData.authorPubKey, INBOX_DATA.publicData.authorPubKey);
     assert.strictEqual(result.data, INBOX_DATA.meta, "the document still holds the meta alone");
+    assert.strictEqual(result.lastModifier, janek, "lastModifier must not become the rotator");
+    assert.strictEqual(result.lastModificationDate, SIGNED_AT, "lastModificationDate must not move");
+    assert.strictEqual(result.history[1].author, rotator, "the history is the only record of who rotated");
+});
+
+it("inbox: changes no membership and keeps the group key blobs when no grantees are passed", async () => {
+    const {result} = await rotateInbox(undefined);
+    assert.deepStrictEqual(result.users, [alice]);
+    assert.deepStrictEqual(result.managers, [janek]);
+    assert.deepStrictEqual(result.groups, GRANTS);
+    assert.deepStrictEqual(result.groupKeys, OLD_GROUP_KEYS);
 });
 
 it("refuses to rotate a container with no history rather than reading past its end", async () => {
