@@ -155,6 +155,7 @@ class FakeJanusRequester extends JanusRequester {
         }
         else if (request === "unpublish") {
             this.broadcastForHandle(Number(payload?.handle_id), "unpublished", false);
+            this.webrtcupEmitted.delete(Number(payload?.handle_id));
         }
         else if (request === "leave") {
             this.broadcastForHandle(Number(payload?.handle_id), "leaving", true);
