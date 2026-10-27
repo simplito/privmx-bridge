@@ -18,7 +18,8 @@ import { RepositoryFactory } from "../../../db/RepositoryFactory";
 import { CloudKeyService } from "../../../service/cloud/CloudKeyService";
 import { GroupNotificationService } from "../../../service/cloud/GroupNotificationService";
 import { GroupService } from "../../../service/cloud/GroupService";
-import { createGroupRepositoryMock, createMock, fakeRateLimiter, hasNoCalls, hasOneCall, mock } from "../../testUtils/TestUtils";
+import { StreamNotificationService } from "../../../service/cloud/StreamNotificationService";
+import { createGroupRepositoryMock, createMock, fakeRateLimiter, hasNoCalls, hasOneCall, hasOneCallWithArguments, mock } from "../../testUtils/TestUtils";
 import { buildTree, creationStatement, planCommit, PlanOp, policyStatement, rotationGrantEdge, rotationStatement, rungsFor, settersOf, signStatement, statementFor, userKeys } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
@@ -152,10 +153,13 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     const cloudAccessValidator = createMock<CloudAccessValidator>({});
     const activeUsersMap = createMock<ActiveUsersMap>({});
     const groupRotationRateLimiter = fakeRateLimiter(() => !options.rateLimited);
+    const streamNotificationService = createMock<StreamNotificationService>({});
+    mock(streamNotificationService, "sendStreamRoomsUpdatedForGroup", () => {});
     const groupService = new GroupService(
         repositoryFactory, activeUsersMap, "localhost" as types.core.Host, cloudKeyService, groupNotificationService,
         cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter,
         {maxGroupMembers: options.maxGroupMembers ?? TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config,
+        streamNotificationService,
     );
     
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
@@ -230,7 +234,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         return context;
     });
     
-    return {groupService, groupRepository, groupNotificationService, groupRotationRateLimiter, cloudKeyService, group, repositoryFactory, cloudAccessValidator, getArchiveWindow: () => archiveWindow,
+    return {groupService, groupRepository, groupNotificationService, streamNotificationService, groupRotationRateLimiter, cloudKeyService, group, repositoryFactory, cloudAccessValidator, getArchiveWindow: () => archiveWindow,
         getEpochKeyWindow: () => epochKeyWindow, getRungFloor: () => rungFloor};
 }
 
@@ -561,6 +565,15 @@ it("removeMember accepts an honest removal and charges the rotation budget", asy
     hasOneCall(groupRepository.removeMembersWithTransition);
     assert.deepStrictEqual(groupRotationRateLimiter.kept, [`remove|${groupId}|${janek}`]);
     hasOneCall(groupNotificationService.sendUpdatedGroup);
+});
+
+it("SECURITY: a removal tells the stream rooms granted to the group, so a live publication re-keys", async () => {
+    // A publishing client never writes again, so without this event the room stays under the key the removed
+    // member holds for the rest of the publication.
+    const group = treeBackedGroup();
+    const {groupService, streamNotificationService} = createGroupService(group);
+    await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
+    hasOneCallWithArguments(streamNotificationService.sendStreamRoomsUpdatedForGroup, [group.id, myContext.solution]);
 });
 
 it("SECURITY: removeMember accepts an honest removal after a statement dated ahead of the bridge's clock", async () => {
@@ -1707,6 +1720,15 @@ it("generateNewGroupKey rotates a one-member group with the grant edge to its so
     hasOneCall(groupRepository.generateNewGroupKey);
     const params = groupRepository.generateNewGroupKey.mock.calls[0][0] as {grantEdge: types.cloud.GroupTreeEdge};
     assert.deepStrictEqual([params.grantEdge.childKind, params.grantEdge.childUserId, params.grantEdge.parentGeneration], ["user", janek, EPOCH + 1]);
+});
+
+it("SECURITY: a rotation tells the stream rooms granted to the group, so a live publication re-keys", async () => {
+    // As a removal: a rotation after a suspected compromise must not leave a live publication
+    // under the pre-rotation room key.
+    const group = oneMemberGroup();
+    const {groupService, streamNotificationService} = createGroupService(group);
+    await groupService.generateNewGroupKey(janekCloudUser, rotationModel(group));
+    hasOneCallWithArguments(streamNotificationService.sendStreamRoomsUpdatedForGroup, [group.id, myContext.solution]);
 });
 
 type EdgeMutation = (honest: types.cloud.GroupTreeEdge) => types.cloud.GroupTreeEdge;

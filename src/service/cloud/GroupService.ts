@@ -17,6 +17,7 @@ import { RepositoryFactory } from "../../db/RepositoryFactory";
 import { CloudUser, Executor } from "../../CommonTypes";
 import { CloudKeyService } from "./CloudKeyService";
 import { GroupNotificationService } from "./GroupNotificationService";
+import type { StreamNotificationService } from "./StreamNotificationService";
 import { CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
@@ -51,6 +52,7 @@ export class GroupService extends BaseContainerService {
         private cloudAccessValidator: CloudAccessValidator,
         private groupRotationRateLimiter: GroupRotationRateLimiter,
         private config: Config,
+        private streamNotificationService: StreamNotificationService,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -340,7 +342,7 @@ export class GroupService extends BaseContainerService {
      *  One edge, whatever the group's size. */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
-        const rotated = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
+        const {rotated, solution} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
@@ -382,9 +384,12 @@ export class GroupService extends BaseContainerService {
                 const winner = await groupRepository.get(model.id);
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData(winner!));
             }
-            return result;
+            return {rotated: result, solution: context.solution};
         }));
         this.groupNotificationService.sendUpdatedGroup(rotated, [], "keyRotated");
+        // A rotation stales every room granted to the group as a removal does, and a live publication never writes
+        // again: the event makes its publisher re-key.
+        this.streamNotificationService.sendStreamRoomsUpdatedForGroup(rotated.id, solution);
         return rotated;
     }
     
@@ -558,6 +563,7 @@ export class GroupService extends BaseContainerService {
         if (model.abandonHistory) {
             this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
         }
+        this.streamNotificationService.sendStreamRoomsUpdatedForGroup(group.id, context.solution);
         return group;
     }
     
