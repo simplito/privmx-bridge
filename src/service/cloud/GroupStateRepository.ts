@@ -16,6 +16,8 @@ import * as types from "../../types";
 import * as db from "../../db/Model";
 import { TreeMath } from "./keytree/TreeMath";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
+import { AppException } from "../../api/AppException";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
@@ -46,8 +48,8 @@ export class GroupStateRepository {
     static readonly MAX_HISTORY_PAGE = 8;
     /** At most this many statements per `getTreeCommits` page. */
     static readonly MAX_TREE_COMMITS_PER_PAGE = 256;
-    /** At most this many rungs per `getArchiveRungs` page, whatever the window. One epoch holds at most ~33 spans, one
-     *  rung each (`LadderMath.validateRungSet` refuses any other span), so the next page from the last
+    /** At most this many rungs per `getArchiveRungs` page, whatever the window. One epoch holds at most ~33 spans x
+     *  `MAX_RUNGS_PER_SPAN` (`LadderMath.validateRungSet` refuses any other span), so the next page from the last
      *  `atKeyVersion` always moves on. */
     static readonly MAX_ARCHIVE_RUNGS_PER_PAGE = 256;
     /** At most this many epoch rows per windowed `getEpochKeys` read (the key archive's `keyHistory`). */
@@ -253,7 +255,8 @@ export class GroupStateRepository {
     
     /**
      * The rungs stored for the given spans only, ascending by `atKeyVersion`: what a client needs for the one path it
-     * descends, instead of every rung of a window. Each span holds one rung, so the answer is bounded by the span count. `minTarget` leaves out rungs pointing below a floor, as in
+     * descends, instead of every rung of a window. Each span holds at most `LadderMath.MAX_RUNGS_PER_SPAN` rungs, so
+     * the answer is bounded by the span count. `minTarget` leaves out rungs pointing below a floor, as in
      * `getArchiveRungs`.
      */
     async getArchiveRungsForSpans(groupId: types.group.GroupId, spans: {at: number, target: number}[], minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
@@ -267,6 +270,12 @@ export class GroupStateRepository {
             }
             return q.andList(conditions);
         }).sort("atKeyVersion", true).array();
+        return rungs.map(rung => this.toArchiveRung(rung));
+    }
+    
+    /** The rungs stored for one span, at most `LadderMath.MAX_RUNGS_PER_SPAN` of them. */
+    async getRungsAt(groupId: types.group.GroupId, atKeyVersion: number, targetKeyVersion: number): Promise<types.cloud.GroupArchiveRung[]> {
+        const rungs = await this.rungs.query(q => q.and(q.eq("groupId", groupId), q.eq("atKeyVersion", atKeyVersion), q.eq("targetKeyVersion", targetKeyVersion))).array();
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     
@@ -500,6 +509,23 @@ export class GroupStateRepository {
                 upsert: true,
             },
         })));
+    }
+    
+    /**
+     * One repair rung: an insert, never an upsert, so nothing a member submits can replace or delete a stored rung
+     * (an opener cannot swap its good rung for a bad one after others checked it). A second rung for the span by
+     * the same author is a duplicate id, reported as `AUTHOR_HAS_RUNG`.
+     */
+    async insertRung(groupId: types.group.GroupId, author: types.cloud.UserId, rung: types.cloud.GroupArchiveRungSubmission): Promise<void> {
+        try {
+            await this.rungs.insert({id: GroupStateRepository.rungId(groupId, rung, author), ...this.toRungDoc(groupId, rung, author)});
+        }
+        catch (e) {
+            if (e instanceof DbDuplicateError) {
+                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "AUTHOR_HAS_RUNG", at: rung.atKeyVersion, target: rung.targetKeyVersion});
+            }
+            throw e;
+        }
     }
     
     /** Drops the rungs that point below `belowEpoch` — one range delete over the target-epoch index. */

@@ -177,6 +177,10 @@ export class ContextApiValidator extends BaseValidator {
             belowEpoch: this.builder.min(this.builder.int, 1),
             expectedKeyVersion: this.builder.int,
         }));
+        this.registerMethod("groupRepairRung", this.builder.createObject({
+            id: this.tv.groupId,
+            rung: this.tv.groupArchiveRung,
+        }));
         this.registerMethod("groupGetKeyArchive", this.builder.createObject({
             id: this.tv.groupId,
             fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
