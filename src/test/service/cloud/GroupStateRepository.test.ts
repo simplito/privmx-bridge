@@ -306,6 +306,16 @@ it("SECURITY: a new epoch's key is looked up among every statement of the group,
     assert.strictEqual(await fresh.repository.hasEpochWithGroupPubKey(groupId, key), false);
 });
 
+it("a tombstone is filed under its group's context, and a context's tombstones go in one delete over the context", async () => {
+    // A deleted context's id never returns, so nobody can create a group there again: its tombstones guard nothing.
+    const contextId = "MyContextId" as types.context.ContextId;
+    const {repository, captured} = createStateRepository();
+    await repository.markDeleted(groupId, contextId);
+    assert.deepStrictEqual(captured.tombstones.inserted, [{id: groupId, contextId: contextId}]);
+    await repository.deleteTombstonesOfContext(contextId);
+    assert.deepStrictEqual(captured.tombstones.filter, {contextId: contextId});
+});
+
 it("SECURITY: the roster trail is served a bounded page at a time, oldest first", async () => {
     // Entries carry up to 1 MB each; an unbounded read of a long-lived group's trail ran a worker out of memory.
     const {repository, captured} = createStateRepository({history: [{version: 3} as unknown as db.group.GroupHistoryEntry]});
