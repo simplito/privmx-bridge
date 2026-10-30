@@ -200,7 +200,7 @@ describe("TreeMath.sibling", () => {
     });
 });
 
-describe("TreeMath.directPath — the set a removal must refresh", () => {
+describe("TreeMath.directPath", () => {
     it("matches the spec table for N=8, leaf 0", () => {
         assert.deepStrictEqual(TreeMath.directPath(0, 8), [1, 3, 7]);
     });
@@ -244,7 +244,7 @@ describe("TreeMath.directPath — the set a removal must refresh", () => {
         }
     });
     
-    it("contains no leaves — only internal nodes get refreshed", () => {
+    it("contains no leaves", () => {
         for (let numLeaves = 2; numLeaves <= 40; numLeaves++) {
             for (let position = 0; position < numLeaves; position++) {
                 for (const node of TreeMath.directPath(position, numLeaves)) {
@@ -260,7 +260,7 @@ describe("TreeMath.directPath — the set a removal must refresh", () => {
     });
 });
 
-describe("TreeMath.copath — the set a refresh wraps to", () => {
+describe("TreeMath.copath", () => {
     it("matches the spec table for N=8, leaf 0", () => {
         assert.deepStrictEqual(TreeMath.copath(0, 8), [2, 5, 11]);
     });
@@ -306,61 +306,92 @@ describe("TreeMath.copath — the set a refresh wraps to", () => {
     });
 });
 
-describe("TreeMath.leavesUnder", () => {
-    it("root covers every leaf", () => {
-        for (let numLeaves = 1; numLeaves <= 40; numLeaves++) {
-            const leaves = TreeMath.leavesUnder(TreeMath.root(numLeaves), numLeaves);
-            assert.deepStrictEqual(leaves, [...Array(numLeaves).keys()], `N=${numLeaves}`);
+describe("TreeMath.isKeyed / keyedPath — shared expectations with the endpoint (spec §2)", () => {
+    // Literal values, computed once from the definition by an independent implementation and checked by hand for
+    // the small cases. The endpoint's TreeMathTest carries the same table; if either side's arithmetic drifts the
+    // bridge rejects every honest commit, or accepts one that re-keys a node off the committer's path.
+    each<[number, number, number, [number, number[]][]]>([
+        // numLeaves, root, number of keyed nodes, [position, keyedPath]...
+        [1, 0, 0, [[0, []]]],
+        [2, 1, 1, [[0, [1]], [1, [1]]]],
+        [3, 3, 1, [[0, [3]], [1, [3]], [2, [3]]]],
+        [16, 15, 1, [[0, [15]], [8, [15]], [15, [15]]]],
+        [17, 31, 1, [[0, [31]], [8, [31]], [16, [31]]]],
+        [31, 31, 1, [[0, [31]], [15, [31]], [30, [31]]]],
+        [32, 31, 1, [[0, [31]], [16, [31]], [31, [31]]]],
+        [33, 63, 2, [[0, [31, 63]], [16, [31, 63]], [32, [63]]]],
+        [100, 127, 6, [[0, [31, 63, 127]], [50, [95, 63, 127]], [99, [191, 127]]]],
+        [1000, 1023, 62, [[0, [31, 63, 127, 255, 511, 1023]], [500, [991, 959, 895, 767, 511, 1023]], [999, [1983, 1919, 1791, 1535, 1023]]]],
+        [16384, 16383, 1023, [
+            [0, [31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383]],
+            [8192, [16415, 16447, 16511, 16639, 16895, 17407, 18431, 20479, 24575, 16383]],
+            [16383, [32735, 32703, 32639, 32511, 32255, 31743, 30719, 28671, 24575, 16383]],
+        ]],
+    ]).it("N=%s", ([numLeaves, rootIndex, keyedCount, paths]) => {
+        assert.strictEqual(TreeMath.root(numLeaves), rootIndex);
+        let count = 0;
+        for (let nodeIndex = 0; nodeIndex < TreeMath.nodeCount(numLeaves); nodeIndex++) {
+            if (TreeMath.isKeyed(nodeIndex, numLeaves)) {
+                count++;
+            }
+        }
+        assert.strictEqual(count, keyedCount, "keyed nodes");
+        for (const [position, expected] of paths) {
+            assert.deepStrictEqual(TreeMath.keyedPath(position, numLeaves), expected, `keyedPath(${position})`);
         }
     });
     
-    it("a leaf covers only itself", () => {
-        assert.deepStrictEqual(TreeMath.leavesUnder(4, 4), [2]);
+    it("N=64: exactly the level-5 and level-6 nodes are keyed — 31, 95 and the root 63", () => {
+        // 31 = 0b011111 and 95 = 0b1011111 have five trailing ones (level 5), 63 = 0b111111 has six and is the
+        // root. Every other internal node sits at level 1..4, inside a bucket of 16 seats.
+        const keyed = [...Array(TreeMath.nodeCount(64)).keys()].filter(nodeIndex => TreeMath.isKeyed(nodeIndex, 64));
+        assert.deepStrictEqual(keyed, [31, 63, 95]);
+        assert.deepStrictEqual(TreeMath.keyedPath(0, 64), [31, 63]);
+        assert.deepStrictEqual(TreeMath.keyedPath(63, 64), [95, 63]);
     });
     
-    it("children partition their parent's leaves", () => {
-        for (let numLeaves = 2; numLeaves <= 40; numLeaves++) {
-            for (let node = 1; node < TreeMath.nodeCount(numLeaves); node += 2) {
-                const [l, r] = TreeMath.children(node, numLeaves);
-                assert.deepStrictEqual(
-                    TreeMath.leavesUnder(node, numLeaves),
-                    [...TreeMath.leavesUnder(l, numLeaves), ...TreeMath.leavesUnder(r, numLeaves)],
-                    `N=${numLeaves} node=${node}`,
-                );
+    it("the root is keyed whatever its level, and only while it is the root", () => {
+        assert.strictEqual(TreeMath.isKeyed(3, 3), true, "root of N=3, level 2");
+        assert.strictEqual(TreeMath.isKeyed(3, 5), false, "the same node once N=5 moved the root to 7");
+        assert.strictEqual(TreeMath.isKeyed(7, 5), true);
+        assert.strictEqual(TreeMath.isKeyed(15, 16), true, "root of a full bucket");
+        assert.strictEqual(TreeMath.isKeyed(15, 17), false, "a level-4 node under a level-5 root");
+    });
+    
+    it("leaves, nodes outside the tree and bucket nodes are never keyed", () => {
+        assert.strictEqual(TreeMath.isKeyed(0, 1), false, "a one-leaf tree's root is a leaf");
+        assert.strictEqual(TreeMath.isKeyed(4, 64), false, "a leaf");
+        assert.strictEqual(TreeMath.isKeyed(1, 64), false, "level 1");
+        assert.strictEqual(TreeMath.isKeyed(31, 16), false, "outside a 16-leaf tree");
+        assert.strictEqual(TreeMath.isKeyed(159, 81), true, "level 5, in range");
+        assert.strictEqual(TreeMath.isKeyed(159, 80), false, "level 5, past the truncated right edge");
+    });
+    
+    it("keyedPath is directPath filtered by isKeyed, ends at the root, and is empty only for one leaf", () => {
+        for (const numLeaves of [1, 2, 5, 16, 17, 33, 47, 64, 65, 129, 300]) {
+            for (let position = 0; position < numLeaves; position++) {
+                const keyed = TreeMath.keyedPath(position, numLeaves);
+                const expected = TreeMath.directPath(position, numLeaves)
+                    .filter(nodeIndex => TreeMath.level(nodeIndex) > TreeMath.BUCKET_LEVEL || nodeIndex === TreeMath.root(numLeaves));
+                assert.deepStrictEqual(keyed, expected, `N=${numLeaves} p=${position}`);
+                if (numLeaves === 1) {
+                    assert.deepStrictEqual(keyed, []);
+                }
+                else {
+                    assert.strictEqual(keyed[keyed.length - 1], TreeMath.root(numLeaves), `N=${numLeaves} p=${position}`);
+                }
             }
         }
     });
-});
-
-describe("TreeMath — cost properties from the whitepaper", () => {
-    /**
-     * A removal refreshes `directPath` and wraps to two children per refreshed node, minus the blanked leaf.
-     * The whitepaper claims `2·depth - 1` wraps for the tree part; assert it holds for the balanced case.
-     */
-    each<[number, number]>([
-        [8, 5],      // 2*3 - 1
-        [16, 7],     // 2*4 - 1
-        [1024, 19],  // 2*10 - 1
-        [32768, 29], // 2*15 - 1
-    ]).it("balanced N=%s costs the documented number of wraps", ([numLeaves, expectedWraps]) => {
-        const path = TreeMath.directPath(0, numLeaves);
-        assert.strictEqual(path.length, TreeMath.depth(numLeaves));
-        const wraps = path.reduce((sum, node, i) => {
-            // Bottom node skips the blanked leaf; every other node wraps to both children.
-            return sum + (i === 0 ? TreeMath.children(node, numLeaves).length - 1 : 2);
-        }, 0);
-        assert.strictEqual(wraps, expectedWraps);
-    });
     
-    it("N=32768 removal touches 15 nodes, not 32768", () => {
-        assert.strictEqual(TreeMath.directPath(0, 32768).length, 15);
-    });
-    
-    it("growth changes the root exactly at powers of two", () => {
-        assert.strictEqual(TreeMath.growthChangesRoot(4, 4), true, "seating a 5th member grows the tree");
-        assert.strictEqual(TreeMath.growthChangesRoot(2, 4), false, "filling a blank does not");
-        assert.strictEqual(TreeMath.growthChangesRoot(4, 8), false, "room already exists");
-        assert.strictEqual(TreeMath.numLeavesToSeat(4, 4), 5);
-        assert.strictEqual(TreeMath.numLeavesToSeat(1, 4), 4);
+    it("truncated right edges: a lone last seat climbs straight to the root", () => {
+        // N=17: seat 16 is leaf 32, whose parents 33..47 do not exist; its parent is the root 31.
+        assert.deepStrictEqual(TreeMath.directPath(16, 17), [31]);
+        // N=33: seat 32 (leaf 64) hangs directly off the root 63 — level-5 node 95 does not exist yet.
+        assert.deepStrictEqual(TreeMath.directPath(32, 33), [63]);
+        assert.deepStrictEqual(TreeMath.keyedPath(32, 33), [63]);
+        // N=49: node 95 exists from here on (2·49 - 1 = 97 nodes), so seat 48 (leaf 96) climbs through it even
+        // though 95's own right subtree is a single leaf.
+        assert.deepStrictEqual(TreeMath.keyedPath(48, 49), [95, 63]);
     });
 });

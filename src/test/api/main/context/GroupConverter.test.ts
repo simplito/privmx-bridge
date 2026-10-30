@@ -12,7 +12,16 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { GroupConverter } from "../../../../api/main/context/GroupConverter";
-import { buildTree } from "../../../testUtils/TreeFixtures";
+import { ContextApi } from "../../../../api/main/context/ContextApi";
+import { ContextApiValidator } from "../../../../api/main/context/ContextApiValidator";
+import { TypesValidator } from "../../../../api/TypesValidator";
+import type { ContextService } from "../../../../service/cloud/ContextService";
+import type { SessionService } from "../../../../api/session/SessionService";
+import type { GroupService } from "../../../../service/cloud/GroupService";
+import type { RequestLogger } from "../../../../service/log/RequestLogger";
+import { buildTree, planCommit } from "../../../testUtils/TreeFixtures";
+import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
+import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
 
@@ -46,13 +55,17 @@ const group: db.group.Group = {
     privateMetaVersion: 11 as types.group.GroupVersion,
     rosterVersion: 4,
     keyVersion: 3,
-    keyHistory: [],
     policy: {},
     numLeaves: tree.numLeaves,
     leafAssignment: tree.leafAssignment,
     eraFloor: 2,
-    groupKeys: [{group: groupId, keys: [{keyId: keyId, data: "self" as types.core.UserKeyData, groupEpoch: 3}]}],
 };
+
+const selfKey = {keyId: keyId, data: "self" as types.core.UserKeyData, groupEpoch: 3};
+const epochKeys: db.group.GroupEpochKey[] = [
+    {id: `${groupId}|2` as db.group.GroupEpochKeyId, groupId, keyVersion: 2, groupPubKey: "Pub2" as unknown as types.cloud.GroupPubKey},
+    {id: `${groupId}|3` as db.group.GroupEpochKeyId, groupId, keyVersion: 3, groupPubKey: groupPubKey, groupKey: selfKey},
+];
 
 function state(): db.group.GroupState {
     const history: db.group.GroupHistoryEntry[] = [1, 2, 3, 4].map(version => ({
@@ -92,7 +105,7 @@ function state(): db.group.GroupState {
         created: 160 as types.core.Timestamp,
         author: janek,
     };
-    return {tree, history, publicMeta, privateMeta};
+    return {tree, history, publicMeta, privateMeta, treeCommit: null, epochKeys};
 }
 
 it("convertGroup serves the state it was handed, and each plane's own counter", async () => {
@@ -114,13 +127,28 @@ it("convertGroup serves the state it was handed, and each plane's own counter", 
     assert.strictEqual(converted.ownLeafPosition, 1);
 });
 
-it("a listing carries the roster and the epoch, and nothing that grows with history", async () => {
+it("keyHistory and groupKeys come from the epoch rows: the past epochs' grant keys, every row's own key", async () => {
+    const converted = new GroupConverter().convertGroup(alice, group, state(), "full");
+    assert.deepStrictEqual(converted.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}], "the current epoch's key is `groupPubKey`, not history");
+    assert.deepStrictEqual(converted.groupKeys, [{group: groupId, keys: [selfKey]}]);
+    assert.deepStrictEqual(new GroupConverter().convertKeyArchive(group, [], epochKeys).keyHistory, converted.keyHistory);
+});
+
+it("the epoch rows found by groupGetEpochKeys come in groupGet's shapes, the current epoch's grant key included", async () => {
+    const converted = new GroupConverter().convertEpochKeys(group, epochKeys);
+    assert.strictEqual(converted.keyVersion, group.keyVersion);
+    assert.deepStrictEqual(converted.groupKeys, [{group: groupId, keys: [selfKey]}]);
+    assert.deepStrictEqual(converted.keyHistory, epochKeys.filter(row => row.groupPubKey).map(row => ({keyVersion: row.keyVersion, groupPubKey: row.groupPubKey})));
+    assert(converted.keyHistory.some(entry => entry.keyVersion === group.keyVersion), "the current epoch too");
+});
+
+it("a listing carries the epoch and the counters, and nothing that grows with membership or history", async () => {
     const summary = new GroupConverter().convertGroupSummary(group) as unknown as Record<string, unknown>;
-    // Still no `publicMeta`/`privateMeta`: a listing must not carry two envelopes per group.
+    // No `publicMeta`/`privateMeta` (two envelopes per group), no roster and no statement (both grow with members).
     assert.deepStrictEqual(Object.keys(summary).sort(), [
         "contextId", "createDate", "creator", "groupPubKey", "id", "keyVersion",
-        "lastModificationDate", "lastModifier", "managers", "policy", "privateMetaVersion", "publicMetaVersion",
-        "rosterVersion", "type", "users",
+        "lastModificationDate", "lastModifier", "policy", "privateMetaVersion", "publicMetaVersion",
+        "rosterVersion", "type",
     ]);
     assert.strictEqual(summary.publicMetaVersion, 7);
     assert.strictEqual(summary.privateMetaVersion, 11);
@@ -128,26 +156,47 @@ it("a listing carries the roster and the epoch, and nothing that grows with hist
     assert.strictEqual(summary.keyVersion, 3);
 });
 
+/** 64 seats with alice at seat 1, after u40 filled 95: records 31, 63 and 95. */
+function wideGroup() {
+    const seating = Array.from({length: 64}, (_, i) => ["janek", "alice"][i] ?? `u${i}`);
+    const wide = planCommit(buildTree(seating, 3), 3, {kind: "selfUpdate", committer: "u40"}).after;
+    const groupWide: db.group.Group = {...group, numLeaves: wide.numLeaves, leafAssignment: wide.leafAssignment};
+    return {wide, groupWide};
+}
+
 it("the default view serves the caller's climb, not the whole tree", async () => {
-    // Eight seats: one edge per level plus the grant edge, and public keys for the path and the copath. The
-    // difference is the point — at 16 384 members the full tree is 32 767 edges.
-    const seating = ["janek", "alice", "bob", "carol", "dave", "erin", "frank", "grace"];
-    const big = buildTree(seating, 3);
-    const group8: db.group.Group = {...group, numLeaves: big.numLeaves, leafAssignment: big.leafAssignment};
-    const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
+    // The records of alice's keyed path, the one wrap addressed to her, the wrap from 31 to 63, and the grant
+    // edge. The difference is the point — at 16 384 members the full tree is up to 32 767 edges.
+    const {wide, groupWide} = wideGroup();
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide});
     
     assert.strictEqual(converted.treeScope, "path");
     assert.strictEqual(converted.ownLeafPosition, 1);
-    // alice sits at seat 1: three nodes on her path, and two of her three copath entries are internal nodes.
-    // The third is her leaf sibling, whose key comes from the roster — a leaf carries no node keypair at all.
-    assert.strictEqual(converted.treeNodes?.length, 5);
-    assert.ok((converted.treeEdges?.length ?? 0) < big.edges.length, "the view must be smaller than the tree");
+    assert.deepStrictEqual(converted.treeNodes?.map(n => n.nodeIndex), [31, 63]);
+    assert.strictEqual(converted.treeEdges?.length, 3);
     assert.strictEqual(converted.treeEdges?.filter(e => e.isGrantEdge).length, 1, "the grant edge is what the climb ends on");
-    assert.strictEqual(
-        converted.treeEdges?.filter(e => e.childKind === "user").length, 1,
-        "exactly one leaf edge: the caller's own",
-    );
-    assert.strictEqual(converted.treeEdges?.find(e => e.childKind === "user")?.childUserId, alice);
+    assert.deepStrictEqual(converted.treeEdges?.find(e => e.childKind === "user"), wide.edges.find(e => e.childUserId === alice));
+    assert.ok(converted.treeEdges?.some(e => e.parentIndex === 63 && e.childIndex === 31), "the step from 31 to the root");
+});
+
+it("the planning view serves every node record but only the caller's climb", async () => {
+    const {wide, groupWide} = wideGroup();
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide}, "plan");
+    assert.strictEqual(converted.treeScope, "plan");
+    assert.deepStrictEqual(converted.treeNodes?.map(n => n.nodeIndex), [31, 63, 95]);
+    assert.strictEqual(converted.treeEdges?.length, 3);
+});
+
+it("blank records are served without a key, so a client can tell which of its nodes to refill", async () => {
+    const {wide, groupWide} = wideGroup();
+    const removed = planCommit(wide, 3, {kind: "remove", committer: "janek", removed: ["u41"]}).after;
+    const converted = new GroupConverter().convertGroup(alice, {...groupWide, leafAssignment: removed.leafAssignment}, {...state(), tree: removed}, "plan");
+    assert.deepStrictEqual(converted.treeNodes?.find(n => n.nodeIndex === 95), {nodeIndex: 95, generation: 1});
+});
+
+it("serves the tree version, and labels a group from before it", async () => {
+    assert.strictEqual(new GroupConverter().convertGroup(alice, {...group, treeVersion: 2}, state()).treeVersion, 2);
+    assert.strictEqual(new GroupConverter().convertGroup(alice, group, state()).treeVersion, 1);
 });
 
 it("scope full serves the whole tree, for a client that validates it itself", async () => {
@@ -168,7 +217,7 @@ it("a caller with no leaf gets the full tree, having no path of their own", asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// history windowing (BR-09)
+// history windowing
 // ─────────────────────────────────────────────────────────────────────────────
 
 it("serves the whole history, from genesis, when the caller does not say what it has", async () => {
@@ -237,21 +286,18 @@ it("forNewMembers allocates blanks lowest-first before appending", async () => {
     assert.deepStrictEqual(converted.nextFreeSeats, [2, 4, 8]);
 });
 
-it("forNewMembers serves the nodes an addition to those seats needs", async () => {
+it("forNewMembers and forUserIds resolve seats without widening the view", async () => {
+    // Planning reads every record from `scope: "plan"`; the seat lists only save the caller reading the roster.
     const {big, group8} = bigGroup(["janek", "alice", "", "carol", "dave", "erin", "frank", ""]);
     const plain = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     const withSeats = new GroupConverter().convertGroup(
-        alice, group8, {...state(), tree: big}, "path", undefined, 2,
+        alice, group8, {...state(), tree: big}, "path", ["frank" as types.cloud.UserId], 2,
     );
     assert.deepStrictEqual(withSeats.nextFreeSeats, [2, 7]);
-    // Still a path view, just a wider one: the caller's climb plus what seating those two needs.
+    assert.deepStrictEqual(withSeats.subjectLeafPositions, [6]);
     assert.strictEqual(withSeats.treeScope, "path");
-    assert.ok(
-        (withSeats.treeNodes?.length ?? 0) > (plain.treeNodes?.length ?? 0),
-        "asking for seats must serve the nodes those seats are planned against",
-    );
-    // No assertion that the window beats the whole tree here: at eight seats two paths plus their copaths cover
-    // nearly all of it. The saving is asymptotic, and `treeScope` staying "path" is what this fixture can show.
+    assert.deepStrictEqual(withSeats.treeNodes, plain.treeNodes);
+    assert.deepStrictEqual(withSeats.treeEdges, plain.treeEdges);
 });
 
 it("no seats are reported when nobody asked for any", async () => {
@@ -259,4 +305,111 @@ it("no seats are reported when nobody asked for any", async () => {
     const converted = new GroupConverter().convertGroup(alice, group8, {...state(), tree: big});
     assert.strictEqual(converted.nextFreeSeats, undefined);
     assert.strictEqual(converted.subjectLeafPositions, undefined);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// what lets a client verify what it is served
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("a path view carries the copath hashes that, with the caller's own path, rebuild the tree hash", async () => {
+    const {wide, groupWide} = wideGroup();
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide});
+    assert.deepStrictEqual(converted.copathHashes, TreeHash.copathHashes(TreeHash.of(wide), 1).map(hash => hash.toString("hex")));
+    assert.strictEqual(converted.copathHashes?.length, TreeMath.copath(1, 64).length, "aligned with the copath");
+    // Rebuild the root from alice's leaf upwards, using only what the view serves.
+    const served = TreeHash.of({numLeaves: 64, leafAssignment: wide.leafAssignment, nodes: converted.treeNodes});
+    let current = TreeMath.leafNode(1);
+    let hash = TreeHash.childHash(served, current);
+    for (const copathHash of converted.copathHashes!) {
+        const parent = TreeMath.parent(current, 64);
+        const sibling = Buffer.from(copathHash, "hex");
+        const [left] = TreeMath.children(parent, 64);
+        // The parent's own fields come from the served record (keyed) or its index alone (unkeyed).
+        hash = left === current ? TreeHash.nodeHash(served, parent, hash, sibling) : TreeHash.nodeHash(served, parent, sibling, hash);
+        current = parent;
+    }
+    assert.strictEqual(hash.toString("hex"), TreeHash.childHash(TreeHash.of(wide), TreeMath.root(64)).toString("hex"));
+});
+
+it("the hashes behind a path view are computed once per commit, and a commit moves the cache key", async () => {
+    const {wide, groupWide} = wideGroup();
+    const atSeq2: db.group.Group = {...groupWide, id: "CachedGroupId" as types.group.GroupId, treeCommitSeq: 2};
+    const hex = (hashes: Buffer[]) => hashes.map(hash => hash.toString("hex"));
+    const before = new GroupConverter().convertGroup(alice, atSeq2, {...state(), tree: wide});
+    // u41 sits on alice's copath, so its self-update (seq 3) changes what she must be served.
+    const next = planCommit(wide, 3, {kind: "selfUpdate", committer: "u41"}).after;
+    // Same key, other tree: what comes back is the cached computation — which is why the key must move per commit.
+    assert.deepStrictEqual(new GroupConverter().convertGroup(alice, atSeq2, {...state(), tree: next}).copathHashes, before.copathHashes);
+    const after = new GroupConverter().convertGroup(alice, {...atSeq2, treeCommitSeq: 3}, {...state(), tree: next});
+    assert.deepStrictEqual(after.copathHashes, hex(TreeHash.copathHashes(TreeHash.of(next), 1)));
+    assert.notDeepStrictEqual(after.copathHashes, before.copathHashes);
+});
+
+it("the hash cache keeps one entry per group, its latest seq, and only the nodes at bucket level and above", async () => {
+    const {wide, groupWide} = wideGroup();
+    const cache = (GroupConverter as unknown as {hashCache: Map<types.group.GroupId, {seq: number, hashes: Map<number, Buffer>}>}).hashCache;
+    const id = "OneEntryGroupId" as types.group.GroupId;
+    const next = planCommit(wide, 3, {kind: "selfUpdate", committer: "u41"}).after;
+    new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 2}, {...state(), tree: wide});
+    new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 3}, {...state(), tree: next});
+    assert.strictEqual(cache.get(id)?.seq, 3, "a newer seq replaces the entry instead of adding one");
+    const late = new GroupConverter().convertGroup(alice, {...groupWide, id, treeCommitSeq: 2}, {...state(), tree: wide});
+    assert.deepStrictEqual(late.copathHashes, TreeHash.copathHashes(TreeHash.of(wide), 1).map(hash => hash.toString("hex")), "an older read is still answered right");
+    assert.strictEqual(cache.get(id)?.seq, 3, "but does not displace the newer entry");
+    assert([...cache.get(id)!.hashes.keys()].every(nodeIndex => TreeMath.level(nodeIndex) >= TreeMath.BUCKET_LEVEL));
+});
+
+it("the hash cache stays within its entry bound, least recently used out first", async () => {
+    const {wide, groupWide} = wideGroup();
+    const limits = GroupConverter as unknown as {HASH_CACHE_MAX_GROUPS: number, hashCache: Map<string, unknown>};
+    const saved = limits.HASH_CACHE_MAX_GROUPS;
+    limits.HASH_CACHE_MAX_GROUPS = 1;
+    try {
+        new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundA" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
+        new GroupConverter().convertGroup(alice, {...groupWide, id: "BoundB" as types.group.GroupId, treeCommitSeq: 1}, {...state(), tree: wide});
+        assert.deepStrictEqual([...limits.hashCache.keys()], ["BoundB"]);
+    }
+    finally {
+        limits.HASH_CACHE_MAX_GROUPS = saved;
+    }
+});
+
+it("plan and full views carry every record instead, and no copath hashes", async () => {
+    const {wide, groupWide} = wideGroup();
+    for (const scope of ["plan", "full"] as const) {
+        assert.strictEqual(new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide}, scope).copathHashes, undefined);
+    }
+});
+
+it("the latest statement is served as is; vouching statements are named by the served records' setBy", async () => {
+    const {wide, groupWide} = wideGroup();
+    const latest = {seq: 2} as types.cloud.GroupTreeCommitStatement;
+    const converted = new GroupConverter().convertGroup(alice, groupWide, {...state(), tree: wide, treeCommit: latest});
+    assert.strictEqual(converted.treeCommit, latest);
+    assert.deepStrictEqual(converted.treeNodes.map(node => node.setBy), [1, 2], "31 set at creation, 63 by u40's self-update");
+    assert.deepStrictEqual(GroupConverter.vouchingSeqs(converted.treeNodes), [1, 2]);
+    assert.deepStrictEqual(GroupConverter.vouchingSeqs([...converted.treeNodes, {nodeIndex: 95, generation: 0}]), [1, 2], "a blank record vouches for nothing");
+});
+
+it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by keyId", async () => {
+    const asked: {keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]}[] = [];
+    const groupService = {
+        getEpochKeys: (_user: unknown, _id: types.group.GroupId, keyIds: types.core.KeyId[], groupPubKeys: types.cloud.GroupPubKey[]) => {
+            asked.push({keyIds, groupPubKeys});
+            const rows = epochKeys.filter(row => keyIds.includes(row.groupKey?.keyId as types.core.KeyId) || groupPubKeys.includes(row.groupPubKey as types.cloud.GroupPubKey));
+            return Promise.resolve({group, epochKeys: rows});
+        },
+    };
+    const api = new ContextApi(
+        new ContextApiValidator(new TypesValidator()),
+        {} as unknown as ContextService,
+        {validateContextSessionAndGetCloudUser: () => ({})} as unknown as SessionService,
+        groupService as unknown as GroupService,
+        new GroupConverter(),
+        {setContextId: () => undefined} as unknown as RequestLogger,
+    );
+    const pub2 = "Pub2" as unknown as types.cloud.GroupPubKey;
+    const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});
+    assert.deepStrictEqual(asked, [{keyIds: [], groupPubKeys: [pub2]}]);
+    assert.deepStrictEqual(result.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}]);
 });

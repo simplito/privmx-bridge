@@ -259,8 +259,14 @@ describe("LadderMath.validateRungSet", () => {
         ok(LadderMath.validateRungSet([{at: 8, target: 7}], 8, 1));
     });
     
-    it("accepts a non-aligned skip — alignment is advisory, not enforced", () => {
-        ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1));
+    it("refuses a span the epoch does not owe, so a commit's rungs stay within the canonical ~33 spans", () => {
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1), "NOT_CANONICAL");
+        // A skip below the effective floor is not owed either, whichever of the two floors it is.
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5), "BELOW_PRUNE_WATERMARK");
+        ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 6}], 8, 1));
+        // Never more than the owed spans: one commit cannot file 256 rungs at targets of its choosing.
+        const many = Array.from({length: 200}, (_, i) => ({at: 1024, target: 1023 - i}));
+        problem(LadderMath.validateRungSet(many, 1024, 1), "NOT_CANONICAL");
     });
     
     /** SECURITY — the single check that stops a removed member reading forward. */

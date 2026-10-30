@@ -15,9 +15,9 @@ import { CacheWithTTL } from "../../../utils/CacheWithTTL";
 import { DateUtils } from "../../../utils/DateUtils";
 
 /**
- * Cross-worker (IPC) sliding-window rate limiter for group key rotations (Phase 2, BR-4).
- * Keyed per group (the caller passes the groupId): BR-4 bounds epoch churn, which is a per-group cost
- * regardless of which manager triggers it. The state lives in the master process so the cap is global
+ * Cross-worker (IPC) sliding-window rate limiter for group key rotations.
+ * Keyed by whatever the caller passes; `GroupService.rateLimitKey` keeps a separate budget per member and
+ * per kind of operation, so no member can spend another's. The state lives in the master process so the cap is global
  * across worker processes (an in-worker Map would only cap per worker). Modeled on NonceMap.
  */
 @IpcService
@@ -33,30 +33,28 @@ export class GroupRotationRateLimiter {
     }
     
     /**
-     * Peek: returns whether a rotation for `key` is currently allowed within the window.
-     * Does NOT consume quota — quota is consumed by `record` only after a rotation actually commits,
-     * so lost CAS races / version mismatches do not burn the caller's budget.
-     *
-     * Peeking means concurrent requests can all pass before any of them records, so the window can overshoot.
-     * What bounds it is the CAS on `keyVersion`: of the requests racing on one epoch exactly one commits, and
-     * only that one records. The alternative — consume here, refund on failure — would trade this for a budget
-     * that a client can drain with requests that were never going to commit.
+     * Reserves one unit of `key`'s budget — `limit` an hour, or the configured per-member budget when the caller
+     * passes none — and says whether it could. Check and charge are one call in the master, so requests racing
+     * each other cannot all pass on the last unit, as they could when this only peeked. A caller that does not
+     * end up spending the unit hands it back with `release`.
      */
     @ApiMethod({})
-    async check(model: {key: string}): Promise<{allowed: boolean}> {
-        const cutoff = DateUtils.now() - DateUtils.hours(1);
-        const timestamps = (this.cache.get(model.key) ?? []).filter(t => t > cutoff);
-        return {allowed: timestamps.length < this.maxRotationsPerHour};
-    }
-    
-    /** Commit: records one successful rotation for `key`. Call only after the rotation has committed. */
-    @ApiMethod({})
-    async record(model: {key: string}): Promise<void> {
+    async reserve(model: {key: string, limit?: number}): Promise<{allowed: boolean}> {
         const window = DateUtils.hours(1);
         const cutoff = DateUtils.now() - window;
         const timestamps = (this.cache.get(model.key) ?? []).filter(t => t > cutoff);
+        if (timestamps.length >= (model.limit ?? this.maxRotationsPerHour)) {
+            return {allowed: false};
+        }
         timestamps.push(DateUtils.now());
         this.cache.set(model.key, timestamps, window);
+        return {allowed: true};
+    }
+    
+    /** Hands back one unit `reserve` took and the caller did not spend. */
+    @ApiMethod({})
+    async release(model: {key: string}): Promise<void> {
+        this.cache.get(model.key)?.pop();
     }
     
     deleteExpired() {

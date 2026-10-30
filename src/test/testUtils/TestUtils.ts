@@ -13,8 +13,12 @@ limitations under the License.
 
 import "q2-test";
 import { ErrorCode, AppException } from "../../api/AppException";
+import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
+import type { GroupRepository } from "../../service/cloud/GroupRepository";
+import type { GroupStateRepository } from "../../service/cloud/GroupStateRepository";
 
-export type Mocked<T> = T&{ [K in keyof T]: T[K] & Mock };
+/** Methods become mocks; an object property (a repository's `state`) is mocked in turn. */
+export type Mocked<T> = T&{ [K in keyof T]: T[K] extends (...args: never[]) => unknown ? T[K] & Mock : T[K] extends object ? Mocked<T[K]> : T[K] & Mock };
 export const ANY = {any: true};
 
 export function hasOneCallWithArguments(mockObj: Mock, args: any[]) {
@@ -49,6 +53,31 @@ export function mock<T, K extends keyof T>(obj: Mocked<T>, prop: K, func?: T[K])
 
 export function createMock<T>(props: {[K in keyof T]?: Mock}) {
     return <Mocked<T>>props;
+}
+
+/** A group repository mock whose `state` is a mock of its own. */
+export function createGroupRepositoryMock() {
+    return createMock<GroupRepository>({state: createMock<GroupStateRepository>({}) as never});
+}
+
+/** A rate limiter granting what `allow` lets through; `kept` lists the units reserved and never handed back. */
+export function fakeRateLimiter(allow: (key: string) => boolean = () => true) {
+    const limiter = createMock<GroupRotationRateLimiter>({});
+    const fake = Object.assign(limiter, {kept: [] as string[], allow});
+    mock(limiter, "reserve", async (model: {key: string}) => {
+        if (!fake.allow(model.key)) {
+            return {allowed: false};
+        }
+        fake.kept.push(model.key);
+        return {allowed: true};
+    });
+    mock(limiter, "release", async (model: {key: string}) => {
+        const index = fake.kept.indexOf(model.key);
+        if (index >= 0) {
+            fake.kept.splice(index, 1);
+        }
+    });
+    return fake;
 }
 
 export function createFake<T>(props: {[K in keyof T]?: T[K]}) {

@@ -12,7 +12,7 @@ limitations under the License.
 import { BaseTestSet, Test } from "../BaseTestSet";
 import * as assert from "assert";
 import { testData } from "../../datasets/testData";
-import { buildTree } from "../../testUtils/TreeFixtures";
+import { buildTree, creationStatement, policyCommitAgainst, registerUserKey, ServedGroup } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
@@ -33,6 +33,13 @@ const secondGroupPubKey = secondGroupIdentity.pub58 as unknown as types.cloud.Gr
 interface ReceivedEvent {
     type: string;
     data: Record<string, unknown>;
+}
+
+/** A one-member tree for the test user and the creation statement it signs for it. */
+function soloTree(pubKey: types.cloud.GroupPubKey, resourceId: types.core.ClientResourceId) {
+    registerUserKey(testData.userId, testData.userPrivKey as types.core.EccWif);
+    const tree = buildTree([testData.userId], 1);
+    return {resourceId, tree, commit: creationStatement(tree, testData.userId, {groupId: resourceId, groupPubKey: pubKey, users: [testData.userId], managers: [testData.userId]})};
 }
 
 export class GroupEventsTest extends BaseTestSet {
@@ -127,7 +134,8 @@ export class GroupEventsTest extends BaseTestSet {
         assert(privateEvent.changeKind === "privateMetaUpdated", `changeKind mismatch: ${JSON.stringify(privateEvent.changeKind)}`);
         assert(privateEvent.privateMetaVersion === 2, "the private counter must have advanced");
         
-        await this.apis.contextApi.groupUpdatePolicy({id: groupId, policy: {get: "all" as types.cloud.PolicyEntry}});
+        const {group} = await this.apis.contextApi.groupGet({groupId, scope: "plan"});
+        await this.apis.contextApi.groupUpdatePolicy(policyCommitAgainst(group as unknown as ServedGroup, testData.userId, {get: "all" as types.cloud.PolicyEntry}));
         await this.settle();
         const afterPolicy = this.received.filter(e => e.type === "groupUpdated");
         const policyEvent = afterPolicy[afterPolicy.length - 1].data;
@@ -146,7 +154,7 @@ export class GroupEventsTest extends BaseTestSet {
             publicMeta: "META" as types.group.GroupData,
             privateMeta: "META_PRIV" as types.group.GroupData,
             keyId: testData.keyId,
-            tree: buildTree([testData.userId], 1),
+            ...soloTree(groupPubKey, this.helpers.generateResourceId()),
         });
         this.groupId = res.groupId;
     }
@@ -161,7 +169,7 @@ export class GroupEventsTest extends BaseTestSet {
             publicMeta: "META2" as types.group.GroupData,
             privateMeta: "META2_PRIV" as types.group.GroupData,
             keyId: testData.keyId,
-            tree: buildTree([testData.userId], 1),
+            ...soloTree(secondGroupPubKey, this.helpers.generateResourceId()),
         });
         this.otherGroupId = res.groupId;
     }

@@ -11,9 +11,24 @@ limitations under the License.
 
 import * as types from "../../../types";
 import { TreeMath } from "./TreeMath";
+import type { HashableTree } from "./TreeHash";
 
-/** Why a submitted tree state was rejected. */
+/** Why a submitted edge set was rejected. Shared by the whole-state check and the commit check. */
+export type EdgeProblem =
+    | {kind: "GRANT_EDGE_COUNT", count: number}
+    | {kind: "GRANT_EDGE_WRONG_CHILD", expected: string, got: string}
+    | {kind: "GRANT_EDGE_WRONG_EPOCH", expected: number, got: number}
+    | {kind: "DUPLICATE_EDGE", parent: string, child: string}
+    | {kind: "MISSING_EDGE", parent: string, child: string}
+    | {kind: "UNEXPECTED_EDGE", parent: string, child: string}
+    | {kind: "STALE_PARENT_GENERATION", parent: string, child: string, expected: number, got: number}
+    | {kind: "STALE_CHILD_GENERATION", parent: string, child: string, expected: number, got: number}
+    | {kind: "EMPTY_EDGE_DATA", parent: string, child: string}
+    | {kind: "MALFORMED_EDGE", parent: string, child: string};
+
+/** Why a stored or submitted tree state was rejected. */
 export type TreeProblem =
+    | EdgeProblem
     | {kind: "BAD_NUM_LEAVES", numLeaves: number}
     | {kind: "LEAF_COUNT_MISMATCH", expected: number, got: number}
     | {kind: "NO_OCCUPIED_LEAF"}
@@ -21,65 +36,88 @@ export type TreeProblem =
     | {kind: "LEAF_MEMBER_NOT_IN_ROSTER", userId: types.cloud.UserId}
     | {kind: "ROSTER_MEMBER_WITHOUT_LEAF", userId: types.cloud.UserId}
     | {kind: "DUPLICATE_NODE", nodeIndex: number}
-    | {kind: "MISSING_NODE", nodeIndex: number}
     | {kind: "UNEXPECTED_NODE", nodeIndex: number}
     | {kind: "BAD_GENERATION", nodeIndex: number, generation: number}
-    | {kind: "EMPTY_NODE_PUBKEY", nodeIndex: number}
-    | {kind: "GRANT_EDGE_COUNT", count: number}
-    | {kind: "GRANT_EDGE_WRONG_CHILD", expected: string, got: string}
-    | {kind: "GRANT_EDGE_WRONG_EPOCH", expected: number, got: number}
-    | {kind: "DUPLICATE_EDGE", edge: EdgeKey}
-    | {kind: "MISSING_EDGE", edge: EdgeKey}
-    | {kind: "UNEXPECTED_EDGE", edge: EdgeKey}
-    | {kind: "STALE_PARENT_GENERATION", edge: EdgeKey, expected: number, got: number}
-    | {kind: "STALE_CHILD_GENERATION", edge: EdgeKey, expected: number, got: number}
-    | {kind: "EMPTY_EDGE_DATA", edge: EdgeKey};
-
-/** Identifies an edge for error reporting: which parent, which child. */
-export interface EdgeKey {
-    parent: string;
-    child: string;
-}
+    | {kind: "ROOT_NOT_FILLED", nodeIndex: number};
 
 interface Roster {
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
 }
 
+/** One element of a resolution: a filled keyed node, or a seated member. */
+export type Resolved =
+    | {kind: "node", nodeIndex: number, generation: number}
+    | {kind: "user", userId: types.cloud.UserId};
+
+/** An edge a state owes, keyed by `edgeId`. `childGeneration` only for a node child. */
+export interface RequiredEdge {
+    parent: string;
+    child: string;
+    parentGeneration: number;
+    childGeneration?: number;
+}
+
+/** What the single grant edge must look like. */
+export interface GrantExpectation {
+    epoch: number;
+    child: string;
+    childGeneration?: number;
+}
+
 /**
  * Structural validation of the hidden key tree. Decidable from node indices, generations and roster membership
  * alone — no crypto, no database.
  *
- * The load-bearing rule: **every edge must name the current generation of both endpoints.** Refresh coverage
- * then follows for free — a refreshed node invalidates the generation named by every edge into and out of it,
- * forcing the client to resubmit exactly those edges. No separate coverage rule is needed.
+ * **The invariant (tree version 2).** A node's private key is known only to members seated in its subtree. That
+ * holds because every edge wraps a node key to something *below* it, and the set of edges is not chosen by the
+ * client but forced by the state: each filled keyed node `v` wraps to exactly the resolution of each of its
+ * children (`resolve`), and nothing else is stored apart from the one grant edge. A blank node passes its
+ * children's resolutions up, which is why an edge's parent is the child's lowest *filled* keyed ancestor rather
+ * than its structural parent.
+ *
+ * Every edge also names the current generation of both of its ends, so a re-keyed node invalidates every edge
+ * into and out of it and forces exactly those to be resubmitted.
  */
 export class TreeValidator {
     
     /**
-     * Validates a complete tree state against the roster and the epoch it claims to serve.
+     * Validates a complete tree state against the roster and the epoch it claims to serve. Used where a whole
+     * state is in hand — `verifyGroupTrees.ts` and the conformance test — never on the write path, which checks
+     * deltas instead (`TreeTransitionValidator.validateCommit`).
      *
-     * @param tree       the submitted state
+     * @param tree       the state; `nodes` are all records of the group, filled and blank
      * @param roster     the group's users and managers; every member gets exactly one leaf, and no leaf may
      *                   hold a non-member
      * @param keyVersion the epoch the grant edge must be addressed to
      */
     static validateState(tree: types.cloud.GroupTreeState, roster: Roster, keyVersion: number): TreeProblem[] {
-        const problems: TreeProblem[] = [];
-        if (!Number.isInteger(tree.numLeaves) || tree.numLeaves < 1) {
-            return [{kind: "BAD_NUM_LEAVES", numLeaves: tree.numLeaves}];
+        const problems: TreeProblem[] = TreeValidator.validateLeaves(tree, roster);
+        if (problems.some(problem => problem.kind === "BAD_NUM_LEAVES" || problem.kind === "LEAF_COUNT_MISMATCH")) {
+            return problems;
         }
-        const numLeaves = tree.numLeaves;
-        if (tree.leafAssignment.length !== numLeaves) {
-            return [{kind: "LEAF_COUNT_MISMATCH", expected: numLeaves, got: tree.leafAssignment.length}];
+        const view = TreeValidator.checkNodes(tree, problems);
+        const rootIndex = TreeMath.root(tree.numLeaves);
+        if (!TreeMath.isLeaf(rootIndex) && !TreeValidator.isFilled(view, rootIndex)) {
+            // Every commit re-keys the root, so a state at rest always has it filled — and the grant edge has
+            // nothing else to wrap to.
+            problems.push({kind: "ROOT_NOT_FILLED", nodeIndex: rootIndex});
         }
-        problems.push(...TreeValidator.checkLeaves(tree, roster));
-        const generations = TreeValidator.checkNodes(tree, numLeaves, problems);
-        problems.push(...TreeValidator.checkEdges(tree, numLeaves, keyVersion, generations));
+        const filled = [...view.nodes.keys()].filter(nodeIndex => TreeValidator.isFilled(view, nodeIndex));
+        problems.push(...TreeValidator.checkEdges(
+            tree.edges, TreeValidator.requiredEdges(view, filled), TreeValidator.grantExpectation(view, keyVersion),
+        ));
         return problems;
     }
     
-    private static checkLeaves(tree: types.cloud.GroupTreeState, roster: Roster): TreeProblem[] {
+    /** Geometry and seating against the roster: every member on exactly one leaf, nobody else on any. */
+    static validateLeaves(tree: types.cloud.GroupTreeState, roster: Roster): TreeProblem[] {
+        if (!Number.isInteger(tree.numLeaves) || tree.numLeaves < 1) {
+            return [{kind: "BAD_NUM_LEAVES", numLeaves: tree.numLeaves}];
+        }
+        if (tree.leafAssignment.length !== tree.numLeaves) {
+            return [{kind: "LEAF_COUNT_MISMATCH", expected: tree.numLeaves, got: tree.leafAssignment.length}];
+        }
         const problems: TreeProblem[] = [];
         const members = new Set<string>([...roster.users, ...roster.managers]);
         const seated = new Set<string>();
@@ -109,95 +147,131 @@ export class TreeValidator {
         return problems;
     }
     
-    /** Checks the node set covers exactly the internal nodes, and returns nodeIndex → current generation. */
-    private static checkNodes(
-        tree: types.cloud.GroupTreeState,
-        numLeaves: number,
-        problems: TreeProblem[],
-    ): Map<number, number> {
-        const generations = new Map<number, number>();
+    /** Records only on keyed nodes, one each, with a sane generation. Returns the records as a view. */
+    private static checkNodes(tree: types.cloud.GroupTreeState, problems: TreeProblem[]): HashableTree {
+        const view: HashableTree = {numLeaves: tree.numLeaves, leafAssignment: tree.leafAssignment, nodes: new Map()};
         for (const node of tree.nodes) {
-            if (generations.has(node.nodeIndex)) {
+            if (view.nodes.has(node.nodeIndex)) {
                 problems.push({kind: "DUPLICATE_NODE", nodeIndex: node.nodeIndex});
                 continue;
             }
-            generations.set(node.nodeIndex, node.generation);
-            if (!Number.isInteger(node.nodeIndex) || node.nodeIndex < 0
-                || !TreeMath.exists(node.nodeIndex, numLeaves) || TreeMath.isLeaf(node.nodeIndex)) {
-                // Leaves carry no node keypair: a member's own long-term key *is* the leaf. Publishing one
-                // would be a second key where the design has one.
+            if (!Number.isInteger(node.nodeIndex) || node.nodeIndex < 0 || !TreeMath.isKeyed(node.nodeIndex, tree.numLeaves)) {
+                // A record on a leaf would be a second key where the member's long-term key is the design; one
+                // on a bucket node would be a key nothing is allowed to wrap to.
                 problems.push({kind: "UNEXPECTED_NODE", nodeIndex: node.nodeIndex});
+                continue;
             }
             if (!Number.isInteger(node.generation) || node.generation < 0) {
                 problems.push({kind: "BAD_GENERATION", nodeIndex: node.nodeIndex, generation: node.generation});
             }
-            if (!node.publicKey) {
-                problems.push({kind: "EMPTY_NODE_PUBKEY", nodeIndex: node.nodeIndex});
-            }
+            view.nodes.set(node.nodeIndex, node);
         }
-        for (const nodeIndex of TreeValidator.internalNodes(numLeaves)) {
-            if (!generations.has(nodeIndex)) {
-                problems.push({kind: "MISSING_NODE", nodeIndex});
-            }
-        }
-        return generations;
+        return view;
+    }
+    
+    /** A keyed node with a record that carries a public key. Anything else resolves through its children. */
+    private static isFilled(view: HashableTree, nodeIndex: number): boolean {
+        return TreeMath.isKeyed(nodeIndex, view.numLeaves) && !!view.nodes.get(nodeIndex)?.publicKey;
     }
     
     /**
-     * Checks the edge set is exactly the required one: two edges per internal node (one per existing child,
-     * skipping blank leaves), plus one grant edge, all naming current generations.
+     * The resolution of a node: the nearest filled keyed nodes and seated members covering its subtree.
+     *
+     * A seated leaf resolves to its member, a blank leaf to nothing, a filled keyed node to itself; anything else
+     * — a blank keyed node, a keyed node with no record, a bucket node — to its two children's resolutions.
      */
-    private static checkEdges(
-        tree: types.cloud.GroupTreeState,
-        numLeaves: number,
-        keyVersion: number,
-        generations: Map<number, number>,
-    ): TreeProblem[] {
-        const problems: TreeProblem[] = [];
-        const required = TreeValidator.requiredEdges(tree, numLeaves, generations);
+    static resolve(view: HashableTree, nodeIndex: number): Resolved[] {
+        if (TreeMath.isLeaf(nodeIndex)) {
+            const userId = view.leafAssignment[TreeMath.leafPosition(nodeIndex)];
+            return userId ? [{kind: "user", userId}] : [];
+        }
+        if (TreeValidator.isFilled(view, nodeIndex)) {
+            return [{kind: "node", nodeIndex, generation: view.nodes.get(nodeIndex)!.generation}];
+        }
+        return TreeMath.children(nodeIndex, view.numLeaves).flatMap(child => TreeValidator.resolve(view, child));
+    }
+    
+    /**
+     * The edges the given filled nodes owe in `view`: for each one, a wrap to every element of each child's
+     * resolution. This is the whole of what a parent may wrap to — never a node or member outside its subtree.
+     */
+    static requiredEdges(view: HashableTree, parents: number[]): Map<string, RequiredEdge> {
+        const required = new Map<string, RequiredEdge>();
+        for (const parentIndex of parents) {
+            const parentGeneration = view.nodes.get(parentIndex)!.generation;
+            for (const childIndex of TreeMath.children(parentIndex, view.numLeaves)) {
+                for (const resolved of TreeValidator.resolve(view, childIndex)) {
+                    if (resolved.kind === "user") {
+                        required.set(`${parentIndex}>user:${resolved.userId}`, {
+                            parent: `node:${parentIndex}`, child: `user:${resolved.userId}`, parentGeneration,
+                        });
+                    }
+                    else {
+                        required.set(`${parentIndex}>node:${resolved.nodeIndex}`, {
+                            parent: `node:${parentIndex}`, child: `node:${resolved.nodeIndex}`, parentGeneration,
+                            childGeneration: resolved.generation,
+                        });
+                    }
+                }
+            }
+        }
+        return required;
+    }
+    
+    /**
+     * The grant edge joins the grant keypair of the current epoch to the tree root. Its `parentGeneration`
+     * carries the epoch rather than a node generation, which is what ties the tree to `keyVersion`. A one-member
+     * group has no internal node at all — the root *is* the member's leaf — so the grant key is wrapped straight
+     * to them.
+     */
+    static grantExpectation(view: HashableTree, epoch: number): GrantExpectation {
+        const rootIndex = TreeMath.root(view.numLeaves);
+        if (TreeMath.isLeaf(rootIndex)) {
+            return {epoch, child: `user:${view.leafAssignment[0]}`};
+        }
+        const root = view.nodes.get(rootIndex);
+        return {epoch, child: `node:${rootIndex}`, ...(root ? {childGeneration: root.generation} : {})};
+    }
+    
+    /** Checks a submitted edge set is exactly `required` plus one grant edge as `grant` describes. */
+    static checkEdges(edges: types.cloud.GroupTreeEdge[], required: Map<string, RequiredEdge>, grant: GrantExpectation): EdgeProblem[] {
+        const problems: EdgeProblem[] = [];
         const seen = new Set<string>();
         let grantEdges = 0;
-        
-        for (const edge of tree.edges) {
+        for (const edge of edges) {
+            const describe = TreeValidator.describe(edge);
             if (!edge.data) {
-                problems.push({kind: "EMPTY_EDGE_DATA", edge: TreeValidator.describe(edge)});
+                problems.push({kind: "EMPTY_EDGE_DATA", ...describe});
+            }
+            if (TreeValidator.isMalformed(edge)) {
+                problems.push({kind: "MALFORMED_EDGE", ...describe});
             }
             if (edge.isGrantEdge) {
                 grantEdges++;
-                problems.push(...TreeValidator.checkGrantEdge(edge, tree, numLeaves, keyVersion, generations));
+                problems.push(...TreeValidator.checkGrantEdge(edge, grant));
                 continue;
             }
             const key = TreeValidator.edgeId(edge);
             if (seen.has(key)) {
-                problems.push({kind: "DUPLICATE_EDGE", edge: TreeValidator.describe(edge)});
+                problems.push({kind: "DUPLICATE_EDGE", ...describe});
                 continue;
             }
             seen.add(key);
             const expected = required.get(key);
             if (!expected) {
-                problems.push({kind: "UNEXPECTED_EDGE", edge: TreeValidator.describe(edge)});
+                problems.push({kind: "UNEXPECTED_EDGE", ...describe});
                 continue;
             }
             if (edge.parentGeneration !== expected.parentGeneration) {
-                problems.push({
-                    kind: "STALE_PARENT_GENERATION",
-                    edge: TreeValidator.describe(edge),
-                    expected: expected.parentGeneration,
-                    got: edge.parentGeneration,
-                });
+                problems.push({kind: "STALE_PARENT_GENERATION", ...describe, expected: expected.parentGeneration, got: edge.parentGeneration});
             }
             if (expected.childGeneration !== undefined && edge.childGeneration !== expected.childGeneration) {
-                problems.push({
-                    kind: "STALE_CHILD_GENERATION",
-                    edge: TreeValidator.describe(edge),
-                    expected: expected.childGeneration,
-                    got: edge.childGeneration ?? -1,
-                });
+                problems.push({kind: "STALE_CHILD_GENERATION", ...describe, expected: expected.childGeneration, got: edge.childGeneration ?? -1});
             }
         }
         for (const [key, expected] of required) {
             if (!seen.has(key)) {
-                problems.push({kind: "MISSING_EDGE", edge: expected.describe});
+                problems.push({kind: "MISSING_EDGE", parent: expected.parent, child: expected.child});
             }
         }
         if (grantEdges !== 1) {
@@ -206,49 +280,22 @@ export class TreeValidator {
         return problems;
     }
     
-    /**
-     * The grant edge joins the grant keypair of the current epoch to the tree root. Its `parentGeneration`
-     * carries the epoch rather than a node generation, which is what ties the tree to `keyVersion`.
-     */
-    private static checkGrantEdge(
-        edge: types.cloud.GroupTreeEdge,
-        tree: types.cloud.GroupTreeState,
-        numLeaves: number,
-        keyVersion: number,
-        generations: Map<number, number>,
-    ): TreeProblem[] {
-        const problems: TreeProblem[] = [];
-        if (edge.parentGeneration !== keyVersion) {
-            problems.push({kind: "GRANT_EDGE_WRONG_EPOCH", expected: keyVersion, got: edge.parentGeneration});
+    private static checkGrantEdge(edge: types.cloud.GroupTreeEdge, grant: GrantExpectation): EdgeProblem[] {
+        const problems: EdgeProblem[] = [];
+        if (edge.parentGeneration !== grant.epoch) {
+            problems.push({kind: "GRANT_EDGE_WRONG_EPOCH", expected: grant.epoch, got: edge.parentGeneration});
         }
-        const rootIndex = TreeMath.root(numLeaves);
-        if (TreeMath.isLeaf(rootIndex)) {
-            // A one-member group has no internal node at all: the root *is* the member's leaf, so the grant key
-            // is wrapped straight to them.
-            const holder = tree.leafAssignment[0];
-            if (edge.childKind !== "user" || edge.childUserId !== holder) {
-                problems.push({
-                    kind: "GRANT_EDGE_WRONG_CHILD",
-                    expected: `user:${holder}`,
-                    got: `${edge.childKind}:${edge.childUserId ?? edge.childIndex}`,
-                });
-            }
+        const child = TreeValidator.describe(edge).child;
+        if (child !== grant.child) {
+            problems.push({kind: "GRANT_EDGE_WRONG_CHILD", expected: grant.child, got: child});
             return problems;
         }
-        if (edge.childKind !== "node" || edge.childIndex !== rootIndex) {
-            problems.push({
-                kind: "GRANT_EDGE_WRONG_CHILD",
-                expected: `node:${rootIndex}`,
-                got: `${edge.childKind}:${edge.childUserId ?? edge.childIndex}`,
-            });
-            return problems;
-        }
-        const rootGeneration = generations.get(rootIndex);
-        if (rootGeneration !== undefined && edge.childGeneration !== rootGeneration) {
+        if (grant.childGeneration !== undefined && edge.childGeneration !== grant.childGeneration) {
             problems.push({
                 kind: "STALE_CHILD_GENERATION",
-                edge: {parent: `grant@${keyVersion}`, child: `node:${rootIndex}`},
-                expected: rootGeneration,
+                parent: `grant@${grant.epoch}`,
+                child,
+                expected: grant.childGeneration,
                 got: edge.childGeneration ?? -1,
             });
         }
@@ -256,55 +303,15 @@ export class TreeValidator {
     }
     
     /**
-     * The edge set a well-formed tree must carry: for each internal node, one edge to each existing child,
-     * except that a blank leaf gets none — there is nobody to wrap to.
+     * Whether the edge carries a field its kind does not have: a `parentIndex` on the grant edge (whose parent
+     * is the grant keypair) or missing on any other, a user id on an edge to a node, a node on an edge to a user.
+     * Stored as sent, such an edge would be served back to clients saying something it does not mean.
      */
-    private static requiredEdges(
-        tree: types.cloud.GroupTreeState,
-        numLeaves: number,
-        generations: Map<number, number>,
-    ): Map<string, {parentGeneration: number, childGeneration?: number, describe: EdgeKey}> {
-        const required = new Map<string, {parentGeneration: number, childGeneration?: number, describe: EdgeKey}>();
-        for (const parentIndex of TreeValidator.internalNodes(numLeaves)) {
-            const parentGeneration = generations.get(parentIndex);
-            if (parentGeneration === undefined) {
-                continue; // already reported as a missing node
-            }
-            for (const childIndex of TreeMath.children(parentIndex, numLeaves)) {
-                if (TreeMath.isLeaf(childIndex)) {
-                    const userId = tree.leafAssignment[TreeMath.leafPosition(childIndex)];
-                    if (!userId) {
-                        continue;
-                    }
-                    required.set(`${parentIndex}>user:${userId}`, {
-                        parentGeneration,
-                        describe: {parent: `node:${parentIndex}`, child: `user:${userId}`},
-                    });
-                }
-                else {
-                    const childGeneration = generations.get(childIndex);
-                    const entry: {parentGeneration: number, childGeneration?: number, describe: EdgeKey} = {
-                        parentGeneration,
-                        describe: {parent: `node:${parentIndex}`, child: `node:${childIndex}`},
-                    };
-                    if (childGeneration !== undefined) {
-                        entry.childGeneration = childGeneration;
-                    }
-                    required.set(`${parentIndex}>node:${childIndex}`, entry);
-                }
-            }
-        }
-        return required;
-    }
-    
-    /** Internal nodes of a tree of the given size: the odd indices, leaves being the even ones. */
-    static internalNodes(numLeaves: number): number[] {
-        const count = TreeMath.nodeCount(numLeaves);
-        const result: number[] = [];
-        for (let nodeIndex = 1; nodeIndex < count; nodeIndex += 2) {
-            result.push(nodeIndex);
-        }
-        return result;
+    private static isMalformed(edge: types.cloud.GroupTreeEdge): boolean {
+        return (edge.isGrantEdge ? edge.parentIndex !== undefined : edge.parentIndex === undefined) ||
+            (edge.childKind === "user" ?
+                edge.childUserId === undefined || edge.childIndex !== undefined || edge.childGeneration !== undefined :
+                edge.childUserId !== undefined || edge.childIndex === undefined);
     }
     
     private static edgeId(edge: types.cloud.GroupTreeEdge): string {
@@ -312,7 +319,7 @@ export class TreeValidator {
         return `${edge.parentIndex ?? -1}>${child}`;
     }
     
-    private static describe(edge: types.cloud.GroupTreeEdge): EdgeKey {
+    private static describe(edge: types.cloud.GroupTreeEdge): {parent: string, child: string} {
         return {
             parent: edge.isGrantEdge ? "grant" : `node:${edge.parentIndex ?? -1}`,
             child: edge.childKind === "user" ? `user:${edge.childUserId ?? ""}` : `node:${edge.childIndex ?? -1}`,

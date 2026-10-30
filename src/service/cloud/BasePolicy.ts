@@ -17,7 +17,7 @@ import { AppException } from "../../api/AppException";
 export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: types.cloud.UserId[]; managers: types.cloud.UserId[]; policy?: types.cloud.ContainerPolicy;}, I> {
     
     constructor(
-        private policyService: PolicyService,
+        protected policyService: PolicyService,
     ) {
     }
     

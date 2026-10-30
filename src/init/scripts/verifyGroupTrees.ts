@@ -22,10 +22,15 @@ import { ConfigLoader } from "../../service/config/ConfigLoader";
 import { Callbacks } from "../../service/event/Callbacks";
 import { JobService } from "../../service/job/JobService";
 import { TreeValidator } from "../../service/cloud/keytree/TreeValidator";
+import { TreeMath } from "../../service/cloud/keytree/TreeMath";
+import { CommitStatement } from "../../service/cloud/keytree/CommitStatement";
 import * as util from "util";
 
 /**
- * Checks every group's stored tree against the rules a write has to satisfy.
+ * Checks every group's stored tree against the rules a write has to satisfy — in particular that the stored edges
+ * are exactly the ones the node records and the seating force (see `TreeValidator`), that the tree and roster hash
+ * to the latest commit statement, that every filled record is listed by the statement its `setBy` names, and that
+ * each of those statements is signed by the `committerPubKey` it carries — no context user's current key is consulted.
  *
  * Transitions are validated against stored state rather than replacing it, so the bridge never re-validates the
  * whole tree on a write. That is sound only while every write goes through a validator — a migration or repair
@@ -56,15 +61,27 @@ async function go() {
     
     let checked = 0;
     let broken = 0;
+    let legacy = 0;
     const groups = mongoDbManager.getCollectionByName("group");
     for await (const doc of groups.find({}, {projection: {_id: 1}})) {
         const group = await groupRepository.get(doc._id as never);
         if (!group) {
             continue;
         }
+        if (group.treeVersion !== TreeMath.TREE_VERSION) {
+            // Written under the earlier layout; no commit is accepted on it, and the rules here do not apply.
+            legacy++;
+            console.log(`${group.id}: tree version ${group.treeVersion ?? "(none)"}, not checked — recreate it`);
+            continue;
+        }
         checked++;
-        const tree = await groupRepository.getTree(group);
-        const problems = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
+        const tree = await groupRepository.state.getTree(group);
+        const problems: unknown[] = TreeValidator.validateState(tree, {users: group.users, managers: group.managers}, group.keyVersion ?? 0);
+        // The statement chain: the latest statement must describe this exact state, every filled record must be
+        // listed by the statement its `setBy` names, and each statement must verify with the key it names.
+        const seqs = [group.treeCommitSeq ?? 0, ...tree.nodes.map(node => node.setBy ?? 0)];
+        const statements = new Map((await groupRepository.state.getTreeCommitsAt(group.id, seqs)).map(statement => [statement.seq, statement]));
+        problems.push(...CommitStatement.checkStoredState(group, tree, statements).map(problem => ({kind: "STATEMENT", problem})));
         if (problems.length > 0) {
             broken++;
             console.log(`${group.id}: ${problems.length} problem(s)`);
@@ -76,7 +93,7 @@ async function go() {
             }
         }
     }
-    console.log(`checked ${checked} group(s), ${broken} broken`);
+    console.log(`checked ${checked} group(s), ${broken} broken, ${legacy} on an unsupported tree version`);
     await mongoDbManager.close();
     if (broken > 0) {
         process.exit(2);

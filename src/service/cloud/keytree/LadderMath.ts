@@ -173,8 +173,9 @@ export class LadderMath {
      * Validates a submitted rung set for an epoch being created. Pure; the caller reports the errors.
      *
      * `target < at` on every rung is the entire security guarantee of this layer. Also checked: the rung is
-     * addressed to the epoch being created, targets nothing below the era floor or prune watermark, the unit
-     * rung is present, and no span is duplicated.
+     * addressed to the epoch being created, targets nothing below the era floor or prune watermark, its span is
+     * one the epoch owes (`rungSpansFor`), the unit rung is present, and no span is duplicated: a commit has one author, and the rule is one rung per span per
+     * author.
      */
     static validateRungSet(
         submitted: RungSpan[],
@@ -185,6 +186,7 @@ export class LadderMath {
         LadderMath.assertEpoch(newEpoch, "newEpoch");
         LadderMath.assertEpoch(eraFloor, "eraFloor");
         
+        const canonical = LadderMath.rungSpansFor(newEpoch, Math.max(eraFloor, prunedBelow ?? 1));
         const seen = new Set<string>();
         for (const rung of submitted) {
             if (!Number.isInteger(rung.at) || !Number.isInteger(rung.target)) {
@@ -201,6 +203,11 @@ export class LadderMath {
             }
             if (prunedBelow !== undefined && rung.target < prunedBelow) {
                 return {ok: false, problem: {kind: "BELOW_PRUNE_WATERMARK", rung, prunedBelow}};
+            }
+            // Only the spans the epoch owes (unit rung and aligned skips above the floor): what
+            // bounds an epoch's rungs to ~33 spans and makes a descent path, or a page of the archive, cover them.
+            if (!canonical.some(owed => owed.target === rung.target)) {
+                return {ok: false, problem: {kind: "NOT_CANONICAL", rung}};
             }
             const key = `${rung.at}/${rung.target}`;
             if (seen.has(key)) {
@@ -230,4 +237,5 @@ export type LadderProblem =
     | {kind: "BELOW_ERA_FLOOR", rung: RungSpan, eraFloor: number}
     | {kind: "BELOW_PRUNE_WATERMARK", rung: RungSpan, prunedBelow: number}
     | {kind: "DUPLICATE", rung: RungSpan}
-    | {kind: "UNIT_RUNG_MISSING", newEpoch: number, requiredTarget: number};
+    | {kind: "UNIT_RUNG_MISSING", newEpoch: number, requiredTarget: number}
+    | {kind: "NOT_CANONICAL", rung: RungSpan};
