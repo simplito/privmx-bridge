@@ -88,7 +88,7 @@ jobs:
       - name: Start MongoDB with replica set
         run: |
           echo "127.0.0.1 mongodb" | sudo tee -a /etc/hosts
-          docker run -d -p 27017:27017 --name mongodb --hostname mongodb mongo:8 \
+          docker run -d -p 27017:27017 --name mongodb --hostname mongodb mongo:9 \
             --replSet rs0 --bind_ip_all
           # Fail fast with Mongo's logs instead of looping forever when the container dies.
           wait_for() {
