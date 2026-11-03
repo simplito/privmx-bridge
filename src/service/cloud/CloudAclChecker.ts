@@ -28,6 +28,7 @@ export type AclFunctionNameX =
     | "context/groupSelfUpdate"
     | "context/groupCutEra"
     | "context/groupPruneArchive"
+    | "context/groupRepairRung"
     | "context/groupDelete"
     | "context/groupSendCustomEvent"
     | "context/READ"
@@ -165,6 +166,7 @@ export class CloudAclChecker {
             "context/groupSelfUpdate": ["groupId"],
             "context/groupCutEra": ["groupId"],
             "context/groupPruneArchive": ["groupId"],
+            "context/groupRepairRung": ["groupId"],
             "context/groupDelete": ["groupId"],
             "context/groupSendCustomEvent": ["groupId"],
         } as types.cloud.AclFunctions;
