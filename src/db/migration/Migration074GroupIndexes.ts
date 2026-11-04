@@ -14,8 +14,9 @@ import { MigrationId } from "./MigrationManager";
 import { GroupStateRepository } from "../../service/cloud/GroupStateRepository";
 
 /**
- * Indexes only, so a re-run changes nothing: a new epoch's key is checked against every statement of the group,
- * below the era floor too.
+ * Indexes only, so a re-run changes nothing:
+ * - a new epoch's key is checked against every statement of the group, below the era floor too;
+ * - group tombstones are pruned with their context.
  */
 export class Migration074GroupIndexes {
     
@@ -25,5 +26,7 @@ export class Migration074GroupIndexes {
         const dbManager = ioc.getMongoDbManager();
         const commits = await dbManager.createOrGetCollection(GroupStateRepository.TREE_COMMIT_COLLECTION_NAME);
         await commits.createIndex({groupId: 1, "statement.groupPubKey": 1});
+        const tombstones = await dbManager.createOrGetCollection(GroupStateRepository.TOMBSTONE_COLLECTION_NAME);
+        await tombstones.createIndex({contextId: 1});
     }
 }

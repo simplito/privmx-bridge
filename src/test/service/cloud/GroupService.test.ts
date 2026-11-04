@@ -414,6 +414,8 @@ it("Should delete group", async () => {
     const res = await groupService.deleteGroup(janekCloudUser, groupId);
     expect(res.id).toBe(groupId);
     hasOneCall(groupRepository.deleteGroup);
+    // The whole document, so the tombstone can be filed under the group's context.
+    assert.strictEqual(groupRepository.deleteGroup.mock.calls[0][0], group);
     hasOneCall(groupNotificationService.sendDeletedGroup);
 });
 
@@ -428,6 +430,24 @@ it("Should refuse to delete a group still referenced by a container", async () =
         return;
     }
     expect(true).toBeFalsy();
+});
+
+it("deleting a context's groups prunes its tombstones after the last group is gone", async () => {
+    // Before the loop, a tombstone written by the loop would survive; inside it, one delete per group.
+    const {groupService, groupRepository} = createGroupService();
+    const order: string[] = [];
+    mock(groupRepository, "deleteOneByOneByContext", (async (_ctx: types.context.ContextId, func: (g: db.group.Group) => Promise<void>) => {
+        for (const deleted of [group, {...group, id: "OtherGroupId" as types.group.GroupId}]) {
+            order.push(deleted.id);
+            await func(deleted);
+        }
+    }) as never);
+    mock(groupRepository.state, "deleteTombstonesOfContext", (async () => {
+        order.push("tombstones");
+    }) as never);
+    await groupService.deleteGroupsByContext(contextId);
+    assert.deepStrictEqual(order, [groupId, "OtherGroupId", "tombstones"]);
+    assert.deepStrictEqual([...groupRepository.state.deleteTombstonesOfContext.mock.calls[0]], [contextId]);
 });
 
 // ---------- rotation is decoupled from the metadata writes ----------
