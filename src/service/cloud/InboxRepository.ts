@@ -15,6 +15,7 @@ import * as db from "../../db/Model";
 import { DateUtils } from "../../utils/DateUtils";
 import { Utils } from "../../utils/Utils";
 import { ContextRepository } from "./ContextRepository";
+import { AppException } from "../../api/AppException";
 
 export class InboxRepository {
     
@@ -148,18 +149,26 @@ export class InboxRepository {
     }
     
     async rotateKeys(oldInbox: db.inbox.Inbox, modifier: types.cloud.UserId,
-        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], grantees?: types.cloud.ContainerGrantees) {
+        newKeyId: types.core.KeyId, newKeys: types.cloud.UserKeysEntry[], inboxPubKey: types.core.EccPubKey, grantees?: types.cloud.ContainerGrantees) {
         // History entry keeps the PREVIOUS entry's keyId/data so the DIO (signed by oldInbox.lastModifier
         // at oldInbox.lastModificationDate) remains verifiable by the endpoint. The full InboxData lives only
         // in the history — `oldInbox.data` is just its `meta`. The keyId comes from `previous` for the same
         // reason the data does: see ThreadRepository.rotateKeys.
+        // The one exception is the entries key in the public data, which senders seal entries to: it
+        // moves to the new key's public key, or new entries stay sealed to the replaced key a removed member
+        // holds. A rotator gets nothing else: rotateKeys is a user right, metadata and file limits stay the
+        // managers' (`update` policy), so a rotation cannot carry them.
         const previous = Utils.lastOf(oldInbox.history, `inbox '${oldInbox.id}' history`);
+        const publicData = previous.data.publicData;
+        if (typeof publicData !== "object" || publicData === null || Array.isArray(publicData)) {
+            throw new AppException("INTERNAL_ERROR", `inbox '${oldInbox.id}' public data is not an object`);
+        }
         const groups = grantees?.groups || oldInbox.groups || [];
         const entry: db.inbox.InboxHistoryEntry = {
             created: DateUtils.now(),
             author: modifier,
             keyId: previous.keyId,
-            data: previous.data,
+            data: {...previous.data, publicData: {...publicData, inboxPubKey, inboxKeyId: newKeyId}},
             users: oldInbox.users,
             managers: oldInbox.managers,
             groups: groups,

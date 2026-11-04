@@ -86,8 +86,8 @@ function createRepository(options: {casMiss?: boolean, rereads?: db.group.Group[
     const replacements: unknown[] = [];
     const inserted: db.group.Group[] = [];
     const collection = createFake<mongodb.Collection>({
-        updateOne: (async (filter: Record<string, unknown>, update: {$set: Record<string, unknown>}) => {
-            updates.push({filter, set: update.$set});
+        updateOne: (async (filter: Record<string, unknown>, update: {$set: Record<string, unknown>, $inc?: Record<string, number>}) => {
+            updates.push({filter, set: update.$set ?? update.$inc});
             return {matchedCount: options.casMiss ? 0 : 1};
         }) as never,
         // Nothing here may call it: a removal is a `$set`, never a whole-document replace.
@@ -619,6 +619,17 @@ it("commit rungs are stored with the committer as author", async () => {
         grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs,
     });
     hasOneCallWithArguments(rotation.state.insertRungs, [groupId, janek, rungs]);
+});
+
+it("a repair serialises on the group document, conditioned on the floors it was validated against", async () => {
+    // Every floor change writes this document too, so inside a transaction a racing one is a write conflict.
+    const {repository, updates} = createRepository();
+    assert.strictEqual(await repository.touchLadder(group({eraFloor: 3})), true);
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: {$exists: false}});
+    await repository.touchLadder(group({eraFloor: 3, archivePrunedBelow: 4}));
+    assert.deepStrictEqual(updates[1].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: 4});
+    // A floor that moved: nothing written, reported to the caller.
+    assert.strictEqual(await createRepository({casMiss: true}).repository.touchLadder(group()), false);
 });
 
 it("a rotation that loses the race writes nothing beside the document either", async () => {

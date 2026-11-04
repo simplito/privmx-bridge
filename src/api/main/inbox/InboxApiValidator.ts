@@ -48,6 +48,7 @@ export class InboxApiValidator extends BaseValidator {
         }));
         this.registerMethod("inboxRotateKeys", this.builder.createObject({
             id: this.tv.inboxId,
+            inboxPubKey: this.tv.eccPub,
             keyId: this.tv.keyId,
             keys: this.builder.createListWithMaxLength(this.tv.cloudKeyEntrySet, 16384),
             groupKeys: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudGroupKeyEntrySet, 16384)),

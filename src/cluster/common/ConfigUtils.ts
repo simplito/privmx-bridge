@@ -76,8 +76,8 @@ export interface Config {
     maxGroupMembers: number,
     /** `PMX_MAX_GROUP_ROTATIONS_PER_HOUR` (default 60): how many times an hour one member may do each of these in
      *  one group, each from its own budget (limiter keys `<budget>|<groupId>|<userId>`): rotate the grant key
-     *  (`rotate`), remove members (`remove`), re-key their own path (`selfUpdate`), commit a policy (`policy`), and
-     *  have a commit refused (`refused`; ten times as many lost races, `stale`).
+     *  (`rotate`), remove members (`remove`), re-key their own path (`selfUpdate`), commit a policy (`policy`), call
+     *  `groupRepairRung` (`repair`), and have a commit refused (`refused`; ten times as many lost races, `stale`).
      *  Self-updates also share one per-group budget (`selfUpdate|<groupId>`, sized by the tree). Separate so that
      *  spending one never blocks another — above all, nothing but `remove` ever blocks a removal. A floor of 1 keeps
      *  a misconfiguration from making revocation impossible. */

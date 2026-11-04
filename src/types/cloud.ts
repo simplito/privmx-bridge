@@ -284,7 +284,7 @@ export interface GroupArchiveRungSubmission {
 
 /**
  * One rung as the bridge serves it: the submission plus who stored it. `author` is set by the bridge to the caller
- * of the operation that stored the rung (the commit), never taken from the client. It is the
+ * of the operation that stored the rung (a commit or `groupRepairRung`), never taken from the client. It is the
  * bridge's word, so clients use it as a label only; blame comes from the signed statement that opened the epoch.
  * Rows stored before the field was server-set may lack it.
  */
