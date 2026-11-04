@@ -1125,6 +1125,7 @@ export class IOC {
                 this.getCloudAccessValidator(),
                 this.workerRegistry.getGroupRotationRateLimiter(),
                 this.workerRegistry.getConfig(),
+                this.getStreamNotificationService(),
             );
         }
         return this.groupService;

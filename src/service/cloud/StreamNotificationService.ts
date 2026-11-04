@@ -188,6 +188,17 @@ export class StreamNotificationService {
         });
     }
     
+    /** A removal from a granted group stales the room's key, but a live publication never writes again, so
+     *  nothing would make its publisher re-key: the event tells it to, and the rotation that follows moves every
+     *  participant's media key off the one the removed member holds. */
+    sendStreamRoomsUpdatedForGroup(groupId: types.group.GroupId, solution: types.cloud.SolutionId) {
+        this.safe("streamRoomUpdated", async () => {
+            for (const streamRoom of await this.repositoryFactory.createStreamRoomRepository().getGrantedTo(groupId)) {
+                this.sendStreamRoomUpdated(streamRoom, solution, []);
+            }
+        });
+    }
+    
     sendStreamRoomUpdated(streamRoom: db.stream.StreamRoom, solution: types.cloud.SolutionId, additionalUsers: UserIdentityWithStatus[]) {
         this.safe("streamRoomUpdated", async () => {
             const now = DateUtils.now();
