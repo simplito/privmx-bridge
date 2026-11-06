@@ -499,6 +499,7 @@ export namespace store {
         };
         updates?: types.store.StoreFileUpdate[];
         supportsRandomWrite?: boolean;
+        randomWriteMeta?: types.store.StoreFileRandomWriteMeta;
     }
 }
 

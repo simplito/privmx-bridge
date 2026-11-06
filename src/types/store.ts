@@ -18,6 +18,8 @@ export type StoreVersion = number&{__storeVersion: never};
 export type StoreType = string&{__storeType: never};
 export type StoreFileMeta = unknown;
 export type StoreFileVersion = number&{__storeFileVersion: never};
+export type StoreFileRwMeta = unknown;
+export type StoreFileRwVersion = number&{__storeFileRwVersion: never};
 
 export interface StoreFileUpdate {
     createDate: types.core.Timestamp;
@@ -56,3 +58,7 @@ export interface StoreFileFetchError {
     error: {code: number; message: string;};
 }
 
+export interface StoreFileRandomWriteMeta {
+    rwVersion: StoreFileRwVersion;
+    rwMeta: StoreFileRwMeta;
+}

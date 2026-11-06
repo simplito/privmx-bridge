@@ -95,6 +95,27 @@ export class StoreFileRepository {
         return nFile;
     }
     
+    async createRandomWrite(storeId: types.store.StoreId, resourceId: types.core.ClientResourceId|null, author: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, fileId: types.request.FileId, randomWriteMeta: types.store.StoreFileRandomWriteMeta) {
+        const nFile: db.store.StoreFile = {
+            id: this.repository.generateId(),
+            storeId: storeId,
+            author: author,
+            createDate: DateUtils.now(),
+            meta: meta,
+            keyId: keyId,
+            fileId: fileId,
+            size: 0 as types.core.SizeInBytes,
+            checksumSize: 0 as types.core.SizeInBytes,
+            supportsRandomWrite: true,
+            randomWriteMeta: randomWriteMeta,
+        };
+        if (resourceId) {
+            nFile.clientResourceId = resourceId;
+        }
+        await this.repository.insert(nFile);
+        return nFile;
+    }
+    
     async update(oldFile: db.store.StoreFile, modifier: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, file: db.request.FileDefinition, thumb: db.request.FileDefinition|undefined) {
         const updates = oldFile.updates || [];
         updates.push({
@@ -146,7 +167,7 @@ export class StoreFileRepository {
     async updateMetaWithSize(oldFile: db.store.StoreFile, modifier: types.cloud.UserId, meta: types.store.StoreFileMeta, keyId: types.core.KeyId, size: {
         newFileSize?: number,
         newChecksumSize?: number;
-    }) {
+    }, randomWriteMeta?: types.store.StoreFileRandomWriteMeta) {
         const updates = oldFile.updates || [];
         updates.push({
             createDate: DateUtils.now(),
@@ -159,6 +180,24 @@ export class StoreFileRepository {
             size: size.newFileSize as types.core.SizeInBytes,
             checksumSize: size.newChecksumSize as types.core.SizeInBytes,
             updates: updates,
+            ...(randomWriteMeta !== undefined ? {randomWriteMeta} : {}),
+        };
+        await this.repository.update(nFile);
+        return nFile;
+    }
+    
+    async updateRandomWriteMeta(oldFile: db.store.StoreFile, size: {
+        newFileSize?: number,
+        newChecksumSize?: number;
+    }, rwMeta: types.store.StoreFileRwMeta) {
+        const nFile: db.store.StoreFile = {
+            ...oldFile,
+            size: size.newFileSize as types.core.SizeInBytes,
+            checksumSize: size.newChecksumSize as types.core.SizeInBytes,
+            randomWriteMeta: {
+                rwMeta: rwMeta,
+                rwVersion: oldFile.randomWriteMeta!.rwVersion + 1 as types.store.StoreFileRwVersion,
+            },
         };
         await this.repository.update(nFile);
         return nFile;
