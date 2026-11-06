@@ -93,7 +93,7 @@ export class StreamService extends BaseContainerService {
         const { user, context } = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         
         this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomCreate", []);
-        this.policy.makeCreateContainerCheck(user, context, managers, policy);
+        this.policy.makeCreateContainerCheck(user, context, await this.withGroupManagers(contextId, user.userId, managers, groups), policy);
         
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
         const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
@@ -172,7 +172,8 @@ export class StreamService extends BaseContainerService {
             
             this.cloudAclChecker.verifyAccess(user.acl, "stream/streamRoomUpdate", ["streamRoomId=" + id]);
             const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStreamRoom, user.userId, userGroupIds), managers, policy);
+            const effectiveManagers = await this.withGroupManagers(context.id, user.userId, managers, groups, userGroupIds);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStreamRoom, user.userId, userGroupIds), effectiveManagers, policy);
             
             const currentVersion = <types.stream.StreamRoomVersion>oldStreamRoom.history.length;
             if (currentVersion !== version && !force) {

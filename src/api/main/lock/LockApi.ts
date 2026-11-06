@@ -12,7 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as lockApi from "./LockApiTypes";
 import { LockService } from "../../../service/cloud/LockService";
-import { StoreService } from "../../../service/cloud/StoreService";
+import { LockIntent, StoreService } from "../../../service/cloud/StoreService";
 import { ApiMethod } from "../../Decorators";
 import { SessionService } from "../../session/SessionService";
 import { LockApiValidator } from "./LockApiValidator";
@@ -32,21 +32,24 @@ export class LockApi extends BaseApi implements lockApi.ILockApi {
     @ApiMethod({})
     async lockLock(model: lockApi.LockLockModel): Promise<lockApi.LockOperationResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId);
+        // A shared lock is the one a reader takes; every level above it announces a write.
+        const intent: LockIntent = model.lockLevel === "shared" ? "read" : "write";
+        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId, intent);
         return this.lockService.lock(model.resourceId, model.uuid, model.lockLevel);
     }
     
     @ApiMethod({})
     async lockUnlock(model: lockApi.LockUnlockModel): Promise<lockApi.LockOperationResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId);
+        // Releasing or downgrading a lock writes nothing, and a reader has to be able to let go.
+        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId, "read");
         return this.lockService.unlock(model.resourceId, model.uuid, model.lockLevel);
     }
     
     @ApiMethod({})
     async lockCheckReservedLock(model: lockApi.LockCheckReservedLockModel): Promise<lockApi.LockCheckReservedLockResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId);
+        await this.storeService.assertCanLockRandomWriteFile(cloudUser, model.resourceId as types.store.StoreFileId, "read");
         return this.lockService.checkReservedLock(model.resourceId, model.uuid);
     }
 }
