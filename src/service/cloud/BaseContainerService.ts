@@ -53,6 +53,33 @@ export class BaseContainerService {
     }
     
     /**
+     * The managers list as the manager-lockout checks must read it: a caller who is a manager through one of
+     * the grants being written is on it, the way {@link BaseContainerService.withGroupMembership} puts them on
+     * the container being read. Without this, a caller whose only manager role comes from a group is seen as
+     * removing themselves from the managers on every create and update they make.
+     *
+     * Costs no query unless a manager-role grant could change the answer; pass `userGroupIds` where the caller's
+     * groups were already fetched.
+     */
+    protected async withGroupManagers(
+        contextId: types.context.ContextId,
+        userId: types.cloud.UserId,
+        managers: types.cloud.UserId[],
+        groups: types.cloud.GroupGrant[]|undefined,
+        userGroupIds?: types.group.GroupId[],
+    ): Promise<types.cloud.UserId[]> {
+        const managerGrants = (groups || []).filter(g => g.role === "manager");
+        if (managerGrants.length === 0 || managers.includes(userId)) {
+            return managers;
+        }
+        const ownGroupIds = userGroupIds || await this.getCallerGroupIds(contextId, userId);
+        if (!managerGrants.some(g => ownGroupIds.includes(g.groupId))) {
+            return managers;
+        }
+        return Utils.unique([...managers, userId]);
+    }
+    
+    /**
      * Current epoch of every group granted on the given containers, in one query. Takes a list so a page of
      * containers costs the same as one; a page granting no groups costs no query at all.
      *

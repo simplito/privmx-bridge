@@ -182,7 +182,7 @@ export class ThreadService extends BaseContainerService {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "thread/threadCreate", []);
-        this.policy.makeCreateContainerCheck(user, context, managers, policy);
+        this.policy.makeCreateContainerCheck(user, context, await this.withGroupManagers(contextId, user.userId, managers, groups), policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
         const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
@@ -211,7 +211,8 @@ export class ThreadService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldThread.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "thread/threadUpdate", ["threadId=" + id]);
             const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldThread, user.userId, userGroupIds), managers, policy);
+            const effectiveManagers = await this.withGroupManagers(context.id, user.userId, managers, groups, userGroupIds);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldThread, user.userId, userGroupIds), effectiveManagers, policy);
             const currentVersion = <types.thread.ThreadVersion>oldThread.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
