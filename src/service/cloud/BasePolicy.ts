@@ -46,6 +46,13 @@ export abstract class BasePolicy<T extends {creator: types.cloud.UserId; users: 
         if (policy !== undefined && (!this.canOverwriteContextPolicy(context) || !this.canUpdateContainerPolicy(user, context, oldContainer))) {
             throw new AppException("ACCESS_DENIED", "cannot update policy");
         }
+        // A container's algorithm is fixed when it is created. An update carries the whole policy, so one that
+        // names a different suite — or drops the one already there — would restamp the container while its
+        // existing data stays encrypted the old way. Enforced here rather than client-side because this is the
+        // only place that holds for every client, including one built from an older or patched endpoint.
+        if (policy !== undefined && policy.cryptoSuite !== oldContainer.policy?.cryptoSuite) {
+            throw new AppException("INVALID_PARAMS", "policy.cryptoSuite cannot be changed");
+        }
     }
     
     canCreateContainer(user: db.context.ContextUser, context: db.context.Context) {
