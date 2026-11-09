@@ -22,6 +22,11 @@ scripts/build-docker-for-platform.sh
 .env.local
 .env.*.local
 
+# Runtime data, not build input. Also gitignored. Left in the context it breaks the build outright:
+# the mongo container writes files as its own uid, and the daemon cannot read them ("error from
+# sender: open volumes/mongo/data/db/.mongodb: permission denied").
+volumes/
+
 # Build artifacts
 build/
 coverage/
