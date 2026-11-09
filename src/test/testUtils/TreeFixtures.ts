@@ -16,6 +16,7 @@ import { CommitOp, TreeCommit, TreeTransitionValidator } from "../../service/clo
 import { CommitStatement } from "../../service/cloud/keytree/CommitStatement";
 import { TreeHash } from "../../service/cloud/keytree/TreeHash";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../utils/crypto/VerifyKey";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { DateUtils } from "../../utils/DateUtils";
 import type * as elliptic from "elliptic";
@@ -59,7 +60,7 @@ let realNodeKeys = false;
 /** A placeholder public key, unique per call — what `PrivateKey::generateRandom()` gives the endpoint. */
 function freshKey(nodeIndex: number, generation: number): types.core.EccPubKey {
     if (realNodeKeys) {
-        return ECUtils.generateKeyPair().pub58;
+        return secp256k1ToBase58(ECUtils.generateKeyPair().keyPair);
     }
     return `pk:${nodeIndex}g${generation}#${++mintCounter}` as types.core.EccPubKey;
 }
@@ -251,7 +252,9 @@ export function userKeys(name: string): {keyPair: elliptic.ec.KeyPair, pub58: ty
         keyPair = ECUtils.generateKeyPair().keyPair;
         userKeyPairs.set(name, keyPair);
     }
-    return {keyPair, pub58: ECUtils.publicToBase58DER(keyPair) as unknown as types.cloud.UserPubKey};
+    // Tagged, like every key that crosses the API boundary — including node and grant keys, which the
+    // bridge stores and compares but never verifies with. An untagged one is refused by the validators.
+    return {keyPair, pub58: secp256k1ToBase58(keyPair) as unknown as types.cloud.UserPubKey};
 }
 
 /** Makes `name` sign with a known key, e.g. the e2e test user's. */

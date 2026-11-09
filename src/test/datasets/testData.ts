@@ -16,7 +16,11 @@ export const testData = {
     userId: "janek" as types.cloud.UserId,
     contextId: "662115304034ea5684acac8b" as types.context.ContextId,
     contextId2: "662115304034ea5684acac8c" as types.context.ContextId,
-    userPubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.core.EccPubKey,
+    // The same secp256k1 point as before, now behind its algorithm tag (0x81). The API refuses an
+    // untagged key outright — there is no guessing from length any more — so the old bare SEC1
+    // spelling of this key fails validation before any test gets to its own assertion.
+    userPubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.core.EccPubKey,
+    // Unchanged: a WIF is a secp256k1 private key by construction and carries no tag.
     userPrivKey: "L3ZcrvuPSYaWUnb4sfhxz3bDfvTEQ6Zmntt2BjaWDnfc1mBAhKMV",
     solutionId: "G7J8Pm4op76xCcv9gNVqsQkmFcJ" as types.cloud.SolutionId,
     instanceId: "Jf61tr8Crn72WXpcG7eXWK",

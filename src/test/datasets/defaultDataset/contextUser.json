@@ -4,7 +4,7 @@
     "created": 1718703806794,
     "userId": "janek",
     "contextId": "662115304034ea5684acac8b",
-    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "userPubKey": "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR",
     "acl": "ALLOW ALL"
   },
   {
@@ -12,7 +12,7 @@
     "created": 1718703806794,
     "userId": "janek",
     "contextId": "662115304034ea5684acac8c",
-    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "userPubKey": "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR",
     "acl": "ALLOW ALL"
   },
   {
@@ -20,7 +20,7 @@
     "created": 1718703806794,
     "userId": "janek",
     "contextId": "662115304034ea5684acac8e",
-    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "userPubKey": "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR",
     "acl": "ALLOW ALL"
   },
   {
@@ -28,7 +28,7 @@
     "created": 1718703806794,
     "userId": "janek",
     "contextId": "662115304034ea5684acac8f",
-    "userPubKey": "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c",
+    "userPubKey": "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR",
     "acl": "ALLOW ALL"
   },
   {
@@ -36,7 +36,7 @@
     "created": 1718703806794,
     "userId": "zbychu",
     "contextId": "662115304034ea5684acac8c",
-    "userPubKey": "8eZUpoKPVMPKG7GCWb4xozavyTyn6oJ32Zmw5mEhXGSxRjScT9",
+    "userPubKey": "L5vzKJJquDg664yCbyRnmR1pgytcfm5aJ2PNxXmyaRk5mf2gShcZ",
     "acl": "ALLOW ALL"
   },
   {
@@ -44,7 +44,7 @@
     "created": 1718703806794,
     "userId": "zbychu",
     "contextId": "662115304034ea5684acac8d",
-    "userPubKey": "8eZUpoKPVMPKG7GCWb4xozavyTyn6oJ32Zmw5mEhXGSxRjScT9",
+    "userPubKey": "L5vzKJJquDg664yCbyRnmR1pgytcfm5aJ2PNxXmyaRk5mf2gShcZ",
     "acl": "ALLOW ALL"
   }
 ]

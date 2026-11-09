@@ -14,6 +14,7 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { additionOf, buildTree, commitAgainst, creationStatement, PlanOp, policyCommitAgainst, registerUserKey, removalOf, rotationGrantEdge, rotationStatement, selfUpdateOf, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
@@ -48,7 +49,7 @@ function epochKey(epoch: number): types.cloud.GroupPubKey {
     if (existing) {
         return existing;
     }
-    const generated = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+    const generated = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.cloud.GroupPubKey;
     epochKeys.set(epoch, generated);
     return generated;
 }
@@ -317,7 +318,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const res = await this.plainApis.contextApi.addUserToContext({
                 contextId: testData.contextId,
                 userId: userId,
-                userPubKey: ECUtils.generateKeyPair().pub58 as types.cloud.UserPubKey,
+                userPubKey: secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as types.cloud.UserPubKey,
                 acl: "ALLOW ALL" as types.cloud.ContextAcl,
             });
             assert(res === "OK", `addUserToContext(${userId}) did not return OK`);
@@ -691,7 +692,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
             const transition = additionOf(plan, this.keyVersion, [BOB_POSITION]);
             transition.seatedNodes.push({
                 nodeIndex: offPath, fromGeneration: 0, generation: 1,
-                publicKey: ECUtils.generateKeyPair().pub58,
+                publicKey: secp256k1ToBase58(ECUtils.generateKeyPair().keyPair),
             });
             await this.apis.contextApi.groupAddMembers({
                 id: this.requireGroupId(),

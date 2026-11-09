@@ -15,6 +15,7 @@ import { AppException } from "../../api/AppException";
 import { ContextApiValidator } from "../../api/main/context/ContextApiValidator";
 import { TypesValidator } from "../../api/TypesValidator";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../utils/crypto/VerifyKey";
 import { signStatement, userKeys } from "../testUtils/TreeFixtures";
 import * as types from "../../types";
 
@@ -28,7 +29,7 @@ const validator = new ContextApiValidator(new TypesValidator());
 
 const KEY_ID = "0fb486f81eee410d01972358a919f347";
 const RESOURCE_ID = "8b3f4c2e-1d5a-4e6b-9c7d-0a1b2c3d4e5f";
-const PUB_KEY = ECUtils.generateKeyPair().pub58;
+const PUB_KEY = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair);
 
 function users(count: number) {
     return Array.from({length: count}, (_, i) => "user_" + i);

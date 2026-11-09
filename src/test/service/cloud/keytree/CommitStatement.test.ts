@@ -79,7 +79,10 @@ describe("CommitStatement signature", () => {
         assert.strictEqual(signature.length, 65);
         assert.ok([27, 28, 29, 30].includes(signature[0]));
         const signed = {...unsigned, signature: signature.toString("base64") as types.core.EccSignature};
-        assert.strictEqual(ECUtils.verifySignature2(pub58 as unknown as types.core.EccPubKey, signed.signature, Crypto.sha256(CommitStatement.signedBytes(signed))), true);
+        // Verified from the key pair, not from `pub58`: that string is tagged now, and `verifySignature2`
+        // decodes with `ECUtils.publicFromBase58DER`, which only reads the bare secp256k1 form. What this
+        // test pins is the signature format, so the key is better taken as the object it already has.
+        assert.strictEqual(ECUtils.verifySignature3(keyPair, signed.signature, Crypto.sha256(CommitStatement.signedBytes(signed))), true);
         assert.strictEqual(CommitStatement.verifySignature(signed), true);
     });
     

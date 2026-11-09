@@ -81,6 +81,13 @@ export class ECUtils {
         return ec.keyFromPublic(result.result.toString("hex"), "hex");
     }
     
+    /**
+     * The bare secp256k1 encoding, with no algorithm tag.
+     *
+     * The API no longer accepts this form — a key crossing the API boundary must say which algorithm it is.
+     * Use `secp256k1ToBase58` from `VerifyKey` for anything a client sends, stores or is compared against.
+     * This stays for the ECIES paths, which are secp256k1 by construction.
+     */
     static publicToBase58DER(keyPair: elliptic.ec.KeyPair, compressed: boolean = true): types.core.EccPubKey {
         const hex = keyPair.getPublic(compressed, "hex");
         return <types.core.EccPubKey>Base58.encodeWithChecksum(Buffer.from(hex, "hex"));

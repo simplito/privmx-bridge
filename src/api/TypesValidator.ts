@@ -12,7 +12,7 @@ limitations under the License.
 import * as AdvValidator from "adv-validator";
 import Validator = AdvValidator.Types.Validator;
 import ObjectValidator = AdvValidator.Types.ObjectValidator;
-import { ECUtils } from "../utils/crypto/ECUtils";
+import { canonicalPublicKeyFromBase58, publicVerifyKeyFromBase58 } from "../utils/crypto/VerifyKey";
 import * as types from "../types";
 import { StringChecker } from "../utils/StringChecker";
 import * as ByteBuffer from "bytebuffer";
@@ -41,8 +41,8 @@ export class TypesValidator {
     
     byteBuffer: CustomValidatorWithLength;
     eccPub: Validator;
-    /** The canonical public key: one string per point. Use it for every public key the Bridge compares as a string. */
-    eccPubCompressed: Validator;
+    /** The canonical public key: one string per key. Use it for every public key the Bridge compares as a string. */
+    eccPubCanonical: Validator;
     base64: CustomValidatorWithLength;
     bi10: Validator;
     bi16: Validator;
@@ -101,7 +101,7 @@ export class TypesValidator {
     inboxData: Validator;
     streamRoomId: Validator;
     streamRoomData: Validator;
-    unknown4Kb: Validator;
+    unknown32Kb: Validator;
     unknown16Kb: Validator;
     unknown1Mb: Validator;
     resourceType: Validator;
@@ -158,21 +158,25 @@ export class TypesValidator {
             if (typeof(value) !== "string") {
                 throw new Error("Expected string");
             }
-            const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
-            if (ecc === null) {
+            // Any algorithm the bridge can verify a signature with, not secp256k1 alone. The check stays
+            // rather than being dropped for agility's sake: a key is matched by its encoding
+            // (`userPubKeyExists` is a string lookup), so a truncated or mistyped one has to fail here and
+            // not later, as a container nobody can open.
+            if (publicVerifyKeyFromBase58(value as types.core.EccPubKey) === null) {
                 throw new Error("Expected Ecc public key");
             }
             return;
         });
-        this.eccPubCompressed = this.builder.createCustom(value => {
+        this.eccPubCanonical = this.builder.createCustom(value => {
             if (typeof(value) !== "string") {
                 throw new Error("Expected string");
             }
-            // One string per key: the grant-key reuse check compares keys as strings, and a re-encoded key (uncompressed, hybrid) passes
-            // for a new one. A throw from the decode (a compressed x with no point) is a refusal too, as in `eccPub`.
-            const ecc = ECUtils.publicFromBase58DER(value as types.core.EccPubKey);
-            if (ecc === null || ECUtils.publicToBase58DER(ecc) !== value) {
-                throw new Error("Expected a compressed Ecc public key");
+            // One string per key: `NODE_NOT_NEW` and the grant-key reuse check compare keys as strings, so a
+            // key spelled a second way would pass for one nobody had seen. Tagged like every other key — the
+            // bridge never verifies with these, but a group whose keys cannot name their own algorithm is a
+            // group that can never leave secp256k1, which is the one thing this is all for.
+            if (canonicalPublicKeyFromBase58(value as types.core.EccPubKey) === null) {
+                throw new Error("Expected a canonical tagged public key");
             }
         });
         this.base64 = this.builder.createCustom((value, validator, checker) => {
@@ -206,7 +210,11 @@ export class TypesValidator {
         this.username = this.builder.extends(this.builder.error(this.builder.rangeLength(this.builder.string, 3, 50), "INVALID_USERNAME"), {custom: (s: string) => usernameRegex.test(s)});
         this.id = this.builder.rangeLength(this.builder.string, 1, 60);
         
-        this.eccSignature = this.builder.error(this.builder.length(this.base64, 65), "INVALID_SIGNATURE");
+        // A signature's length follows the signing algorithm, and this validator sees the signature
+        // before the key that made it: 65 for compact ECDSA (secp256k1), 64 for Ed25519. Bounded
+        // rather than exact — `verifySignature` still checks the length the key's own algorithm
+        // requires, so a signature of the wrong shape for its key is refused there.
+        this.eccSignature = this.builder.error(this.builder.rangeLength(this.base64, 64, 65), "INVALID_SIGNATURE");
         
         this.timestampStr = this.builder.error(this.bi10, "INVALID_TIMESTAMP");
         this.timestamp = this.builder.error(this.builder.int, "INVALID_TIMESTAMP");
@@ -216,9 +224,17 @@ export class TypesValidator {
         this.sessionId = this.builder.maxLength(this.builder.string, 150);
         this.userAgent = this.builder.maxLength(this.builder.string, 1024);
         this.userAgentOpt = this.builder.nullableOptional(this.userAgent);
-        this.unknown4Kb = this.builder.createCustom(value => {
+        // Container data and wrapped keys. 4 KB was ample while an identity was a 33-byte point; a
+        // post-quantum one is 1248 bytes, and these fields carry them several times over — the author's
+        // key in each integrity object, and a wrapped container key that now also carries a 1088-byte
+        // ML-KEM ciphertext per recipient. A three-member thread overran 4 KB outright.
+        //
+        // This is a sanity bound, not a security one: the server never reads inside these blobs. It is
+        // here so that a malformed or hostile request fails early instead of becoming a document nobody
+        // can use, which is why it is raised rather than removed.
+        this.unknown32Kb = this.builder.createCustom(value => {
             const size = this.getValueSize(value, "<root>");
-            const maxSize = 4096;
+            const maxSize = 32768;
             if (size > maxSize) {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
@@ -249,7 +265,7 @@ export class TypesValidator {
         });
         
         this.keyId = this.builder.rangeLength(this.builder.string, 1, 128);
-        this.userKeyData = this.unknown4Kb;
+        this.userKeyData = this.unknown32Kb;
         this.requestId = this.builder.rangeLength(this.builder.string, 1, 60);
         
         this.bufferReadRange = this.builder.createOneOf([
@@ -275,8 +291,8 @@ export class TypesValidator {
         this.cloudUserPubKey = this.eccPub;
         this.threadId = id;
         this.threadMessageId = id;
-        this.threadData = this.unknown4Kb;
-        this.kvdbData = this.unknown4Kb;
+        this.threadData = this.unknown32Kb;
+        this.kvdbData = this.unknown32Kb;
         this.threadMessageData = this.unknown16Kb;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
@@ -287,11 +303,11 @@ export class TypesValidator {
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
-        this.groupPubKey = this.eccPubCompressed;
+        this.groupPubKey = this.eccPubCanonical;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
             generation: this.intNonNegative,
-            publicKey: this.eccPubCompressed,
+            publicKey: this.eccPubCanonical,
             // Accepted for symmetry with what `groupGet` serves, and ignored: the bridge sets it to the seq of the
             // statement the node arrives with.
             setBy: this.builder.optional(this.intNonNegative),
@@ -338,7 +354,7 @@ export class TypesValidator {
             // Absent when the node has no record yet: there is no generation it was read at.
             fromGeneration: this.builder.optional(this.intNonNegative),
             generation: this.intNonNegative,
-            publicKey: this.eccPubCompressed,
+            publicKey: this.eccPubCanonical,
         });
         // A creation sets every keyed node (one per bucket of 2^BUCKET_LEVEL seats, minus one), and an addition the
         // newcomers' paths. Its edges are what those nodes owe, and a node whose sibling subtree is all blank wraps
@@ -389,7 +405,7 @@ export class TypesValidator {
             path: this.builder.createListWithMaxLength(this.builder.createObject({
                 nodeIndex: this.intNonNegative,
                 generation: this.intNonNegative,
-                publicKey: this.eccPubCompressed,
+                publicKey: this.eccPubCanonical,
                 subtreeHash: sha256Hex,
             }), maxCommitNodes),
             addedUsers: memberList,
@@ -420,9 +436,9 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.storeId = id;
-        this.storeData = this.unknown4Kb;
+        this.storeData = this.unknown32Kb;
         this.storeFileId = id;
-        this.storeFileMeta = this.unknown4Kb;
+        this.storeFileMeta = this.unknown32Kb;
         this.storeFileOperations = this.builder.createCustom((value, _validator, checker) => {
             const storeFileOperation = this.builder.createObject({
                 type: this.builder.createEnum(["file", "checksum"]),
@@ -483,11 +499,11 @@ export class TypesValidator {
                 maxFileSize: this.intNonNegative,
                 maxWholeUploadSize: this.intNonNegative,
             }),
-            meta: this.unknown4Kb,
-            publicData: this.unknown4Kb,
+            meta: this.unknown32Kb,
+            publicData: this.unknown32Kb,
         });
         this.streamRoomId = id;
-        this.streamRoomData = this.unknown4Kb;
+        this.streamRoomData = this.unknown32Kb;
         this.resourceType = this.builder.rangeLength(this.builder.string, 1, 128);
         this.optResourceType = this.builder.optional(this.resourceType);
         this.contextAcl = this.builder.maxLength(this.builder.string, 4096);
@@ -525,6 +541,9 @@ export class TypesValidator {
             ownerCanBeRemovedFromManagers: policyEntry,
             canOverwriteContextPolicy: policyEntry,
             forwardSecrecy: policyEntry,
+            sendCustomNotification: policyEntry,
+            // Opaque to the bridge; PolicyService decides where it may appear, this only bounds its size.
+            cryptoSuite: this.builder.optional(this.builder.maxLength(this.builder.string, 64)),
         });
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
@@ -539,6 +558,10 @@ export class TypesValidator {
             policy: this.containerPolicy,
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
+            context: this.builder.optional(this.builder.createObject({
+                listUsers: policyEntry,
+                sendCustomNotification: policyEntry,
+            })),
             thread: this.builder.optional(this.containerPolicy),
             store: this.builder.optional(this.containerPolicy),
             kvdb: this.builder.optional(this.containerPolicy),

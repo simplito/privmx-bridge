@@ -11,7 +11,7 @@ limitations under the License.
 
 import * as types from "../../../types";
 import { Crypto } from "../../../utils/crypto/Crypto";
-import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { publicVerifyKeyFromBase58, verifySignature } from "../../../utils/crypto/VerifyKey";
 import { ByteWriter } from "./ByteWriter";
 import { HashableTree, TreeHash } from "./TreeHash";
 
@@ -150,17 +150,26 @@ export class CommitStatement {
     
     /**
      * Against the key the statement names itself; whether that is the committer's key is the reader's check.
-     * The header byte must be one the native Endpoint verifies (27..42, `ECCImpl::verify`), or one member's
-     * stored statement would freeze the group for every native client while web ones carry on. Honest signers
-     * emit 27 (native) or 27..30 (web).
+     *
+     * The algorithm comes from the key's tag, not from an assumption: a group whose members are Ed25519
+     * identities signs its statements with Ed25519, and the same stored history has to verify either way.
+     *
+     * The recovery header is checked only for secp256k1, because only a compact ECDSA signature has one. It
+     * must be a byte the native Endpoint verifies (27..42, `ECCImpl::verify`), or one member's stored
+     * statement would freeze the group for every native client while web ones carry on. Honest signers emit
+     * 27 (native) or 27..30 (web).
      */
     static verifySignature(cs: types.cloud.GroupTreeCommitStatement): boolean {
         try {
-            const header = Buffer.from(cs.signature, "base64")[0];
-            if (header < 27 || header > 42) {
+            const key = publicVerifyKeyFromBase58(cs.committerPubKey);
+            if (!key) {
                 return false;
             }
-            return ECUtils.verifySignature2(cs.committerPubKey, cs.signature, Crypto.sha256(CommitStatement.signedBytes(cs)));
+            const signature = Buffer.from(cs.signature, "base64");
+            if (key.algorithm === "secp256k1" && (signature[0] < 27 || signature[0] > 42)) {
+                return false;
+            }
+            return verifySignature(key, signature, Crypto.sha256(CommitStatement.signedBytes(cs)));
         }
         catch {
             return false;

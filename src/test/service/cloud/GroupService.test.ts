@@ -33,6 +33,7 @@ import { CloudUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { Config } from "../../../cluster/common/ConfigUtils";
 import { TypesValidator } from "../../../api/TypesValidator";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
@@ -62,7 +63,7 @@ const bobCloudUser = new CloudUser("SomeUnknownPubKey" as types.core.EccPubKey);
 // what proves membership is gated separately from it.
 const carol = "carol" as types.cloud.UserId;
 const carolKeys = ECUtils.generateKeyPair();
-const carolPub = carolKeys.pub58 as types.cloud.UserPubKey;
+const carolPub = secp256k1ToBase58(carolKeys.keyPair) as types.cloud.UserPubKey;
 const carolCloudUser = new CloudUser(carolPub);
 
 const myContext: db.context.Context = {

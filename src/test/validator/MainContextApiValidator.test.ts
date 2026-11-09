@@ -16,10 +16,11 @@ import { ContextApiValidator } from "../../api/main/context/ContextApiValidator"
 import { TypesValidator } from "../../api/TypesValidator";
 import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
+import { publicVerifyKeyFromBase58, secp256k1ToBase58, SECP256K1_TAG } from "../../utils/crypto/VerifyKey";
 import { Base58 } from "../../utils/crypto/Base58";
 import { buildTree, rotationGrantEdge, rungsFor, signStatement, userKeys } from "../testUtils/TreeFixtures";
 
-const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
+const groupPubKey = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
 const groupId = "MyGroupId" as types.group.GroupId;
 const keyId = "MyKeyId" as types.core.KeyId;
@@ -99,19 +100,36 @@ it("ContextApiValidator.groupCreate rejects invalid groupPubKey", () => {
     expect(result.success).toBe(false);
 });
 
-/** The same point spelled every way but compressed, plus a point off the curve; elliptic decodes them all. */
+/**
+ * The same key spelled every way but its one canonical form, which is `Base58Check(tag || compressed)`.
+ *
+ * Two kinds of wrong spelling, refused by two different checks. The untagged ones — including the plain
+ * compressed point, which is what keys looked like before 3.0.0 — carry no tag the bridge knows, so they are
+ * refused outright rather than guessed at. The tagged ones carry the secp256k1 tag over the wrong number of
+ * bytes, so they fail the length the tag promises. Whether the bytes are a point on the curve is a third
+ * check, guarded by the "not a valid key" test above.
+ */
 function nonCanonicalSpellings(key: types.cloud.GroupPubKey): Record<string, types.cloud.GroupPubKey> {
-    const point = ECUtils.publicFromBase58DER(key as unknown as types.core.EccPubKey)!;
-    const uncompressed = Buffer.from(point.getPublic(false, "hex"), "hex");
+    const parsed = publicVerifyKeyFromBase58(key as unknown as types.core.EccPubKey);
+    if (parsed === null || parsed.algorithm !== "secp256k1") {
+        throw new Error("the fixture key is not a tagged secp256k1 key");
+    }
+    const compressed = Buffer.from(parsed.ecc.getPublic(true, "hex"), "hex");
+    const uncompressed = Buffer.from(parsed.ecc.getPublic(false, "hex"), "hex");
     const hybrid = Buffer.from(uncompressed);
     hybrid[0] = 0x06 + uncompressed[64] % 2;
-    const offCurve = Buffer.from(uncompressed);
-    offCurve[64] = offCurve[64] % 2 === 0 ? offCurve[64] + 1 : offCurve[64] - 1;
+    const tagged = (bytes: Buffer) => Buffer.concat([Buffer.from([SECP256K1_TAG]), bytes]);
     const encode = (bytes: Buffer) => Base58.encodeWithChecksum(bytes) as unknown as types.cloud.GroupPubKey;
-    return {uncompressed: encode(uncompressed), hybrid: encode(hybrid), offCurve: encode(offCurve)};
+    return {
+        untagged: encode(compressed),
+        uncompressed: encode(uncompressed),
+        hybrid: encode(hybrid),
+        taggedUncompressed: encode(tagged(uncompressed)),
+        taggedHybrid: encode(tagged(hybrid)),
+    };
 }
 
-it("SECURITY: a group public key in any encoding but the compressed one is refused", () => {
+it("SECURITY: a group public key in any spelling but the canonical tagged one is refused", () => {
     // Keys are compared as strings (the statement's key against the model's): the same key re-encoded
     // would pass for a new one everywhere.
     const tree = buildTree(["janek"], 1);
@@ -324,7 +342,7 @@ it("ContextApiValidator.groupGenerateNewKey rejects missing expectedKeyVersion",
 
 // ---------- Hidden key tree + Epoch Ladder ----------
 
-const nodePubKey = ECUtils.generateKeyPair().pub58 as unknown as types.core.EccPubKey;
+const nodePubKey = secp256k1ToBase58(ECUtils.generateKeyPair().keyPair) as unknown as types.core.EccPubKey;
 
 /** Two members, one internal node, one grant edge — the smallest tree the wire format accepts. */
 function validTree(): types.cloud.GroupTreeState {
@@ -439,7 +457,7 @@ it("ContextApiValidator.groupRemoveMembers valid", () => {
     expect(result.success).toBe(true);
 });
 
-it("SECURITY: a tree node public key in any encoding but the compressed one is refused", () => {
+it("SECURITY: a tree node public key in any spelling but the canonical tagged one is refused", () => {
     // NODE_NOT_NEW compares node keys as strings: a replaced node key re-encoded would pass for a fresh one.
     const removal = (publicKey: types.core.EccPubKey) => {
         const transition = validRemovalTransition();
@@ -451,8 +469,9 @@ it("SECURITY: a tree node public key in any encoding but the compressed one is r
         };
     };
     expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(nodePubKey))).success).toBe(true);
-    const uncompressed = ECUtils.publicToBase58DER(ECUtils.publicFromBase58DER(nodePubKey)!, false);
-    expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(uncompressed))).success).toBe(false);
+    for (const spelling of Object.values(nonCanonicalSpellings(nodePubKey as unknown as types.cloud.GroupPubKey))) {
+        expect(Utils.try(() => validator().validate("groupRemoveMembers", removal(spelling as unknown as types.core.EccPubKey))).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupRemoveMembers rejects a rung with epoch zero", () => {

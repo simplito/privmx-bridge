@@ -100,7 +100,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
     })).setResult({
         user: {
             userId: "John" as types.cloud.UserId,
-            pubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+            pubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
             created: 1713444359253 as types.core.Timestamp,
             contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
             acl: "" as types.cloud.ContextAcl,
@@ -108,11 +108,11 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
     });
     call("getUserFromContextByPubKey", api => api.getUserFromContextByPubKey({
         contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
-        pubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+        pubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
     })).setResult({
         user: {
             userId: "John" as types.cloud.UserId,
-            pubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+            pubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
             created: 1713444359253 as types.core.Timestamp,
             contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
             acl: "" as types.cloud.ContextAcl,
@@ -126,7 +126,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
     })).setResult({
         users: [{
             userId: "John" as types.cloud.UserId,
-            pubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+            pubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
             created: 1713444359253 as types.core.Timestamp,
             contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
             acl: "" as types.cloud.ContextAcl,
@@ -139,7 +139,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
     })).setResult("OK");
     call("removeUserFromContextByPubKey", api => api.removeUserFromContextByPubKey({
         contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
-        userPubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+        userPubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
     })).setResult("OK");
     call("updateContext", api => api.updateContext({
         contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
@@ -156,7 +156,7 @@ export const test = testApi("client", "context/", ManagementContextApi, new Mana
     call("addUserToContext", api => api.addUserToContext({
         contextId: "65fd820f0758a54a68558d7c" as types.context.ContextId,
         userId: "Josh" as types.cloud.UserId,
-        userPubKey: "64dGCs7myoFrZDnP5pgvmBNKF1za22b5iBQaEpeBcGWiTUCA3c" as types.cloud.UserPubKey,
+        userPubKey: "L5tQP5guhcAXxcGK8A12PNy1UNAAgYzob54zbAw2yuq5qR5DJQQR" as types.cloud.UserPubKey,
     })).setResult("OK");
     call("setUserAcl", api => api.setUserAcl({
         userId: "John" as types.cloud.UserId,

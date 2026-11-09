@@ -14,12 +14,13 @@ import * as assert from "assert";
 import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { secp256k1ToBase58 } from "../../../utils/crypto/VerifyKey";
 import { ThreadApiClient } from "../../../api/main/thread/ThreadApiClient";
 
 // A second context user ("alice") used to prove the rotateKeys POLICY gate (not just the ACL) is enforced.
 const aliceIdentity = ECUtils.generateKeyPair();
 const aliceId = "alice" as types.cloud.UserId;
-const alicePubKey = aliceIdentity.pub58 as types.cloud.UserPubKey;
+const alicePubKey = secp256k1ToBase58(aliceIdentity.keyPair) as types.cloud.UserPubKey;
 const aliceWif = aliceIdentity.privWif as string;
 
 const threadKeyId = "thread-key" as types.core.KeyId;
