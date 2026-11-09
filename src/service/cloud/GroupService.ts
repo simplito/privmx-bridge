@@ -30,6 +30,7 @@ import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/
 import { TreeValidator } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
 import { LadderMath } from "./keytree/LadderMath";
+import { publicKeyAlgorithmOf } from "../../utils/crypto/VerifyKey";
 import { CommitStatement, ExpectedStatement } from "./keytree/CommitStatement";
 import { HashableTree, TreeHash } from "./keytree/TreeHash";
 import { DateUtils } from "../../utils/DateUtils";
@@ -150,6 +151,7 @@ export class GroupService extends BaseContainerService {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
+        await this.assertMembersMatchTheGroupsAlgorithm(contextId, allUsers, groupPubKey);
         const newGroupKey = GroupService.buildSelfAddressedKey(undefined, groupKeys, keyId, 1);
         const commit = this.assertCreatedTreeIsValid(tree, {users, managers}, user.userId);
         // The group has no id yet, so the creator signs the resourceId it chose instead.
@@ -435,6 +437,7 @@ export class GroupService extends BaseContainerService {
             this.assertWithinLimit(Utils.uniqueFromArrays(oldGroup.users, oldGroup.managers, addedUserIds).length);
             this.assertWithinLimit(TreeMath.numLeavesToSeatAll(model.transition.positions, oldGroup.numLeaves), true);
             await this.cloudKeyService.checkUsersExistance(oldGroup.contextId, addedUserIds);
+            await this.assertMembersMatchTheGroupsAlgorithm(oldGroup.contextId, addedUserIds, oldGroup.groupPubKey);
             const commit = await this.chargingRefusals(budget, "add", model.id, user.userId, async () => {
                 const {commit: accepted, nodes} = await this.assertCommitIsAcceptable(groupRepository, oldGroup, {
                     kind: "add", committer: user.userId, addedUsers: addedUserIds, positions: model.transition.positions,
@@ -944,6 +947,33 @@ export class GroupService extends BaseContainerService {
         const limit = this.config.maxGroupMembers;
         if (requested > limit) {
             throw new AppException("GROUP_MEMBER_LIMIT_EXCEEDED", seats ? {limit, requested, seats} : {limit, requested});
+        }
+    }
+    
+    /**
+     * Every member of a group is of one key algorithm, and this is where the server says so.
+     *
+     * It follows from the tree rather than from any rule: a node key is one key for a whole subtree and reaches
+     * each member by Diffie-Hellman against their identity, which needs both ends on one curve. So the group's
+     * keys are of its members' algorithm, which is why the tag on `groupPubKey` can stand for "the algorithm of
+     * this group" and the check is two tags compared.
+     *
+     * A client refuses this itself before it plans a commit, so reaching here means an older or patched one. The
+     * cost of letting it through is a group whose next commit cannot wrap to one of its own members — a group
+     * nobody can repair — so it is worth one lookup. Containers are deliberately not checked this way: they wrap
+     * their key separately per recipient and may hold members of several algorithms.
+     */
+    private async assertMembersMatchTheGroupsAlgorithm(contextId: types.context.ContextId, userIds: types.cloud.UserId[], groupPubKey: types.cloud.GroupPubKey) {
+        const expected = publicKeyAlgorithmOf(groupPubKey as unknown as types.core.EccPubKey);
+        if (expected === null) {
+            throw new AppException("INVALID_PARAMS", "groupPubKey names no known key algorithm");
+        }
+        const members = await this.repositoryFactory.createContextUserRepository().getUsers(contextId, userIds);
+        for (const member of members) {
+            const algorithm = publicKeyAlgorithmOf(member.userPubKey as unknown as types.core.EccPubKey);
+            if (algorithm !== expected) {
+                throw new AppException("INVALID_PARAMS", `user '${member.userId}' has a key of algorithm '${algorithm ?? "unknown"}' and this group's keys are '${expected}'`);
+            }
         }
     }
     
