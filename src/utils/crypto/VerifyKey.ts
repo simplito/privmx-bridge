@@ -193,6 +193,16 @@ export function publicKeyAlgorithmOf(key: types.core.EccPubKey): VerifyKeyAlgori
 }
 
 /**
+ * Whether a name spells one of the algorithms above.
+ *
+ * Reads the same table the tags do, so a configured name and a name read off a key can never drift apart:
+ * adding an algorithm to `TAGGED_ALGORITHMS` makes it configurable in the same commit.
+ */
+export function isKnownKeyAlgorithm(name: string): name is VerifyKeyAlgorithm {
+    return TAGGED_ALGORITHMS.some(spec => spec.algorithm === name);
+}
+
+/**
  * Verifies a signature under the key's own algorithm.
  *
  * `message` is the same bytes for every algorithm — `NonceService.getMessage` produces a SHA-256 digest and

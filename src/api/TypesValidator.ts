@@ -561,6 +561,8 @@ export class TypesValidator {
             context: this.builder.optional(this.builder.createObject({
                 listUsers: policyEntry,
                 sendCustomNotification: policyEntry,
+                // PolicyService checks the name against the algorithms the bridge knows; this only bounds it.
+                keyAlgorithm: this.builder.optional(this.builder.maxLength(this.builder.string, 64)),
             })),
             thread: this.builder.optional(this.containerPolicy),
             store: this.builder.optional(this.containerPolicy),

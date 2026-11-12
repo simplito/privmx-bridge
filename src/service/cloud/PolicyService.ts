@@ -13,6 +13,7 @@ import * as types from "../../types";
 import { AppException } from "../../api/AppException";
 import * as db from "../../db/Model";
 import { Utils } from "../../utils/Utils";
+import { isKnownKeyAlgorithm } from "../../utils/crypto/VerifyKey";
 
 export interface PolicyUser {
     user?: boolean;
@@ -179,6 +180,11 @@ export class PolicyService {
         }
         if (policy.listUsers !== undefined) {
             this.validatePolicyEntry(path + ".listUsers", policy.listUsers, ["default", "none", "all"], []);
+        }
+        // Checked against the algorithms the bridge can actually read off a key tag, not stored opaquely:
+        // a name nothing can ever match would make every addUserToContext fail with no way to tell why.
+        if (policy.keyAlgorithm !== undefined && !isKnownKeyAlgorithm(policy.keyAlgorithm)) {
+            throw new AppException("INVALID_PARAMS", `${path}.keyAlgorithm names no algorithm this bridge knows`);
         }
     }
     

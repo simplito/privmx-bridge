@@ -97,6 +97,17 @@ export class ContextUserRepository {
         return this.repository.findAll(q => q.eq("contextId", contextId));
     }
     
+    /**
+     * Any one user of the context, or null when it has none.
+     *
+     * Used to read the context's key algorithm off an identity already in it. Any user will do, because
+     * that is exactly the invariant `assertUserMatchesTheContextsAlgorithm` maintains: once a context has
+     * a user, every other user's key names the same algorithm.
+     */
+    async findAnyUser(contextId: types.context.ContextId) {
+        return this.repository.find(q => q.eq("contextId", contextId));
+    }
+    
     async getUsersPageFromContext(contextId: types.context.ContextId, model: types.core.ListModel) {
         return this.repository.matchX({contextId: contextId}, model, "created");
     }

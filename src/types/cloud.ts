@@ -369,7 +369,23 @@ export interface ContextInnerPolicy {
     listUsers?: PolicyEntry;
     /** Determines who can send custom notifications */
     sendCustomNotification?: PolicyEntry;
+    /** Names the key algorithm every user identity in this context is made of, e.g. "ed25519x25519".
+     *  A user whose key names another algorithm is refused at `addUserToContext`, and an update that would
+     *  change this is refused. Left unset, the context takes the algorithm of the users it already has, so
+     *  the first user added settles it either way. */
+    keyAlgorithm?: KeyAlgorithmName;
 }
+
+/**
+ * The name of a key algorithm, as `VerifyKey` spells it — e.g. "secp256k1", "ed25519x25519mlkem768".
+ *
+ * Unlike {@link CryptoSuiteName} this is **not** opaque to the bridge, and that is the point: the bridge
+ * reads the same name off a public key's tag, so a context can be held to one algorithm without the bridge
+ * being told anything a key does not already say about itself.
+ *
+ * @doctype string
+ */
+export type KeyAlgorithmName = string&{__keyAlgorithmName: never};
 
 /** @doctype string */
 export type PolicyEntry = "inherit"|"yes"|"no"|"default"|"none"|"all"|"user"|"owner"|"manager"|"itemOwner"|"itemOwner&user"|"itemOwner&user,manager"|"owner&user"|"manager&owner"|"itemOwner,manager"|"itemOwner,owner"|"itemOwner,manager,owner"|"manager,owner"|(string&{__policyEntry: never});

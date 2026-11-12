@@ -24,6 +24,7 @@ import { StreamService } from "./StreamService";
 import { GroupService } from "./GroupService";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 import * as db from "../../db/Model";
+import { publicKeyAlgorithmOf } from "../../utils/crypto/VerifyKey";
 import { ContextNotificationService } from "./ContextNotificationService";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { Callbacks } from "../event/Callbacks";
@@ -80,6 +81,7 @@ export class ContextService {
         }
         if (rest.policy) {
             this.policyService.validateContextPolicy(rest.policy);
+            await this.assertKeyAlgorithmIsNotChanged(context, rest.policy);
         }
         if (rest.scope && context.shares.length > 0 && rest.scope === "private") {
             throw new AppException("CANNOT_SWITCH_CONNECTED_CONTEXT_TO_PRIVATE");
@@ -141,10 +143,76 @@ export class ContextService {
         if (!context) {
             throw new AppException("CONTEXT_DOES_NOT_EXIST");
         }
+        await this.assertUserMatchesTheContextsAlgorithm(context, userPubKey);
         await this.repositoryFactory.createContextUserRepository().insertOrUpdate(contextId, userId, userPubKey, acl);
         void this.contextNotificationService.sendUserAdded(userId, userPubKey, context.id);
         if (await this.activeUsersMap.isContextUserActive({host: this.host, solutionId: context.solution, user: {userPubKey}})) {
             void this.activeUsersMap.addToActiveContextUsers({userIdentities: [{userPubKey: userPubKey, contextId: contextId}]});
+        }
+    }
+    
+    /**
+     * The key algorithm this context's identities are made of, or null while nothing has settled it.
+     *
+     * Two sources, in order: what the policy declares, then what the users already in the context are made
+     * of. The second is not a fallback but the same fact observed rather than configured — a context with
+     * users has an algorithm whether or not anyone wrote it down, which is what lets this work on a context
+     * seeded straight into the database.
+     */
+    async getKeyAlgorithm(context: db.context.Context): Promise<types.cloud.KeyAlgorithmName|null> {
+        const declared = context.policy?.context?.keyAlgorithm;
+        if (declared !== undefined) {
+            return declared;
+        }
+        const existing = await this.repositoryFactory.createContextUserRepository().findAnyUser(context.id);
+        if (!existing) {
+            return null;
+        }
+        return publicKeyAlgorithmOf(existing.userPubKey as unknown as types.core.EccPubKey) as types.cloud.KeyAlgorithmName|null;
+    }
+    
+    /**
+     * Refuses an identity whose key is not of the context's algorithm.
+     *
+     * This is the level that was missing: a build option decides what algorithm a client *generates*, and
+     * without this nothing would stop a client built for one algorithm from putting a key of that algorithm
+     * into a context made of another. The group-level check is a backstop — by the time it fires the wrong
+     * identity is already registered, and the message blames the user rather than the configuration.
+     *
+     * An unknown tag cannot reach this: `TypesValidator`'s `eccPub` has already refused it.
+     */
+    /**
+     * Refuses an update that would change the context's key algorithm, or drop a declaration it already had.
+     *
+     * Dropping is refused as firmly as changing: the identities registered under the old declaration do not
+     * go anywhere, so un-pinning would leave the context claiming to allow anything while being, in fact,
+     * still made of one algorithm. Declaring the algorithm the context already has is allowed — it writes
+     * down what was observed, which is the one way a seeded context can be given an explicit policy.
+     */
+    private async assertKeyAlgorithmIsNotChanged(context: db.context.Context, policy: types.context.ContextPolicy) {
+        const current = await this.getKeyAlgorithm(context);
+        if (current === null) {
+            return;
+        }
+        const proposed = policy.context?.keyAlgorithm;
+        if (proposed === current) {
+            return;
+        }
+        if (proposed === undefined && context.policy?.context?.keyAlgorithm === undefined) {
+            // Never declared, and this update does not declare it either: nothing is being changed.
+            return;
+        }
+        throw new AppException("INVALID_PARAMS", `policy.context.keyAlgorithm cannot be changed; this context's keys are '${current}'`);
+    }
+    
+    private async assertUserMatchesTheContextsAlgorithm(context: db.context.Context, userPubKey: types.cloud.UserPubKey) {
+        const expected = await this.getKeyAlgorithm(context);
+        if (expected === null) {
+            return;
+        }
+        const algorithm = publicKeyAlgorithmOf(userPubKey as unknown as types.core.EccPubKey);
+        if (algorithm !== expected) {
+            throw new AppException("INVALID_PARAMS", `this context's keys are '${expected}' and this one is '${algorithm}'`);
         }
     }
     
