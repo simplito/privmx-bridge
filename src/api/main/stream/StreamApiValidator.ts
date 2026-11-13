@@ -174,7 +174,7 @@ export class StreamApiValidator extends BaseValidator {
             streamRoomId: this.tv.streamRoomId,
             channel: this.tv.wsChannelName,
             keyId: this.tv.keyId,
-            data: this.tv.unknown16Kb,
+            data: this.tv.itemPayload,
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384)),
         }));
         

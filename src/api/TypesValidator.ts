@@ -102,7 +102,7 @@ export class TypesValidator {
     streamRoomId: Validator;
     streamRoomData: Validator;
     unknown32Kb: Validator;
-    unknown16Kb: Validator;
+    itemPayload: Validator;
     unknown1Mb: Validator;
     resourceType: Validator;
     optResourceType: Validator;
@@ -239,9 +239,18 @@ export class TypesValidator {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
         });
-        this.unknown16Kb = this.builder.createCustom(value => {
+        // The per-item counterpart of the bound above, and it pays the same post-quantum cost: every item
+        // envelope spells out two public keys — the author's, and the creator's inside the integrity
+        // object — so a post-quantum identity costs about 3.4 KB before any content, against roughly 100
+        // bytes for secp256k1.
+        //
+        // At 16 KB that left a post-quantum client about 90 bytes of margin on a maximum-size message,
+        // which the next format change spends: making the integrity object's checksums follow the
+        // container's suite (SHA-512 instead of SHA-256) overran it by 96 bytes. The budget here is
+        // therefore 16 KB of content plus room for a post-quantum envelope, not a round number.
+        this.itemPayload = this.builder.createCustom(value => {
             const size = this.getValueSize(value, "<root>");
-            const maxSize = 16384;
+            const maxSize = 24576;
             if (size > maxSize) {
                 throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
             }
@@ -293,7 +302,7 @@ export class TypesValidator {
         this.threadMessageId = id;
         this.threadData = this.unknown32Kb;
         this.kvdbData = this.unknown32Kb;
-        this.threadMessageData = this.unknown16Kb;
+        this.threadMessageData = this.itemPayload;
         this.cloudKeyEntrySet = this.builder.createObject({
             user: this.cloudUserId,
             keyId: this.keyId,

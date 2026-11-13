@@ -85,7 +85,7 @@ export class KvdbApiValidator extends BaseValidator {
         this.registerMethod("kvdbEntrySet", this.builder.createObject({
             kvdbId: this.tv.kvdbId,
             kvdbEntryKey: this.tv.kvdbEntryKey,
-            kvdbEntryValue: this.tv.unknown16Kb,
+            kvdbEntryValue: this.tv.itemPayload,
             keyId: this.tv.keyId,
             version: this.builder.optional(this.builder.min(this.builder.int, 0)),
             force: this.builder.optional(this.builder.bool),

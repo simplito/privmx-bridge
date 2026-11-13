@@ -148,7 +148,7 @@ export class StoreApiValidator extends BaseValidator {
             storeId: this.tv.storeId,
             channel: this.tv.wsChannelName,
             keyId: this.tv.keyId,
-            data: this.tv.unknown16Kb,
+            data: this.tv.itemPayload,
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, 16384)),
         }));
     }

@@ -34,7 +34,7 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("contextSendCustomEvent", this.builder.createObject({
             contextId: this.tv.cloudContextId,
             channel: this.tv.wsChannelName,
-            data: this.tv.unknown16Kb,
+            data: this.tv.itemPayload,
             users: this.builder.createList(this.builder.createObject({
                 id: this.tv.cloudUserId,
                 key: this.tv.userKeyData,
@@ -198,7 +198,7 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupSendCustomEvent", this.builder.createObject({
             groupId: this.tv.groupId,
             channel: this.tv.wsChannelName,
-            data: this.tv.unknown16Kb,
+            data: this.tv.itemPayload,
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS)),
         }));
     }
