@@ -172,6 +172,15 @@ const groupGrantRandomWriteStoreFile: db.store.StoreFile = {
     storeId: groupGrantStoreId,
     author: alice,
 };
+// The same store, but a file alice did not write: the default item.update of "itemOwner&user,manager" puts it
+// out of her reach while item.get of "user" does not - which is what separates a read lock from a write lock.
+const foreignRandomWriteStoreFileId = "MyForeignRandomWriteStoreFileId" as types.store.StoreFileId;
+const foreignRandomWriteStoreFile: db.store.StoreFile = {
+    ...randomWriteStoreFile,
+    id: foreignRandomWriteStoreFileId,
+    storeId: groupGrantStoreId,
+    author: janek,
+};
 const request: db.request.Request = {
     id: requestId,
     author: "janek" as types.core.Username,
@@ -715,15 +724,23 @@ testFail("Should fails on reading not exisitng thumb", "FILES_CONTAINER_FILE_HAS
 );
 
 testFail("Should fail locking a not existing file", "STORE_FILE_DOES_NOT_EXIST", storeService =>
-    storeService.assertCanLockRandomWriteFile(janekUserPubKey, notExistingStoreFileId),
+    storeService.assertCanLockRandomWriteFile(janekUserPubKey, notExistingStoreFileId, "write"),
 );
 
 testFail("Should fail locking a file that does not support random write", "UNSUPPORTED_OPERATION", storeService =>
-    storeService.assertCanLockRandomWriteFile(janekUserPubKey, storeFileId),
+    storeService.assertCanLockRandomWriteFile(janekUserPubKey, storeFileId, "write"),
 );
 
 testFail("Should fail locking a random-write file without access", "ACCESS_DENIED", storeService =>
-    storeService.assertCanLockRandomWriteFile(bobUserPubKey, randomWriteStoreFileId),
+    storeService.assertCanLockRandomWriteFile(bobUserPubKey, randomWriteStoreFileId, "write"),
+);
+
+testFail("Should fail read locking a random-write file without access", "ACCESS_DENIED", storeService =>
+    storeService.assertCanLockRandomWriteFile(bobUserPubKey, randomWriteStoreFileId, "read"),
+);
+
+testFail("Should fail write locking a random-write file written by somebody else", "ACCESS_DENIED", storeService =>
+    storeService.assertCanLockRandomWriteFile(aliceUserPubKey, foreignRandomWriteStoreFileId, "write"),
 );
 
 it("Should authorize locking a random-write file for a user with write access", async () => {
@@ -731,7 +748,7 @@ it("Should authorize locking a random-write file for a user with write access", 
     const {storeService} = createStoreService();
     
     // Act & Assert (resolves without throwing)
-    await storeService.assertCanLockRandomWriteFile(janekUserPubKey, randomWriteStoreFileId);
+    await storeService.assertCanLockRandomWriteFile(janekUserPubKey, randomWriteStoreFileId, "write");
 });
 
 it("Should authorize locking a random-write file for a user with access only through a group", async () => {
@@ -739,7 +756,17 @@ it("Should authorize locking a random-write file for a user with access only thr
     const {storeService} = createStoreService();
     
     // Act & Assert (resolves without throwing)
-    await storeService.assertCanLockRandomWriteFile(aliceUserPubKey, groupGrantRandomWriteStoreFileId);
+    await storeService.assertCanLockRandomWriteFile(aliceUserPubKey, groupGrantRandomWriteStoreFileId, "write");
+});
+
+it("Should authorize read locking a random-write file written by somebody else", async () => {
+    // Setup - alice reaches the store through a group granted "user" and did not write the file, so a read
+    // lock is all her access allows. SQLite takes one before every read, so refusing it would make the file
+    // readable only by its author.
+    const {storeService} = createStoreService();
+    
+    // Act & Assert (resolves without throwing)
+    await storeService.assertCanLockRandomWriteFile(aliceUserPubKey, foreignRandomWriteStoreFileId, "read");
 });
 
 function createStoreService() {
@@ -801,7 +828,15 @@ function createStoreService() {
     mock(requestRepository, "getReadyForUser", async () => request);
     mock(requestRepository, "delete", async () => {});
     
-    mock(storeFileRepository, "get", async (id) => id === storeFileId ? storeFile : (id == storeFileIdWithoutThumb ? storeFileWithoutThumb : (id === groupGrantStoreFileId ? groupGrantStoreFile : (id === randomWriteStoreFileId ? randomWriteStoreFile : (id === groupGrantRandomWriteStoreFileId ? groupGrantRandomWriteStoreFile : null)))));
+    const storeFilesById = new Map<types.store.StoreFileId, db.store.StoreFile>([
+        [storeFileId, storeFile],
+        [storeFileIdWithoutThumb, storeFileWithoutThumb],
+        [groupGrantStoreFileId, groupGrantStoreFile],
+        [randomWriteStoreFileId, randomWriteStoreFile],
+        [groupGrantRandomWriteStoreFileId, groupGrantRandomWriteStoreFile],
+        [foreignRandomWriteStoreFileId, foreignRandomWriteStoreFile],
+    ]);
+    mock(storeFileRepository, "get", async (id) => storeFilesById.get(id) || null);
     mock(storeFileRepository, "getPageByStore", async () => ({list: [storeFile], count: 1}));
     mock(storeFileRepository, "create", async () => storeFile);
     mock(storeFileRepository, "update", async () => storeFile);
