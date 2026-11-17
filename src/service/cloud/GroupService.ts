@@ -83,47 +83,54 @@ export class GroupService extends BaseContainerService {
      */
     async getGroupPublicKey(executor: Executor, groupId: types.group.GroupId) {
         const groupRepository = this.repositoryFactory.createGroupRepository();
-        const group = await groupRepository.get(groupId);
-        if (!group) {
-            throw new AppException("GROUP_DOES_NOT_EXIST");
-        }
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupGetPublicKey", ["groupId=" + group.id]);
-            if (group.visibleTo !== "context" && !this.policy.canReadContainer(user, context, group)) {
-                throw new AppException("GROUP_DOES_NOT_EXIST");
-            }
-        });
+        // Run on every document that may be served, not only the first one read: between two reads the caller may
+        // have been removed, or the group hidden again.
+        const assertMayRead = async (group: db.group.Group) => {
+            await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
+                this.cloudAclChecker.verifyAccess(user.acl, "context/groupGetPublicKey", ["groupId=" + group.id]);
+                if (group.visibleTo !== "context" && !this.policy.canReadContainer(user, context, group)) {
+                    throw new AppException("GROUP_DOES_NOT_EXIST");
+                }
+            });
+        };
+        let current = await groupRepository.get(groupId);
         // The document and its latest statement are two reads; a commit between them is read again, as
         // `getFullState` does for the tree.
-        let current = group;
         for (let attempt = 0; attempt < 3; attempt++) {
+            if (!current) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            await assertMayRead(current);
             if (current.treeCommitSeq === undefined) {
                 // No statement, nothing vouches for the key: a client could only take the bridge's word for it.
                 throw new AppException("GROUP_DOES_NOT_EXIST");
             }
             const [treeCommit] = await groupRepository.state.getTreeCommitsAt(current.id, [current.treeCommitSeq]);
             const again = await groupRepository.get(groupId);
-            if (!again) {
-                throw new AppException("GROUP_DOES_NOT_EXIST");
-            }
-            if (treeCommit && again.treeCommitSeq === current.treeCommitSeq) {
-                return {group: current, treeCommit};
+            if (treeCommit && again && again.treeCommitSeq === current.treeCommitSeq) {
+                // `again`, not `current`: the newest document, checked like the first, with the statement it names.
+                await assertMayRead(again);
+                return {group: again, treeCommit};
             }
             current = again;
         }
         throw new AppException("INTERNAL_ERROR", "the group kept changing while it was read");
     }
     
-    /** Who beside the members may read the group's identity key, roster and statements. A manager's call. */
+    /**
+     * Who beside the members may read the group's identity key, roster and statements. Widening it shows the
+     * roster to the whole context, so it takes a manager whom the group's own signed `update` rule lets change the
+     * group - the same two conditions a change of its members takes.
+     */
     async setVisibility(cloudUser: CloudUser, groupId: types.group.GroupId, visibleTo: "members"|"context") {
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const group = await groupRepository.get(groupId);
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
         }
-        const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+        const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + group.id]);
-        if (!group.managers.includes(user.userId)) {
+        if (!group.managers.includes(user.userId) || !this.policy.canUpdateContainer(user, context, group)) {
             throw new AppException("ACCESS_DENIED");
         }
         if ((group.visibleTo ?? "members") !== visibleTo) {
@@ -206,6 +213,10 @@ export class GroupService extends BaseContainerService {
         this.policy.makeCreateContainerCheck(user, context, managers, policy);
         if (allUsers.length === 0) {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
+        }
+        if (visibleTo === "context" && !managers.includes(user.userId)) {
+            // As `setVisibility` would ask of it afterwards: showing a roster to the context is a manager's call.
+            throw new AppException("ACCESS_DENIED", "only a manager may make a group visible to the context");
         }
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
         const newGroupKey = GroupService.buildSelfAddressedKey(undefined, groupKeys, keyId, 1);
@@ -559,6 +570,7 @@ export class GroupService extends BaseContainerService {
             }
             const leaving = new Set(model.userIds);
             const managers = oldGroup.managers.filter(u => !leaving.has(u));
+            GroupService.assertKeepsAManager(oldGroup.managers, managers);
             this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, managers, undefined);
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
@@ -1163,6 +1175,17 @@ export class GroupService extends BaseContainerService {
      * policy commits; `repair` counts `groupRepairRung` calls, accepted or refused; `refused` counts commits the
      * bridge refused after hashing the tree, `stale` lost races (`chargingRefusals`).
      */
+    /**
+     * A group that has managers keeps at least one: with none, whatever only a manager may do (the policy, the
+     * visibility, as a rule the roster) can never be done again, and nobody can undo that. A group created with
+     * no manager at all is left alone - that is a roster frozen on purpose.
+     */
+    static assertKeepsAManager(before: types.cloud.UserId[], after: types.cloud.UserId[]) {
+        if (before.length > 0 && after.length === 0) {
+            throw new AppException("GROUP_LAST_MANAGER");
+        }
+    }
+    
     private static rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
     }

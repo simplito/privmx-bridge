@@ -49,7 +49,7 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
             // Required: the first commit statement names the group by it, before the bridge assigns an id.
-            resourceId: this.tv.uuidv4,
+            resourceId: this.tv.groupResourceId,
             type: this.tv.optResourceType,
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
