@@ -42,7 +42,7 @@ export class GroupRepository {
         privateMetaVersion: 1,
         rosterVersion: 1,
         keyVersion: 1,
-        policy: 1,
+        policy: 1, visibleTo: 1,
     };
     
     /** Mirrors `db.group.GroupEpochFields`; see there for why this read is kept this narrow. */
@@ -591,6 +591,12 @@ export class GroupRepository {
         }
         await this.state.insertTreeCommit(oldGroup.id, statement);
         return {...oldGroup, ...changes};
+    }
+    
+    /** Sets who beside the members may read the group's identity key, roster and statements. Touches nothing a
+     *  statement signs, so it moves no counter and needs no CAS. */
+    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context") {
+        await this.repository.collection.updateOne({_id: groupId} as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
     }
     
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {

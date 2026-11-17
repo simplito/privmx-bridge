@@ -76,6 +76,64 @@ export class GroupService extends BaseContainerService {
         });
     }
     
+    /**
+     * A group's current identity key with what vouches for it: the latest statement and the roster it describes.
+     * For whoever may read the group, and for every user of its context when the group is visible to the context.
+     * A group the caller may not see is reported as not existing: its id tells nothing.
+     */
+    async getGroupPublicKey(executor: Executor, groupId: types.group.GroupId) {
+        const groupRepository = this.repositoryFactory.createGroupRepository();
+        const group = await groupRepository.get(groupId);
+        if (!group) {
+            throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupGetPublicKey", ["groupId=" + group.id]);
+            if (group.visibleTo !== "context" && !this.policy.canReadContainer(user, context, group)) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+        });
+        // The document and its latest statement are two reads; a commit between them is read again, as
+        // `getFullState` does for the tree.
+        let current = group;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (current.treeCommitSeq === undefined) {
+                // No statement, nothing vouches for the key: a client could only take the bridge's word for it.
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            const [treeCommit] = await groupRepository.state.getTreeCommitsAt(current.id, [current.treeCommitSeq]);
+            const again = await groupRepository.get(groupId);
+            if (!again) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
+            }
+            if (treeCommit && again.treeCommitSeq === current.treeCommitSeq) {
+                return {group: current, treeCommit};
+            }
+            current = again;
+        }
+        throw new AppException("INTERNAL_ERROR", "the group kept changing while it was read");
+    }
+    
+    /** Who beside the members may read the group's identity key, roster and statements. A manager's call. */
+    async setVisibility(cloudUser: CloudUser, groupId: types.group.GroupId, visibleTo: "members"|"context") {
+        const groupRepository = this.repositoryFactory.createGroupRepository();
+        const group = await groupRepository.get(groupId);
+        if (!group) {
+            throw new AppException("GROUP_DOES_NOT_EXIST");
+        }
+        const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
+        this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + group.id]);
+        if (!group.managers.includes(user.userId)) {
+            throw new AppException("ACCESS_DENIED");
+        }
+        if ((group.visibleTo ?? "members") !== visibleTo) {
+            await groupRepository.setVisibility(group.id, visibleTo);
+            group.visibleTo = visibleTo;
+            this.groupNotificationService.sendUpdatedGroup(group, [], "visibilityChanged");
+        }
+        return group;
+    }
+    
     /** The group plus its out-of-document state, read consistently with each other (`getFullState`). Separate
      *  from `getGroup` so callers that need only the document do not drag a tree and a full history along with it. */
     async getGroupWithState(executor: Executor, groupId: types.group.GroupId, type: types.group.GroupType|undefined, fromRosterVersion?: number) {
@@ -138,7 +196,7 @@ export class GroupService extends BaseContainerService {
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
         publicMeta: types.group.GroupData, privateMeta: types.group.GroupData, keyId: types.core.KeyId,
         policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement,
-        groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">) {
+        groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">, visibleTo?: "members"|"context") {
         const allUsers = Utils.uniqueFromArrays(users, managers);
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         this.assertWithinLimit(allUsers.length);
@@ -178,10 +236,15 @@ export class GroupService extends BaseContainerService {
         try {
             // One transaction: the genesis history entry and the initial tree must not survive a failure that
             // leaves the group itself uncreated, or the other way round.
-            const group = await this.repositoryFactory.withTransaction(session =>
-                this.repositoryFactory.createGroupRepository(session)
-                    .createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, publicMeta, privateMeta, keyId, policy, tree, statement, newGroupKey),
-            );
+            const group = await this.repositoryFactory.withTransaction(async session => {
+                const repository = this.repositoryFactory.createGroupRepository(session);
+                const created = await repository.createGroup(contextId, resourceId, type, groupPubKey, user.userId, managers, users, data, publicMeta, privateMeta, keyId, policy, tree, statement, newGroupKey);
+                if (visibleTo === "context") {
+                    await repository.setVisibility(created.id, visibleTo);
+                    created.visibleTo = visibleTo;
+                }
+                return created;
+            });
             this.groupNotificationService.sendCreatedGroup(group);
             return group;
         }
@@ -1262,9 +1325,10 @@ class Reservations {
             // A transient error re-runs the whole transaction; it is still the same request.
             return;
         }
-        const {allowed} = await this.limiter.reserve(limit === undefined ? {key} : {key, limit});
+        const {allowed, retryAt} = await this.limiter.reserve(limit === undefined ? {key} : {key, limit});
         if (!allowed) {
-            throw new AppException("GROUP_ROTATION_RATE_LIMIT");
+            // When the oldest unit of the hour is handed back: a client waits until then instead of guessing.
+            throw new AppException("GROUP_ROTATION_RATE_LIMIT", {retryAt});
         }
         this.held.add(key);
     }

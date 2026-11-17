@@ -39,12 +39,13 @@ export class GroupRotationRateLimiter {
      * end up spending the unit hands it back with `release`.
      */
     @ApiMethod({})
-    async reserve(model: {key: string, limit?: number}): Promise<{allowed: boolean}> {
+    async reserve(model: {key: string, limit?: number}): Promise<{allowed: boolean, retryAt?: number}> {
         const window = DateUtils.hours(1);
         const cutoff = DateUtils.now() - window;
         const timestamps = (this.cache.get(model.key) ?? []).filter(t => t > cutoff);
         if (timestamps.length >= (model.limit ?? this.maxRotationsPerHour)) {
-            return {allowed: false};
+            // The oldest unit leaves the window first; with a limit of 0 there is nothing to wait for.
+            return {allowed: false, retryAt: timestamps.length > 0 ? Math.min(...timestamps) + window : DateUtils.now() + window};
         }
         timestamps.push(DateUtils.now());
         this.cache.set(model.key, timestamps, window);

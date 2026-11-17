@@ -18,6 +18,8 @@ export type AclFunctionNameX =
     | "context/groupGet"
     | "context/groupList"
     | "context/groupGetTreeCommits"
+    | "context/groupGetPublicKey"
+    | "context/groupSetVisibility"
     | "context/groupCreate"
     | "context/groupUpdatePublicMeta"
     | "context/groupUpdatePrivateMeta"
@@ -152,6 +154,7 @@ export class CloudAclChecker {
             "context/groupGet": ["groupId"],
             "context/groupList": [],
             "context/groupGetTreeCommits": ["groupId"],
+            "context/groupGetPublicKey": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {
@@ -169,6 +172,7 @@ export class CloudAclChecker {
             "context/groupRepairRung": ["groupId"],
             "context/groupDelete": ["groupId"],
             "context/groupSendCustomEvent": ["groupId"],
+            "context/groupSetVisibility": ["groupId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
         const contextAll = {...contextRead, ...contextWrite};

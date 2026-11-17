@@ -218,6 +218,9 @@ export namespace group {
         keyId: types.core.KeyId;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        /** Who may read the group's identity key, roster and statements beside its members: nobody (absent or
+         *  "members"), or every user of the context ("context"). The bridge's own setting; no statement signs it. */
+        visibleTo?: "members"|"context";
         policy?: types.cloud.ContainerPolicy;
         /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
          *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
@@ -266,7 +269,7 @@ export namespace group {
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
         |"lastModificationDate"|"lastModifier"|"publicMetaVersion"|"privateMetaVersion"
-        |"rosterVersion"|"keyVersion"|"policy">;
+        |"rosterVersion"|"keyVersion"|"policy"|"visibleTo">;
     
     /**
      * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is

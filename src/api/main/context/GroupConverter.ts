@@ -102,6 +102,7 @@ export class GroupConverter {
             privateMetaVersion: group.privateMetaVersion,
             rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
+            visibleTo: group.visibleTo ?? "members",
             keyHistory: GroupConverter.keyHistory(group, state.epochKeys),
             policy: group.policy || {},
             history: state.history.map(x => this.convertHistoryEntry(x)),
@@ -130,7 +131,29 @@ export class GroupConverter {
             privateMetaVersion: group.privateMetaVersion,
             rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
+            visibleTo: group.visibleTo ?? "members",
             policy: group.policy || {},
+        };
+        if (group.clientResourceId) {
+            res.resourceId = group.clientResourceId;
+        }
+        return res;
+    }
+    
+    /** What `groupGetPublicKey` serves: the identity key and what vouches for it, nothing a member alone may read. */
+    convertGroupPublicInfo(group: db.group.Group, treeCommit: types.cloud.GroupTreeCommitStatement): contextApi.GroupPublicInfo {
+        const res: contextApi.GroupPublicInfo = {
+            id: group.id,
+            contextId: group.contextId,
+            creator: group.creator,
+            users: group.users,
+            managers: group.managers,
+            rosterVersion: group.rosterVersion,
+            keyVersion: group.keyVersion,
+            groupPubKey: group.groupPubKey,
+            policy: group.policy || {},
+            visibleTo: group.visibleTo ?? "members",
+            treeCommit: treeCommit,
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;

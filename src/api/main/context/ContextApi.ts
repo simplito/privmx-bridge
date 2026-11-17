@@ -11,6 +11,7 @@ limitations under the License.
 
 import { ContextService } from "../../../service/cloud/ContextService";
 import { GroupService } from "../../../service/cloud/GroupService";
+import { AppException } from "../../AppException";
 import { ApiMethod } from "../../Decorators";
 import { SessionService } from "../../session/SessionService";
 import { ContextApiValidator } from "./ContextApiValidator";
@@ -71,7 +72,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys, model.visibleTo);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
@@ -127,6 +128,44 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         // Only the statements vouching for what this response serves — a path view needs a handful, not the chain.
         info.treeCommits = await this.groupService.getTreeCommitsAt(group, GroupConverter.vouchingSeqs(info.treeNodes));
         return {group: info};
+    }
+    
+    @ApiMethod({})
+    async groupGetMany(model: contextApi.GroupGetManyModel): Promise<contextApi.GroupGetManyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const results: contextApi.GroupGetManyEntry[] = [];
+        for (const groupId of model.groupIds) {
+            try {
+                const {group, state} = await this.groupService.getGroupWithState(cloudUser, groupId, undefined, undefined);
+                const info = this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group, state, "path");
+                info.treeCommits = await this.groupService.getTreeCommitsAt(group, GroupConverter.vouchingSeqs(info.treeNodes));
+                results.push({group: info});
+            }
+            catch (e) {
+                // One group that is gone, or that the caller left, must not take the rest of the list with it.
+                if (!(e instanceof AppException)) {
+                    throw e;
+                }
+                results.push({error: {code: e.getCode(), message: e.getMessage()}});
+            }
+        }
+        return {results};
+    }
+    
+    @ApiMethod({})
+    async groupGetPublicKey(model: contextApi.GroupGetPublicKeyModel): Promise<contextApi.GroupGetPublicKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {group, treeCommit} = await this.groupService.getGroupPublicKey(cloudUser, model.groupId);
+        this.requestLogger.setContextId(group.contextId);
+        return {group: this.groupConverter.convertGroupPublicInfo(group, treeCommit)};
+    }
+    
+    @ApiMethod({})
+    async groupSetVisibility(model: contextApi.GroupSetVisibilityModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.setVisibility(cloudUser, model.groupId, model.visibleTo);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
     }
     
     @ApiMethod({})

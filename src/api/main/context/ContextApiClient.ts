@@ -83,6 +83,18 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupGetTreeCommits", model);
     }
     
+    groupGetMany(model: contextApi.GroupGetManyModel): Promise<contextApi.GroupGetManyResult> {
+        return this.request("context.groupGetMany", model);
+    }
+    
+    groupGetPublicKey(model: contextApi.GroupGetPublicKeyModel): Promise<contextApi.GroupGetPublicKeyResult> {
+        return this.request("context.groupGetPublicKey", model);
+    }
+    
+    groupSetVisibility(model: contextApi.GroupSetVisibilityModel): Promise<types.core.OK> {
+        return this.request("context.groupSetVisibility", model);
+    }
+    
     groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
         return this.request("context.groupCutEra", model);
     }

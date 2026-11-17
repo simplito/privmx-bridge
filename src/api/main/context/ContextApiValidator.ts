@@ -54,6 +54,7 @@ export class ContextApiValidator extends BaseValidator {
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            visibleTo: this.builder.optional(this.builder.createEnum(["members", "context"])),
             // Three envelopes, one per plane: `data` carries the roster tag, each metadata plane its own DIO
             // and its own domain-separated tag.
             data: this.tv.groupData,
@@ -161,6 +162,16 @@ export class ContextApiValidator extends BaseValidator {
             transition: this.tv.groupTreeSelfUpdateTransition,
             commit: this.tv.groupTreeCommitStatement,
             expectedKeyVersion: this.builder.int,
+        }));
+        this.registerMethod("groupGetMany", this.builder.createObject({
+            groupIds: this.builder.createListWithMaxLength(this.tv.groupId, TypesValidator.MAX_GROUP_BATCH),
+        }));
+        this.registerMethod("groupGetPublicKey", this.builder.createObject({
+            groupId: this.tv.groupId,
+        }));
+        this.registerMethod("groupSetVisibility", this.builder.createObject({
+            groupId: this.tv.groupId,
+            visibleTo: this.builder.createEnum(["members", "context"]),
         }));
         this.registerMethod("groupGetTreeCommits", this.builder.createObject({
             groupId: this.tv.groupId,

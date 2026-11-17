@@ -113,6 +113,8 @@ export interface GroupCreateModel {
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
+    /** Defaults to "members". */
+    visibleTo?: GroupVisibility;
     /** The roster/tree plane's first entry: carries the roster tag and no metadata. */
     data: types.group.GroupData;
     publicMeta: types.group.GroupData;
@@ -479,6 +481,54 @@ export interface GroupGetResult {
     group: GroupInfo;
 }
 
+/** Who may read a group's identity key, roster and statements beside its members. */
+export type GroupVisibility = "members"|"context";
+
+export interface GroupGetManyModel {
+    /** Up to 128 groups, each read as `groupGet` reads it in the "path" scope. */
+    groupIds: types.group.GroupId[];
+}
+
+/** One result per requested id, in order. A group that cannot be served has its error here and fails nothing else. */
+export type GroupGetManyEntry = {group: GroupInfo}|{error: {code: types.core.ErrorCode, message: types.core.ErrorMessage}};
+
+export interface GroupGetManyResult {
+    results: GroupGetManyEntry[];
+}
+
+export interface GroupGetPublicKeyModel {
+    groupId: types.group.GroupId;
+}
+
+/**
+ * What somebody outside a group needs to seal to it: the current identity key, and the latest statement with the
+ * roster it describes, which is what vouches for that key. No tree, no metadata, no keys.
+ */
+export interface GroupPublicInfo {
+    id: types.group.GroupId;
+    contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
+    creator: types.cloud.UserId;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    rosterVersion: number;
+    keyVersion: number;
+    groupPubKey: types.cloud.GroupPubKey;
+    policy: types.cloud.ContainerPolicy;
+    visibleTo: GroupVisibility;
+    /** The latest commit statement. Signed; the client checks it. */
+    treeCommit: types.cloud.GroupTreeCommitStatement;
+}
+
+export interface GroupGetPublicKeyResult {
+    group: GroupPublicInfo;
+}
+
+export interface GroupSetVisibilityModel {
+    groupId: types.group.GroupId;
+    visibleTo: GroupVisibility;
+}
+
 export interface GroupListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
     sortBy?: "createDate"|"lastModificationDate";
@@ -511,6 +561,7 @@ export interface GroupSummary {
     privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
     keyVersion: number;
+    visibleTo: GroupVisibility;
     policy: types.cloud.ContainerPolicy;
 }
 
@@ -576,6 +627,7 @@ export interface GroupInfo {
     /** Roster plane counter. Moves only on a membership change or a rotation. */
     rosterVersion: number;
     keyVersion: number;
+    visibleTo: GroupVisibility;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
@@ -622,7 +674,7 @@ export interface GroupInfo {
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
 export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
-    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned";
+    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -697,6 +749,25 @@ export interface IContextApi {
     groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
     groupSelfUpdate(model: GroupSelfUpdateModel): Promise<types.core.OK>;
     groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
+    /**
+     * Reads several groups in one request, for a client opening a list of them.
+     * @param model ids of the groups
+     * @returns one result per id, in order
+     */
+    groupGetMany(model: GroupGetManyModel): Promise<GroupGetManyResult>;
+    /**
+     * A group's current identity key with the statement that vouches for it. For a member, and for any user of the
+     * context when the group is visible to the context.
+     * @param model id of the group
+     * @returns the key, the roster and the latest statement
+     */
+    groupGetPublicKey(model: GroupGetPublicKeyModel): Promise<GroupGetPublicKeyResult>;
+    /**
+     * Sets who may read the group's identity key, roster and statements beside its members. Managers only.
+     * @param model id of the group and the new visibility
+     * @returns "OK"
+     */
+    groupSetVisibility(model: GroupSetVisibilityModel): Promise<types.core.OK>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
