@@ -593,6 +593,49 @@ export class GroupRepository {
         return {...oldGroup, ...changes};
     }
     
+    /**
+     * Moves members between `users` and `managers`: a roster entry at the unchanged epoch and a statement, no node.
+     * CAS'd like an addition, so it loses to any commit that landed first.
+     */
+    async setRolesWithStatement(params: {
+        oldGroup: db.group.Group,
+        modifier: types.cloud.UserId,
+        users: types.cloud.UserId[],
+        managers: types.cloud.UserId[],
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        statement: types.cloud.GroupTreeCommitStatement,
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier} = params;
+        const now = DateUtils.now();
+        const version = this.nextVersionOf(oldGroup, "rosterVersion");
+        const changes: Partial<db.group.Group> = {
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            users: params.users,
+            managers: params.managers,
+            rosterVersion: version,
+            treeCommitSeq: params.statement.seq,
+        };
+        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
+            return null;
+        }
+        await this.state.insertHistoryEntry({
+            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
+            groupId: oldGroup.id,
+            version: version,
+            keyId: params.keyId,
+            keyVersion: oldGroup.keyVersion,
+            data: params.data,
+            groupPubKey: oldGroup.groupPubKey,
+            created: now,
+            author: modifier,
+        });
+        await this.state.insertTreeCommit(oldGroup.id, params.statement);
+        return {...oldGroup, ...changes};
+    }
+    
     /** Sets who beside the members may read the group's identity key, roster and statements. Touches nothing a
      *  statement signs, so it moves no counter and needs no CAS. */
     async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context") {

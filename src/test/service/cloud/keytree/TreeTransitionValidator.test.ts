@@ -161,6 +161,24 @@ describe("validateCommit accepts honest commits", () => {
         assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), EPOCH + 1), []);
     });
     
+    it("reseat: a removal's blanks and epoch, the subject still seated", () => {
+        const c = honest(BASE, {kind: "reseat", committer: "u40", removed: ["u0"]});
+        const commit = accepted(c);
+        assert.deepStrictEqual(commit.refreshed.map(node => node.nodeIndex), [95, 63]);
+        assert.deepStrictEqual(commit.blanked, [31]);
+        assert.strictEqual(commit.keyVersion, EPOCH + 1);
+        assert.deepStrictEqual(commit.leafAssignment, BASE.leafAssignment);
+        assert.deepStrictEqual(TreeValidator.validateState(c.plan.after, rosterOf(c.plan.after), EPOCH + 1), []);
+    });
+    
+    it("SECURITY: a reseat submitted as a removal's transition, or of the committer, is refused", () => {
+        const c = honest(BASE, {kind: "reseat", committer: "u40", removed: ["u0"]});
+        // The same delta under the other op: the seat would have to be vacated, so the edges no longer match.
+        assert.strictEqual(TreeTransitionValidator.validateCommit(c.stored, {...c.op, kind: "remove"} as typeof c.op, c.submitted).ok, false);
+        const self = TreeTransitionValidator.validateCommit(c.stored, {kind: "reseat", committer: userId("u40"), removedUsers: [userId("u40")], blankedPositions: [40]}, c.submitted);
+        assert.deepStrictEqual(self, {ok: false, rejections: [{kind: "SELF_REMOVAL", userId: "u40"}]});
+    });
+    
     it("SECURITY: remove of the creator by its bucket neighbour still blanks what the creator set", () => {
         const c = honest(BASE, {kind: "remove", committer: "u1", removed: ["u0"]});
         assert.deepStrictEqual(accepted(c).blanked, [95]);

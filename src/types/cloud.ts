@@ -205,7 +205,11 @@ export interface GroupTreeSelfUpdateTransition {
     edges: GroupTreeEdge[];
 }
 
-export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy";
+/**
+ * `roles` moves members between the two lists and nothing else (`addedUsers`: now a user, `addedManagers`: now a
+ * manager). `reseat` is a removal that keeps its subjects seated and on the roster (`removed`: who was reseated).
+ */
+export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy"|"roles"|"reseat";
 
 /** One node a commit re-keyed, as the committer signed it. */
 export interface GroupTreeCommitPathEntry {
@@ -329,6 +333,10 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     delete?: PolicyEntry;
     /** Determines who can rotate container keys */
     rotateKeys?: PolicyEntry;
+    /** Groups only: who can add members. Absent, `inherit` or `default`: whoever `update` allows. */
+    addMembers?: PolicyEntry;
+    /** Groups only: who can remove or reseat members. Absent, `inherit` or `default`: whoever `update` allows. */
+    removeMembers?: PolicyEntry;
     /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
     /** Determines whether the creator has to be added to the list of managers */

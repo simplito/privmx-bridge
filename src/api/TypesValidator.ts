@@ -374,7 +374,7 @@ export class TypesValidator {
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
             prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
-            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy"]),
+            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy", "roles", "reseat"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,
             date: this.intNonNegative,
@@ -521,6 +521,8 @@ export class TypesValidator {
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
             rotateKeys: policyEntry,
+            addMembers: policyEntry,
+            removeMembers: policyEntry,
             creatorHasToBeManager: policyEntry,
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,

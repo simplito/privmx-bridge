@@ -78,6 +78,7 @@ export type PlanOp =
     | {kind: "create", committer: string}
     | {kind: "add", committer: string, members: string[], positions: number[]}
     | {kind: "remove", committer: string, removed: string[]}
+    | {kind: "reseat", committer: string, removed: string[]}
     | {kind: "selfUpdate", committer: string};
 
 /** What an honest endpoint submits for one commit, and the state the bridge holds once it is applied. */
@@ -161,11 +162,13 @@ export function planCommit(before: types.cloud.GroupTreeState, keyVersion: numbe
             TreeMath.keyedPath(position, numLeaves).forEach(nodeIndex => fill.add(nodeIndex));
         });
     }
-    else if (op.kind === "remove") {
+    else if (op.kind === "remove" || op.kind === "reseat") {
         for (const removed of op.removed) {
             const position = seating.indexOf(userId(removed));
             blankedPositions.push(position);
-            seating[position] = "" as types.cloud.UserId;
+            if (op.kind === "remove") {
+                seating[position] = "" as types.cloud.UserId;
+            }
             TreeMath.keyedPath(position, numLeaves).forEach(nodeIndex => blank.add(nodeIndex));
         }
         // Know(r): plus every filled node a leaver minted, and every ancestor of it.
@@ -287,14 +290,15 @@ export interface StatementContext {
 }
 
 /** Every op a statement can name: the planned ones, plus those that move no node. */
-export type StatementOp = PlanOp|{kind: "rotate", committer: string}|{kind: "policy", committer: string, policy: types.cloud.ContainerPolicy};
+export type StatementOp = PlanOp|{kind: "rotate", committer: string}|{kind: "policy", committer: string, policy: types.cloud.ContainerPolicy}
+    |{kind: "roles", committer: string, toUsers: string[], toManagers: string[]};
 
 /** The signed statement an honest committer sends with `plan`. */
 export function statementFor(plan: Plan, op: StatementOp, ctx: StatementContext): types.cloud.GroupTreeCommitStatement {
     const sorted = (values: string[]) => TreeHash.sortedUnique(values.map(userId));
     // A creation has no deltas: its `rosterHash` binds the genesis roster.
-    const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : [];
-    const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : [];
+    const addedManagers = op.kind === "add" ? (ctx.addedManagers ?? []) : op.kind === "roles" ? op.toManagers : [];
+    const addedUsers = op.kind === "add" ? op.members.filter(m => !addedManagers.includes(m)) : op.kind === "roles" ? op.toUsers : [];
     const hashes = TreeHash.childHashes(TreeHash.of(plan.after));
     const creator = userId(ctx.creator ?? op.committer);
     const policy = op.kind === "create" ? (ctx.policy ?? {}) : op.kind === "policy" ? op.policy : undefined;
@@ -320,7 +324,7 @@ export function statementFor(plan: Plan, op: StatementOp, ctx: StatementContext)
             subtreeHash: hashes.get(node.nodeIndex)!.toString("hex")})),
         addedUsers: sorted(addedUsers),
         addedManagers: sorted(addedManagers),
-        removed: sorted(op.kind === "remove" ? op.removed : []),
+        removed: sorted(op.kind === "remove" || op.kind === "reseat" ? op.removed : []),
         ...(policy !== undefined ? {policy} : {}),
     });
 }
@@ -351,7 +355,8 @@ export function commitOpFor(op: PlanOp, plan: Plan): CommitOp {
         case "create": return {kind: "create", committer};
         case "selfUpdate": return {kind: "selfUpdate", committer};
         case "add": return {kind: "add", committer, addedUsers: op.members.map(userId), positions: op.positions};
-        case "remove": return {kind: "remove", committer, removedUsers: op.removed.map(userId), blankedPositions: plan.blankedPositions};
+        case "remove":
+        case "reseat": return {kind: op.kind, committer, removedUsers: op.removed.map(userId), blankedPositions: plan.blankedPositions};
     }
 }
 
@@ -430,6 +435,23 @@ export function commitAgainst(served: ServedGroup, op: PlanOp, groupPubKey?: typ
         ...(served.treeCommit ? {previous: served.treeCommit} : {}),
     });
     return {plan, commit};
+}
+
+/** The statement of a `groupSetRoles` request: the tree, the epoch and the rules as they stand, the roster after. */
+export function rolesCommitAgainst(served: ServedGroup, committer: string, toUsers: string[], toManagers: string[]) {
+    const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+    return statementFor(
+        {refreshedNodes: [], edges: [], blankedPositions: [], blanked: [], after: tree, keyVersion: served.keyVersion, seq: (served.treeCommit?.seq ?? 0) + 1},
+        {kind: "roles", committer, toUsers, toManagers},
+        {
+            groupId: served.id,
+            groupPubKey: served.groupPubKey,
+            rosterVersion: served.rosterVersion + 1,
+            users: [...served.users.filter(u => !toManagers.includes(u)), ...toUsers],
+            managers: [...served.managers.filter(u => !toUsers.includes(u)), ...toManagers],
+            ...(served.treeCommit ? {previous: served.treeCommit} : {}),
+        },
+    );
 }
 
 /** The `groupUpdatePolicy` request `committer` sends to set `policy` on a served group (scope `"plan"` or `"full"`). */

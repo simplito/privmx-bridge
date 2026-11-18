@@ -248,6 +248,12 @@ export class PolicyService {
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
+        for (const field of ["addMembers", "removeMembers"] as const) {
+            const entry = policy[field];
+            if (entry !== undefined) {
+                this.validatePolicyEntry(`${path}.${field}`, entry, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
+            }
+        }
         if (policy.delete !== undefined) {
             this.validatePolicyEntry(path + ".delete", policy.delete, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }

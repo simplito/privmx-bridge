@@ -230,6 +230,28 @@ export interface GroupRemoveMembersModel {
 }
 
 /**
+ * Changes the role of members already in the group, as a signed `roles` commit. No key moves: a role decides what
+ * the bridge and the other members accept from somebody, not what they can read.
+ *
+ * Needs the signed `updatePolicy` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
+ * managers with none.
+ */
+export interface GroupSetRolesModel {
+    id: types.group.GroupId;
+    /** Each member at most once, and at least one of them changing lists. */
+    changes: GroupAddMemberEntry[];
+    /** The current content key: a role change opens no epoch. */
+    keyId: types.core.KeyId;
+    /** The roster entry after the change. */
+    data: types.group.GroupData;
+    /** The statement: op `roles`, the tree as it stands, `addedManagers` and `addedUsers` naming who moved where. */
+    commit: types.cloud.GroupTreeCommitStatement;
+    expectedKeyVersion: number;
+    /** @see GroupAddMembersModel.expectedRosterVersion */
+    expectedRosterVersion: number;
+}
+
+/**
  * Re-keys the caller's own keyed path in a tree-backed group, refilling whatever blanks a removal or an addition
  * left on it.
  *
@@ -683,7 +705,7 @@ export interface GroupInfo {
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
 export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
-    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged";
+    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged"|"rolesChanged"|"membersReseated";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -756,6 +778,21 @@ export interface IContextApi {
     groupList(model: GroupListModel): Promise<GroupListResult>;
     groupAddMembers(model: GroupAddMembersModel): Promise<types.core.OK>;
     groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    /**
+     * Re-admits members whose long-term key was replaced: a removal in every respect but one, its subjects keep
+     * their seats and their place on the roster. The epoch advances, so whoever still holds a subject's old key
+     * reads nothing written afterwards. Takes what `groupRemoveMembers` takes; the statement's op is `reseat` and
+     * its `removed` names the subjects. Needs the signed `removeMembers` rule.
+     * @param model group's id, the members to reseat, the new grant key, the transition, the statement and the rungs
+     * @returns "OK"
+     */
+    groupReseat(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    /**
+     * Changes the role of members of a group
+     * @param model group's id, the members with their new roles, the roster entry and the statement
+     * @returns "OK"
+     */
+    groupSetRoles(model: GroupSetRolesModel): Promise<types.core.OK>;
     groupSelfUpdate(model: GroupSelfUpdateModel): Promise<types.core.OK>;
     groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
     /**

@@ -141,7 +141,7 @@ export class ContextApiValidator extends BaseValidator {
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
         }));
-        this.registerMethod("groupRemoveMembers", this.builder.createObject({
+        const removal = this.builder.createObject({
             id: this.tv.groupId,
             userIds: this.builder.createListWithRangeLength(this.tv.cloudUserId, 1, TypesValidator.MAX_GROUP_BATCH),
             groupPubKey: this.tv.groupPubKey,
@@ -156,6 +156,21 @@ export class ContextApiValidator extends BaseValidator {
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
             abandonHistory: this.builder.optional(this.builder.bool),
+        });
+        this.registerMethod("groupRemoveMembers", removal);
+        // A reseat is a removal that keeps its subjects: the same request, another statement op.
+        this.registerMethod("groupReseat", removal);
+        this.registerMethod("groupSetRoles", this.builder.createObject({
+            id: this.tv.groupId,
+            changes: this.builder.createListWithRangeLength(this.builder.createObject({
+                userId: this.tv.cloudUserId,
+                role: this.builder.createEnum(["user", "manager"]),
+            }), 1, TypesValidator.MAX_GROUP_BATCH),
+            keyId: this.tv.keyId,
+            data: this.tv.groupData,
+            commit: this.tv.groupTreeCommitStatement,
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
         }));
         this.registerMethod("groupSelfUpdate", this.builder.createObject({
             id: this.tv.groupId,

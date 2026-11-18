@@ -144,6 +144,6 @@ describe("CommitStatement signed bytes", () => {
     });
     
     it("op codes", () => {
-        assert.deepStrictEqual(CommitStatement.OP_CODES, {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5, policy: 6});
+        assert.deepStrictEqual(CommitStatement.OP_CODES, {create: 1, add: 2, remove: 3, selfUpdate: 4, rotate: 5, policy: 6, roles: 7, reseat: 8});
     });
 });

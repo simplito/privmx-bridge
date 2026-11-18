@@ -27,6 +27,8 @@ export type AclFunctionNameX =
     | "context/groupRotateKeys"
     | "context/groupAddMembers"
     | "context/groupRemoveMembers"
+    | "context/groupReseat"
+    | "context/groupSetRoles"
     | "context/groupSelfUpdate"
     | "context/groupCutEra"
     | "context/groupPruneArchive"
@@ -166,6 +168,8 @@ export class CloudAclChecker {
             "context/groupRotateKeys": ["groupId"],
             "context/groupAddMembers": ["groupId"],
             "context/groupRemoveMembers": ["groupId"],
+            "context/groupReseat": ["groupId"],
+            "context/groupSetRoles": ["groupId"],
             "context/groupSelfUpdate": ["groupId"],
             "context/groupCutEra": ["groupId"],
             "context/groupPruneArchive": ["groupId"],
