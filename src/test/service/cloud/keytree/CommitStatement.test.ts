@@ -134,6 +134,7 @@ describe("CommitStatement shared vectors", () => {
     it("signed bytes match the shared vectors", () => {
         const all = vectors().signedBytes;
         assert.ok(all.some(v => v.statement.op === "policy"), "a policy op among them");
+        assert.ok(all.some(v => v.statement.op === "roles") && all.some(v => v.statement.op === "reseat"), "and the two roster ops");
         for (const vector of all) {
             assert.strictEqual(CommitStatement.signedBytes(vector.statement).toString("hex"), vector.expectedHex, vector.statement.op);
         }
@@ -141,7 +142,7 @@ describe("CommitStatement shared vectors", () => {
     
     it("SECURITY: policy hash matches the shared vectors", () => {
         const all = vectors().policyHash;
-        assert.strictEqual(all.length, 6);
+        assert.strictEqual(all.length, 11);
         for (const vector of all) {
             assert.strictEqual(CommitStatement.policyHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
