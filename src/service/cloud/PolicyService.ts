@@ -180,6 +180,7 @@ export class PolicyService {
     }
     
     private validateContainerPolicyForContext(path: string, policy: types.cloud.ContainerPolicy) {
+        PolicyService.refuseRosterRules(path, policy);
         if (policy.get !== undefined) {
             this.validatePolicyEntry(path + ".get", policy.get, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -226,7 +227,21 @@ export class PolicyService {
         }
     }
     
-    validateContainerPolicyForContainer(path: string, policy: types.cloud.ContainerPolicy) {
+    /** `addMembers` and `removeMembers` are a group's own, signed rules. Anywhere else nothing reads them, and a rule
+     *  that can be set and does nothing is a permission somebody believes they took away. */
+    private static refuseRosterRules(path: string, policy: types.cloud.ContainerPolicy) {
+        for (const field of ["addMembers", "removeMembers"] as const) {
+            if (policy[field] !== undefined) {
+                throw new AppException("INVALID_PARAMS", `${path}.${field} is not allowed here`);
+            }
+        }
+    }
+    
+    /** `rosterRules`: the container is a group, the one place the two roster rules mean something. */
+    validateContainerPolicyForContainer(path: string, policy: types.cloud.ContainerPolicy, rosterRules = false) {
+        if (!rosterRules) {
+            PolicyService.refuseRosterRules(path, policy);
+        }
         if (policy.get !== undefined) {
             this.validatePolicyEntry(path + ".get", policy.get, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }

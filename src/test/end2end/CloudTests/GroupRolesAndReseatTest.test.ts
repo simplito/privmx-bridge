@@ -125,6 +125,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
     async shouldLetTheRulesSplitAddingFromRemoving() {
         // Anybody in the group may add; removing (and reseating) stays with managers.
         const groupId = await this.createGroup({addMembers: "user" as types.cloud.PolicyEntry, removeMembers: "manager" as types.cloud.PolicyEntry});
+        // Adding is one thing, handing out the manager role another: that stays with whoever may set roles.
+        await shouldThrowErrorWithCode2(() => this.add(groupId, bob, dave, "manager"), "ACCESS_DENIED");
         await this.add(groupId, bob, dave);
         assert((await this.read(groupId)).users.includes(dave), "a user should have added dave");
         await shouldThrowErrorWithCode2(() => this.removeOrReseat(groupId, bob, "remove", [carol]), "ACCESS_DENIED");
@@ -183,14 +185,14 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         assert(res === "OK", `${kind} did not return OK`);
     }
     
-    private async add(groupId: types.group.GroupId, as: types.cloud.UserId, newcomer: types.cloud.UserId) {
+    private async add(groupId: types.group.GroupId, as: types.cloud.UserId, newcomer: types.cloud.UserId, role: "user"|"manager" = "user") {
         const api = await this.apiOf(as);
         const {group: served} = await api.groupGet({groupId, scope: "plan", forNewMembers: 1});
         const positions = served.nextFreeSeats!;
         const {plan, commit} = commitAgainst(served as unknown as ServedGroup, {kind: "add", committer: as, members: [newcomer], positions});
         const res = await api.groupAddMembers({
             id: groupId,
-            members: [{userId: newcomer, role: "user"}],
+            members: [{userId: newcomer, role}],
             keyId: `group-key-${served.keyVersion}` as types.core.KeyId,
             data: "roster" as types.group.GroupData,
             transition: additionOf(plan, served.keyVersion, positions),

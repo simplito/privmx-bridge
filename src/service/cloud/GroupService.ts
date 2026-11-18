@@ -205,7 +205,7 @@ export class GroupService extends BaseContainerService {
         policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement,
         groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">, visibleTo?: "members"|"context") {
         const allUsers = Utils.uniqueFromArrays(users, managers);
-        this.policyService.validateContainerPolicyForContainer("policy", policy);
+        this.policyService.validateContainerPolicyForContainer("policy", policy, true);
         this.assertWithinLimit(allUsers.length);
         this.assertWithinLimit(tree.numLeaves, true);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
@@ -381,7 +381,7 @@ export class GroupService extends BaseContainerService {
     async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
         // Required by the API validator (`groupTreeCommitStatementWithPolicy`).
         const policy = model.commit.policy!;
-        this.policyService.validateContainerPolicyForContainer("policy", policy);
+        this.policyService.validateContainerPolicyForContainer("policy", policy, true);
         const budget = new Reservations(this.groupRotationRateLimiter);
         const group = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
@@ -558,6 +558,10 @@ export class GroupService extends BaseContainerService {
             const newManagers = model.members.filter(member => member.role === "manager").map(member => member.userId);
             const managers = [...oldGroup.managers, ...newManagers];
             this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "addMembers");
+            if (newManagers.length > 0) {
+                // Seating somebody as a manager hands out a role: the gate of `setRoles`, on top of the one for adding.
+                this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "updatePolicy");
+            }
             const listed = new Set<types.cloud.UserId>();
             for (const userId of addedUserIds) {
                 if (oldGroup.users.includes(userId) || oldGroup.managers.includes(userId)) {
@@ -650,6 +654,10 @@ export class GroupService extends BaseContainerService {
             const managers = oldGroup.managers.filter(u => !leaving.has(u));
             GroupService.assertKeepsAManager(oldGroup.managers, managers);
             this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "removeMembers");
+            if (model.abandonHistory && !this.policy.canUpdateContainer(user, usedContext, oldGroup)) {
+                // It cuts the era as `groupCutEra` would: that call's rule as well as its ACL.
+                throw new AppException("ACCESS_DENIED", "policy is not met");
+            }
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
                     throw new AppException("INVALID_PARAMS", `user '${userId}' is not a member`);
@@ -1476,7 +1484,7 @@ class GroupPolicy extends BasePolicy<db.group.Group, never> {
     /** The gate of a roster commit: the signed rule for it, and the two "stays a manager" guards every container has. */
     makeRosterCheck(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, managers: types.cloud.UserId[],
         rule: "addMembers"|"removeMembers"|"updatePolicy") {
-        if (!this.signed(user, context, group, rule)) {
+        if (!this.signed(user, context, group, rule) || !this.passesContextVeto(user, context, group, "update")) {
             throw new AppException("ACCESS_DENIED", "policy is not met");
         }
         if (this.updaterIsRemovedFromManagersAndItIsForbidden(context, group, user, managers)) {
@@ -1492,9 +1500,17 @@ class GroupPolicy extends BasePolicy<db.group.Group, never> {
             && context.policy?.group?.ownerCanBeRemovedFromManagers !== "no";
     }
     
+    /** The context's side of a rule alone: every roster commit is an update of the group, whatever rule signs it,
+     *  so a context that denies `update` denies a change of roles too. */
+    private passesContextVeto(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, field: "update") {
+        const veto = context.policy?.group?.[field];
+        return veto === undefined || veto === "inherit" || veto === "default" || this.policyService.userMeetsPolicy(this.getPolicyUser(user, group), veto);
+    }
+    
     private signed(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, field: "update"|"rotateKeys"|"updatePolicy"|"addMembers"|"removeMembers") {
         const who = this.getPolicyUser(user, group);
-        // The context has no rule of its own for the roster: its `update` veto covers both halves of it.
+        // The context has no rule of its own for the roster (one set there is refused): its `update` veto covers both
+        // halves of it.
         const memberRule = field === "addMembers" || field === "removeMembers";
         const veto = context.policy?.group?.[memberRule ? "update" : field];
         const rule = memberRule ? CommitStatement.resolveMemberRule(group.policy, field) : CommitStatement.resolve(group.policy, field);
