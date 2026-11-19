@@ -38,6 +38,13 @@ import { TreeMath } from "./keytree/TreeMath";
 import { Config } from "../../cluster/common/ConfigUtils";
 import { Utils } from "../../utils/Utils";
 
+/** A group as an application's backend is served it: the document, its members' keys and its public metadata. */
+export interface ManagementGroupView {
+    group: db.group.Group;
+    pubKeys: Map<types.cloud.UserId, types.cloud.UserPubKey>;
+    publicMeta: types.group.GroupData;
+}
+
 export class GroupService extends BaseContainerService {
     
     private policy: GroupPolicy;
@@ -199,6 +206,34 @@ export class GroupService extends BaseContainerService {
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const groups = await groupRepository.getPage(contextId, listParams, sortBy, all ? undefined : user.userId);
         return {user, groups};
+    }
+    
+    /**
+     * A page of a context's groups with their rosters, optionally only those `ofUser` belongs to. For the
+     * application's backend alone: a user of the context is refused whatever its role, because this is the
+     * membership graph of the context and `getGroupsByContext` is what narrows it for a user.
+     */
+    async getGroupsForManagement(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, ofUser?: types.cloud.UserId) {
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new AppException("CONTEXT_DOES_NOT_EXIST");
+        }
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, context, () => {
+            throw new AppException("ACCESS_DENIED");
+        });
+        return this.repositoryFactory.createGroupRepository().getWholePage(contextId, listParams, "createDate", ofUser);
+    }
+    
+    /** What the bridge holds of the given groups in the clear. All of one context. */
+    async getManagementViews(groups: db.group.Group[]): Promise<ManagementGroupView[]> {
+        if (groups.length === 0) {
+            return [];
+        }
+        const members = Utils.unique(groups.flatMap(g => [...g.users, ...g.managers]));
+        const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(groups[0].contextId, members);
+        const pubKeys = new Map(contextUsers.map(u => [u.userId, u.userPubKey]));
+        const metas = await this.repositoryFactory.createGroupRepository().state.getPublicMetaHeads(groups.map(g => g.id));
+        return groups.map(group => ({group, pubKeys, publicMeta: metas.find(m => m.groupId === group.id)?.data}));
     }
     
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.group.GroupType|undefined,

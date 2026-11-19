@@ -99,6 +99,10 @@ import { InboxApi } from "../../api/main/inbox/InboxApi";
 import { StreamApi } from "../../api/main/stream/StreamApi";
 import { MainApiResolver, RequestApiResolver } from "../../api/ServerEndpoint";
 import { ManagementThreadApi } from "../../api/plain/thread/ManagementThreadApi";
+import { ManagementGroupApi } from "../../api/plain/group/ManagementGroupApi";
+import { ManagementGroupApiValidator } from "../../api/plain/group/ManagementGroupApiValidator";
+import { ManagementSpaceApi } from "../../api/plain/space/ManagementSpaceApi";
+import { ManagementSpaceApiValidator } from "../../api/plain/space/ManagementSpaceApiValidator";
 import { ManagementThreadApiValidator } from "../../api/plain/thread/ManagementThreadApiValidator";
 import { ManagementInboxApiValidator } from "../../api/plain/inbox/ManagementInboxApiValidator";
 import { ManagementStoreApiValidator } from "../../api/plain/store/ManagementStoreApiValidator";
@@ -775,6 +779,18 @@ export class IOC {
                 e.getAuthorizationHolder(),
                 e.ioc.getSolutionService(),
             ));
+            this.plainApiResolver.registerApiWithPrefix("group/", ManagementGroupApi, e => new ManagementGroupApi(
+                new ManagementGroupApiValidator(e.ioc.getTypesValidator()),
+                e.getAuthorizationDetector(),
+                e.getAuthorizationHolder(),
+                e.ioc.getGroupService(),
+            ));
+            this.plainApiResolver.registerApiWithPrefix("space/", ManagementSpaceApi, e => new ManagementSpaceApi(
+                new ManagementSpaceApiValidator(e.ioc.getTypesValidator()),
+                e.getAuthorizationDetector(),
+                e.getAuthorizationHolder(),
+                e.ioc.getSpaceService(),
+            ));
             this.plainApiResolver.registerApiWithPrefix("thread/", ManagementThreadApi, e => new ManagementThreadApi(
                 e.ioc.getManagementThreadApiValidator(),
                 e.getAuthorizationDetector(),
@@ -1156,6 +1172,7 @@ export class IOC {
                 this.getJobService(),
                 this.getWebSocketSender(),
                 this.getRepositoryFactory(),
+                this.getWebSocketPlainSender(),
             );
         }
         return this.spaceNotificationService;
@@ -1174,6 +1191,7 @@ export class IOC {
                 this.getJobService(),
                 this.getWebSocketSender(),
                 this.getRepositoryFactory(),
+                this.getWebSocketPlainSender(),
             );
         }
         return this.groupNotificationService;

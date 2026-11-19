@@ -153,7 +153,11 @@ export class SpaceService extends BaseContainerService {
     
     async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space) {
         let caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined;
-        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, contextId, async user => {
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (!context) {
+            throw new AppException("CONTEXT_DOES_NOT_EXIST");
+        }
+        await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, context, async user => {
             this.cloudAclChecker.verifyAccess(user.acl, "context/spaceList", []);
             caller = {userId: user.userId, ownGroupIds: await this.getCallerGroupIds(contextId, user.userId)};
         });

@@ -17,3 +17,5 @@ export { test as StoreApi } from "../../api/plain/store/ManagementStoreApiValida
 export { test as StreamApi } from "../../api/plain/stream/ManagementStreamApiValidatorTest";
 export { test as InboxApi } from "../../api/plain/inbox/ManagementInboxApiValidatorTest";
 export { test as KvdbApi } from "../../api/plain/kvdb/ManagementKvdbApiValidatorTest";
+export { test as GroupApi } from "../../api/plain/group/ManagementGroupApiValidatorTest";
+export { test as SpaceApi } from "../../api/plain/space/ManagementSpaceApiValidatorTest";

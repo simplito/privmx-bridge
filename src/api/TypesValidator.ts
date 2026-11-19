@@ -553,7 +553,7 @@ export class TypesValidator {
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
-        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb"]);
+        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb", "group", "space"]);
         this.wsChannelName = this.builder.createCustom((value) => {
             const alphaNumericalRegex = /^[a-zA-Z0-9,/_|=:-]*$/;
             if (typeof value !== "string") {

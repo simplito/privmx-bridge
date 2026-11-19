@@ -11,6 +11,8 @@ limitations under the License.
 
 import { JobService } from "../job/JobService";
 import { WebSocketSender } from "../ws/WebSocketSender";
+import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
+import type { SpaceNotifyEvent } from "../../api/plain/space/ManagementSpaceApiTypes";
 import * as contextApi from "../../api/main/context/ContextApiTypes";
 import * as db from "../../db/Model";
 import * as types from "../../types";
@@ -24,7 +26,16 @@ export class SpaceNotificationService {
         private jobService: JobService,
         private webSocketSender: WebSocketSender,
         private repositoryFactory: RepositoryFactory,
+        private webSocketPlainSender: WebSocketPlainSender,
     ) {
+    }
+    
+    /** The same event for the application's backend, on its `space` channel. Nothing is sent once the context is gone. */
+    private async sendToBackend(contextId: types.context.ContextId, event: SpaceNotifyEvent) {
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (context) {
+            this.webSocketPlainSender.sendToPlainUsers(context.solution, event);
+        }
     }
     
     private safe(errorMessage: string, func: () => Promise<void>) {
@@ -52,6 +63,7 @@ export class SpaceNotificationService {
     
     sendCreatedSpace(space: db.space.Space) {
         this.safe("spaceCreated", async () => {
+            await this.sendToBackend(space.contextId, {channel: "space", type: "spaceCreated", data: this.changedData(space, "created"), timestamp: DateUtils.now()});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceCreatedEvent>(
                 await this.recipientKeys(space),
                 {contextId: space.contextId, containerId: space.id, channel: "context/spaces/create" as types.core.WsChannelName},
@@ -63,6 +75,7 @@ export class SpaceNotificationService {
     /** @param alsoUsers users who are no longer recipients and are told once more, so their client can let go. */
     sendUpdatedSpace(space: db.space.Space, changeKind: contextApi.SpaceChangeKind, alsoUsers: types.cloud.UserId[] = []) {
         this.safe("spaceUpdated", async () => {
+            await this.sendToBackend(space.contextId, {channel: "space", type: "spaceUpdated", data: this.changedData(space, changeKind), timestamp: DateUtils.now()});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceUpdatedEvent>(
                 await this.recipientKeys(space, alsoUsers),
                 {contextId: space.contextId, containerId: space.id, channel: "context/spaces/update" as types.core.WsChannelName},
@@ -82,6 +95,7 @@ export class SpaceNotificationService {
     
     sendDeletedSpace(space: db.space.Space) {
         this.safe("spaceDeleted", async () => {
+            await this.sendToBackend(space.contextId, {channel: "space", type: "spaceDeleted", data: {spaceId: space.id, contextId: space.contextId}, timestamp: DateUtils.now()});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceDeletedEvent>(
                 await this.recipientKeys(space),
                 {contextId: space.contextId, containerId: space.id, channel: "context/spaces/delete" as types.core.WsChannelName},

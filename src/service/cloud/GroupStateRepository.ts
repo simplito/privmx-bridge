@@ -186,6 +186,10 @@ export class GroupStateRepository {
     }
     
     /** The group's public-metadata entry — a lookup by derived id. */
+    async getPublicMetaHeads(groupIds: types.group.GroupId[]): Promise<db.group.GroupPublicMetaEntry[]> {
+        return this.publicMetaEntries.getMulti(groupIds.map(id => GroupStateRepository.publicMetaEntryId(id)));
+    }
+    
     async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
         return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));
     }

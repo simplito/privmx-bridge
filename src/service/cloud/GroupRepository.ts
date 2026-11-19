@@ -80,6 +80,19 @@ export class GroupRepository {
      * before the projection so a field left out of the summary stays filterable.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
+        return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
+            [...this.pageStages(contextId, listParams, onlyForUser), {$project: GroupRepository.SUMMARY_PROJECTION}],
+            listParams,
+            sortBy,
+        );
+    }
+    
+    /** The same page with whole documents, rosters included: for the backend's view, never for a client's listing. */
+    async getWholePage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
+        return this.repository.getMatchingPage(this.pageStages(contextId, listParams, onlyForUser), listParams, sortBy);
+    }
+    
+    private pageStages(contextId: types.context.ContextId, listParams: types.core.ListModel, onlyForUser?: types.cloud.UserId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         // `onlyForUser` narrows to the caller's own groups, served off the `{contextId, users}` /
         // `{contextId, managers}` indexes from Migration071. In the same `$match` as `contextId`, so no query
@@ -87,11 +100,7 @@ export class GroupRepository {
         const match = onlyForUser === undefined
             ? {contextId: contextId}
             : {contextId: contextId, $or: [{users: onlyForUser}, {managers: onlyForUser}]};
-        return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
-            [{$match: match}, ...mongoQueries, {$project: GroupRepository.SUMMARY_PROJECTION}],
-            listParams,
-            sortBy,
-        );
+        return [{$match: match}, ...mongoQueries];
     }
     
     /** Ids of the groups in the given context the user belongs to (member or manager) — used by Phase 2 grantee

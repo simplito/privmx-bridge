@@ -38,6 +38,8 @@ import * as assert from "assert";
 import { ManagementContextApiClient } from "../../api/plain/context/ManagementContextApiClient";
 import { ManagementStoreApiClient } from "../../api/plain/store/ManagementStoreApiClient";
 import { ManagementThreadApiClient } from "../../api/plain/thread/ManagementThreadApiClient";
+import { ManagementGroupApiClient } from "../../api/plain/group/ManagementGroupApiClient";
+import { ManagementSpaceApiClient } from "../../api/plain/space/ManagementSpaceApiClient";
 import { ManagementInboxApiClient } from "../../api/plain/inbox/ManagementInboxApiClient";
 import { ManagerApiClient } from "../../api/plain/manager/ManagerApiClient";
 import { ManagementSolutionApiClient } from "../../api/plain/solution/ManagementSolutionApiClient";
@@ -205,6 +207,8 @@ export class BaseTestSet {
         solutionApi: ManagementSolutionApiClient;
         contextApi: ManagementContextApiClient
         threadApi: ManagementThreadApiClient;
+        groupApi: ManagementGroupApiClient;
+        spaceApi: ManagementSpaceApiClient;
         storeApi: ManagementStoreApiClient;
         inboxApi: ManagementInboxApiClient;
         streamApi: ManagementStreamApiClient;
@@ -388,6 +392,8 @@ export class BaseTestSet {
             storeApi: new ManagementStoreApiClient(jsonRpcClient),
             streamApi: new ManagementStreamApiClient(jsonRpcClient),
             threadApi: new ManagementThreadApiClient(jsonRpcClient),
+            groupApi: new ManagementGroupApiClient(jsonRpcClient),
+            spaceApi: new ManagementSpaceApiClient(jsonRpcClient),
             kvdbApi: new ManagementKvdbApiClient(jsonRpcClient),
         };
     }
