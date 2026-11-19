@@ -26,6 +26,7 @@ import { ContextUserRepository } from "../service/cloud/ContextUserRepository";
 import { ThreadRepository } from "../service/cloud/ThreadRepository";
 import { ThreadMessageRepository } from "../service/cloud/ThreadMessageRepository";
 import { GroupRepository } from "../service/cloud/GroupRepository";
+import { SpaceRepository } from "../service/cloud/SpaceRepository";
 import { GroupStateRepository } from "../service/cloud/GroupStateRepository";
 import { StoreRepository } from "../service/cloud/StoreRepository";
 import { StoreFileRepository } from "../service/cloud/StoreFileRepository";
@@ -123,6 +124,13 @@ export class RepositoryFactory {
     
     createGroupRepository(session?: mongodb.ClientSession) {
         return new GroupRepository(this.createObjectRepositoryFor(GroupRepository, session), this.createGroupStateRepository(session));
+    }
+    
+    createSpaceRepository(session?: mongodb.ClientSession) {
+        return new SpaceRepository(
+            this.createObjectRepositoryFor(SpaceRepository, session),
+            this.mongoDbManager.getRepository<string, db.space.SpaceKey>(SpaceRepository.KEY_COLLECTION_NAME, "id", session),
+        );
     }
     
     /** The nine collections a group's state lives in outside its document — always in the caller's session. */

@@ -126,4 +126,40 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     groupSendCustomEvent(model: contextApi.GroupSendCustomEventModel): Promise<types.core.OK> {
         return this.request("context.groupSendCustomEvent", model);
     }
+    
+    spaceCreate(model: contextApi.SpaceCreateModel): Promise<contextApi.SpaceCreateResult> {
+        return this.request("context.spaceCreate", model);
+    }
+    
+    spaceGet(model: contextApi.SpaceIdModel): Promise<contextApi.SpaceGetResult> {
+        return this.request("context.spaceGet", model);
+    }
+    
+    spaceList(model: contextApi.SpaceListModel): Promise<contextApi.SpaceListResult> {
+        return this.request("context.spaceList", model);
+    }
+    
+    spaceDelete(model: contextApi.SpaceIdModel): Promise<types.core.OK> {
+        return this.request("context.spaceDelete", model);
+    }
+    
+    spaceAddRecipients(model: contextApi.SpaceAddRecipientsModel): Promise<types.core.OK> {
+        return this.request("context.spaceAddRecipients", model);
+    }
+    
+    spaceRemoveRecipients(model: contextApi.SpaceRemoveRecipientsModel): Promise<contextApi.SpaceRotateKeyResult> {
+        return this.request("context.spaceRemoveRecipients", model);
+    }
+    
+    spaceRotateKey(model: contextApi.SpaceRotateKeyModel): Promise<contextApi.SpaceRotateKeyResult> {
+        return this.request("context.spaceRotateKey", model);
+    }
+    
+    spaceUpdatePublicMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        return this.request("context.spaceUpdatePublicMeta", model);
+    }
+    
+    spaceUpdatePrivateMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        return this.request("context.spaceUpdatePrivateMeta", model);
+    }
 }

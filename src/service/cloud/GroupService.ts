@@ -18,6 +18,7 @@ import { CloudUser, Executor } from "../../CommonTypes";
 import { CloudKeyService } from "./CloudKeyService";
 import { GroupNotificationService } from "./GroupNotificationService";
 import type { StreamNotificationService } from "./StreamNotificationService";
+import type { SpaceNotificationService } from "./SpaceNotificationService";
 import { CloudAclChecker } from "./CloudAclChecker";
 import { PolicyService } from "./PolicyService";
 import { BasePolicy } from "./BasePolicy";
@@ -53,6 +54,7 @@ export class GroupService extends BaseContainerService {
         private groupRotationRateLimiter: GroupRotationRateLimiter,
         private config: Config,
         private streamNotificationService: StreamNotificationService,
+        private spaceNotificationService: SpaceNotificationService,
     ) {
         super(repositoryFactory, activeUsersMap, host);
         this.policy = new GroupPolicy(this.policyService);
@@ -527,6 +529,7 @@ export class GroupService extends BaseContainerService {
         // A rotation stales every room granted to the group as a removal does, and a live publication never writes
         // again: the event makes its publisher re-key.
         this.streamNotificationService.sendStreamRoomsUpdatedForGroup(rotated.id, solution);
+        this.spaceNotificationService.sendKeyStaleOfGroup(rotated.id);
         return rotated;
     }
     
@@ -725,6 +728,7 @@ export class GroupService extends BaseContainerService {
             this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
         }
         this.streamNotificationService.sendStreamRoomsUpdatedForGroup(group.id, context.solution);
+        this.spaceNotificationService.sendKeyStaleOfGroup(group.id);
         return group;
     }
     
@@ -1353,7 +1357,8 @@ export class GroupService extends BaseContainerService {
                 await this.repositoryFactory.createStoreRepository(session).isGroupReferenced(oldGroup.id) ||
                 await this.repositoryFactory.createInboxRepository(session).isGroupReferenced(oldGroup.id) ||
                 await this.repositoryFactory.createKvdbRepository(session).isGroupReferenced(oldGroup.id) ||
-                await this.repositoryFactory.createStreamRoomRepository(session).isGroupReferenced(oldGroup.id);
+                await this.repositoryFactory.createStreamRoomRepository(session).isGroupReferenced(oldGroup.id) ||
+                await this.repositoryFactory.createSpaceRepository(session).isGroupReferenced(oldGroup.id);
             if (referenced) {
                 throw new AppException("GROUP_IN_USE");
             }

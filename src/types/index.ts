@@ -18,6 +18,7 @@ export * as inbox from "./inbox";
 export * as packet from "./packet";
 export * as request from "./request";
 export * as resource from "./resource";
+export * as space from "./space";
 export * as store from "./store";
 export * as stream from "./stream";
 export * as thread from "./thread";

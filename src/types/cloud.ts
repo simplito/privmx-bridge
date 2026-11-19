@@ -305,6 +305,21 @@ export interface GroupGrant {
     role: ContainerRole;
 }
 
+/** Who a space's key is wrapped for: a group (its members reach it through the group's key) or one user. */
+export type SpaceRecipient = ({groupId: types.group.GroupId}|{userId: UserId; pubKey: UserPubKey})&{role: ContainerRole};
+
+/**
+ * One version of a space's key wrapped for one recipient. `data` and `signature` are the client's: the bridge
+ * stores them and checks only that every recipient has an entry, and that a group's entry names the epoch the
+ * group is at.
+ */
+export interface SpaceKeyEntry {
+    keyVersion: number;
+    recipient: {groupId: types.group.GroupId; groupKeyVersion: number}|{userId: UserId};
+    data: types.core.Base64;
+    signature: types.core.Base64;
+}
+
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
 export interface ContainerGrantees {
     groups?: GroupGrant[];

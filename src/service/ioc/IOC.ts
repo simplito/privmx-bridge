@@ -63,6 +63,8 @@ import { ThreadConverter } from "../../api/main/thread/ThreadConverter";
 import { CloudKeyService } from "../cloud/CloudKeyService";
 import { ThreadNotificationService } from "../cloud/ThreadNotificationService";
 import { GroupService } from "../cloud/GroupService";
+import { SpaceService } from "../cloud/SpaceService";
+import { SpaceNotificationService } from "../cloud/SpaceNotificationService";
 import { GroupNotificationService } from "../cloud/GroupNotificationService";
 import { GroupConverter } from "../../api/main/context/GroupConverter";
 import { StoreApiValidator } from "../../api/main/store/StoreApiValidator";
@@ -206,6 +208,8 @@ export class IOC {
     protected cloudKeyService?: CloudKeyService;
     protected threadNotificationService?: ThreadNotificationService;
     protected groupService?: GroupService;
+    protected spaceService?: SpaceService;
+    protected spaceNotificationService?: SpaceNotificationService;
     protected groupConverter?: GroupConverter;
     protected groupNotificationService?: GroupNotificationService;
     protected storeService?: StoreService;
@@ -608,7 +612,7 @@ export class IOC {
                 ));
             this.mainApiRsolver.registerApiWithPrefix("", RequestApi, ({ioc: e, sessionService: s}) => new RequestApi(e.ioc.getRequestApiValidator(), s, e.ioc.getRequestService()));
             this.mainApiRsolver.registerApiWithPrefix("request.", RequestApi, ({ioc: e, sessionService: s}) => new RequestApi(e.ioc.getRequestApiValidator(), s, e.ioc.getRequestService()));
-            this.mainApiRsolver.registerApiWithPrefix("context.", ContextApi, ({ioc: e, sessionService: s}) => new ContextApi(e.ioc.getContextApiValidator(), e.ioc.getContextService(), s, e.ioc.getGroupService(), e.ioc.getGroupConverter(), e.getRequestLogger()));
+            this.mainApiRsolver.registerApiWithPrefix("context.", ContextApi, ({ioc: e, sessionService: s}) => new ContextApi(e.ioc.getContextApiValidator(), e.ioc.getContextService(), s, e.ioc.getGroupService(), e.ioc.getGroupConverter(), e.getRequestLogger(), e.ioc.getSpaceService()));
             this.mainApiRsolver.registerApiWithPrefix("thread2.", ThreadApi, ({ioc: e, sessionService: s}) => new ThreadApi(e.ioc.getThreadApiValidator(), e.ioc.getThreadService(), s, e.ioc.getThreadConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("thread.", ThreadApi, ({ioc: e, sessionService: s}) => new ThreadApi(e.ioc.getThreadApiValidator(), e.ioc.getThreadService(), s, e.ioc.getThreadConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("store.", StoreApi, ({ioc: e, sessionService: s}) => new StoreApi(e.ioc.getStoreApiValidator(), s, e.ioc.getStoreService(), e.ioc.getStoreConverter(), e.getRequestLogger()));
@@ -1126,9 +1130,35 @@ export class IOC {
                 this.workerRegistry.getGroupRotationRateLimiter(),
                 this.workerRegistry.getConfig(),
                 this.getStreamNotificationService(),
+                this.getSpaceNotificationService(),
             );
         }
         return this.groupService;
+    }
+    
+    getSpaceService() {
+        if (this.spaceService == null) {
+            this.spaceService = new SpaceService(
+                this.getRepositoryFactory(),
+                this.workerRegistry.getActiveUsersMap(),
+                this.getInstanceHost(),
+                this.workerRegistry.getCloudAclChecker(),
+                this.getCloudAccessValidator(),
+                this.getSpaceNotificationService(),
+            );
+        }
+        return this.spaceService;
+    }
+    
+    getSpaceNotificationService() {
+        if (this.spaceNotificationService == null) {
+            this.spaceNotificationService = new SpaceNotificationService(
+                this.getJobService(),
+                this.getWebSocketSender(),
+                this.getRepositoryFactory(),
+            );
+        }
+        return this.spaceNotificationService;
     }
     
     getGroupConverter() {

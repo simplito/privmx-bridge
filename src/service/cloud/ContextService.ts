@@ -99,6 +99,10 @@ export class ContextService {
         await this.storeService.deleteStoresByContext(contextId, context.solution);
         await this.inboxService.deleteInboxesByContext(contextId, context.solution);
         await this.streamService.deleteStreamRoomsByContext(contextId, context.solution);
+        // Before the groups: a space names groups, never the other way round.
+        for (const space of await this.repositoryFactory.createSpaceRepository().getByContext(contextId)) {
+            await this.repositoryFactory.createSpaceRepository().delete(space.id);
+        }
         await this.groupService.deleteGroupsByContext(contextId);
     }
     

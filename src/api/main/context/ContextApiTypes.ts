@@ -762,6 +762,118 @@ export interface GroupCustomEventData {
     eventData: unknown;
 }
 
+/**
+ * A space as one caller sees it. `keys` are only the entries the caller can open: its own and those of the
+ * groups it belongs to.
+ */
+export interface SpaceInfo {
+    id: types.space.SpaceId;
+    resourceId: types.core.ClientResourceId;
+    contextId: types.context.ContextId;
+    creator: types.cloud.UserId;
+    createDate: types.core.Timestamp;
+    lastModifier: types.cloud.UserId;
+    lastModificationDate: types.core.Timestamp;
+    /** `groupKeyVersion`: the group's epoch the current key version was wrapped to. */
+    groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number}[];
+    users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
+    keyId: types.core.KeyId;
+    keyVersion: number;
+    /** True when a recipient group has moved past the epoch the current key was wrapped to. */
+    keyIsStale: boolean;
+    keys: types.cloud.SpaceKeyEntry[];
+    publicMeta: types.space.SpaceData;
+    privateMeta: types.space.SpaceData;
+    publicMetaVersion: number;
+    privateMetaVersion: number;
+}
+
+export interface SpaceCreateModel {
+    contextId: types.context.ContextId;
+    /** The space's id follows from it, as a group's does: a random uuid, or 64 hex digits of a digest. */
+    resourceId: types.core.ClientResourceId;
+    recipients: types.cloud.SpaceRecipient[];
+    keyId: types.core.KeyId;
+    /** Key version 1, one entry per recipient. */
+    keys: types.cloud.SpaceKeyEntry[];
+    publicMeta: types.space.SpaceData;
+    privateMeta: types.space.SpaceData;
+}
+
+export interface SpaceCreateResult {
+    spaceId: types.space.SpaceId;
+}
+
+export interface SpaceIdModel {
+    id: types.space.SpaceId;
+}
+
+export interface SpaceGetResult {
+    space: SpaceInfo;
+}
+
+export interface SpaceListModel extends types.core.ListModel {
+    contextId: types.context.ContextId;
+    sortBy?: "createDate"|"lastModificationDate";
+}
+
+export interface SpaceListResult {
+    /** `keys` of a listed space are those of its current key version only; `spaceGet` serves every version. */
+    spaces: SpaceInfo[];
+    count: number;
+}
+
+export interface SpaceAddRecipientsModel {
+    id: types.space.SpaceId;
+    recipients: types.cloud.SpaceRecipient[];
+    /** Every key version of the space, for every new recipient. */
+    keys: types.cloud.SpaceKeyEntry[];
+}
+
+export interface SpaceRotateKeyModel {
+    id: types.space.SpaceId;
+    keyId: types.core.KeyId;
+    /** The next key version, one entry per recipient that stays. */
+    keys: types.cloud.SpaceKeyEntry[];
+    expectedKeyVersion: number;
+}
+
+export interface SpaceRemoveRecipientsModel extends SpaceRotateKeyModel {
+    groups?: types.group.GroupId[];
+    users?: types.cloud.UserId[];
+}
+
+export interface SpaceRotateKeyResult {
+    keyVersion: number;
+}
+
+export interface SpaceUpdateMetaModel {
+    id: types.space.SpaceId;
+    meta: types.space.SpaceData;
+    /** The version of that metadata the caller read. */
+    version: number;
+}
+
+export type SpaceChangeKind = "created"|"recipientsAdded"|"recipientsRemoved"|"keyRotated"|"keyStale"|"metaUpdated";
+
+export interface SpaceChangedEventData {
+    spaceId: types.space.SpaceId;
+    contextId: types.context.ContextId;
+    keyVersion: number;
+    publicMetaVersion: number;
+    privateMetaVersion: number;
+    changeKind: SpaceChangeKind;
+}
+
+export interface SpaceDeletedEventData {
+    spaceId: types.space.SpaceId;
+    contextId: types.context.ContextId;
+}
+
+export type SpaceCreatedEvent = types.cloud.Event<"spaceCreated", "context", SpaceChangedEventData>;
+export type SpaceUpdatedEvent = types.cloud.Event<"spaceUpdated", "context", SpaceChangedEventData>;
+export type SpaceDeletedEvent = types.cloud.Event<"spaceDeleted", "context", SpaceDeletedEventData>;
+
 export interface IContextApi {
     contextGet(model: ContextGetModel): Promise<ContextGetResult>;
     contextList(model: ContextListModel): Promise<ContextListResult>;
@@ -820,4 +932,58 @@ export interface IContextApi {
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupGetEpochKeys(model: GroupGetEpochKeysModel): Promise<GroupGetEpochKeysResult>;
     groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
+    /**
+     * Creates a space: one key wrapped for several groups and users. The caller has to be one of its managers.
+     * @param model context, resource id, recipients, the key's id and its wraps, metadata
+     * @returns the space's id
+     */
+    spaceCreate(model: SpaceCreateModel): Promise<SpaceCreateResult>;
+    /**
+     * Reads a space. For a recipient: a user it names, or a member of a group it names.
+     * @param model id of the space
+     * @returns the space with the wrapped keys the caller can open
+     */
+    spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
+    /**
+     * Lists the spaces of a context the caller is a recipient of.
+     * @param model context and paging
+     * @returns the spaces, each with the wraps of its current key the caller can open
+     */
+    spaceList(model: SpaceListModel): Promise<SpaceListResult>;
+    /**
+     * Deletes a space. Managers only.
+     * @param model id of the space
+     * @returns "OK"
+     */
+    spaceDelete(model: SpaceIdModel): Promise<types.core.OK>;
+    /**
+     * Adds recipients, with every version of the key wrapped for each. Managers only.
+     * @param model id of the space, the new recipients and their wraps
+     * @returns "OK"
+     */
+    spaceAddRecipients(model: SpaceAddRecipientsModel): Promise<types.core.OK>;
+    /**
+     * Removes recipients and moves the space to a new key they do not get. Managers only.
+     * @param model id of the space, who leaves, the new key's id and its wraps for those who stay
+     * @returns the new key version
+     */
+    spaceRemoveRecipients(model: SpaceRemoveRecipientsModel): Promise<SpaceRotateKeyResult>;
+    /**
+     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`.
+     * @param model id of the space, the new key's id and its wraps
+     * @returns the new key version
+     */
+    spaceRotateKey(model: SpaceRotateKeyModel): Promise<SpaceRotateKeyResult>;
+    /**
+     * Replaces the public metadata. Managers only.
+     * @param model id of the space, the metadata and the version it replaces
+     * @returns "OK"
+     */
+    spaceUpdatePublicMeta(model: SpaceUpdateMetaModel): Promise<types.core.OK>;
+    /**
+     * Replaces the private metadata. Managers only.
+     * @param model id of the space, the metadata and the version it replaces
+     * @returns "OK"
+     */
+    spaceUpdatePrivateMeta(model: SpaceUpdateMetaModel): Promise<types.core.OK>;
 }

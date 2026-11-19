@@ -11,6 +11,7 @@ limitations under the License.
 
 import { BaseValidator } from "../../BaseValidator";
 import { TypesValidator } from "../../TypesValidator";
+import { SpaceService } from "../../../service/cloud/SpaceService";
 
 export class ContextApiValidator extends BaseValidator {
     
@@ -19,6 +20,11 @@ export class ContextApiValidator extends BaseValidator {
     static readonly MAX_ARCHIVE_SPANS = 128;
     /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
     static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
+    /** Wrapped keys per space call. Adding recipients sends every key version for each of them, so this is what
+     *  bounds recipients times versions in one `spaceAddRecipients`.
+     *  ponytail: a space rotated more often than this divided by the recipients added cannot take them in one
+     *  call; serve the old versions from a ladder, as groups do, when a space gets that old. */
+    static readonly MAX_SPACE_KEY_ENTRIES = 16384;
     
     constructor(
         private tv: TypesValidator,
@@ -227,5 +233,62 @@ export class ContextApiValidator extends BaseValidator {
             data: this.tv.unknown16Kb,
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS)),
         }));
+        // A recipient is a group or a user, never both: the two shapes are told apart by which id they carry.
+        const role = this.builder.createEnum(["user", "manager"]);
+        const spaceRecipient = this.builder.createOneOf([
+            this.builder.createObject({groupId: this.tv.groupId, role: role}),
+            this.builder.createObject({userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role}),
+        ]);
+        const spaceKeyEntry = this.builder.createObject({
+            keyVersion: this.builder.min(this.builder.int, 1),
+            recipient: this.builder.createOneOf([
+                this.builder.createObject({groupId: this.tv.groupId, groupKeyVersion: this.builder.min(this.builder.int, 1)}),
+                this.builder.createObject({userId: this.tv.cloudUserId}),
+            ]),
+            data: this.builder.maxLength(this.tv.base64, 4096),
+            signature: this.builder.maxLength(this.tv.base64, 1024),
+        });
+        const spaceRecipients = this.builder.createListWithRangeLength(spaceRecipient, 1, SpaceService.MAX_RECIPIENTS);
+        const spaceKeys = this.builder.createListWithRangeLength(spaceKeyEntry, 1, ContextApiValidator.MAX_SPACE_KEY_ENTRIES);
+        const spaceId = this.builder.createObject({id: this.tv.spaceId});
+        this.registerMethod("spaceCreate", this.builder.createObject({
+            contextId: this.tv.cloudContextId,
+            resourceId: this.tv.groupResourceId,
+            recipients: spaceRecipients,
+            keyId: this.tv.keyId,
+            keys: spaceKeys,
+            publicMeta: this.tv.groupData,
+            privateMeta: this.tv.groupData,
+        }));
+        this.registerMethod("spaceGet", spaceId);
+        this.registerMethod("spaceDelete", spaceId);
+        this.registerMethod("spaceList", this.builder.addFields(this.tv.listModel, {
+            contextId: this.tv.cloudContextId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+        }));
+        this.registerMethod("spaceAddRecipients", this.builder.createObject({
+            id: this.tv.spaceId,
+            recipients: spaceRecipients,
+            keys: spaceKeys,
+        }));
+        const rotation = {
+            id: this.tv.spaceId,
+            keyId: this.tv.keyId,
+            keys: spaceKeys,
+            expectedKeyVersion: this.builder.min(this.builder.int, 1),
+        };
+        this.registerMethod("spaceRotateKey", this.builder.createObject(rotation));
+        this.registerMethod("spaceRemoveRecipients", this.builder.createObject({
+            ...rotation,
+            groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS)),
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS)),
+        }));
+        const metaUpdate = this.builder.createObject({
+            id: this.tv.spaceId,
+            meta: this.tv.groupData,
+            version: this.builder.min(this.builder.int, 1),
+        });
+        this.registerMethod("spaceUpdatePublicMeta", metaUpdate);
+        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate);
     }
 }

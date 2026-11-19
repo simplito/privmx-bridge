@@ -422,6 +422,7 @@ it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by 
         groupService as unknown as GroupService,
         new GroupConverter(),
         {setContextId: () => undefined} as unknown as RequestLogger,
+        {} as never,
     );
     const pub2 = "Pub2" as unknown as types.cloud.GroupPubKey;
     const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});

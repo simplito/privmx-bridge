@@ -180,7 +180,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     const groupRotationRateLimiter = fakeRateLimiter();
     const streamNotificationService = createMock<StreamNotificationService>({});
     mock(streamNotificationService, "sendStreamRoomsUpdatedForGroup", () => {});
-    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config, streamNotificationService);
+    const groupService = new GroupService(repositoryFactory, activeUsersMap, host, cloudKeyService, groupNotificationService, cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter, {maxGroupMembers: TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config, streamNotificationService, {sendKeyStaleOfGroup: () => {}} as never);
     
     const containerRepo = {isGroupReferenced: async () => groupReferenced};
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
@@ -189,6 +189,7 @@ function createGroupService(groupReferenced = false, contextPolicy: types.contex
     mock(repositoryFactory, "createInboxRepository", (() => containerRepo) as never);
     mock(repositoryFactory, "createKvdbRepository", (() => containerRepo) as never);
     mock(repositoryFactory, "createStreamRoomRepository", (() => containerRepo) as never);
+    mock(repositoryFactory, "createSpaceRepository", (() => ({isGroupReferenced: async () => false})) as never);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
     mock(repositoryFactory, "withTransaction", f => f({} as mongodb.ClientSession));
     mock(threadRepository, "isGroupReferenced", async () => groupReferenced);

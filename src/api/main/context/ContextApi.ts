@@ -17,6 +17,8 @@ import { SessionService } from "../../session/SessionService";
 import { ContextApiValidator } from "./ContextApiValidator";
 import { BaseApi } from "../../BaseApi";
 import { GroupConverter } from "./GroupConverter";
+import { SpaceConverter } from "./SpaceConverter";
+import { SpaceService } from "../../../service/cloud/SpaceService";
 import { RequestLogger } from "../../../service/log/RequestLogger";
 import * as db from "../../../db/Model";
 import * as contextApi from "./ContextApiTypes";
@@ -30,6 +32,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         private groupService: GroupService,
         private groupConverter: GroupConverter,
         private requestLogger: RequestLogger,
+        private spaceService: SpaceService,
     ) {
         super(contextApiValidator);
     }
@@ -320,5 +323,77 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             lastStatusChange: x.lastStatusChange ? x.lastStatusChange : null,
         };
         return res;
+    }
+    
+    @ApiMethod({})
+    async spaceCreate(model: contextApi.SpaceCreateModel): Promise<contextApi.SpaceCreateResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.createSpace(cloudUser, model);
+        this.requestLogger.setContextId(space.contextId);
+        return {spaceId: space.id};
+    }
+    
+    @ApiMethod({})
+    async spaceGet(model: contextApi.SpaceIdModel): Promise<contextApi.SpaceGetResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const view = await this.spaceService.getSpace(cloudUser, model.id);
+        this.requestLogger.setContextId(view.space.contextId);
+        return {space: SpaceConverter.convertSpace(view)};
+    }
+    
+    @ApiMethod({})
+    async spaceList(model: contextApi.SpaceListModel): Promise<contextApi.SpaceListResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const page = await this.spaceService.listSpaces(cloudUser, model.contextId, model, model.sortBy || "createDate");
+        this.requestLogger.setContextId(model.contextId);
+        return {spaces: page.list.map(x => SpaceConverter.convertSpace(x)), count: page.count};
+    }
+    
+    @ApiMethod({})
+    async spaceDelete(model: contextApi.SpaceIdModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.deleteSpace(cloudUser, model.id);
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceAddRecipients(model: contextApi.SpaceAddRecipientsModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.addRecipients(cloudUser, model);
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceRemoveRecipients(model: contextApi.SpaceRemoveRecipientsModel): Promise<contextApi.SpaceRotateKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.rotateKey(cloudUser, model, "context/spaceRemoveRecipients");
+        this.requestLogger.setContextId(space.contextId);
+        return {keyVersion: space.keyVersion};
+    }
+    
+    @ApiMethod({})
+    async spaceRotateKey(model: contextApi.SpaceRotateKeyModel): Promise<contextApi.SpaceRotateKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.rotateKey(cloudUser, model, "context/spaceRotateKey");
+        this.requestLogger.setContextId(space.contextId);
+        return {keyVersion: space.keyVersion};
+    }
+    
+    @ApiMethod({})
+    async spaceUpdatePublicMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.updateMeta(cloudUser, model, "publicMeta");
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceUpdatePrivateMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.updateMeta(cloudUser, model, "privateMeta");
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
     }
 }

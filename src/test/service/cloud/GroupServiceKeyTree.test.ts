@@ -160,6 +160,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         cloudAclChecker, policyService, cloudAccessValidator, groupRotationRateLimiter,
         {maxGroupMembers: options.maxGroupMembers ?? TypesValidator.MAX_GROUP_MEMBERS, maxGroupRotationsPerHour: 60} as Config,
         streamNotificationService,
+        {sendKeyStaleOfGroup: () => {}} as never,
     );
     
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);

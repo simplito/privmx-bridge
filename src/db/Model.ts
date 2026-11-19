@@ -199,6 +199,47 @@ export namespace thread {
     }
 }
 
+export namespace space {
+    
+    /**
+     * A space: one key, in versions, wrapped for several groups and users. It holds no data of its own. The
+     * wrapped keys live in `spaceKey`, one document per version and recipient, so the document stays of a size
+     * that follows the recipients and not the number of rotations.
+     */
+    export interface Space {
+        id: types.space.SpaceId;
+        clientResourceId: types.core.ClientResourceId;
+        contextId: types.context.ContextId;
+        creator: types.cloud.UserId;
+        createDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        lastModificationDate: types.core.Timestamp;
+        /** `groupKeyVersion`: the group's epoch the current key version was wrapped to. Behind the group's
+         *  current epoch means the key is stale. */
+        groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number}[];
+        users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
+        keyId: types.core.KeyId;
+        keyVersion: number;
+        publicMeta: types.space.SpaceData;
+        privateMeta: types.space.SpaceData;
+        publicMetaVersion: number;
+        privateMetaVersion: number;
+        /** Moves with every write; each write is a compare-and-swap on it. */
+        version: number;
+    }
+    
+    export interface SpaceKey {
+        id: string;
+        spaceId: types.space.SpaceId;
+        keyVersion: number;
+        groupId?: types.group.GroupId;
+        groupKeyVersion?: number;
+        userId?: types.cloud.UserId;
+        data: types.core.Base64;
+        signature: types.core.Base64;
+    }
+}
+
 export namespace group {
     
     /**

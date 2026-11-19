@@ -136,6 +136,7 @@ export class TypesValidator {
     kvdbEntryKey: Validator;
     uuidv4: Validator;
     groupResourceId: Validator;
+    spaceId: Validator;
     stringOrNull: Validator;
     numberOrNull: Validator;
     containerAccessScope: Validator;
@@ -285,6 +286,7 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.groupId = id;
+        this.spaceId = id;
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;

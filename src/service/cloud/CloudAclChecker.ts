@@ -35,6 +35,15 @@ export type AclFunctionNameX =
     | "context/groupRepairRung"
     | "context/groupDelete"
     | "context/groupSendCustomEvent"
+    | "context/spaceGet"
+    | "context/spaceList"
+    | "context/spaceCreate"
+    | "context/spaceDelete"
+    | "context/spaceAddRecipients"
+    | "context/spaceRemoveRecipients"
+    | "context/spaceRotateKey"
+    | "context/spaceUpdatePublicMeta"
+    | "context/spaceUpdatePrivateMeta"
     | "context/READ"
     | "context/WRITE"
     | "context/ALL"
@@ -157,6 +166,8 @@ export class CloudAclChecker {
             "context/groupList": [],
             "context/groupGetTreeCommits": ["groupId"],
             "context/groupGetPublicKey": ["groupId"],
+            "context/spaceGet": ["spaceId"],
+            "context/spaceList": [],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);
         const contextWrite = {
@@ -177,6 +188,13 @@ export class CloudAclChecker {
             "context/groupDelete": ["groupId"],
             "context/groupSendCustomEvent": ["groupId"],
             "context/groupSetVisibility": ["groupId"],
+            "context/spaceCreate": [],
+            "context/spaceDelete": ["spaceId"],
+            "context/spaceAddRecipients": ["spaceId"],
+            "context/spaceRemoveRecipients": ["spaceId"],
+            "context/spaceRotateKey": ["spaceId"],
+            "context/spaceUpdatePublicMeta": ["spaceId"],
+            "context/spaceUpdatePrivateMeta": ["spaceId"],
         } as types.cloud.AclFunctions;
         this.groups.set("context/WRITE" as types.cloud.AclGroupName, contextWrite);
         const contextAll = {...contextRead, ...contextWrite};
