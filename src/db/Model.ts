@@ -216,16 +216,29 @@ export namespace space {
         lastModificationDate: types.core.Timestamp;
         /** `groupKeyVersion`: the group's epoch the current key version was wrapped to. Behind the group's
          *  current epoch means the key is stale. */
-        groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number}[];
+        groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number; groupPubKey: types.cloud.GroupPubKey}[];
         users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
         keyId: types.core.KeyId;
         keyVersion: number;
+        /** The seq of `statement`. */
+        seq: number;
+        /** The last signed statement: `groups`, `users` and `keyVersion` are what it says. Earlier ones live in `spaceStatement`. */
+        statement: types.cloud.SpaceStatement;
         publicMeta: types.space.SpaceData;
         privateMeta: types.space.SpaceData;
         publicMetaVersion: number;
         privateMetaVersion: number;
         /** Moves with every write; each write is a compare-and-swap on it. */
         version: number;
+    }
+    
+    /** One entry of a space's history. Written once, never changed. */
+    export interface SpaceStatementEntry {
+        /** `<spaceId>/<seq>`: a second statement at one seq cannot be stored. */
+        id: string;
+        spaceId: types.space.SpaceId;
+        seq: number;
+        statement: types.cloud.SpaceStatement;
     }
     
     export interface SpaceKey {

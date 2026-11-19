@@ -679,6 +679,22 @@ export class GroupRepository {
      * Projected, because this runs on every container read and every item write into a group-granted container.
      * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
      */
+    /** Each group's current epoch and the identity key of that epoch. Groups of another context are left out. */
+    async getKeyHeads(contextId: types.context.ContextId, groupIds: types.group.GroupId[]) {
+        const map = new Map<types.group.GroupId, {keyVersion: number, groupPubKey: types.cloud.GroupPubKey}>();
+        if (groupIds.length === 0) {
+            return map;
+        }
+        const groups = await this.repository.getMultiProjected<Pick<db.group.Group, "id"|"contextId"|"keyVersion"|"groupPubKey">>(
+            Utils.unique(groupIds), {contextId: 1, keyVersion: 1, groupPubKey: 1});
+        for (const g of groups) {
+            if (g.contextId === contextId) {
+                map.set(g.id, {keyVersion: g.keyVersion, groupPubKey: g.groupPubKey});
+            }
+        }
+        return map;
+    }
+    
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
             return new Map();

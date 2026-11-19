@@ -24,9 +24,13 @@ import { GroupEpochs } from "../../api/main/GroupKeys";
 import { Crypto } from "../../utils/crypto/Crypto";
 import { ByteWriter } from "./keytree/ByteWriter";
 import { DateUtils } from "../../utils/DateUtils";
-import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
+import { SpaceStatement } from "./SpaceStatement";
+import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
 
-type SpaceAcl = "context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
+type Caller = {userId: types.cloud.UserId, pubKey: types.cloud.UserPubKey, ownGroupIds: types.group.GroupId[]};
+type Recipients = Pick<db.space.Space, "groups"|"users">;
+
+type SpaceAcl = "context/spaceGetStatements"|"context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
     |"context/spaceRemoveRecipients"|"context/spaceRotateKey"|"context/spaceUpdatePublicMeta"|"context/spaceUpdatePrivateMeta";
 
 /** A space with what one caller is served of it. `keys` is empty for a caller that is not a user. */
@@ -62,7 +66,7 @@ export class SpaceService extends BaseContainerService {
     }
     
     /** The caller's role in the space: the highest of its own and of the groups it belongs to. */
-    static roleOf(space: Pick<db.space.Space, "groups"|"users">, userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]): types.cloud.ContainerRole|undefined {
+    static roleOf(space: {groups: types.cloud.GroupGrant[], users: {userId: types.cloud.UserId, role: types.cloud.ContainerRole}[]}, userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]): types.cloud.ContainerRole|undefined {
         const roles = [
             ...space.users.filter(u => u.userId === userId).map(u => u.role),
             ...space.groups.filter(g => ownGroupIds.includes(g.groupId)).map(g => g.role),
@@ -71,7 +75,7 @@ export class SpaceService extends BaseContainerService {
     }
     
     /** True when a recipient group is past the epoch the current key was wrapped to, or cannot be found. */
-    static isStale(space: Pick<db.space.Space, "groups">, groupEpochs: GroupEpochs): boolean {
+    static isStale(space: {groups: {groupId: types.group.GroupId, groupKeyVersion: number}[]}, groupEpochs: GroupEpochs): boolean {
         return space.groups.some(g => {
             const epoch = groupEpochs.get(g.groupId);
             return epoch === undefined || epoch > g.groupKeyVersion;
@@ -111,6 +115,73 @@ export class SpaceService extends BaseContainerService {
         }
     }
     
+    /**
+     * Holds a submitted statement to the history it continues and to the state the bridge is about to store.
+     * Whether its signer was entitled is the readers' question, with one part answered here as well: the
+     * standing the signer claims has to be one it has and one that allows the change. A statement the readers
+     * would refuse must not get into the history, or every reader would stop at it for good.
+     */
+    static assertStatement(st: types.cloud.SpaceStatement, x: {
+        spaceId: types.space.SpaceId, contextId: types.context.ContextId, prior?: Pick<db.space.Space, "seq"|"statement"|"groups"|"users">,
+        op: types.cloud.SpaceStatementOp, keyVersion: number, after: Recipients, caller: Caller, managerOnly: boolean,
+    }) {
+        const bad = (why: string): never => {
+            throw new AppException("SPACE_STATEMENT_INVALID", why);
+        };
+        if (st.seq !== (x.prior ? x.prior.seq + 1 : 1)) {
+            throw new AppException("SPACE_VERSION_MISMATCH", `the next statement is seq ${x.prior ? x.prior.seq + 1 : 1}`);
+        }
+        if (st.spaceId !== x.spaceId || st.contextId !== x.contextId) {
+            bad("the statement names another space or context");
+        }
+        if (st.prevDigest !== (x.prior ? SpaceStatement.digest(x.prior.statement) : "")) {
+            bad("prevDigest is not the digest of the statement before");
+        }
+        if (st.op !== x.op) {
+            bad(`the statement is a '${st.op}', the call a '${x.op}'`);
+        }
+        if (st.keyVersion !== x.keyVersion) {
+            bad(`the statement names key version ${st.keyVersion}, the change makes ${x.keyVersion}`);
+        }
+        if (x.op === "add" && st.keyCommit !== x.prior!.statement.keyCommit) {
+            bad("adding recipients does not change the key: keyCommit has to stay");
+        }
+        if (!SpaceStatement.sameRecipients(st, x.after)) {
+            bad("groups and users are not the recipients after the change, each group at its current epoch and key");
+        }
+        if (st.signer !== x.caller.userId || st.signerPubKey !== x.caller.pubKey) {
+            bad("the signer is not the caller under its context key");
+        }
+        if (!SpaceStatement.verifySignature(st)) {
+            bad("the signature does not verify");
+        }
+        // The standing is judged in the state before the change; a creation has only its own.
+        const before = x.prior || x.after;
+        let role: types.cloud.ContainerRole|undefined;
+        if (st.via === "") {
+            if (st.viaSignature !== "") {
+                bad("viaSignature without via");
+            }
+            role = before.users.find(u => u.userId === x.caller.userId && u.pubKey === x.caller.pubKey)?.role;
+            if (!role) {
+                bad("the signer is not a user the space names: name the group it acts through in via");
+            }
+        }
+        else {
+            const group = before.groups.find(g => g.groupId === st.via);
+            if (!group || !x.caller.ownGroupIds.includes(st.via)) {
+                bad("via is not a recipient group the caller belongs to");
+            }
+            if (!SpaceStatement.verifyViaSignature(st, group!.groupPubKey)) {
+                bad("viaSignature does not verify under the key the space holds for the group");
+            }
+            role = group!.role;
+        }
+        if (x.managerOnly && role !== "manager") {
+            bad("the change takes a manager, and the standing the statement names is not one");
+        }
+    }
+    
     private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView> {
         const [view] = await this.views([space], caller, currentKeysOnly);
         return view;
@@ -130,7 +201,7 @@ export class SpaceService extends BaseContainerService {
     
     /** The caller's standing in a space. A backend (no user) passes as a manager and is served no keys. */
     private async access(executor: Executor, space: db.space.Space, acl: SpaceAcl) {
-        let caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[], role: types.cloud.ContainerRole}|undefined;
+        let caller: Caller&{role: types.cloud.ContainerRole}|undefined;
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, space.contextId, async user => {
             this.cloudAclChecker.verifyAccess(user.acl, acl, ["spaceId=" + space.id]);
             const ownGroupIds = await this.getCallerGroupIds(space.contextId, user.userId);
@@ -138,7 +209,7 @@ export class SpaceService extends BaseContainerService {
             if (!role) {
                 throw new AppException("ACCESS_DENIED");
             }
-            caller = {userId: user.userId, ownGroupIds, role};
+            caller = {userId: user.userId, pubKey: user.userPubKey, ownGroupIds, role};
         });
         return caller;
     }
@@ -149,6 +220,16 @@ export class SpaceService extends BaseContainerService {
             throw new AppException("SPACE_DOES_NOT_EXIST");
         }
         return this.view(space, await this.access(executor, space, "context/spaceGet"), false);
+    }
+    
+    async getStatements(executor: Executor, model: SpaceGetStatementsModel) {
+        const repository = this.repositoryFactory.createSpaceRepository();
+        const space = await repository.get(model.id);
+        if (!space) {
+            throw new AppException("SPACE_DOES_NOT_EXIST");
+        }
+        await this.access(executor, space, "context/spaceGetStatements");
+        return {space, statements: await repository.getStatements(model.id, model.fromSeq, model.limit)};
     }
     
     async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space) {
@@ -170,13 +251,19 @@ export class SpaceService extends BaseContainerService {
         const {user} = await this.cloudAccessValidator.getUserFromContext(cloudUser, model.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/spaceCreate", []);
         const {groups, users, groupEpochs} = await this.resolveRecipients(model.contextId, model.recipients);
-        if (SpaceService.roleOf({groups, users}, user.userId, await this.getCallerGroupIds(model.contextId, user.userId)) !== "manager") {
+        const ownGroupIds = await this.getCallerGroupIds(model.contextId, user.userId);
+        if (SpaceService.roleOf({groups, users}, user.userId, ownGroupIds) !== "manager") {
             throw new AppException("ACCESS_DENIED", "the creator has to be a manager of the space");
         }
         SpaceService.assertKeysCover(model.keys, model.recipients, [1], 1, groupEpochs);
+        const id = SpaceService.spaceId(model.contextId, model.resourceId);
+        SpaceService.assertStatement(model.statement, {
+            spaceId: id, contextId: model.contextId, op: "create", keyVersion: 1, after: {groups, users},
+            caller: {userId: user.userId, pubKey: user.userPubKey, ownGroupIds}, managerOnly: true,
+        });
         const now = DateUtils.now();
         const space: db.space.Space = {
-            id: SpaceService.spaceId(model.contextId, model.resourceId),
+            id: id,
             clientResourceId: model.resourceId,
             contextId: model.contextId,
             creator: user.userId,
@@ -187,6 +274,8 @@ export class SpaceService extends BaseContainerService {
             users: users,
             keyId: model.keyId,
             keyVersion: 1,
+            seq: 1,
+            statement: model.statement,
             publicMeta: model.publicMeta,
             privateMeta: model.privateMeta,
             publicMetaVersion: 1,
@@ -217,8 +306,11 @@ export class SpaceService extends BaseContainerService {
         }
         const versions = Array.from({length: space.keyVersion}, (_, i) => i + 1);
         SpaceService.assertKeysCover(model.keys, model.recipients, versions, space.keyVersion, groupEpochs);
-        const changed = await this.write(space, user.userId, {groups: [...space.groups, ...groups], users: [...space.users, ...users]},
-            repository => repository.insertKeys(space.id, model.keys));
+        const after = {groups: [...space.groups, ...groups], users: [...space.users, ...users]};
+        SpaceService.assertStatement(model.statement, {
+            spaceId: space.id, contextId: space.contextId, prior: space, op: "add", keyVersion: space.keyVersion, after, caller: user, managerOnly: true,
+        });
+        const changed = await this.write(space, user.userId, after, repository => repository.insertKeys(space.id, model.keys), model.statement);
         this.spaceNotificationService.sendUpdatedSpace(changed, "recipientsAdded");
         return changed;
     }
@@ -243,17 +335,22 @@ export class SpaceService extends BaseContainerService {
         if (![...users, ...staying].some(r => r.role === "manager")) {
             throw new AppException("SPACE_LAST_MANAGER");
         }
-        const groupEpochs = await this.getGroupEpochs(space.contextId, [{groups: staying}]);
+        const heads = await this.repositoryFactory.createGroupRepository().getKeyHeads(space.contextId, staying.map(g => g.groupId));
+        const groupEpochs: GroupEpochs = new Map([...heads].map(([id, head]) => [id, head.keyVersion]));
         const keyVersion = space.keyVersion + 1;
         SpaceService.assertKeysCover(model.keys, [...staying, ...users], [keyVersion], keyVersion, groupEpochs);
         // The new key is wrapped to each group's current epoch: `assertKeysCover` just held the entries to that.
-        const groups = staying.map(g => ({...g, groupKeyVersion: groupEpochs.get(g.groupId)!}));
+        const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
+        SpaceService.assertStatement(model.statement, {
+            spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
+            caller: user, managerOnly: removing,
+        });
         const changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
             if (removing) {
                 await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
             }
             await repository.insertKeys(space.id, model.keys);
-        });
+        }, model.statement);
         this.spaceNotificationService.sendUpdatedSpace(changed, removing ? "recipientsRemoved" : "keyRotated", removedUsers);
         return changed;
     }
@@ -297,14 +394,20 @@ export class SpaceService extends BaseContainerService {
     }
     
     /** The document and its keys in one transaction, behind the compare-and-swap on the document's version. */
-    private async write(space: db.space.Space, modifier: types.cloud.UserId, changes: Partial<db.space.Space>, keys?: (repository: ReturnType<RepositoryFactory["createSpaceRepository"]>) => Promise<void>) {
-        const all = {...changes, lastModifier: modifier, lastModificationDate: DateUtils.now()};
+    private async write(
+        space: db.space.Space, modifier: types.cloud.UserId, changes: Partial<db.space.Space>,
+        keys?: (repository: ReturnType<RepositoryFactory["createSpaceRepository"]>) => Promise<void>, statement?: types.cloud.SpaceStatement,
+    ) {
+        const all = {...changes, ...(statement ? {seq: statement.seq, statement} : {}), lastModifier: modifier, lastModificationDate: DateUtils.now()};
         await this.repositoryFactory.withTransaction(async session => {
             const repository = this.repositoryFactory.createSpaceRepository(session);
             if (!await repository.update(space, all)) {
                 throw new AppException("SPACE_VERSION_MISMATCH");
             }
             await keys?.(repository);
+            if (statement) {
+                await repository.insertStatement(statement);
+            }
         });
         return {...space, ...all, version: space.version + 1};
     }
@@ -325,8 +428,9 @@ export class SpaceService extends BaseContainerService {
         }
         const groupRepository = this.repositoryFactory.createGroupRepository();
         await groupRepository.checkGroupsExistence(contextId, groupIds);
-        const groupEpochs = await groupRepository.getKeyVersions(contextId, groupIds);
-        const groups = recipients.flatMap(r => "groupId" in r ? [{groupId: r.groupId, role: r.role, groupKeyVersion: groupEpochs.get(r.groupId)!}] : []);
+        const heads = await groupRepository.getKeyHeads(contextId, groupIds);
+        const groupEpochs: GroupEpochs = new Map([...heads].map(([id, head]) => [id, head.keyVersion]));
+        const groups = recipients.flatMap(r => "groupId" in r ? [{groupId: r.groupId, role: r.role, groupKeyVersion: heads.get(r.groupId)!.keyVersion, groupPubKey: heads.get(r.groupId)!.groupPubKey}] : []);
         return {groups, users, groupEpochs};
     }
 }

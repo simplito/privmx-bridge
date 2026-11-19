@@ -36,6 +36,7 @@ export type AclFunctionNameX =
     | "context/groupDelete"
     | "context/groupSendCustomEvent"
     | "context/spaceGet"
+    | "context/spaceGetStatements"
     | "context/spaceList"
     | "context/spaceCreate"
     | "context/spaceDelete"
@@ -167,6 +168,7 @@ export class CloudAclChecker {
             "context/groupGetTreeCommits": ["groupId"],
             "context/groupGetPublicKey": ["groupId"],
             "context/spaceGet": ["spaceId"],
+            "context/spaceGetStatements": ["spaceId"],
             "context/spaceList": [],
         } as types.cloud.AclFunctions;
         this.groups.set("context/READ" as types.cloud.AclGroupName, contextRead);

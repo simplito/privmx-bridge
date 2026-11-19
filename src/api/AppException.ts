@@ -147,6 +147,7 @@ export const API_ERROR_CODES = {
     "SPACE_VERSION_MISMATCH"                : {code: 0x6227, message: "Space has moved since this change was planned"},
     "SPACE_KEYS_INVALID"                    : {code: 0x6228, message: "Submitted space keys do not cover the recipients or name an outdated group epoch"},
     "SPACE_LAST_MANAGER"                    : {code: 0x6229, message: "Space would be left without a manager"},
+    "SPACE_STATEMENT_INVALID"               : {code: 0x622A, message: "Space statement does not continue the space's history or describe the change"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

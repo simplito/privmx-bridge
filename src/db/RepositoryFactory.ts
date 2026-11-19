@@ -130,6 +130,7 @@ export class RepositoryFactory {
         return new SpaceRepository(
             this.createObjectRepositoryFor(SpaceRepository, session),
             this.mongoDbManager.getRepository<string, db.space.SpaceKey>(SpaceRepository.KEY_COLLECTION_NAME, "id", session),
+            this.mongoDbManager.getRepository<string, db.space.SpaceStatementEntry>(SpaceRepository.STATEMENT_COLLECTION_NAME, "id", session),
         );
     }
     

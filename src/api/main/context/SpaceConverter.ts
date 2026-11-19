@@ -29,6 +29,8 @@ export class SpaceConverter {
             users: space.users,
             keyId: space.keyId,
             keyVersion: space.keyVersion,
+            seq: space.seq,
+            statement: space.statement,
             keyIsStale: view.keyIsStale,
             keys: view.keys.map(k => {
                 const entry: types.cloud.SpaceKeyEntry = {

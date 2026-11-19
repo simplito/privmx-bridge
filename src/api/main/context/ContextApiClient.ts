@@ -135,6 +135,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.spaceGet", model);
     }
     
+    spaceGetStatements(model: contextApi.SpaceGetStatementsModel): Promise<contextApi.SpaceGetStatementsResult> {
+        return this.request("context.spaceGetStatements", model);
+    }
+    
     spaceList(model: contextApi.SpaceListModel): Promise<contextApi.SpaceListResult> {
         return this.request("context.spaceList", model);
     }

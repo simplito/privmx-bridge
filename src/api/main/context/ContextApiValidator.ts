@@ -248,6 +248,33 @@ export class ContextApiValidator extends BaseValidator {
             data: this.builder.maxLength(this.tv.base64, 4096),
             signature: this.builder.maxLength(this.tv.base64, 1024),
         });
+        const hash32 = this.builder.createCustom(value => {
+            if (typeof(value) !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+                throw new Error("Expected 32 bytes as lowercase hex");
+            }
+        });
+        const signature = this.builder.rangeLength(this.tv.base64, 65, 65);
+        const spaceStatement = this.builder.createObject({
+            spaceId: this.tv.spaceId,
+            contextId: this.tv.cloudContextId,
+            seq: this.builder.min(this.builder.int, 1),
+            prevDigest: this.builder.createOneOf([this.builder.createConst(""), hash32]),
+            op: this.builder.createEnum(["create", "add", "remove", "rotate"]),
+            date: this.tv.intNonNegative,
+            keyVersion: this.builder.min(this.builder.int, 1),
+            keyCommit: hash32,
+            groups: this.builder.createListWithMaxLength(this.builder.createObject({
+                groupId: this.tv.groupId, role: role, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
+            }), SpaceService.MAX_RECIPIENTS),
+            users: this.builder.createListWithMaxLength(this.builder.createObject({
+                userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role,
+            }), SpaceService.MAX_RECIPIENTS),
+            signer: this.tv.cloudUserId,
+            signerPubKey: this.tv.cloudUserPubKey,
+            via: this.builder.createOneOf([this.builder.createConst(""), this.tv.groupId]),
+            signature: signature,
+            viaSignature: this.builder.createOneOf([this.builder.createConst(""), signature]),
+        });
         const spaceRecipients = this.builder.createListWithRangeLength(spaceRecipient, 1, SpaceService.MAX_RECIPIENTS);
         const spaceKeys = this.builder.createListWithRangeLength(spaceKeyEntry, 1, ContextApiValidator.MAX_SPACE_KEY_ENTRIES);
         const spaceId = this.builder.createObject({id: this.tv.spaceId});
@@ -259,8 +286,14 @@ export class ContextApiValidator extends BaseValidator {
             keys: spaceKeys,
             publicMeta: this.tv.groupData,
             privateMeta: this.tv.groupData,
+            statement: spaceStatement,
         }));
         this.registerMethod("spaceGet", spaceId);
+        this.registerMethod("spaceGetStatements", this.builder.createObject({
+            id: this.tv.spaceId,
+            fromSeq: this.tv.intNonNegative,
+            limit: this.builder.range(this.builder.int, 1, 100),
+        }));
         this.registerMethod("spaceDelete", spaceId);
         this.registerMethod("spaceList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
@@ -270,12 +303,14 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.spaceId,
             recipients: spaceRecipients,
             keys: spaceKeys,
+            statement: spaceStatement,
         }));
         const rotation = {
             id: this.tv.spaceId,
             keyId: this.tv.keyId,
             keys: spaceKeys,
             expectedKeyVersion: this.builder.min(this.builder.int, 1),
+            statement: spaceStatement,
         };
         this.registerMethod("spaceRotateKey", this.builder.createObject(rotation));
         this.registerMethod("spaceRemoveRecipients", this.builder.createObject({

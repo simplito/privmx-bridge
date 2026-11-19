@@ -20,10 +20,12 @@ export class SpaceRepository {
     static readonly COLLECTION_NAME = "space";
     static readonly COLLECTION_ID_PROP = "id";
     static readonly KEY_COLLECTION_NAME = "spaceKey";
+    static readonly STATEMENT_COLLECTION_NAME = "spaceStatement";
     
     constructor(
         private repository: MongoObjectRepository<types.space.SpaceId, db.space.Space>,
         private keys: MongoObjectRepository<string, db.space.SpaceKey>,
+        private statements: MongoObjectRepository<string, db.space.SpaceStatementEntry>,
     ) {
     }
     
@@ -57,7 +59,20 @@ export class SpaceRepository {
     
     async insert(space: db.space.Space, keys: types.cloud.SpaceKeyEntry[]) {
         await this.repository.insert(space);
+        await this.insertStatement(space.statement);
         await this.insertKeys(space.id, keys);
+    }
+    
+    /** Append-only: the id is the space and the seq, so one seq holds one statement for good. */
+    async insertStatement(statement: types.cloud.SpaceStatement) {
+        await this.statements.insert({id: `${statement.spaceId}/${statement.seq}`, spaceId: statement.spaceId, seq: statement.seq, statement});
+    }
+    
+    /** The statements after `fromSeq`, oldest first. */
+    async getStatements(spaceId: types.space.SpaceId, fromSeq: number, limit: number) {
+        const list = await this.statements.collection.find({spaceId: spaceId, seq: {$gt: fromSeq}} as mongodb.Filter<any>, this.statements.getOptions())
+            .sort({seq: 1}).limit(limit).toArray();
+        return list.map(x => this.statements.convertFromDbObj(x as unknown as db.space.SpaceStatementEntry).statement);
     }
     
     async insertKeys(spaceId: types.space.SpaceId, keys: types.cloud.SpaceKeyEntry[]) {
@@ -99,6 +114,7 @@ export class SpaceRepository {
     async delete(id: types.space.SpaceId) {
         await this.repository.delete(id);
         await this.keys.deleteMany(q => q.eq("spaceId", id));
+        await this.statements.deleteMany(q => q.eq("spaceId", id));
     }
     
     async isGroupReferenced(groupId: types.group.GroupId) {

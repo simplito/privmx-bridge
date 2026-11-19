@@ -15,6 +15,8 @@ import { testData } from "../../datasets/testData";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { buildTree, creationStatement, registerUserKey, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { signSpaceStatement } from "../../testUtils/SpaceFixtures";
+import { SpaceService } from "../../../service/cloud/SpaceService";
 
 /**
  * What an application's backend reads of groups and spaces: enough to decide whether a write may be stored
@@ -102,9 +104,18 @@ export class ManagementGroupAndSpaceApiTests extends BaseTestSet {
     
     private async createSpace(groupId: types.group.GroupId) {
         const data = Buffer.from("wrap").toString("base64") as types.core.Base64;
+        const resourceId = this.helpers.generateResourceId();
+        const group = (await this.apis.contextApi.groupGet({groupId, scope: "full"})).group;
         const res = await this.apis.contextApi.spaceCreate({
             contextId: testData.contextId,
-            resourceId: this.helpers.generateResourceId(),
+            resourceId: resourceId,
+            statement: signSpaceStatement({
+                spaceId: SpaceService.spaceId(testData.contextId, resourceId), contextId: testData.contextId, seq: 1, prevDigest: "", op: "create",
+                date: Date.now(), keyVersion: 1, keyCommit: "00".repeat(32),
+                groups: [{groupId, role: "user", groupKeyVersion: group.keyVersion, groupPubKey: group.groupPubKey}],
+                users: [{userId: me, pubKey: myPub, role: "manager"}],
+                signer: me, signerPubKey: myPub, via: "",
+            }, ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif)!),
             recipients: [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}],
             keyId: "space-key-1" as types.core.KeyId,
             keys: [

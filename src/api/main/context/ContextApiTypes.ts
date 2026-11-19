@@ -774,11 +774,15 @@ export interface SpaceInfo {
     createDate: types.core.Timestamp;
     lastModifier: types.cloud.UserId;
     lastModificationDate: types.core.Timestamp;
-    /** `groupKeyVersion`: the group's epoch the current key version was wrapped to. */
-    groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number}[];
+    /** `groupKeyVersion`: the group's epoch the current key version was wrapped to; `groupPubKey`: the group's key of that epoch. */
+    groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number; groupPubKey: types.cloud.GroupPubKey}[];
     users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
     keyId: types.core.KeyId;
     keyVersion: number;
+    /** The seq of `statement`. */
+    seq: number;
+    /** The last signed statement of the space's history; the earlier ones come from `spaceGetStatements`. */
+    statement: types.cloud.SpaceStatement;
     /** True when a recipient group has moved past the epoch the current key was wrapped to. */
     keyIsStale: boolean;
     keys: types.cloud.SpaceKeyEntry[];
@@ -798,6 +802,21 @@ export interface SpaceCreateModel {
     keys: types.cloud.SpaceKeyEntry[];
     publicMeta: types.space.SpaceData;
     privateMeta: types.space.SpaceData;
+    /** Statement 1, op `create`: signed by the caller, naming the recipients, each group at its current epoch and key. */
+    statement: types.cloud.SpaceStatement;
+}
+
+export interface SpaceGetStatementsModel {
+    id: types.space.SpaceId;
+    /** Statements with a higher seq are served; 0 for the whole history. */
+    fromSeq: number;
+    /** 1 to 100. */
+    limit: number;
+}
+
+export interface SpaceGetStatementsResult {
+    /** Oldest first. */
+    statements: types.cloud.SpaceStatement[];
 }
 
 export interface SpaceCreateResult {
@@ -828,6 +847,8 @@ export interface SpaceAddRecipientsModel {
     recipients: types.cloud.SpaceRecipient[];
     /** Every key version of the space, for every new recipient. */
     keys: types.cloud.SpaceKeyEntry[];
+    /** The next statement, op `add`: the recipients before, unchanged, and the new ones; the key version and `keyCommit` stay. */
+    statement: types.cloud.SpaceStatement;
 }
 
 export interface SpaceRotateKeyModel {
@@ -836,6 +857,8 @@ export interface SpaceRotateKeyModel {
     /** The next key version, one entry per recipient that stays. */
     keys: types.cloud.SpaceKeyEntry[];
     expectedKeyVersion: number;
+    /** The next statement, op `rotate` (or `remove`): whoever stays, each group at its current epoch and key, at the new key version. */
+    statement: types.cloud.SpaceStatement;
 }
 
 export interface SpaceRemoveRecipientsModel extends SpaceRotateKeyModel {
@@ -944,6 +967,12 @@ export interface IContextApi {
      * @returns the space with the wrapped keys the caller can open
      */
     spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
+    /**
+     * Reads the signed statements of a space's history, oldest first. For a recipient, as `spaceGet`.
+     * @param model id of the space, the seq to read after, and how many
+     * @returns the statements with a seq above `fromSeq`
+     */
+    spaceGetStatements(model: SpaceGetStatementsModel): Promise<SpaceGetStatementsResult>;
     /**
      * Lists the spaces of a context the caller is a recipient of.
      * @param model context and paging
