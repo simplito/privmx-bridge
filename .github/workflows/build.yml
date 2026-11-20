@@ -71,6 +71,7 @@ jobs:
           - platform: linux/arm64
             runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
     env:
       MONGO_URL: mongodb://mongodb:27017
     steps:
@@ -87,12 +88,23 @@ jobs:
       - name: Start MongoDB with replica set
         run: |
           echo "127.0.0.1 mongodb" | sudo tee -a /etc/hosts
-          docker run -d -p 27017:27017 --name mongodb --hostname mongodb mongo:8.0 \
+          docker run -d -p 27017:27017 --name mongodb --hostname mongodb mongo:9 \
             --replSet rs0 --bind_ip_all
-          until docker exec mongodb mongosh --quiet --eval "db.adminCommand('ping').ok" | grep -q 1; do sleep 1; done
+          # Fail fast with Mongo's logs instead of looping forever when the container dies.
+          wait_for() {
+            for i in $(seq 60); do
+              docker exec mongodb mongosh --quiet --eval "$1" 2>/dev/null | grep -q "$2" && return 0
+              [ "$(docker inspect -f '{{.State.Running}}' mongodb)" = true ] || break
+              sleep 1
+            done
+            docker inspect -f 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' mongodb
+            docker logs mongodb 2>&1 | tail -50
+            return 1
+          }
+          wait_for "db.adminCommand('ping').ok" 1
           docker exec mongodb mongosh --quiet --eval \
             "rs.initiate({_id:'rs0', members:[{_id:0, host:'mongodb:27017'}]})"
-          until docker exec mongodb mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true; do sleep 1; done
+          wait_for "db.hello().isWritablePrimary" true
 
       - name: Install dependencies
         run: npm ci

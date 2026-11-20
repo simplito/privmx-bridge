@@ -63,10 +63,10 @@ export class InboxService extends BaseContainerService {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, model.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxCreate", []);
-        this.policy.makeCreateContainerCheck(user, context, model.managers, policy);
+        const groups = model.groups || [];
+        this.policy.makeCreateContainerCheck(user, context, await this.withGroupManagers(model.contextId, user.userId, model.managers, groups), policy);
         await this.validateAccessToThread(model.data.threadId, user);
         await this.validateAccessToStore(model.data.storeId, user);
-        const groups = model.groups || [];
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(model.contextId, model.keys, model.keyId, model.users, model.managers);
         const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(model.contextId, [model.keyId], [], model.groupKeys || [], model.keyId, groups.map(g => g.groupId));
         try {
@@ -95,7 +95,8 @@ export class InboxService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldInbox.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "inbox/inboxUpdate", ["inboxId=" + model.id]);
             const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds), model.managers, model.policy);
+            const effectiveManagers = await this.withGroupManagers(context.id, user.userId, model.managers, model.groups, userGroupIds);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldInbox, user.userId, userGroupIds), effectiveManagers, model.policy);
             const last = oldInbox.history[oldInbox.history.length - 1];
             if (last.data.threadId != model.data.threadId) {
                 await this.validateAccessToThread(model.data.threadId, user);

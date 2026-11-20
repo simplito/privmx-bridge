@@ -32,6 +32,13 @@ import { LockHelper } from "../misc/LockHelper";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
 
+/**
+ * What a lock request intends to do with the file it names. A shared lock is taken to read,
+ * every higher level to write, and {@link StoreService.assertCanLockRandomWriteFile} asks for
+ * the matching access rather than write access for all of them.
+ */
+export type LockIntent = "read" | "write";
+
 export class StoreService extends BaseContainerService {
     
     private policy: StorePolicy;
@@ -56,11 +63,16 @@ export class StoreService extends BaseContainerService {
     
     /**
      * Authorizes a distributed lock request against a store file. A file may only be
-     * locked if it exists, supports random write, and the caller has write access to
-     * it - the same gate {@link StoreService.randomWrite} enforces. Throws on failure;
-     * returns normally when the caller may lock the file.
+     * locked if it exists, supports random write, and the caller may do to it what the
+     * lock is for: a read lock needs the access {@link StoreService.readStoreFile}
+     * needs, a write lock the access {@link StoreService.randomWrite} enforces. Throws
+     * on failure; returns normally when the caller may take that lock.
+     *
+     * The distinction matters because SQLite takes a shared lock before every read, so
+     * gating all levels on write access would make reading a store-file database the
+     * privilege of whoever wrote it.
      */
-    async assertCanLockRandomWriteFile(cloudUser: CloudUser, fileId: types.store.StoreFileId) {
+    async assertCanLockRandomWriteFile(cloudUser: CloudUser, fileId: types.store.StoreFileId, intent: LockIntent) {
         const file = await this.repositoryFactory.createStoreFileRepository().get(fileId);
         if (!file) {
             throw new AppException("STORE_FILE_DOES_NOT_EXIST");
@@ -69,8 +81,16 @@ export class StoreService extends BaseContainerService {
             throw new AppException("UNSUPPORTED_OPERATION", "Locking is only supported for files supporting random write");
         }
         const {user, context, store, userGroupIds} = await this.getStoreAndUser(cloudUser, file.storeId);
-        this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + fileId]);
-        if (!this.policy.canUpdateItem(user, context, this.withGroupMembership(store, user.userId, userGroupIds), file)) {
+        const groupAwareStore = this.withGroupMembership(store, user.userId, userGroupIds);
+        if (intent === "write") {
+            this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileWrite", ["storeId=" + store.id, "fileId=" + fileId]);
+            if (!this.policy.canUpdateItem(user, context, groupAwareStore, file)) {
+                throw new AppException("ACCESS_DENIED");
+            }
+            return;
+        }
+        this.cloudAclChecker.verifyAccess(user.acl, "store/storeFileRead", ["storeId=" + store.id, "fileId=" + fileId]);
+        if (!this.policy.canReadItem(user, context, groupAwareStore, file)) {
             throw new AppException("ACCESS_DENIED");
         }
     }
@@ -79,7 +99,7 @@ export class StoreService extends BaseContainerService {
         this.policyService.validateContainerPolicyForContainer("policy", policy);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "store/storeCreate", []);
-        this.policy.makeCreateContainerCheck(user, context, managers, policy);
+        this.policy.makeCreateContainerCheck(user, context, await this.withGroupManagers(contextId, user.userId, managers, groups), policy);
         const newKeys = await this.cloudKeyService.checkKeysAndUsersDuringCreation(contextId, keys, keyId, users, managers);
         const newGroupKeys = await this.cloudKeyService.checkGroupKeysAndGrantees(contextId, [keyId], [], groupKeys, keyId, groups.map(g => g.groupId));
         try {
@@ -108,7 +128,8 @@ export class StoreService extends BaseContainerService {
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldStore.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "store/storeUpdate", ["storeId=" + id]);
             const userGroupIds = await this.getCallerGroupIds(context.id, user.userId);
-            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStore, user.userId, userGroupIds), managers, policy);
+            const effectiveManagers = await this.withGroupManagers(context.id, user.userId, managers, groups, userGroupIds);
+            this.policy.makeUpdateContainerCheck(user, context, this.withGroupMembership(oldStore, user.userId, userGroupIds), effectiveManagers, policy);
             const currentVersion = <types.store.StoreVersion>oldStore.history.length;
             if (currentVersion !== version && !force) {
                 throw new AppException("ACCESS_DENIED", "version does not match");
