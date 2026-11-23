@@ -199,6 +199,60 @@ export namespace thread {
     }
 }
 
+export namespace space {
+    
+    /**
+     * A space: one key, in versions, wrapped for several groups and users. It holds no data of its own. The
+     * wrapped keys live in `spaceKey`, one document per version and recipient, so the document stays of a size
+     * that follows the recipients and not the number of rotations.
+     */
+    export interface Space {
+        id: types.space.SpaceId;
+        clientResourceId: types.core.ClientResourceId;
+        contextId: types.context.ContextId;
+        creator: types.cloud.UserId;
+        createDate: types.core.Timestamp;
+        lastModifier: types.cloud.UserId;
+        lastModificationDate: types.core.Timestamp;
+        /** `groupKeyVersion`: the group's epoch the current key version was wrapped to. Behind the group's
+         *  current epoch means the key is stale. */
+        groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number; groupPubKey: types.cloud.GroupPubKey}[];
+        users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
+        keyId: types.core.KeyId;
+        keyVersion: number;
+        /** The seq of `statement`. */
+        seq: number;
+        /** The last signed statement: `groups`, `users` and `keyVersion` are what it says. Earlier ones live in `spaceStatement`. */
+        statement: types.cloud.SpaceStatement;
+        publicMeta: types.space.SpaceData;
+        privateMeta: types.space.SpaceData;
+        publicMetaVersion: number;
+        privateMetaVersion: number;
+        /** Moves with every write; each write is a compare-and-swap on it. */
+        version: number;
+    }
+    
+    /** One entry of a space's history. Written once, never changed. */
+    export interface SpaceStatementEntry {
+        /** `<spaceId>/<seq>`: a second statement at one seq cannot be stored. */
+        id: string;
+        spaceId: types.space.SpaceId;
+        seq: number;
+        statement: types.cloud.SpaceStatement;
+    }
+    
+    export interface SpaceKey {
+        id: string;
+        spaceId: types.space.SpaceId;
+        keyVersion: number;
+        groupId?: types.group.GroupId;
+        groupKeyVersion?: number;
+        userId?: types.cloud.UserId;
+        data: types.core.Base64;
+        signature: types.core.Base64;
+    }
+}
+
 export namespace group {
     
     /**
@@ -218,6 +272,9 @@ export namespace group {
         keyId: types.core.KeyId;
         users: types.cloud.UserId[];
         managers: types.cloud.UserId[];
+        /** Who may read the group's identity key, roster and statements beside its members: nobody (absent or
+         *  "members"), or every user of the context ("context"). The bridge's own setting; no statement signs it. */
+        visibleTo?: "members"|"context";
         policy?: types.cloud.ContainerPolicy;
         /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
          *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
@@ -266,7 +323,7 @@ export namespace group {
     export type GroupSummaryFields = Pick<Group,
         "id"|"clientResourceId"|"contextId"|"type"|"groupPubKey"|"createDate"|"creator"
         |"lastModificationDate"|"lastModifier"|"publicMetaVersion"|"privateMetaVersion"
-        |"rosterVersion"|"keyVersion"|"policy">;
+        |"rosterVersion"|"keyVersion"|"policy"|"visibleTo">;
     
     /**
      * All `GroupRepository.getKeyVersions` reads. Deliberately the three smallest fields on the document: it is

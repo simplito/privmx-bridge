@@ -148,12 +148,27 @@ it("a listing carries the epoch and the counters, and nothing that grows with me
     assert.deepStrictEqual(Object.keys(summary).sort(), [
         "contextId", "createDate", "creator", "groupPubKey", "id", "keyVersion",
         "lastModificationDate", "lastModifier", "policy", "privateMetaVersion", "publicMetaVersion",
-        "rosterVersion", "type",
+        "rosterVersion", "type", "visibleTo",
     ]);
+    // Absent in the document means the default.
+    assert.strictEqual(summary.visibleTo, "members");
     assert.strictEqual(summary.publicMetaVersion, 7);
     assert.strictEqual(summary.privateMetaVersion, 11);
     assert.strictEqual(summary.rosterVersion, 4);
     assert.strictEqual(summary.keyVersion, 3);
+});
+
+it("what an outsider is served is the key and what vouches for it, and nothing a member alone may read", async () => {
+    const statement = {seq: 9, keyVersion: 3} as unknown as types.cloud.GroupTreeCommitStatement;
+    const info = new GroupConverter().convertGroupPublicInfo({...group, visibleTo: "context"}, statement) as unknown as Record<string, unknown>;
+    // No tree, no key entries, no metadata, no history: an outsider gets no more than it takes to seal to the group.
+    assert.deepStrictEqual(Object.keys(info).sort(), [
+        "contextId", "creator", "groupPubKey", "id", "keyVersion", "managers", "policy",
+        "rosterVersion", "treeCommit", "users", "visibleTo",
+    ]);
+    assert.strictEqual(info.visibleTo, "context");
+    assert.strictEqual(info.treeCommit, statement);
+    assert.strictEqual(info.keyVersion, 3);
 });
 
 /** 64 seats with alice at seat 1, after u40 filled 95: records 31, 63 and 95. */
@@ -407,6 +422,7 @@ it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by 
         groupService as unknown as GroupService,
         new GroupConverter(),
         {setContextId: () => undefined} as unknown as RequestLogger,
+        {} as never,
     );
     const pub2 = "Pub2" as unknown as types.cloud.GroupPubKey;
     const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});

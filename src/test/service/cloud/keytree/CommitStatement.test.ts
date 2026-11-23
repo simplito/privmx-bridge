@@ -134,6 +134,7 @@ describe("CommitStatement shared vectors", () => {
     it("signed bytes match the shared vectors", () => {
         const all = vectors().signedBytes;
         assert.ok(all.some(v => v.statement.op === "policy"), "a policy op among them");
+        assert.ok(all.some(v => v.statement.op === "roles") && all.some(v => v.statement.op === "reseat"), "and the two roster ops");
         for (const vector of all) {
             assert.strictEqual(CommitStatement.signedBytes(vector.statement).toString("hex"), vector.expectedHex, vector.statement.op);
         }
@@ -141,7 +142,7 @@ describe("CommitStatement shared vectors", () => {
     
     it("SECURITY: policy hash matches the shared vectors", () => {
         const all = vectors().policyHash;
-        assert.strictEqual(all.length, 6);
+        assert.strictEqual(all.length, 11);
         for (const vector of all) {
             assert.strictEqual(CommitStatement.policyHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
@@ -364,5 +365,31 @@ describe("CommitStatement.checkStoredState", () => {
         statements.set(4, statementFor({...healed, after: rolledBack, refreshedNodes: [], seq: 4}, {kind: "selfUpdate", committer: "u0"}, ctx));
         const problems = CommitStatement.checkStoredState({...group, treeCommitSeq: 4}, rolledBack, statements);
         assert.deepStrictEqual(problems, ["node 63 is not vouched for by statement 3"]);
+    });
+});
+
+describe("CommitStatement roster rules", () => {
+    const creator = "u0" as types.cloud.UserId;
+    const hash = (policy: types.cloud.ContainerPolicy) => CommitStatement.policyHash(policy, creator).toString("hex");
+    
+    it("a policy that does not split `update` hashes as it did before the split existed", () => {
+        assert.strictEqual(hash({update: "user"}), hash({update: "user", addMembers: "inherit", removeMembers: "default"}));
+    });
+    
+    it("SECURITY: each roster rule is signed: changing one changes the hash", () => {
+        const base = hash({addMembers: "user", removeMembers: "manager"});
+        assert.notStrictEqual(base, hash({}));
+        assert.notStrictEqual(base, hash({addMembers: "manager", removeMembers: "manager"}));
+        assert.notStrictEqual(base, hash({addMembers: "user", removeMembers: "user"}));
+        // Not interchangeable: the two are hashed in a fixed order.
+        assert.notStrictEqual(base, hash({addMembers: "manager", removeMembers: "user"}));
+    });
+    
+    it("an unset roster rule follows `update`, a set one does not", () => {
+        assert.strictEqual(CommitStatement.resolveMemberRule({update: "user"}, "addMembers"), "user");
+        assert.strictEqual(CommitStatement.resolveMemberRule({}, "removeMembers"), "manager");
+        assert.strictEqual(CommitStatement.resolveMemberRule({update: "user", removeMembers: "none"}, "removeMembers"), "none");
+        // Setting one leaves the other on `update`, and both are then hashed.
+        assert.strictEqual(hash({update: "user", addMembers: "none"}), hash({update: "user", addMembers: "none", removeMembers: "user"}));
     });
 });

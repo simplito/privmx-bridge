@@ -66,6 +66,9 @@ export type CommitOp =
     | {kind: "create", committer: types.cloud.UserId}
     | {kind: "add", committer: types.cloud.UserId, addedUsers: types.cloud.UserId[], positions: number[]}
     | {kind: "remove", committer: types.cloud.UserId, removedUsers: types.cloud.UserId[], blankedPositions: number[]}
+    /** A removal whose subjects keep their seats: everything they may know is blanked and the epoch advances, so a
+     *  member whose long-term key was replaced is wrapped to again, to the key it has now. */
+    | {kind: "reseat", committer: types.cloud.UserId, removedUsers: types.cloud.UserId[], blankedPositions: number[]}
     | {kind: "selfUpdate", committer: types.cloud.UserId};
 
 /** What the client sent: the re-keyed nodes and the edges they owe. */
@@ -196,6 +199,7 @@ export class TreeTransitionValidator {
             case "add":
                 return TreeTransitionValidator.deriveAddition(stored, op);
             case "remove":
+            case "reseat":
                 return TreeTransitionValidator.deriveRemoval(stored, op);
         }
     }
@@ -209,7 +213,7 @@ export class TreeTransitionValidator {
      * re-keys its own path, which covers the root and so the new grant key; the rest of `Know` is left blank and
      * refilled by self-updates of members seated under it.
      */
-    private static deriveRemoval(stored: StoredTree, op: Extract<CommitOp, {kind: "remove"}>): Derived|TransitionRejection[] {
+    private static deriveRemoval(stored: StoredTree, op: Extract<CommitOp, {kind: "remove"|"reseat"}>): Derived|TransitionRejection[] {
         if (op.removedUsers.length === 0) {
             return [{kind: "EMPTY_BATCH"}];
         }
@@ -243,7 +247,9 @@ export class TreeTransitionValidator {
         const blanked = new Set<number>();
         const n = stored.numLeaves;
         for (const position of positions) {
-            leafAssignment[position] = "" as types.cloud.UserId;
+            if (op.kind === "remove") {
+                leafAssignment[position] = "" as types.cloud.UserId;
+            }
             TreeMath.keyedPath(position, n).forEach(nodeIndex => blanked.add(nodeIndex));
         }
         for (const node of stored.nodes.filter(record => record.publicKey)) {

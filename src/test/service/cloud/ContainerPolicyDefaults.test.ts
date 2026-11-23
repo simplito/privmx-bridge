@@ -128,3 +128,34 @@ it("group: inherit and default resolve to the frozen v3 rules, which are today's
         expect(CommitStatement.V3_POLICY_DEFAULTS[field]).toBe(DefaultContextPolicy.group![field]!);
     }
 });
+
+describe("the roster rules belong to groups", () => {
+    const service = new PolicyService();
+    const rosterRule = {addMembers: "user"} as types.cloud.ContainerPolicy;
+    const refused = (run: () => void) => {
+        try {
+            run();
+        }
+        catch (e) {
+            return AppException.is(e, "INVALID_PARAMS");
+        }
+        return false;
+    };
+    
+    it("a group's own policy may set them", () => {
+        service.validateContainerPolicyForContainer("policy", rosterRule, true);
+        service.validateContainerPolicyForContainer("policy", {removeMembers: "manager,owner"} as types.cloud.ContainerPolicy, true);
+    });
+    
+    it("SECURITY: any other container's policy may not: nothing would read the rule", () => {
+        if (!refused(() => service.validateContainerPolicyForContainer("policy", rosterRule))) {
+            throw new Error("a roster rule on a non-group container must be refused");
+        }
+    });
+    
+    it("SECURITY: a value outside the group grammar is refused on a group too", () => {
+        if (!refused(() => service.validateContainerPolicyForContainer("policy", {addMembers: "itemOwner"} as types.cloud.ContainerPolicy, true))) {
+            throw new Error("itemOwner is not a roster rule");
+        }
+    });
+});

@@ -63,6 +63,8 @@ import { ThreadConverter } from "../../api/main/thread/ThreadConverter";
 import { CloudKeyService } from "../cloud/CloudKeyService";
 import { ThreadNotificationService } from "../cloud/ThreadNotificationService";
 import { GroupService } from "../cloud/GroupService";
+import { SpaceService } from "../cloud/SpaceService";
+import { SpaceNotificationService } from "../cloud/SpaceNotificationService";
 import { GroupNotificationService } from "../cloud/GroupNotificationService";
 import { GroupConverter } from "../../api/main/context/GroupConverter";
 import { StoreApiValidator } from "../../api/main/store/StoreApiValidator";
@@ -97,6 +99,10 @@ import { InboxApi } from "../../api/main/inbox/InboxApi";
 import { StreamApi } from "../../api/main/stream/StreamApi";
 import { MainApiResolver, RequestApiResolver } from "../../api/ServerEndpoint";
 import { ManagementThreadApi } from "../../api/plain/thread/ManagementThreadApi";
+import { ManagementGroupApi } from "../../api/plain/group/ManagementGroupApi";
+import { ManagementGroupApiValidator } from "../../api/plain/group/ManagementGroupApiValidator";
+import { ManagementSpaceApi } from "../../api/plain/space/ManagementSpaceApi";
+import { ManagementSpaceApiValidator } from "../../api/plain/space/ManagementSpaceApiValidator";
 import { ManagementThreadApiValidator } from "../../api/plain/thread/ManagementThreadApiValidator";
 import { ManagementInboxApiValidator } from "../../api/plain/inbox/ManagementInboxApiValidator";
 import { ManagementStoreApiValidator } from "../../api/plain/store/ManagementStoreApiValidator";
@@ -206,6 +212,8 @@ export class IOC {
     protected cloudKeyService?: CloudKeyService;
     protected threadNotificationService?: ThreadNotificationService;
     protected groupService?: GroupService;
+    protected spaceService?: SpaceService;
+    protected spaceNotificationService?: SpaceNotificationService;
     protected groupConverter?: GroupConverter;
     protected groupNotificationService?: GroupNotificationService;
     protected storeService?: StoreService;
@@ -608,7 +616,7 @@ export class IOC {
                 ));
             this.mainApiRsolver.registerApiWithPrefix("", RequestApi, ({ioc: e, sessionService: s}) => new RequestApi(e.ioc.getRequestApiValidator(), s, e.ioc.getRequestService()));
             this.mainApiRsolver.registerApiWithPrefix("request.", RequestApi, ({ioc: e, sessionService: s}) => new RequestApi(e.ioc.getRequestApiValidator(), s, e.ioc.getRequestService()));
-            this.mainApiRsolver.registerApiWithPrefix("context.", ContextApi, ({ioc: e, sessionService: s}) => new ContextApi(e.ioc.getContextApiValidator(), e.ioc.getContextService(), s, e.ioc.getGroupService(), e.ioc.getGroupConverter(), e.getRequestLogger()));
+            this.mainApiRsolver.registerApiWithPrefix("context.", ContextApi, ({ioc: e, sessionService: s}) => new ContextApi(e.ioc.getContextApiValidator(), e.ioc.getContextService(), s, e.ioc.getGroupService(), e.ioc.getGroupConverter(), e.getRequestLogger(), e.ioc.getSpaceService()));
             this.mainApiRsolver.registerApiWithPrefix("thread2.", ThreadApi, ({ioc: e, sessionService: s}) => new ThreadApi(e.ioc.getThreadApiValidator(), e.ioc.getThreadService(), s, e.ioc.getThreadConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("thread.", ThreadApi, ({ioc: e, sessionService: s}) => new ThreadApi(e.ioc.getThreadApiValidator(), e.ioc.getThreadService(), s, e.ioc.getThreadConverter(), e.getRequestLogger()));
             this.mainApiRsolver.registerApiWithPrefix("store.", StoreApi, ({ioc: e, sessionService: s}) => new StoreApi(e.ioc.getStoreApiValidator(), s, e.ioc.getStoreService(), e.ioc.getStoreConverter(), e.getRequestLogger()));
@@ -770,6 +778,18 @@ export class IOC {
                 e.getAuthorizationDetector(),
                 e.getAuthorizationHolder(),
                 e.ioc.getSolutionService(),
+            ));
+            this.plainApiResolver.registerApiWithPrefix("group/", ManagementGroupApi, e => new ManagementGroupApi(
+                new ManagementGroupApiValidator(e.ioc.getTypesValidator()),
+                e.getAuthorizationDetector(),
+                e.getAuthorizationHolder(),
+                e.ioc.getGroupService(),
+            ));
+            this.plainApiResolver.registerApiWithPrefix("space/", ManagementSpaceApi, e => new ManagementSpaceApi(
+                new ManagementSpaceApiValidator(e.ioc.getTypesValidator()),
+                e.getAuthorizationDetector(),
+                e.getAuthorizationHolder(),
+                e.ioc.getSpaceService(),
             ));
             this.plainApiResolver.registerApiWithPrefix("thread/", ManagementThreadApi, e => new ManagementThreadApi(
                 e.ioc.getManagementThreadApiValidator(),
@@ -1126,9 +1146,36 @@ export class IOC {
                 this.workerRegistry.getGroupRotationRateLimiter(),
                 this.workerRegistry.getConfig(),
                 this.getStreamNotificationService(),
+                this.getSpaceNotificationService(),
             );
         }
         return this.groupService;
+    }
+    
+    getSpaceService() {
+        if (this.spaceService == null) {
+            this.spaceService = new SpaceService(
+                this.getRepositoryFactory(),
+                this.workerRegistry.getActiveUsersMap(),
+                this.getInstanceHost(),
+                this.workerRegistry.getCloudAclChecker(),
+                this.getCloudAccessValidator(),
+                this.getSpaceNotificationService(),
+            );
+        }
+        return this.spaceService;
+    }
+    
+    getSpaceNotificationService() {
+        if (this.spaceNotificationService == null) {
+            this.spaceNotificationService = new SpaceNotificationService(
+                this.getJobService(),
+                this.getWebSocketSender(),
+                this.getRepositoryFactory(),
+                this.getWebSocketPlainSender(),
+            );
+        }
+        return this.spaceNotificationService;
     }
     
     getGroupConverter() {
@@ -1144,6 +1191,7 @@ export class IOC {
                 this.getJobService(),
                 this.getWebSocketSender(),
                 this.getRepositoryFactory(),
+                this.getWebSocketPlainSender(),
             );
         }
         return this.groupNotificationService;

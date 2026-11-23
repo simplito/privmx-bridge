@@ -105,8 +105,11 @@ function createService() {
     mock(repositoryFactory, "createNotificationRepository", () => notificationRepository);
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     
-    const service = new GroupNotificationService(jobService, webSocketSender, repositoryFactory);
-    return {service, sent, stored, rosterReads, groupRepository, settle: async () => {
+    const toBackend: {solution: string, event: {channel: string, type: string, data: Record<string, unknown>}}[] = [];
+    mock(repositoryFactory, "createContextRepository", (() => ({get: async () => ({solution: "solution-1"})})) as never);
+    const plainSender = {sendToPlainUsers: (solution: string, event: never) => toBackend.push({solution, event})};
+    const service = new GroupNotificationService(jobService, webSocketSender, repositoryFactory, plainSender as never);
+    return {service, sent, stored, toBackend, rosterReads, groupRepository, settle: async () => {
         await Promise.all(jobs);
     }};
 }
@@ -234,4 +237,14 @@ it("a custom event stores nothing for members who are offline", async () => {
     service.sendGroupCustomEvent(group(), "base64Envelope", {id: janek, pub: "pub-janek" as types.cloud.UserPubKey}, "typing" as types.core.WsChannelName);
     await settle();
     assert.strictEqual(stored.length, 0);
+});
+
+it("the application's backend is sent the same event on its group channel", async () => {
+    const {service, sent, toBackend, settle} = createService();
+    service.sendUpdatedGroup(group(), [], "memberRemoved");
+    service.sendDeletedGroup(group());
+    await settle();
+    assert.deepStrictEqual(toBackend.map(x => [x.solution, x.event.channel, x.event.type]), [["solution-1", "group", "groupUpdated"], ["solution-1", "group", "groupDeleted"]]);
+    assert.deepStrictEqual(toBackend[0].event.data, sent[0].event.data);
+    assert.strictEqual(toBackend[0].event.data.changeKind, "memberRemoved");
 });

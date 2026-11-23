@@ -11,6 +11,7 @@ limitations under the License.
 
 import { BaseValidator } from "../../BaseValidator";
 import { TypesValidator } from "../../TypesValidator";
+import { SpaceService } from "../../../service/cloud/SpaceService";
 
 export class ContextApiValidator extends BaseValidator {
     
@@ -19,6 +20,11 @@ export class ContextApiValidator extends BaseValidator {
     static readonly MAX_ARCHIVE_SPANS = 128;
     /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
     static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
+    /** Wrapped keys per space call. Adding recipients sends every key version for each of them, so this is what
+     *  bounds recipients times versions in one `spaceAddRecipients`.
+     *  ponytail: a space rotated more often than this divided by the recipients added cannot take them in one
+     *  call; serve the old versions from a ladder, as groups do, when a space gets that old. */
+    static readonly MAX_SPACE_KEY_ENTRIES = 16384;
     
     constructor(
         private tv: TypesValidator,
@@ -49,11 +55,12 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("groupCreate", this.builder.createObject({
             contextId: this.tv.cloudContextId,
             // Required: the first commit statement names the group by it, before the bridge assigns an id.
-            resourceId: this.tv.uuidv4,
+            resourceId: this.tv.groupResourceId,
             type: this.tv.optResourceType,
             groupPubKey: this.tv.groupPubKey,
             users: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
             managers: this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS),
+            visibleTo: this.builder.optional(this.builder.createEnum(["members", "context"])),
             // Three envelopes, one per plane: `data` carries the roster tag, each metadata plane its own DIO
             // and its own domain-separated tag.
             data: this.tv.groupData,
@@ -140,7 +147,7 @@ export class ContextApiValidator extends BaseValidator {
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
         }));
-        this.registerMethod("groupRemoveMembers", this.builder.createObject({
+        const removal = this.builder.createObject({
             id: this.tv.groupId,
             userIds: this.builder.createListWithRangeLength(this.tv.cloudUserId, 1, TypesValidator.MAX_GROUP_BATCH),
             groupPubKey: this.tv.groupPubKey,
@@ -155,12 +162,37 @@ export class ContextApiValidator extends BaseValidator {
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
             abandonHistory: this.builder.optional(this.builder.bool),
+        });
+        this.registerMethod("groupRemoveMembers", removal);
+        // A reseat is a removal that keeps its subjects: the same request, another statement op.
+        this.registerMethod("groupReseat", removal);
+        this.registerMethod("groupSetRoles", this.builder.createObject({
+            id: this.tv.groupId,
+            changes: this.builder.createListWithRangeLength(this.builder.createObject({
+                userId: this.tv.cloudUserId,
+                role: this.builder.createEnum(["user", "manager"]),
+            }), 1, TypesValidator.MAX_GROUP_BATCH),
+            keyId: this.tv.keyId,
+            data: this.tv.groupData,
+            commit: this.tv.groupTreeCommitStatement,
+            expectedKeyVersion: this.builder.int,
+            expectedRosterVersion: this.builder.int,
         }));
         this.registerMethod("groupSelfUpdate", this.builder.createObject({
             id: this.tv.groupId,
             transition: this.tv.groupTreeSelfUpdateTransition,
             commit: this.tv.groupTreeCommitStatement,
             expectedKeyVersion: this.builder.int,
+        }));
+        this.registerMethod("groupGetMany", this.builder.createObject({
+            groupIds: this.builder.createListWithMaxLength(this.tv.groupId, TypesValidator.MAX_GROUP_BATCH),
+        }));
+        this.registerMethod("groupGetPublicKey", this.builder.createObject({
+            groupId: this.tv.groupId,
+        }));
+        this.registerMethod("groupSetVisibility", this.builder.createObject({
+            groupId: this.tv.groupId,
+            visibleTo: this.builder.createEnum(["members", "context"]),
         }));
         this.registerMethod("groupGetTreeCommits", this.builder.createObject({
             groupId: this.tv.groupId,
@@ -201,5 +233,97 @@ export class ContextApiValidator extends BaseValidator {
             data: this.tv.unknown16Kb,
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, TypesValidator.MAX_GROUP_MEMBERS)),
         }));
+        // A recipient is a group or a user, never both: the two shapes are told apart by which id they carry.
+        const role = this.builder.createEnum(["user", "manager"]);
+        const spaceRecipient = this.builder.createOneOf([
+            this.builder.createObject({groupId: this.tv.groupId, role: role}),
+            this.builder.createObject({userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role}),
+        ]);
+        const spaceKeyEntry = this.builder.createObject({
+            keyVersion: this.builder.min(this.builder.int, 1),
+            recipient: this.builder.createOneOf([
+                this.builder.createObject({groupId: this.tv.groupId, groupKeyVersion: this.builder.min(this.builder.int, 1)}),
+                this.builder.createObject({userId: this.tv.cloudUserId}),
+            ]),
+            data: this.builder.maxLength(this.tv.base64, 4096),
+            signature: this.builder.maxLength(this.tv.base64, 1024),
+        });
+        const hash32 = this.builder.createCustom(value => {
+            if (typeof(value) !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+                throw new Error("Expected 32 bytes as lowercase hex");
+            }
+        });
+        const signature = this.builder.rangeLength(this.tv.base64, 65, 65);
+        const spaceStatement = this.builder.createObject({
+            spaceId: this.tv.spaceId,
+            contextId: this.tv.cloudContextId,
+            seq: this.builder.min(this.builder.int, 1),
+            prevDigest: this.builder.createOneOf([this.builder.createConst(""), hash32]),
+            op: this.builder.createEnum(["create", "add", "remove", "rotate"]),
+            date: this.tv.intNonNegative,
+            keyVersion: this.builder.min(this.builder.int, 1),
+            keyCommit: hash32,
+            groups: this.builder.createListWithMaxLength(this.builder.createObject({
+                groupId: this.tv.groupId, role: role, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
+            }), SpaceService.MAX_RECIPIENTS),
+            users: this.builder.createListWithMaxLength(this.builder.createObject({
+                userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role,
+            }), SpaceService.MAX_RECIPIENTS),
+            signer: this.tv.cloudUserId,
+            signerPubKey: this.tv.cloudUserPubKey,
+            via: this.builder.createOneOf([this.builder.createConst(""), this.tv.groupId]),
+            signature: signature,
+            viaSignature: this.builder.createOneOf([this.builder.createConst(""), signature]),
+        });
+        const spaceRecipients = this.builder.createListWithRangeLength(spaceRecipient, 1, SpaceService.MAX_RECIPIENTS);
+        const spaceKeys = this.builder.createListWithRangeLength(spaceKeyEntry, 1, ContextApiValidator.MAX_SPACE_KEY_ENTRIES);
+        const spaceId = this.builder.createObject({id: this.tv.spaceId});
+        this.registerMethod("spaceCreate", this.builder.createObject({
+            contextId: this.tv.cloudContextId,
+            resourceId: this.tv.groupResourceId,
+            recipients: spaceRecipients,
+            keyId: this.tv.keyId,
+            keys: spaceKeys,
+            publicMeta: this.tv.groupData,
+            privateMeta: this.tv.groupData,
+            statement: spaceStatement,
+        }));
+        this.registerMethod("spaceGet", spaceId);
+        this.registerMethod("spaceGetStatements", this.builder.createObject({
+            id: this.tv.spaceId,
+            fromSeq: this.tv.intNonNegative,
+            limit: this.builder.range(this.builder.int, 1, 100),
+        }));
+        this.registerMethod("spaceDelete", spaceId);
+        this.registerMethod("spaceList", this.builder.addFields(this.tv.listModel, {
+            contextId: this.tv.cloudContextId,
+            sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+        }));
+        this.registerMethod("spaceAddRecipients", this.builder.createObject({
+            id: this.tv.spaceId,
+            recipients: spaceRecipients,
+            keys: spaceKeys,
+            statement: spaceStatement,
+        }));
+        const rotation = {
+            id: this.tv.spaceId,
+            keyId: this.tv.keyId,
+            keys: spaceKeys,
+            expectedKeyVersion: this.builder.min(this.builder.int, 1),
+            statement: spaceStatement,
+        };
+        this.registerMethod("spaceRotateKey", this.builder.createObject(rotation));
+        this.registerMethod("spaceRemoveRecipients", this.builder.createObject({
+            ...rotation,
+            groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS)),
+            users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS)),
+        }));
+        const metaUpdate = this.builder.createObject({
+            id: this.tv.spaceId,
+            meta: this.tv.groupData,
+            version: this.builder.min(this.builder.int, 1),
+        });
+        this.registerMethod("spaceUpdatePublicMeta", metaUpdate);
+        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate);
     }
 }

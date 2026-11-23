@@ -14,5 +14,7 @@ import { StoreNotifyEvent } from "./store/ManagementStoreApiTypes";
 import { StreamNotifyEvent } from "./stream/ManagementStreamApiTypes";
 import { ThreadNotifyEvent } from "./thread/ManagementThreadApiTypes";
 import { KvdbNotifyEvent } from "./kvdb/ManagementKvdbApiTypes";
+import { GroupNotifyEvent } from "./group/ManagementGroupApiTypes";
+import { SpaceNotifyEvent } from "./space/ManagementSpaceApiTypes";
 
-export type PlainApiEvent = InboxEvent|StreamNotifyEvent|ThreadNotifyEvent|StoreNotifyEvent|KvdbNotifyEvent;
+export type PlainApiEvent = InboxEvent|StreamNotifyEvent|ThreadNotifyEvent|StoreNotifyEvent|KvdbNotifyEvent|GroupNotifyEvent|SpaceNotifyEvent;

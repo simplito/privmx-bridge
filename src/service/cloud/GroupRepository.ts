@@ -42,7 +42,7 @@ export class GroupRepository {
         privateMetaVersion: 1,
         rosterVersion: 1,
         keyVersion: 1,
-        policy: 1,
+        policy: 1, visibleTo: 1,
     };
     
     /** Mirrors `db.group.GroupEpochFields`; see there for why this read is kept this narrow. */
@@ -80,6 +80,19 @@ export class GroupRepository {
      * before the projection so a field left out of the summary stays filterable.
      */
     async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
+        return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
+            [...this.pageStages(contextId, listParams, onlyForUser), {$project: GroupRepository.SUMMARY_PROJECTION}],
+            listParams,
+            sortBy,
+        );
+    }
+    
+    /** The same page with whole documents, rosters included: for the backend's view, never for a client's listing. */
+    async getWholePage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.group.Group, onlyForUser?: types.cloud.UserId) {
+        return this.repository.getMatchingPage(this.pageStages(contextId, listParams, onlyForUser), listParams, sortBy);
+    }
+    
+    private pageStages(contextId: types.context.ContextId, listParams: types.core.ListModel, onlyForUser?: types.cloud.UserId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         // `onlyForUser` narrows to the caller's own groups, served off the `{contextId, users}` /
         // `{contextId, managers}` indexes from Migration071. In the same `$match` as `contextId`, so no query
@@ -87,11 +100,7 @@ export class GroupRepository {
         const match = onlyForUser === undefined
             ? {contextId: contextId}
             : {contextId: contextId, $or: [{users: onlyForUser}, {managers: onlyForUser}]};
-        return this.repository.getMatchingPage<db.group.GroupSummaryFields>(
-            [{$match: match}, ...mongoQueries, {$project: GroupRepository.SUMMARY_PROJECTION}],
-            listParams,
-            sortBy,
-        );
+        return [{$match: match}, ...mongoQueries];
     }
     
     /** Ids of the groups in the given context the user belongs to (member or manager) — used by Phase 2 grantee
@@ -593,6 +602,55 @@ export class GroupRepository {
         return {...oldGroup, ...changes};
     }
     
+    /**
+     * Moves members between `users` and `managers`: a roster entry at the unchanged epoch and a statement, no node.
+     * CAS'd like an addition, so it loses to any commit that landed first.
+     */
+    async setRolesWithStatement(params: {
+        oldGroup: db.group.Group,
+        modifier: types.cloud.UserId,
+        users: types.cloud.UserId[],
+        managers: types.cloud.UserId[],
+        keyId: types.core.KeyId,
+        data: types.group.GroupData,
+        statement: types.cloud.GroupTreeCommitStatement,
+    }): Promise<db.group.Group|null> {
+        const {oldGroup, modifier} = params;
+        const now = DateUtils.now();
+        const version = this.nextVersionOf(oldGroup, "rosterVersion");
+        const changes: Partial<db.group.Group> = {
+            lastModifier: modifier,
+            lastModificationDate: now,
+            keyId: params.keyId,
+            users: params.users,
+            managers: params.managers,
+            rosterVersion: version,
+            treeCommitSeq: params.statement.seq,
+        };
+        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
+            return null;
+        }
+        await this.state.insertHistoryEntry({
+            id: GroupStateRepository.historyEntryId(oldGroup.id, version),
+            groupId: oldGroup.id,
+            version: version,
+            keyId: params.keyId,
+            keyVersion: oldGroup.keyVersion,
+            data: params.data,
+            groupPubKey: oldGroup.groupPubKey,
+            created: now,
+            author: modifier,
+        });
+        await this.state.insertTreeCommit(oldGroup.id, params.statement);
+        return {...oldGroup, ...changes};
+    }
+    
+    /** Sets who beside the members may read the group's identity key, roster and statements. Touches nothing a
+     *  statement signs, so it moves no counter and needs no CAS. */
+    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context") {
+        await this.repository.collection.updateOne({_id: groupId} as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
+    }
+    
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
         try {
             return await this.repository.collection.updateOne(
@@ -621,6 +679,22 @@ export class GroupRepository {
      * Projected, because this runs on every container read and every item write into a group-granted container.
      * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
      */
+    /** Each group's current epoch and the identity key of that epoch. Groups of another context are left out. */
+    async getKeyHeads(contextId: types.context.ContextId, groupIds: types.group.GroupId[]) {
+        const map = new Map<types.group.GroupId, {keyVersion: number, groupPubKey: types.cloud.GroupPubKey}>();
+        if (groupIds.length === 0) {
+            return map;
+        }
+        const groups = await this.repository.getMultiProjected<Pick<db.group.Group, "id"|"contextId"|"keyVersion"|"groupPubKey">>(
+            Utils.unique(groupIds), {contextId: 1, keyVersion: 1, groupPubKey: 1});
+        for (const g of groups) {
+            if (g.contextId === contextId) {
+                map.set(g.id, {keyVersion: g.keyVersion, groupPubKey: g.groupPubKey});
+            }
+        }
+        return map;
+    }
+    
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
             return new Map();

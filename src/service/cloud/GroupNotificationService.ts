@@ -11,6 +11,8 @@ limitations under the License.
 
 import { JobService } from "../job/JobService";
 import { WebSocketSender } from "../ws/WebSocketSender";
+import { WebSocketPlainSender } from "../ws/WebSocketPlainSender";
+import type { GroupNotifyEvent } from "../../api/plain/group/ManagementGroupApiTypes";
 import * as contextApi from "../../api/main/context/ContextApiTypes";
 import * as db from "../../db/Model";
 import * as types from "../../types";
@@ -28,7 +30,16 @@ export class GroupNotificationService {
         private jobService: JobService,
         private webSocketSender: WebSocketSender,
         private repositoryFactory: RepositoryFactory,
+        private webSocketPlainSender: WebSocketPlainSender,
     ) {
+    }
+    
+    /** The same event for the application's backend, on its `group` channel. Nothing is sent once the context is gone. */
+    private async sendToBackend(contextId: types.context.ContextId, event: GroupNotifyEvent) {
+        const context = await this.repositoryFactory.createContextRepository().get(contextId);
+        if (context) {
+            this.webSocketPlainSender.sendToPlainUsers(context.solution, event);
+        }
     }
     
     private safe(errorMessage: string, func: () => Promise<void>) {
@@ -38,6 +49,7 @@ export class GroupNotificationService {
     sendCreatedGroup(group: db.group.Group) {
         this.safe("groupCreated", async () => {
             const now = DateUtils.now();
+            await this.sendToBackend(group.contextId, {channel: "group", type: "groupCreated", data: this.changedData(group, "created"), timestamp: now});
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
             this.webSocketSender.sendCloudEventAtChannel<contextApi.GroupCreatedEvent>(
                 contextUsers.map(user => user.userPubKey),
@@ -68,6 +80,7 @@ export class GroupNotificationService {
         this.safe("groupUpdated", async () => {
             const now = DateUtils.now();
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
+            await this.sendToBackend(group.contextId, {channel: "group", type: "groupUpdated", data: this.changedData(group, changeKind), timestamp: now});
             const targetChannel = {
                 contextId: group.contextId,
                 containerId: group.id,
@@ -102,6 +115,7 @@ export class GroupNotificationService {
         this.safe("groupDeleted", async () => {
             const now = DateUtils.now();
             const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(group.contextId, [...group.users, ...group.managers]);
+            await this.sendToBackend(group.contextId, {channel: "group", type: "groupDeleted", data: {groupId: group.id, contextId: group.contextId}, timestamp: now});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.GroupDeletedEvent>(
                 contextUsers.map(u => u.userPubKey),
                 {

@@ -11,11 +11,14 @@ limitations under the License.
 
 import { ContextService } from "../../../service/cloud/ContextService";
 import { GroupService } from "../../../service/cloud/GroupService";
+import { AppException } from "../../AppException";
 import { ApiMethod } from "../../Decorators";
 import { SessionService } from "../../session/SessionService";
 import { ContextApiValidator } from "./ContextApiValidator";
 import { BaseApi } from "../../BaseApi";
 import { GroupConverter } from "./GroupConverter";
+import { SpaceConverter } from "./SpaceConverter";
+import { SpaceService } from "../../../service/cloud/SpaceService";
 import { RequestLogger } from "../../../service/log/RequestLogger";
 import * as db from "../../../db/Model";
 import * as contextApi from "./ContextApiTypes";
@@ -29,6 +32,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
         private groupService: GroupService,
         private groupConverter: GroupConverter,
         private requestLogger: RequestLogger,
+        private spaceService: SpaceService,
     ) {
         super(contextApiValidator);
     }
@@ -71,7 +75,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async groupCreate(model: contextApi.GroupCreateModel): Promise<contextApi.GroupCreateResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys);
+        const group = await this.groupService.createGroup(cloudUser, model.resourceId, model.contextId, model.type, model.groupPubKey, model.users, model.managers, model.data, model.publicMeta, model.privateMeta, model.keyId, model.commit.policy!, model.tree, model.commit, model.groupKeys, model.visibleTo);
         this.requestLogger.setContextId(group.contextId);
         return {groupId: group.id};
     }
@@ -130,6 +134,44 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     @ApiMethod({})
+    async groupGetMany(model: contextApi.GroupGetManyModel): Promise<contextApi.GroupGetManyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const results: contextApi.GroupGetManyEntry[] = [];
+        for (const groupId of model.groupIds) {
+            try {
+                const {group, state} = await this.groupService.getGroupWithState(cloudUser, groupId, undefined, undefined);
+                const info = this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group, state, "path");
+                info.treeCommits = await this.groupService.getTreeCommitsAt(group, GroupConverter.vouchingSeqs(info.treeNodes));
+                results.push({group: info});
+            }
+            catch (e) {
+                // One group that is gone, or that the caller left, must not take the rest of the list with it.
+                if (!(e instanceof AppException)) {
+                    throw e;
+                }
+                results.push({error: {code: e.getCode(), message: e.getMessage()}});
+            }
+        }
+        return {results};
+    }
+    
+    @ApiMethod({})
+    async groupGetPublicKey(model: contextApi.GroupGetPublicKeyModel): Promise<contextApi.GroupGetPublicKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {group, treeCommit} = await this.groupService.getGroupPublicKey(cloudUser, model.groupId);
+        this.requestLogger.setContextId(group.contextId);
+        return {group: this.groupConverter.convertGroupPublicInfo(group, treeCommit)};
+    }
+    
+    @ApiMethod({})
+    async groupSetVisibility(model: contextApi.GroupSetVisibilityModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.setVisibility(cloudUser, model.groupId, model.visibleTo);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
     async groupList(model: contextApi.GroupListModel): Promise<contextApi.GroupListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const {groups} = await this.groupService.getGroupsByContext(cloudUser, model.contextId, model, model.sortBy || "createDate");
@@ -149,6 +191,22 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     async groupRemoveMembers(model: contextApi.GroupRemoveMembersModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const group = await this.groupService.removeMembers(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupReseat(model: contextApi.GroupRemoveMembersModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.reseatMembers(cloudUser, model);
+        this.requestLogger.setContextId(group.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async groupSetRoles(model: contextApi.GroupSetRolesModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const group = await this.groupService.setRoles(cloudUser, model);
         this.requestLogger.setContextId(group.contextId);
         return "OK";
     }
@@ -265,5 +323,85 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
             lastStatusChange: x.lastStatusChange ? x.lastStatusChange : null,
         };
         return res;
+    }
+    
+    @ApiMethod({})
+    async spaceCreate(model: contextApi.SpaceCreateModel): Promise<contextApi.SpaceCreateResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.createSpace(cloudUser, model);
+        this.requestLogger.setContextId(space.contextId);
+        return {spaceId: space.id};
+    }
+    
+    @ApiMethod({})
+    async spaceGet(model: contextApi.SpaceIdModel): Promise<contextApi.SpaceGetResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const view = await this.spaceService.getSpace(cloudUser, model.id);
+        this.requestLogger.setContextId(view.space.contextId);
+        return {space: SpaceConverter.convertSpace(view)};
+    }
+    
+    @ApiMethod({})
+    async spaceGetStatements(model: contextApi.SpaceGetStatementsModel): Promise<contextApi.SpaceGetStatementsResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const {space, statements} = await this.spaceService.getStatements(cloudUser, model);
+        this.requestLogger.setContextId(space.contextId);
+        return {statements};
+    }
+    
+    @ApiMethod({})
+    async spaceList(model: contextApi.SpaceListModel): Promise<contextApi.SpaceListResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const page = await this.spaceService.listSpaces(cloudUser, model.contextId, model, model.sortBy || "createDate");
+        this.requestLogger.setContextId(model.contextId);
+        return {spaces: page.list.map(x => SpaceConverter.convertSpace(x)), count: page.count};
+    }
+    
+    @ApiMethod({})
+    async spaceDelete(model: contextApi.SpaceIdModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.deleteSpace(cloudUser, model.id);
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceAddRecipients(model: contextApi.SpaceAddRecipientsModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.addRecipients(cloudUser, model);
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceRemoveRecipients(model: contextApi.SpaceRemoveRecipientsModel): Promise<contextApi.SpaceRotateKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.rotateKey(cloudUser, model, "context/spaceRemoveRecipients");
+        this.requestLogger.setContextId(space.contextId);
+        return {keyVersion: space.keyVersion};
+    }
+    
+    @ApiMethod({})
+    async spaceRotateKey(model: contextApi.SpaceRotateKeyModel): Promise<contextApi.SpaceRotateKeyResult> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.rotateKey(cloudUser, model, "context/spaceRotateKey");
+        this.requestLogger.setContextId(space.contextId);
+        return {keyVersion: space.keyVersion};
+    }
+    
+    @ApiMethod({})
+    async spaceUpdatePublicMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.updateMeta(cloudUser, model, "publicMeta");
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
+    }
+    
+    @ApiMethod({})
+    async spaceUpdatePrivateMeta(model: contextApi.SpaceUpdateMetaModel): Promise<types.core.OK> {
+        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
+        const space = await this.spaceService.updateMeta(cloudUser, model, "privateMeta");
+        this.requestLogger.setContextId(space.contextId);
+        return "OK";
     }
 }

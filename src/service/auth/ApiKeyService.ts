@@ -37,7 +37,7 @@ export class ApiKeyService {
             }
             const user = await this.repositoryFactory.createApiUserRepository().create();
             return await this.repositoryFactory.createApiKeyRepository().create(user.id, name as types.auth.ApiKeyName, [
-                "context", "apiKey", "solution", "solution:*", "inbox", "store", "thread", "stream", "kvdb",
+                "context", "apiKey", "solution", "solution:*", "inbox", "store", "thread", "stream", "kvdb", "group", "space",
             ] as types.auth.Scope[], true, publicKey);
         });
     }

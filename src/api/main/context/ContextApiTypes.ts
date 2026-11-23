@@ -107,12 +107,23 @@ export interface ContextUsersStatusChangeData {
 
 export interface GroupCreateModel {
     contextId: types.context.ContextId;
-    /** Required: the first commit statement names the group by it (see `commit`). */
+    /**
+     * Required: the first commit statement names the group by it (see `commit`). A uuid v4, or the 64 hex digits
+     * of a digest when the group's id has to follow from something the application already has.
+     *
+     * A digest anybody can compute is a name anybody can take first: any user of the context who knows the
+     * entity can create "its" group before its owner does. The bridge does not and cannot tell them apart.
+     * `DUPLICATE_RESOURCE_ID` therefore means only that a group exists under the name, never that it is the right
+     * one - and a client that finds a group under a derived id checks who created it (`creator`, bound by the
+     * first statement) against who owns the entity before it trusts the group.
+     */
     resourceId: types.core.ClientResourceId;
     type?: types.group.GroupType;
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
+    /** Defaults to "members". */
+    visibleTo?: GroupVisibility;
     /** The roster/tree plane's first entry: carries the roster tag and no metadata. */
     data: types.group.GroupData;
     publicMeta: types.group.GroupData;
@@ -216,6 +227,28 @@ export interface GroupRemoveMembersModel {
      * until a manager rewrites them (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
      */
     abandonHistory?: boolean;
+}
+
+/**
+ * Changes the role of members already in the group, as a signed `roles` commit. No key moves: a role decides what
+ * the bridge and the other members accept from somebody, not what they can read.
+ *
+ * Needs the signed `updatePolicy` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
+ * managers with none.
+ */
+export interface GroupSetRolesModel {
+    id: types.group.GroupId;
+    /** Each member at most once, and at least one of them changing lists. */
+    changes: GroupAddMemberEntry[];
+    /** The current content key: a role change opens no epoch. */
+    keyId: types.core.KeyId;
+    /** The roster entry after the change. */
+    data: types.group.GroupData;
+    /** The statement: op `roles`, the tree as it stands, `addedManagers` and `addedUsers` naming who moved where. */
+    commit: types.cloud.GroupTreeCommitStatement;
+    expectedKeyVersion: number;
+    /** @see GroupAddMembersModel.expectedRosterVersion */
+    expectedRosterVersion: number;
 }
 
 /**
@@ -479,6 +512,54 @@ export interface GroupGetResult {
     group: GroupInfo;
 }
 
+/** Who may read a group's identity key, roster and statements beside its members. */
+export type GroupVisibility = "members"|"context";
+
+export interface GroupGetManyModel {
+    /** Up to 128 groups, each read as `groupGet` reads it in the "path" scope. */
+    groupIds: types.group.GroupId[];
+}
+
+/** One result per requested id, in order. A group that cannot be served has its error here and fails nothing else. */
+export type GroupGetManyEntry = {group: GroupInfo}|{error: {code: types.core.ErrorCode, message: types.core.ErrorMessage}};
+
+export interface GroupGetManyResult {
+    results: GroupGetManyEntry[];
+}
+
+export interface GroupGetPublicKeyModel {
+    groupId: types.group.GroupId;
+}
+
+/**
+ * What somebody outside a group needs to seal to it: the current identity key, and the latest statement with the
+ * roster it describes, which is what vouches for that key. No tree, no metadata, no keys.
+ */
+export interface GroupPublicInfo {
+    id: types.group.GroupId;
+    contextId: types.context.ContextId;
+    resourceId?: types.core.ClientResourceId;
+    creator: types.cloud.UserId;
+    users: types.cloud.UserId[];
+    managers: types.cloud.UserId[];
+    rosterVersion: number;
+    keyVersion: number;
+    groupPubKey: types.cloud.GroupPubKey;
+    policy: types.cloud.ContainerPolicy;
+    visibleTo: GroupVisibility;
+    /** The latest commit statement. Signed; the client checks it. */
+    treeCommit: types.cloud.GroupTreeCommitStatement;
+}
+
+export interface GroupGetPublicKeyResult {
+    group: GroupPublicInfo;
+}
+
+export interface GroupSetVisibilityModel {
+    groupId: types.group.GroupId;
+    visibleTo: GroupVisibility;
+}
+
 export interface GroupListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
     sortBy?: "createDate"|"lastModificationDate";
@@ -511,6 +592,7 @@ export interface GroupSummary {
     privateMetaVersion: types.group.GroupVersion;
     rosterVersion: number;
     keyVersion: number;
+    visibleTo: GroupVisibility;
     policy: types.cloud.ContainerPolicy;
 }
 
@@ -576,6 +658,7 @@ export interface GroupInfo {
     /** Roster plane counter. Moves only on a membership change or a rotation. */
     rosterVersion: number;
     keyVersion: number;
+    visibleTo: GroupVisibility;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     policy: types.cloud.ContainerPolicy;
     history: GroupHistoryEntryInfo[];
@@ -622,7 +705,7 @@ export interface GroupInfo {
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
 export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
-    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned";
+    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged"|"rolesChanged"|"membersReseated";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -679,6 +762,141 @@ export interface GroupCustomEventData {
     eventData: unknown;
 }
 
+/**
+ * A space as one caller sees it. `keys` are only the entries the caller can open: its own and those of the
+ * groups it belongs to.
+ */
+export interface SpaceInfo {
+    id: types.space.SpaceId;
+    resourceId: types.core.ClientResourceId;
+    contextId: types.context.ContextId;
+    creator: types.cloud.UserId;
+    createDate: types.core.Timestamp;
+    lastModifier: types.cloud.UserId;
+    lastModificationDate: types.core.Timestamp;
+    /** `groupKeyVersion`: the group's epoch the current key version was wrapped to; `groupPubKey`: the group's key of that epoch. */
+    groups: {groupId: types.group.GroupId; role: types.cloud.ContainerRole; groupKeyVersion: number; groupPubKey: types.cloud.GroupPubKey}[];
+    users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
+    keyId: types.core.KeyId;
+    keyVersion: number;
+    /** The seq of `statement`. */
+    seq: number;
+    /** The last signed statement of the space's history; the earlier ones come from `spaceGetStatements`. */
+    statement: types.cloud.SpaceStatement;
+    /** True when a recipient group has moved past the epoch the current key was wrapped to. */
+    keyIsStale: boolean;
+    keys: types.cloud.SpaceKeyEntry[];
+    publicMeta: types.space.SpaceData;
+    privateMeta: types.space.SpaceData;
+    publicMetaVersion: number;
+    privateMetaVersion: number;
+}
+
+export interface SpaceCreateModel {
+    contextId: types.context.ContextId;
+    /** The space's id follows from it, as a group's does: a random uuid, or 64 hex digits of a digest. */
+    resourceId: types.core.ClientResourceId;
+    recipients: types.cloud.SpaceRecipient[];
+    keyId: types.core.KeyId;
+    /** Key version 1, one entry per recipient. */
+    keys: types.cloud.SpaceKeyEntry[];
+    publicMeta: types.space.SpaceData;
+    privateMeta: types.space.SpaceData;
+    /** Statement 1, op `create`: signed by the caller, naming the recipients, each group at its current epoch and key. */
+    statement: types.cloud.SpaceStatement;
+}
+
+export interface SpaceGetStatementsModel {
+    id: types.space.SpaceId;
+    /** Statements with a higher seq are served; 0 for the whole history. */
+    fromSeq: number;
+    /** 1 to 100. */
+    limit: number;
+}
+
+export interface SpaceGetStatementsResult {
+    /** Oldest first. */
+    statements: types.cloud.SpaceStatement[];
+}
+
+export interface SpaceCreateResult {
+    spaceId: types.space.SpaceId;
+}
+
+export interface SpaceIdModel {
+    id: types.space.SpaceId;
+}
+
+export interface SpaceGetResult {
+    space: SpaceInfo;
+}
+
+export interface SpaceListModel extends types.core.ListModel {
+    contextId: types.context.ContextId;
+    sortBy?: "createDate"|"lastModificationDate";
+}
+
+export interface SpaceListResult {
+    /** `keys` of a listed space are those of its current key version only; `spaceGet` serves every version. */
+    spaces: SpaceInfo[];
+    count: number;
+}
+
+export interface SpaceAddRecipientsModel {
+    id: types.space.SpaceId;
+    recipients: types.cloud.SpaceRecipient[];
+    /** Every key version of the space, for every new recipient. */
+    keys: types.cloud.SpaceKeyEntry[];
+    /** The next statement, op `add`: the recipients before, unchanged, and the new ones; the key version and `keyCommit` stay. */
+    statement: types.cloud.SpaceStatement;
+}
+
+export interface SpaceRotateKeyModel {
+    id: types.space.SpaceId;
+    keyId: types.core.KeyId;
+    /** The next key version, one entry per recipient that stays. */
+    keys: types.cloud.SpaceKeyEntry[];
+    expectedKeyVersion: number;
+    /** The next statement, op `rotate` (or `remove`): whoever stays, each group at its current epoch and key, at the new key version. */
+    statement: types.cloud.SpaceStatement;
+}
+
+export interface SpaceRemoveRecipientsModel extends SpaceRotateKeyModel {
+    groups?: types.group.GroupId[];
+    users?: types.cloud.UserId[];
+}
+
+export interface SpaceRotateKeyResult {
+    keyVersion: number;
+}
+
+export interface SpaceUpdateMetaModel {
+    id: types.space.SpaceId;
+    meta: types.space.SpaceData;
+    /** The version of that metadata the caller read. */
+    version: number;
+}
+
+export type SpaceChangeKind = "created"|"recipientsAdded"|"recipientsRemoved"|"keyRotated"|"keyStale"|"metaUpdated";
+
+export interface SpaceChangedEventData {
+    spaceId: types.space.SpaceId;
+    contextId: types.context.ContextId;
+    keyVersion: number;
+    publicMetaVersion: number;
+    privateMetaVersion: number;
+    changeKind: SpaceChangeKind;
+}
+
+export interface SpaceDeletedEventData {
+    spaceId: types.space.SpaceId;
+    contextId: types.context.ContextId;
+}
+
+export type SpaceCreatedEvent = types.cloud.Event<"spaceCreated", "context", SpaceChangedEventData>;
+export type SpaceUpdatedEvent = types.cloud.Event<"spaceUpdated", "context", SpaceChangedEventData>;
+export type SpaceDeletedEvent = types.cloud.Event<"spaceDeleted", "context", SpaceDeletedEventData>;
+
 export interface IContextApi {
     contextGet(model: ContextGetModel): Promise<ContextGetResult>;
     contextList(model: ContextListModel): Promise<ContextListResult>;
@@ -695,12 +913,106 @@ export interface IContextApi {
     groupList(model: GroupListModel): Promise<GroupListResult>;
     groupAddMembers(model: GroupAddMembersModel): Promise<types.core.OK>;
     groupRemoveMembers(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    /**
+     * Re-admits members whose long-term key was replaced: a removal in every respect but one, its subjects keep
+     * their seats and their place on the roster. The epoch advances, so whoever still holds a subject's old key
+     * reads nothing written afterwards. Takes what `groupRemoveMembers` takes; the statement's op is `reseat` and
+     * its `removed` names the subjects. Needs the signed `removeMembers` rule.
+     * @param model group's id, the members to reseat, the new grant key, the transition, the statement and the rungs
+     * @returns "OK"
+     */
+    groupReseat(model: GroupRemoveMembersModel): Promise<types.core.OK>;
+    /**
+     * Changes the role of members of a group
+     * @param model group's id, the members with their new roles, the roster entry and the statement
+     * @returns "OK"
+     */
+    groupSetRoles(model: GroupSetRolesModel): Promise<types.core.OK>;
     groupSelfUpdate(model: GroupSelfUpdateModel): Promise<types.core.OK>;
     groupGetTreeCommits(model: GroupGetTreeCommitsModel): Promise<GroupGetTreeCommitsResult>;
+    /**
+     * Reads several groups in one request, for a client opening a list of them.
+     * @param model ids of the groups
+     * @returns one result per id, in order
+     */
+    groupGetMany(model: GroupGetManyModel): Promise<GroupGetManyResult>;
+    /**
+     * A group's current identity key with the statement that vouches for it. For a member, and for any user of the
+     * context when the group is visible to the context.
+     * @param model id of the group
+     * @returns the key, the roster and the latest statement
+     */
+    groupGetPublicKey(model: GroupGetPublicKeyModel): Promise<GroupGetPublicKeyResult>;
+    /**
+     * Sets who may read the group's identity key, roster and statements beside its members. Managers only.
+     * @param model id of the group and the new visibility
+     * @returns "OK"
+     */
+    groupSetVisibility(model: GroupSetVisibilityModel): Promise<types.core.OK>;
     groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
     groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupGetEpochKeys(model: GroupGetEpochKeysModel): Promise<GroupGetEpochKeysResult>;
     groupSendCustomEvent(model: GroupSendCustomEventModel): Promise<types.core.OK>;
+    /**
+     * Creates a space: one key wrapped for several groups and users. The caller has to be one of its managers.
+     * @param model context, resource id, recipients, the key's id and its wraps, metadata
+     * @returns the space's id
+     */
+    spaceCreate(model: SpaceCreateModel): Promise<SpaceCreateResult>;
+    /**
+     * Reads a space. For a recipient: a user it names, or a member of a group it names.
+     * @param model id of the space
+     * @returns the space with the wrapped keys the caller can open
+     */
+    spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
+    /**
+     * Reads the signed statements of a space's history, oldest first. For a recipient, as `spaceGet`.
+     * @param model id of the space, the seq to read after, and how many
+     * @returns the statements with a seq above `fromSeq`
+     */
+    spaceGetStatements(model: SpaceGetStatementsModel): Promise<SpaceGetStatementsResult>;
+    /**
+     * Lists the spaces of a context the caller is a recipient of.
+     * @param model context and paging
+     * @returns the spaces, each with the wraps of its current key the caller can open
+     */
+    spaceList(model: SpaceListModel): Promise<SpaceListResult>;
+    /**
+     * Deletes a space. Managers only.
+     * @param model id of the space
+     * @returns "OK"
+     */
+    spaceDelete(model: SpaceIdModel): Promise<types.core.OK>;
+    /**
+     * Adds recipients, with every version of the key wrapped for each. Managers only.
+     * @param model id of the space, the new recipients and their wraps
+     * @returns "OK"
+     */
+    spaceAddRecipients(model: SpaceAddRecipientsModel): Promise<types.core.OK>;
+    /**
+     * Removes recipients and moves the space to a new key they do not get. Managers only.
+     * @param model id of the space, who leaves, the new key's id and its wraps for those who stay
+     * @returns the new key version
+     */
+    spaceRemoveRecipients(model: SpaceRemoveRecipientsModel): Promise<SpaceRotateKeyResult>;
+    /**
+     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`.
+     * @param model id of the space, the new key's id and its wraps
+     * @returns the new key version
+     */
+    spaceRotateKey(model: SpaceRotateKeyModel): Promise<SpaceRotateKeyResult>;
+    /**
+     * Replaces the public metadata. Managers only.
+     * @param model id of the space, the metadata and the version it replaces
+     * @returns "OK"
+     */
+    spaceUpdatePublicMeta(model: SpaceUpdateMetaModel): Promise<types.core.OK>;
+    /**
+     * Replaces the private metadata. Managers only.
+     * @param model id of the space, the metadata and the version it replaces
+     * @returns "OK"
+     */
+    spaceUpdatePrivateMeta(model: SpaceUpdateMetaModel): Promise<types.core.OK>;
 }

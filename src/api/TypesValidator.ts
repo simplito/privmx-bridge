@@ -135,6 +135,8 @@ export class TypesValidator {
     kvdbData: Validator;
     kvdbEntryKey: Validator;
     uuidv4: Validator;
+    groupResourceId: Validator;
+    spaceId: Validator;
     stringOrNull: Validator;
     numberOrNull: Validator;
     containerAccessScope: Validator;
@@ -284,6 +286,7 @@ export class TypesValidator {
             data: this.userKeyData,
         });
         this.groupId = id;
+        this.spaceId = id;
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
@@ -373,7 +376,7 @@ export class TypesValidator {
         this.groupTreeCommitStatement = this.builder.createObject({
             seq: this.builder.min(this.builder.int, 1),
             prevDigest: hexValidator(/^([0-9a-f]{64})?$/, "Expected \"\" or 64 lowercase hex characters"),
-            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy"]),
+            op: this.builder.createEnum(["create", "add", "remove", "selfUpdate", "rotate", "policy", "roles", "reseat"]),
             groupId: this.builder.maxLength(this.builder.string, 128),
             treeVersion: this.intNonNegative,
             date: this.intNonNegative,
@@ -520,6 +523,8 @@ export class TypesValidator {
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
             rotateKeys: policyEntry,
+            addMembers: policyEntry,
+            removeMembers: policyEntry,
             creatorHasToBeManager: policyEntry,
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
@@ -548,7 +553,7 @@ export class TypesValidator {
         });
         this.limit = this.builder.range(this.builder.int, 1, 100);
         this.sortOrder = this.builder.createEnum(["asc", "desc"]);
-        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb"]);
+        this.plainApiWsChannelName = this.builder.createEnum(["thread", "store", "stream", "inbox", "kvdb", "group", "space"]);
         this.wsChannelName = this.builder.createCustom((value) => {
             const alphaNumericalRegex = /^[a-zA-Z0-9,/_|=:-]*$/;
             if (typeof value !== "string") {
@@ -583,6 +588,18 @@ export class TypesValidator {
             }
             if (!uuidv4Regex.test(value)) {
                 throw new Error("Value has to be uuid v4");
+            }
+        });
+        this.groupResourceId = this.builder.createCustom((value) => {
+            // A random uuid v4, as every container takes, or the 64 hex digits of a digest: a group whose id has to
+            // follow from something the application already has (the entity it belongs to) names itself by a hash
+            // of that, and every client computes the same one.
+            if (typeof value !== "string") {
+                throw new Error("Expected string");
+            }
+            const uuidv4Regex = /^[0-9A-F]{8}-[0-9A-F]{4}-[4][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i;
+            if (!uuidv4Regex.test(value) && !/^[0-9a-f]{64}$/.test(value)) {
+                throw new Error("Value has to be uuid v4 or 64 lowercase hex digits");
             }
         });
         this.stringOrNull = this.builder.createOneOf([this.builder.string, this.builder.nullValue]);

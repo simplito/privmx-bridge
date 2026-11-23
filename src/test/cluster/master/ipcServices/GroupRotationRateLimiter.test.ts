@@ -49,3 +49,25 @@ it("rate-limits each group independently", async () => {
     // a different group is unaffected
     expect((await limiter.reserve({key: "g2"})).allowed).toBe(true);
 });
+
+it("a refusal says when the oldest unit of the hour is handed back", async () => {
+    const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+    const before = Date.now();
+    for (let i = 0; i < 10; i++) {
+        await limiter.reserve({key});
+    }
+    const refused = await limiter.reserve({key});
+    const after = Date.now();
+    expect(refused.allowed).toBe(false);
+    // An hour after the first reservation, not after the refusal: a client that waits until then gets through.
+    expect(refused.retryAt! >= before + 60 * 60 * 1000).toBe(true);
+    expect(refused.retryAt! <= after + 60 * 60 * 1000).toBe(true);
+    expect((await limiter.reserve({key: "g2"})).retryAt === undefined).toBe(true);
+});
+
+it("a refusal under a limit of zero still names a time", async () => {
+    const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+    const refused = await limiter.reserve({key, limit: 0});
+    expect(refused.allowed).toBe(false);
+    expect(refused.retryAt! > Date.now()).toBe(true);
+});

@@ -205,7 +205,11 @@ export interface GroupTreeSelfUpdateTransition {
     edges: GroupTreeEdge[];
 }
 
-export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy";
+/**
+ * `roles` moves members between the two lists and nothing else (`addedUsers`: now a user, `addedManagers`: now a
+ * manager). `reseat` is a removal that keeps its subjects seated and on the roster (`removed`: who was reseated).
+ */
+export type GroupTreeCommitOp = "create"|"add"|"remove"|"selfUpdate"|"rotate"|"policy"|"roles"|"reseat";
 
 /** One node a commit re-keyed, as the committer signed it. */
 export interface GroupTreeCommitPathEntry {
@@ -301,6 +305,52 @@ export interface GroupGrant {
     role: ContainerRole;
 }
 
+/** Who a space's key is wrapped for: a group (its members reach it through the group's key) or one user. */
+export type SpaceRecipient = ({groupId: types.group.GroupId}|{userId: UserId; pubKey: UserPubKey})&{role: ContainerRole};
+
+export type SpaceStatementOp = "create"|"add"|"remove"|"rotate";
+
+/**
+ * One signed entry of a space's history. `groups` and `users` are the recipients after the change, whole.
+ * See `SpaceStatement` (the service) for the bytes; the hashes and digests are lowercase hex.
+ */
+export interface SpaceStatement {
+    spaceId: types.space.SpaceId;
+    contextId: types.context.ContextId;
+    /** From 1, without gaps. */
+    seq: number;
+    /** Digest of the statement at `seq - 1`, "" at seq 1. */
+    prevDigest: string;
+    op: SpaceStatementOp;
+    /** The author's clock, ms. */
+    date: number;
+    /** The space's key version after the change. */
+    keyVersion: number;
+    /** The author's commitment to the key at `keyVersion`: 32 bytes the bridge does not interpret. */
+    keyCommit: string;
+    groups: {groupId: types.group.GroupId; role: ContainerRole; groupKeyVersion: number; groupPubKey: GroupPubKey}[];
+    users: {userId: UserId; pubKey: UserPubKey; role: ContainerRole}[];
+    signer: UserId;
+    signerPubKey: UserPubKey;
+    /** "" when the author acts as a user the space names, else the recipient group it acts through. */
+    via: types.group.GroupId|"";
+    signature: types.core.Base64;
+    /** By the key of the group `via`, at the epoch the space held it at before this statement; "" without `via`. */
+    viaSignature: types.core.Base64|"";
+}
+
+/**
+ * One version of a space's key wrapped for one recipient. `data` and `signature` are the client's: the bridge
+ * stores them and checks only that every recipient has an entry, and that a group's entry names the epoch the
+ * group is at.
+ */
+export interface SpaceKeyEntry {
+    keyVersion: number;
+    recipient: {groupId: types.group.GroupId; groupKeyVersion: number}|{userId: UserId};
+    data: types.core.Base64;
+    signature: types.core.Base64;
+}
+
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
 export interface ContainerGrantees {
     groups?: GroupGrant[];
@@ -329,6 +379,10 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     delete?: PolicyEntry;
     /** Determines who can rotate container keys */
     rotateKeys?: PolicyEntry;
+    /** Groups only: who can add members. Absent, `inherit` or `default`: whoever `update` allows. */
+    addMembers?: PolicyEntry;
+    /** Groups only: who can remove or reseat members. Absent, `inherit` or `default`: whoever `update` allows. */
+    removeMembers?: PolicyEntry;
     /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
     /** Determines whether the creator has to be added to the list of managers */
