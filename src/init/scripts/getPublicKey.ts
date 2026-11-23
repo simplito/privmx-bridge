@@ -12,12 +12,12 @@ limitations under the License.
 /* eslint-disable no-console */
 
 import type * as Cluster from "cluster";
+import type * as pki from "privmx-pki2";
 import { loadConfig } from "../../cluster/common/ConfigUtils";
 import { LoggerFactory } from "../../service/log/LoggerFactory";
 import * as util from "util";
 import { WorkerRegistry } from "../../cluster/worker/WorkerRegistry";
-import { Base58 } from "../../utils/crypto/Base58";
-import { Crypto } from "../../utils/crypto/Crypto";
+import { ECUtils } from "../../utils/crypto/ECUtils";
 
 const loggerFactory = new LoggerFactory("MAIN");
 
@@ -38,8 +38,8 @@ async function go() {
         const ioc = await registry.getHttpHandler().createHostContext();
         const pkiFactory = ioc.getPkiFactory();
         const keystore = await pkiFactory.loadKeystore();
-        const serverPublicKeyPem = keystore.getPrimaryKey().keyPair.getPublicView().serializeWithArmor();
-        const der58PublicKey = readPubKeyFromPem(serverPublicKeyPem);
+        const signingKey = keystore.getPrimaryKey().keyPair as pki.common.keystore.EccKeyPair;
+        const der58PublicKey = ECUtils.publicToBase58DER(signingKey.keyPair);
         if (args.length === 3 && args[2] == "--kvprint") {
             keyValuePrint(der58PublicKey);
         }
@@ -57,15 +57,6 @@ async function go() {
 
 function consoleErr(str: string) {
     process.stderr.write(str + "\n");
-}
-
-function readPubKeyFromPem(pem: string) {
-    const base64 = pem.split("\n")
-        .filter(x => x && !x.startsWith("---") && !x.startsWith("="))
-        .join("");
-    const buffer = Buffer.from(base64, "base64");
-    const compressedPublicKey = Crypto.compressPublicKey(buffer.subarray(16, 81));
-    return Base58.encodeWithChecksum(Buffer.from(compressedPublicKey));
 }
 
 function keyValuePrint(keyValue: string) {
