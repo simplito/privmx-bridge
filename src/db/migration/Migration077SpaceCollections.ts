@@ -24,7 +24,8 @@ export class Migration077SpaceCollections {
         await spaces.createIndex({contextId: 1, "users.userId": 1});
         // Without `contextId` too: a group's epoch change looks its spaces up by the group alone.
         await spaces.createIndex({"groups.groupId": 1});
-        await spaces.createIndex("clientResourceId", {unique: true, partialFilterExpression: {clientResourceId: {$exists: true}}});
+        // Per context, as the id is: a global index would let one context squat on, or probe for, another's names.
+        await spaces.createIndex({contextId: 1, clientResourceId: 1}, {unique: true, partialFilterExpression: {clientResourceId: {$exists: true}}});
         const keys = await dbManager.createOrGetCollection(SpaceRepository.KEY_COLLECTION_NAME);
         await keys.createIndex({spaceId: 1, keyVersion: 1});
     }

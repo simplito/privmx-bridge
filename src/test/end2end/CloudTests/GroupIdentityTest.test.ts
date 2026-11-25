@@ -50,6 +50,16 @@ export class GroupIdentityTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldTakeTheSameSeedInAnotherContext() {
+        // SECURITY: a name is the context's own. A global index let one context take it first in another, or learn
+        // that it was taken there.
+        const seed = seedOf("contact/chat/42");
+        const here = await this.createGroup(seed);
+        const there = await this.createGroup(seed, testData.contextId2);
+        assert(there === CommitStatement.groupId(testData.contextId2, seed) && there !== here, "the other context's group is not its own");
+    }
+    
+    @Test()
     async shouldKeepADeletedGroupsIdTaken() {
         const seed = seedOf("contact/chat/42");
         const groupId = await this.createGroup(seed);
@@ -66,13 +76,13 @@ export class GroupIdentityTests extends BaseTestSet {
         assert(!!await this.createGroup(this.helpers.generateResourceId()), "a random uuid is still taken");
     }
     
-    private async createGroup(resourceId: types.core.ClientResourceId): Promise<types.group.GroupId> {
+    private async createGroup(resourceId: types.core.ClientResourceId, contextId = testData.contextId): Promise<types.group.GroupId> {
         const users = [testData.userId];
         const managers = [testData.userId];
         const tree = buildTree(users, 1);
         registerUserKey(testData.userId, testData.userPrivKey as types.core.EccWif);
         const res = await this.apis.contextApi.groupCreate({
-            contextId: testData.contextId,
+            contextId: contextId,
             resourceId: resourceId,
             groupPubKey: groupPubKey,
             users: users,

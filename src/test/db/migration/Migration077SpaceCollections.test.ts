@@ -26,7 +26,7 @@ it("creates the space collections with their indexes", async () => {
     assert.deepStrictEqual(indexes, [
         ["space", {contextId: 1, "users.userId": 1}],
         ["space", {"groups.groupId": 1}],
-        ["space", "clientResourceId"],
+        ["space", {contextId: 1, clientResourceId: 1}],
         ["spaceKey", {spaceId: 1, keyVersion: 1}],
     ]);
 });

@@ -111,8 +111,10 @@ export interface GroupCreateModel {
      * Required: the first commit statement names the group by it (see `commit`). A uuid v4, or the 64 hex digits
      * of a digest when the group's id has to follow from something the application already has.
      *
-     * A digest anybody can compute is a name anybody can take first: any user of the context who knows the
-     * entity can create "its" group before its owner does. The bridge does not and cannot tell them apart.
+     * The name is unique within the context only: the same resourceId in another context is another group, and
+     * nothing outside the context can take it or learn that it is taken. Inside the context, though, a digest
+     * anybody can compute is a name anybody can take first: any user of the context who knows the entity can
+     * create "its" group before its owner does. The bridge does not and cannot tell them apart.
      * `DUPLICATE_RESOURCE_ID` therefore means only that a group exists under the name, never that it is the right
      * one - and a client that finds a group under a derived id checks who created it (`creator`, bound by the
      * first statement) against who owns the entity before it trusts the group.
