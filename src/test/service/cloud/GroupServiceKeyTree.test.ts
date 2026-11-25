@@ -1542,10 +1542,23 @@ it("getTreeCommits from seq 0 serves the genesis roster beside the chain", async
     assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 0)).genesis, {users: group.users, managers: group.managers});
 });
 
-it("getTreeCommits needs read access to the group", async () => {
+it("getTreeCommits needs read access to the group, or the group visible to the context", async () => {
     const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH)});
     const {groupService} = createGroupService(group);
     await expectFailure("ACCESS_DENIED", () => groupService.getTreeCommits(aliceCloudUser, groupId, 0));
+    // The same rule as `getGroupPublicKey`: a non-member that pinned a visible group catches its pin up.
+    group.visibleTo = "context";
+    assert.deepStrictEqual((await groupService.getTreeCommits(aliceCloudUser, groupId, 0)).commits.map(c => c.seq), [1]);
+});
+
+it("getTreeCommits serves the statements alone, nothing stored beside them", async () => {
+    const group = treeBackedGroup({users: [bob, carol], tree: buildTree(["janek", "", "bob", "carol"], EPOCH), visibleTo: "context", treeCommitSeq: 2});
+    const {groupService, groupRepository} = createGroupService(group);
+    const statement = {seq: 2} as types.cloud.GroupTreeCommitStatement;
+    mock(groupRepository.state, "getTreeCommitRange", (async () => [{seq: 2, statement, groupKeys: ["wrap"], edges: ["wrap"]}]) as never);
+    const result = await groupService.getTreeCommits(aliceCloudUser, groupId, 1);
+    assert.deepStrictEqual(result.commits, [statement]);
+    assert.strictEqual(result.genesis, undefined);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

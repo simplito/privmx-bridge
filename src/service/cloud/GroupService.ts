@@ -77,10 +77,11 @@ export class GroupService extends BaseContainerService {
         return group;
     }
     
-    private async checkCanRead(executor: Executor, group: db.group.Group, acl: "context/groupGet"|"context/groupGetTreeCommits" = "context/groupGet") {
+    /** @param orVisibleToContext also lets in every user of the context when the group is visible to it, as `getGroupPublicKey` does. */
+    private async checkCanRead(executor: Executor, group: db.group.Group, acl: "context/groupGet"|"context/groupGetTreeCommits" = "context/groupGet", orVisibleToContext = false) {
         await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, group.contextId, (user, context) => {
             this.cloudAclChecker.verifyAccess(user.acl, acl, ["groupId=" + group.id]);
-            if (!this.policy.canReadContainer(user, context, group)) {
+            if (!(orVisibleToContext && group.visibleTo === "context") && !this.policy.canReadContainer(user, context, group)) {
                 throw new AppException("ACCESS_DENIED");
             }
         });
@@ -171,7 +172,10 @@ export class GroupService extends BaseContainerService {
     
     /**
      * A page of the group's commit statements, `fromSeq < seq <= toSeq` (default: the latest). Readable by whoever
-     * may read the group: every statement is signed, and clients check each one themselves.
+     * may read the group's public info (`getGroupPublicKey`): a non-member that pinned a group visible to the
+     * context replays the chain to catch its pin up. Every statement is signed public data (keys, hashes, user ids,
+     * the policy), clients check each one themselves, and no wrap or key comes along: only `statement` and, at
+     * seq 1, the genesis roster that `getGroupPublicKey` serves anyway.
      */
     async getTreeCommits(executor: Executor, groupId: types.group.GroupId, fromSeq: number, toSeq?: number) {
         const groupRepository = this.repositoryFactory.createGroupRepository();
@@ -179,7 +183,7 @@ export class GroupService extends BaseContainerService {
         if (!group) {
             throw new AppException("GROUP_DOES_NOT_EXIST");
         }
-        await this.checkCanRead(executor, group, "context/groupGetTreeCommits");
+        await this.checkCanRead(executor, group, "context/groupGetTreeCommits", true);
         const latest = group.treeCommitSeq ?? 0;
         const upTo = Math.min(toSeq ?? latest, latest);
         const docs = upTo > fromSeq ? await groupRepository.state.getTreeCommitRange(groupId, fromSeq, upTo) : [];

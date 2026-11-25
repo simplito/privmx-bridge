@@ -68,9 +68,13 @@ export class GroupClientReadsTests extends BaseTestSet {
         
         // Visible is not readable: the tree, the keys and the metadata stay the members'.
         await shouldThrowErrorWithCode2(() => outsider.groupGet({groupId}), "ACCESS_DENIED");
-        await shouldThrowErrorWithCode2(() => outsider.groupGetTreeCommits({groupId, fromSeq: 0}), "ACCESS_DENIED");
+        // The signed chain is public info, though: a client that pinned the group replays it to catch up.
+        const chain = await outsider.groupGetTreeCommits({groupId, fromSeq: 0});
+        assert(chain.commits.length === 1 && chain.commits[0].seq === 1, "the chain should be served");
+        assert(Object.keys(chain).every(k => ["commits", "genesisUsers", "genesisManagers"].includes(k)), `unexpected fields: ${Object.keys(chain).join(",")}`);
         
         await this.apis.contextApi.groupSetVisibility({groupId, visibleTo: "members"});
+        await shouldThrowErrorWithCode2(() => outsider.groupGetTreeCommits({groupId, fromSeq: 0}), "ACCESS_DENIED");
         await shouldThrowErrorWithCode2(() => outsider.groupGetPublicKey({groupId}), "GROUP_DOES_NOT_EXIST");
     }
     
