@@ -182,6 +182,22 @@ export class SpaceService extends BaseContainerService {
         }
     }
     
+    /**
+     * Holds every group the space wraps at or above the group's floors, inside the space's transaction. The group
+     * document is written as well (`touchLadder`), so a floor raised concurrently (`groupCutEra`,
+     * `groupPruneArchive`, a removal abandoning history: each writes that document too) is a write conflict and
+     * one transaction re-runs against the other's result. A check alone would be write skew: each side would pass
+     * against the other's old state, and the space would hold a key nobody can sign through any more.
+     */
+    static async assertGroupFloors(groupRepository: Pick<ReturnType<RepositoryFactory["createGroupRepository"]>, "get"|"touchLadder">, groups: db.space.Space["groups"]) {
+        for (const g of groups) {
+            const group = await groupRepository.get(g.groupId);
+            if (!group || g.groupKeyVersion < Math.max(group.eraFloor, group.archivePrunedBelow ?? 0) || !await groupRepository.touchLadder(group)) {
+                throw new AppException("SPACE_KEYS_INVALID", `group '${g.groupId}' no longer reaches epoch ${g.groupKeyVersion}`);
+            }
+        }
+    }
+    
     private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView> {
         const [view] = await this.views([space], caller, currentKeysOnly);
         return view;
@@ -283,7 +299,10 @@ export class SpaceService extends BaseContainerService {
             version: 1,
         };
         try {
-            await this.repositoryFactory.withTransaction(session => this.repositoryFactory.createSpaceRepository(session).insert(space, model.keys));
+            await this.repositoryFactory.withTransaction(async session => {
+                await SpaceService.assertGroupFloors(this.repositoryFactory.createGroupRepository(session), space.groups);
+                await this.repositoryFactory.createSpaceRepository(session).insert(space, model.keys);
+            });
         }
         catch (err) {
             if (err instanceof DbDuplicateError) {
@@ -403,6 +422,9 @@ export class SpaceService extends BaseContainerService {
             const repository = this.repositoryFactory.createSpaceRepository(session);
             if (!await repository.update(space, all)) {
                 throw new AppException("SPACE_VERSION_MISMATCH");
+            }
+            if (changes.groups) {
+                await SpaceService.assertGroupFloors(this.repositoryFactory.createGroupRepository(session), changes.groups);
             }
             await keys?.(repository);
             if (statement) {

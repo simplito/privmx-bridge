@@ -84,3 +84,19 @@ it("stores a key entry under an id that tells groups from users", () => {
     assert.deepStrictEqual([forGroup.groupId, forGroup.groupKeyVersion, forGroup.userId], ["x", 5, undefined]);
     assert.deepStrictEqual([forUser.groupId, forUser.userId], [undefined, "x"]);
 });
+
+it("refuses to wrap a group below its floors, and writes the group so a concurrent floor change conflicts", async () => {
+    const touched: string[] = [];
+    const repo = {
+        get: async (id: types.group.GroupId) => ({id, eraFloor: 3, archivePrunedBelow: id === g2 ? 5 : undefined}),
+        touchLadder: async (group: {id: string}) => touched.push(group.id) > 0,
+    } as never;
+    const at = (groupId: types.group.GroupId, groupKeyVersion: number) => [{groupId, groupKeyVersion, role: "user" as const, groupPubKey: "k" as types.cloud.GroupPubKey}];
+    await SpaceService.assertGroupFloors(repo, at(g1, 3));
+    assert.deepStrictEqual(touched, ["g1"]);
+    await assert.rejects(SpaceService.assertGroupFloors(repo, at(g1, 2)), (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
+    await assert.rejects(SpaceService.assertGroupFloors(repo, at(g2, 4)), (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
+    // The floors moved since the read: nothing written, refused.
+    await assert.rejects(SpaceService.assertGroupFloors({...(repo as object), touchLadder: async () => false} as never, at(g1, 3)),
+        (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
+});
