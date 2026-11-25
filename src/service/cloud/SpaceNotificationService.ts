@@ -43,8 +43,8 @@ export class SpaceNotificationService {
     }
     
     /** Every recipient: the users the space names and the members of the groups it names. */
-    private async recipientKeys(space: db.space.Space, alsoUsers: types.cloud.UserId[] = []) {
-        const {groupsByUser} = await this.repositoryFactory.createGroupRepository().getGranteeView(space.groups.map(g => g.groupId));
+    private async recipientKeys(space: db.space.Space, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
+        const {groupsByUser} = await this.repositoryFactory.createGroupRepository().getGranteeView([...space.groups.map(g => g.groupId), ...alsoGroups]);
         const userIds = [...new Set([...space.users.map(u => u.userId), ...groupsByUser.keys(), ...alsoUsers])];
         const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(space.contextId, userIds);
         return contextUsers.map(user => user.userPubKey);
@@ -72,12 +72,12 @@ export class SpaceNotificationService {
         });
     }
     
-    /** @param alsoUsers users who are no longer recipients and are told once more, so their client can let go. */
-    sendUpdatedSpace(space: db.space.Space, changeKind: contextApi.SpaceChangeKind, alsoUsers: types.cloud.UserId[] = []) {
+    /** @param alsoUsers and @param alsoGroups recipients no longer in the space, told once more so their clients can let go. */
+    sendUpdatedSpace(space: db.space.Space, changeKind: contextApi.SpaceChangeKind, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
         this.safe("spaceUpdated", async () => {
             await this.sendToBackend(space.contextId, {channel: "space", type: "spaceUpdated", data: this.changedData(space, changeKind), timestamp: DateUtils.now()});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceUpdatedEvent>(
-                await this.recipientKeys(space, alsoUsers),
+                await this.recipientKeys(space, alsoUsers, alsoGroups),
                 {contextId: space.contextId, containerId: space.id, channel: "context/spaces/update" as types.core.WsChannelName},
                 {channel: "context", type: "spaceUpdated", data: this.changedData(space, changeKind), timestamp: DateUtils.now()},
             );

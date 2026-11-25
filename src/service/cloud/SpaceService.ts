@@ -351,7 +351,7 @@ export class SpaceService extends BaseContainerService {
             }
             await repository.insertKeys(space.id, model.keys);
         }, model.statement);
-        this.spaceNotificationService.sendUpdatedSpace(changed, removing ? "recipientsRemoved" : "keyRotated", removedUsers);
+        this.spaceNotificationService.sendUpdatedSpace(changed, removing ? "recipientsRemoved" : "keyRotated", removedUsers, removedGroups);
         return changed;
     }
     
