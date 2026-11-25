@@ -141,7 +141,7 @@ function treeBackedGroup(overrides: Partial<TreeGroup> = {}): TreeGroup {
 }
 
 function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rateLimited?: boolean, casMiss?: boolean, rungs?: types.cloud.GroupArchiveRung[], maxGroupMembers?: number,
-    publicMetaKeyVersion?: number, privateMetaKeyVersion?: number, contextPolicy?: types.context.ContextPolicy} = {}) {
+    publicMetaKeyVersion?: number, privateMetaKeyVersion?: number, contextPolicy?: types.context.ContextPolicy, spaceAtGroupKeyVersion?: number} = {}) {
     let archiveWindow: {from?: number, to?: number}|null = null;
     const repositoryFactory = createMock<RepositoryFactory>({});
     const cloudKeyService = createMock<CloudKeyService>({});
@@ -165,6 +165,9 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
+    // A space naming the group, holding its key at `spaceAtGroupKeyVersion`.
+    mock(repositoryFactory, "createSpaceRepository", (() => ({isGroupHeldBelow: async (_id: types.group.GroupId, keyVersion: number) =>
+        options.spaceAtGroupKeyVersion !== undefined && options.spaceAtGroupKeyVersion < keyVersion})) as never);
     mock(repositoryFactory, "withTransaction", f => f({} as mongodb.ClientSession));
     
     mock(cloudKeyService, "checkUsersExistance", async () => {});
@@ -963,6 +966,32 @@ it("cutEra allows a floor both planes sit at or above", async () => {
     const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 3, privateMetaKeyVersion: 4});
     await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH});
     hasOneCall(groupRepository.cutEra);
+});
+
+// A statement signed through the group has to verify under the key a space holds for it; an unreachable epoch
+// there would leave the space stale for good.
+it("cutEra refuses a floor above the epoch a space holds the group's key at", async () => {
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 2});
+    await expectFailure("GROUP_IN_USE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.cutEra);
+    await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 2, expectedKeyVersion: EPOCH});
+    hasOneCall(groupRepository.cutEra);
+});
+
+it("pruneArchive refuses a watermark above the epoch a space holds the group's key at", async () => {
+    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 2});
+    await expectFailure("GROUP_IN_USE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
+    hasNoCalls(groupRepository.pruneArchive);
+});
+
+it("removeMember abandoning history refuses while a space holds the group's key", async () => {
+    const group = treeBackedGroup();
+    const {groupService, groupRepository} = createGroupService(group, {spaceAtGroupKeyVersion: EPOCH});
+    await expectFailure("GROUP_IN_USE", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+    // An ordinary removal leaves the epoch reachable, so the space can still be moved on.
+    await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
+    hasOneCall(groupRepository.removeMembersWithTransition);
 });
 
 it("cutEra requires a manager", async () => {

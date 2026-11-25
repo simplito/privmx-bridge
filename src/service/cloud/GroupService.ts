@@ -11,6 +11,7 @@ limitations under the License.
 
 /* eslint-disable max-classes-per-file */
 import * as types from "../../types";
+import * as mongodb from "mongodb";
 import * as db from "../../db/Model";
 import { AppException } from "../../api/AppException";
 import { RepositoryFactory } from "../../db/RepositoryFactory";
@@ -696,6 +697,10 @@ export class GroupService extends BaseContainerService {
                 // It cuts the era as `groupCutEra` would: that call's rule as well as its ACL.
                 throw new AppException("ACCESS_DENIED", "policy is not met");
             }
+            if (model.abandonHistory) {
+                // The era closes at the new epoch, so every space holding the group's key is stranded below it.
+                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1);
+            }
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
                     throw new AppException("INVALID_PARAMS", `user '${userId}' is not a member`);
@@ -824,6 +829,7 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("INVALID_PARAMS", `newFloor cannot exceed the current epoch ${keyVersion}`);
             }
             await this.assertMetaSurvivesFloor(groupRepository, model.id, model.newFloor);
+            await this.assertSpacesSurviveFloor(session, model.id, model.newFloor);
             const result = await groupRepository.cutEra(oldGroup, model.newFloor);
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
@@ -851,6 +857,7 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("INVALID_PARAMS", `belowEpoch cannot exceed the current epoch ${keyVersion}`);
             }
             await this.assertMetaSurvivesFloor(groupRepository, model.id, model.belowEpoch);
+            await this.assertSpacesSurviveFloor(session, model.id, model.belowEpoch);
             const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
@@ -989,6 +996,18 @@ export class GroupService extends BaseContainerService {
             const how = stranded.map(entry => entry.fix).join(" and ");
             throw new AppException("GROUP_META_UNREACHABLE",
                 `${where}, below the requested floor ${floor}; call ${how} first to rewrite ${stranded.length > 1 ? "them" : "it"} at the current epoch`);
+        }
+    }
+    
+    /**
+     * Refuses to strand a space below a floor. A statement signed through the group has to verify under the group
+     * key the space holds (the epoch it was last wrapped to); with that epoch unreachable nobody could sign one, and
+     * the space would stay stale for good.
+     */
+    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number) {
+        if (await this.repositoryFactory.createSpaceRepository(session).isGroupHeldBelow(groupId, floor)) {
+            throw new AppException("GROUP_IN_USE",
+                `a space holds the group's key at an epoch below ${floor}; rotate that space's key to the group's current epoch, or remove the group from it, first`);
         }
     }
     

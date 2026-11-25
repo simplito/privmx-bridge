@@ -121,6 +121,12 @@ export class SpaceRepository {
         return (await this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).limit(1).array()).length > 0;
     }
     
+    /** Whether a space still holds the group's key at an epoch below `keyVersion`. */
+    async isGroupHeldBelow(groupId: types.group.GroupId, keyVersion: number) {
+        const filter = {groups: {$elemMatch: {groupId: groupId, groupKeyVersion: {$lt: keyVersion}}}};
+        return !!await this.repository.collection.findOne(filter as mongodb.Filter<any>, {...this.repository.getOptions(), projection: {_id: 1}});
+    }
+    
     async getByGroup(groupId: types.group.GroupId) {
         return this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).array();
     }
