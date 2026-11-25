@@ -405,6 +405,15 @@ export class SpaceService extends BaseContainerService {
         return space;
     }
     
+    /** The context is gone by now, so the backend is told under the solution it had. */
+    async deleteSpacesByContext(contextId: types.context.ContextId, solution: types.cloud.SolutionId) {
+        const repository = this.repositoryFactory.createSpaceRepository();
+        for (const space of await repository.getByContext(contextId)) {
+            await repository.delete(space.id);
+            this.spaceNotificationService.sendDeletedSpace(space, solution);
+        }
+    }
+    
     private async getForChange(cloudUser: CloudUser, id: types.space.SpaceId, acl: SpaceAcl, managerOnly: boolean) {
         const space = await this.repositoryFactory.createSpaceRepository().get(id);
         if (!space) {

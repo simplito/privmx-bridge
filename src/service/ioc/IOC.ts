@@ -1016,6 +1016,7 @@ export class IOC {
                 this.getInboxService(),
                 this.getStreamService(),
                 this.getGroupService(),
+                this.getSpaceService(),
                 this.getContextNotificationService(),
                 this.workerRegistry.getActiveUsersMap(),
                 this.getInstanceHost(),

@@ -38,3 +38,21 @@ it("tells the members of a removed group that they were removed", async () => {
     assert.deepStrictEqual(asked, [["stays", "gone"]]);
     assert.deepStrictEqual(sentTo, ["pub:alice", "pub:bob"]);
 });
+
+it("tells the backend a space was deleted with its context, under the solution the context had", async () => {
+    const toBackend: unknown[] = [];
+    const jobs: Promise<void>[] = [];
+    const service = new SpaceNotificationService(
+        {addJob: (f: () => Promise<void>) => jobs.push(f())} as never,
+        {sendCloudEventAtChannel: () => undefined} as never,
+        {
+            createContextRepository: () => ({get: async () => null}),
+            createGroupRepository: () => ({getGranteeView: async () => ({groupsByUser: new Map()})}),
+            createContextUserRepository: () => ({getUsers: async () => []}),
+        } as never,
+        {sendToPlainUsers: (solution: string, event: {type: string}) => toBackend.push([solution, event.type])} as never,
+    );
+    service.sendDeletedSpace({id: "s", contextId: "c", groups: [], users: []} as unknown as db.space.Space, "sol" as types.cloud.SolutionId);
+    await Promise.all(jobs);
+    assert.deepStrictEqual(toBackend, [["sol", "spaceDeleted"]]);
+});

@@ -22,6 +22,7 @@ import { StoreService } from "./StoreService";
 import { InboxService } from "./InboxService";
 import { StreamService } from "./StreamService";
 import { GroupService } from "./GroupService";
+import { SpaceService } from "./SpaceService";
 import { DbInconsistencyError } from "../../error/DbInconsistencyError";
 import * as db from "../../db/Model";
 import { ContextNotificationService } from "./ContextNotificationService";
@@ -40,6 +41,7 @@ export class ContextService {
         private inboxService: InboxService,
         private streamService: StreamService,
         private groupService: GroupService,
+        private spaceService: SpaceService,
         private contextNotificationService: ContextNotificationService,
         private activeUsersMap: ActiveUsersMap,
         private host: types.core.Host,
@@ -100,9 +102,7 @@ export class ContextService {
         await this.inboxService.deleteInboxesByContext(contextId, context.solution);
         await this.streamService.deleteStreamRoomsByContext(contextId, context.solution);
         // Before the groups: a space names groups, never the other way round.
-        for (const space of await this.repositoryFactory.createSpaceRepository().getByContext(contextId)) {
-            await this.repositoryFactory.createSpaceRepository().delete(space.id);
-        }
+        await this.spaceService.deleteSpacesByContext(contextId, context.solution);
         await this.groupService.deleteGroupsByContext(contextId);
     }
     

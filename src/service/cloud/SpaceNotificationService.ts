@@ -30,11 +30,11 @@ export class SpaceNotificationService {
     ) {
     }
     
-    /** The same event for the application's backend, on its `space` channel. Nothing is sent once the context is gone. */
-    private async sendToBackend(contextId: types.context.ContextId, event: SpaceNotifyEvent) {
-        const context = await this.repositoryFactory.createContextRepository().get(contextId);
-        if (context) {
-            this.webSocketPlainSender.sendToPlainUsers(context.solution, event);
+    /** The same event for the application's backend, on its `space` channel. Without `solution`, nothing is sent once the context is gone. */
+    private async sendToBackend(contextId: types.context.ContextId, event: SpaceNotifyEvent, solution?: types.cloud.SolutionId) {
+        solution ??= (await this.repositoryFactory.createContextRepository().get(contextId))?.solution;
+        if (solution) {
+            this.webSocketPlainSender.sendToPlainUsers(solution, event);
         }
     }
     
@@ -93,9 +93,10 @@ export class SpaceNotificationService {
         });
     }
     
-    sendDeletedSpace(space: db.space.Space) {
+    /** @param solution the context's, when the context is already deleted. */
+    sendDeletedSpace(space: db.space.Space, solution?: types.cloud.SolutionId) {
         this.safe("spaceDeleted", async () => {
-            await this.sendToBackend(space.contextId, {channel: "space", type: "spaceDeleted", data: {spaceId: space.id, contextId: space.contextId}, timestamp: DateUtils.now()});
+            await this.sendToBackend(space.contextId, {channel: "space", type: "spaceDeleted", data: {spaceId: space.id, contextId: space.contextId}, timestamp: DateUtils.now()}, solution);
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceDeletedEvent>(
                 await this.recipientKeys(space),
                 {contextId: space.contextId, containerId: space.id, channel: "context/spaces/delete" as types.core.WsChannelName},
