@@ -67,7 +67,7 @@ export class CommitStatement {
     /** Whether `date` is unacceptable for a statement extending one dated `notBefore`, at bridge time `now`.
      *  Dates never go back and are at most T behind the clock. Past `now + T` only a date equal to `notBefore` is
      *  taken, so a forward-dated statement cannot freeze the honest commits after it nor be moved further ahead. */
-    private static isBadDate(date: number, notBefore: number, now: number): boolean {
+    static isBadDate(date: number, notBefore: number, now: number): boolean {
         const tolerance = CommitStatement.DATE_TOLERANCE_MS;
         return !Number.isSafeInteger(date) || date < notBefore || date < now - tolerance || date > Math.max(now + tolerance, notBefore);
     }

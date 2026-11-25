@@ -100,3 +100,21 @@ it("refuses to wrap a group below its floors, and writes the group so a concurre
     await assert.rejects(SpaceService.assertGroupFloors({...(repo as object), touchLadder: async () => false} as never, at(g1, 3)),
         (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
 });
+
+it("refuses a statement dated off the bridge's clock, as a group statement is", () => {
+    const st = {spaceId: "s", contextId: "c", seq: 1, prevDigest: "", op: "create", keyVersion: 9} as unknown as types.cloud.SpaceStatement;
+    const check = (date: number) => {
+        try {
+            SpaceService.assertStatement({...st, date}, {spaceId: "s" as types.space.SpaceId, contextId: "c" as types.context.ContextId, op: "create", keyVersion: 1,
+                after: {groups: [], users: []}, caller: {userId: alice, pubKey: pub, ownGroupIds: []}, managerOnly: true});
+        }
+        catch (e) {
+            return AppException.is(e, "SPACE_STATEMENT_INVALID") ? String(e.data) : "other";
+        }
+        return "accepted";
+    };
+    assert.match(check(1), /date/);
+    assert.match(check(Date.now() + 60 * 60 * 1000), /date/);
+    // On time it gets past the date, to the next check.
+    assert.match(check(Date.now()), /key version/);
+});

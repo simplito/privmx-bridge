@@ -25,6 +25,7 @@ import { Crypto } from "../../utils/crypto/Crypto";
 import { ByteWriter } from "./keytree/ByteWriter";
 import { DateUtils } from "../../utils/DateUtils";
 import { SpaceStatement } from "./SpaceStatement";
+import { CommitStatement } from "./keytree/CommitStatement";
 import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
 
 type Caller = {userId: types.cloud.UserId, pubKey: types.cloud.UserPubKey, ownGroupIds: types.group.GroupId[]};
@@ -139,6 +140,10 @@ export class SpaceService extends BaseContainerService {
         }
         if (st.op !== x.op) {
             bad(`the statement is a '${st.op}', the call a '${x.op}'`);
+        }
+        // The same bound as a group statement's, so a forward-dated statement cannot freeze the ones after it.
+        if (CommitStatement.isBadDate(st.date, x.prior ? x.prior.statement.date : 0, DateUtils.now())) {
+            bad("date is off the bridge's clock or before the statement it extends");
         }
         if (st.keyVersion !== x.keyVersion) {
             bad(`the statement names key version ${st.keyVersion}, the change makes ${x.keyVersion}`);
