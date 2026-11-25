@@ -21,10 +21,12 @@ export class ContextApiValidator extends BaseValidator {
     /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
     static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
     /** Wrapped keys per space call. Adding recipients sends every key version for each of them, so this is what
-     *  bounds recipients times versions in one `spaceAddRecipients`.
+     *  bounds recipients times versions in one `spaceAddRecipients`. An entry is at most ~5.2 KB of JSON (4 KB of
+     *  data, 1 KB of signature), so a call stays near 21 MB: well under the WebSocket's 100 MiB message limit,
+     *  which is the only bound a request body has (HTTP reads it whole). 16384 came to ~85 MB, at that limit.
      *  ponytail: a space rotated more often than this divided by the recipients added cannot take them in one
      *  call; serve the old versions from a ladder, as groups do, when a space gets that old. */
-    static readonly MAX_SPACE_KEY_ENTRIES = 16384;
+    static readonly MAX_SPACE_KEY_ENTRIES = 4096;
     
     constructor(
         private tv: TypesValidator,
