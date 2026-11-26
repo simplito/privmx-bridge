@@ -20,6 +20,7 @@ import type * as elliptic from "elliptic";
 import { Crypto } from "../../../utils/crypto/Crypto";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
+import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { signSpaceStatement, UnsignedSpaceStatement } from "../../testUtils/SpaceFixtures";
 import { buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rungsFor, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 
@@ -113,23 +114,25 @@ export class SpaceTests extends BaseTestSet {
         
         // A new key wrapped to the epoch the group has left is refused.
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 1), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 1), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", me),
         }), "SPACE_KEYS_INVALID");
         // Any recipient may rotate: bob is only a user of the space.
         const rotated = await (await this.apiOf(bob)).spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", bob),
         });
         assert(rotated.keyVersion === 2, `rotation should give key version 2, got ${rotated.keyVersion}`);
         const fresh = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(!fresh.keyIsStale && fresh.keyVersion === 2 && fresh.keyId === "space-key-2", "the rotation clears the stale mark");
         assert(fresh.groups[0].groupKeyVersion === 2, "the new key is wrapped to the group's new epoch");
-        assert(fresh.keys.length === 4, `both versions stay readable, got ${fresh.keys.length} entries`);
+        assert(fresh.keys.length === 2 && fresh.keys.every(k => k.keyVersion === 2), `only the current version is wrapped, got ${fresh.keys.length} entries`);
+        const archive = await (await this.apiOf(bob)).spaceGetKeyArchive({id: spaceId});
+        assert(JSON.stringify(archive.rungs) === JSON.stringify(this.rungsOf(2)) && archive.nextKeyVersion === undefined, `version 1 is reached down the rung: ${JSON.stringify(archive)}`);
         
         // A rotation planned against the old version loses.
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3, 2), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3, 2), rungs: this.rungsOf(3), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", me),
         }), "SPACE_VERSION_MISMATCH");
         // A listing serves the current version's entries only.
@@ -176,17 +179,17 @@ export class SpaceTests extends BaseTestSet {
         // Removing the group moves the key on; whoever stays gets the new version, the group nothing.
         const staying: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, bobDirect];
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRemoveRecipients({
-            id: spaceId, users: [me, bob], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor([{groupId, role: "user"}], 2, 1), expectedKeyVersion: 1,
+            id: spaceId, users: [me, bob], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor([{groupId, role: "user"}], 2, 1), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "remove", me, {removeUsers: [me, bob]}),
         }), "SPACE_LAST_MANAGER");
         const removed = await this.apis.contextApi.spaceRemoveRecipients({
-            id: spaceId, groups: [groupId], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(staying, 2), expectedKeyVersion: 1,
+            id: spaceId, groups: [groupId], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(staying, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "remove", me, {removeGroups: [groupId]}),
         });
         assert(removed.keyVersion === 2, "removing a recipient opens a new key version");
         const after = (await asBob.spaceGet({id: spaceId})).space;
         assert(after.groups.length === 0 && after.users.length === 2, "the group is gone from the recipients");
-        assert(after.keys.every(k => "userId" in k.recipient) && after.keys.length === 2, "the removed group's entries are gone, bob keeps both versions of his");
+        assert(after.keys.length === 1 && "userId" in after.keys[0].recipient && after.keys[0].keyVersion === 2, "the removed group's entries are gone, bob keeps the current version of his");
         // Carol reached the space through the group only.
         await shouldThrowErrorWithCode2(async () => (await this.apiOf(carol)).spaceGet({id: spaceId}), "ACCESS_DENIED");
         
@@ -289,7 +292,7 @@ export class SpaceTests extends BaseTestSet {
         const asBob = await this.apiOf(bob);
         const bobDirect: Recipient = {userId: bob, pubKey: bobPub, role: "user"};
         const rotate = (statement: Statement, api = this.apis.contextApi) => api.spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2), expectedKeyVersion: 1, statement,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1, statement,
         });
         const refused = async (twist: Twist, code = "SPACE_STATEMENT_INVALID") =>
             shouldThrowErrorWithCode2(async () => rotate(await this.next(spaceId, "rotate", me, {}, twist)), code as never);
@@ -321,13 +324,16 @@ export class SpaceTests extends BaseTestSet {
         // The same statement a second time is a statement for a seq that is taken.
         const stale = (await this.apis.contextApi.spaceGet({id: spaceId})).space.statement;
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3), expectedKeyVersion: 2, statement: stale,
+            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3), rungs: this.rungsOf(3), expectedKeyVersion: 2, statement: stale,
         }), "SPACE_VERSION_MISMATCH");
         
         // An addition keeps the key, and every recipient before it as it was.
-        const add = (statement: Statement) => this.apis.contextApi.spaceAddRecipients({
-            id: spaceId, recipients: [bobDirect], keys: [...this.keysFor([bobDirect], 1), ...this.keysFor([bobDirect], 2)], statement,
+        const add = (statement: Statement, keys = this.keysFor([bobDirect], 2)) => this.apis.contextApi.spaceAddRecipients({
+            id: spaceId, recipients: [bobDirect], keys, statement,
         });
+        // A newcomer gets the current version only; older ones it reaches down the rungs.
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}), [...this.keysFor([bobDirect], 1), ...this.keysFor([bobDirect], 2)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}), this.keysFor([bobDirect], 1)), "SPACE_KEYS_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
             st.keyCommit = this.commit();
         }})), "SPACE_STATEMENT_INVALID");
@@ -359,6 +365,56 @@ export class SpaceTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => asBob.spaceGetStatements({id: hidden, fromSeq: 0, limit: 10}), "ACCESS_DENIED");
         assert(await this.apis.contextApi.spaceDelete({id: hidden}) === "OK", "spaceDelete did not return OK");
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.spaceGetStatements({id: hidden, fromSeq: 0, limit: 10}), "SPACE_DOES_NOT_EXIST");
+    }
+    
+    @Test()
+    async shouldTakeOnlyTheCanonicalRungsAndServeThemAPageOfVersionsAtATime() {
+        const groupId = await this.createGroup();
+        const recipients: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}];
+        const spaceId = await this.createSpace(recipients);
+        const rotate = async (keyVersion: number, rungs: types.cloud.SpaceRung[]) => this.apis.contextApi.spaceRotateKey({
+            id: spaceId, keyId: `space-key-${keyVersion}` as types.core.KeyId, keys: this.keysFor(recipients, keyVersion), rungs, expectedKeyVersion: keyVersion - 1,
+            statement: await this.next(spaceId, "rotate", me),
+        });
+        const rung = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: b64(`rung ${at}->${target}`)});
+        
+        // Version 2 owes the rung to 1, nothing else and nothing at another version.
+        await shouldThrowErrorWithCode2(() => rotate(2, []), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(2, [rung(3, 2)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(2, [rung(2, 1), rung(2, 1)]), "SPACE_KEYS_INVALID");
+        assert((await rotate(2, this.rungsOf(2))).keyVersion === 2, "rotation to 2");
+        assert((await rotate(3, this.rungsOf(3))).keyVersion === 3, "rotation to 3");
+        // Version 4 owes the rungs to 3 and to 2: one missing, or one more, is refused.
+        await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3), rung(4, 2), rung(4, 1)]), "SPACE_KEYS_INVALID");
+        assert((await rotate(4, this.rungsOf(4))).keyVersion === 4, "rotation to 4");
+        
+        // The older versions' wraps are gone: a reader descends from the current one.
+        const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
+        assert(space.keys.length === 2 && space.keys.every(k => k.keyVersion === 4), `only version 4 is wrapped: ${JSON.stringify(space.keys)}`);
+        const asBob = await this.apiOf(bob);
+        const all = await asBob.spaceGetKeyArchive({id: spaceId});
+        const spans = (rungs: types.cloud.SpaceRung[]) => rungs.map(r => `${r.atKeyVersion}->${r.targetKeyVersion}`).join();
+        assert(spans(all.rungs) === "2->1,3->2,4->2,4->3" && all.nextKeyVersion === undefined, `the whole ladder: ${spans(all.rungs)}`);
+        assert(all.rungs.every(r => r.data === rung(r.atKeyVersion, r.targetKeyVersion).data), "a rung comes back as it was sent");
+        const first = await asBob.spaceGetKeyArchive({id: spaceId, limit: 2});
+        assert(spans(first.rungs) === "2->1" && first.nextKeyVersion === 3, `first page: ${JSON.stringify(first)}`);
+        const rest = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: first.nextKeyVersion, limit: 2});
+        assert(spans(rest.rungs) === "3->2,4->2,4->3" && rest.nextKeyVersion === undefined, `second page: ${JSON.stringify(rest)}`);
+        const window = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});
+        assert(spans(window.rungs) === "3->2" && window.nextKeyVersion === undefined, `closed window: ${JSON.stringify(window)}`);
+        
+        // Only a recipient reads the ladder, and it goes with the space.
+        const hidden = await this.createSpace([{userId: me, pubKey: myPub, role: "manager"}]);
+        await shouldThrowErrorWithCode2(() => asBob.spaceGetKeyArchive({id: hidden}), "ACCESS_DENIED");
+        assert(await this.apis.contextApi.spaceDelete({id: spaceId}) === "OK", "spaceDelete did not return OK");
+        await shouldThrowErrorWithCode2(() => asBob.spaceGetKeyArchive({id: spaceId}), "SPACE_DOES_NOT_EXIST");
+    }
+    
+    /** The canonical rungs of `keyVersion` (`LadderMath.rungSpansFor(keyVersion, 1)`); the data is a label, not a sealed key. */
+    private rungsOf(keyVersion: number): types.cloud.SpaceRung[] {
+        return LadderMath.rungSpansFor(keyVersion, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: b64(`rung ${span.at}->${span.target}`)}))
+            .sort((a, b) => a.targetKeyVersion - b.targetKeyVersion);
     }
     
     /** One entry per recipient at `keyVersion`; a group's names `groupEpoch`, or the epoch the group is at. The data is a label, not a wrap. */

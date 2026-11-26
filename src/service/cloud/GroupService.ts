@@ -1203,15 +1203,9 @@ export class GroupService extends BaseContainerService {
      * would encrypt a later epoch's key under an earlier one, handing anyone with an old key everything after.
      */
     private assertRungsAreValid(rungs: types.cloud.GroupArchiveRungSubmission[], newKeyVersion: number, group: db.group.Group) {
-        const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
-        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor);
+        const result = LadderMath.validateRungSubmission(rungs, newKeyVersion, group.eraFloor);
         if (!result.ok) {
             throw new AppException("GROUP_ARCHIVE_INVALID", result.problem);
-        }
-        for (const rung of rungs) {
-            if (!rung.data) {
-                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: rung.atKeyVersion, target: rung.targetKeyVersion});
-            }
         }
     }
     

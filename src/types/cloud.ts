@@ -351,6 +351,18 @@ export interface SpaceKeyEntry {
     signature: types.core.Base64;
 }
 
+/**
+ * One rung of a space's key ladder: key version `targetKeyVersion` sealed under key version `atKeyVersion`, as
+ * base64 `iv || ciphertext || tag` of AES-256-GCM. A rotation to version v publishes exactly the rungs of
+ * `LadderMath.rungSpansFor(v, 1)`: the unit rung v -> v-1 and the aligned skips. Not signed: a reader checks every
+ * key it derives against the `keyCommit` of the space's signed history, so a forged rung only fails that check.
+ */
+export interface SpaceRung {
+    atKeyVersion: number;
+    targetKeyVersion: number;
+    data: types.core.Base64;
+}
+
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
 export interface ContainerGrantees {
     groups?: GroupGrant[];

@@ -863,25 +863,29 @@ export interface SpaceIdModel {
 }
 
 export interface SpaceGetResult {
-    /** `keys` are those of the current key version only; older versions come from `spaceGetKeys`. */
+    /** `keys` are those of the current key version only; older versions are reached down the rungs of `spaceGetKeyArchive`. */
     space: SpaceInfo;
 }
 
-export interface SpaceGetKeysModel {
+/**
+ * Fetches the rungs of a space's key ladder, a page of key versions at a time. A reader unwraps the current key
+ * version and descends: from version a it takes a rung (a -> t) to the lowest t still at or above the version it
+ * wants, and repeats. Every key so derived is checked against the `keyCommit` of the signed history.
+ */
+export interface SpaceGetKeyArchiveModel {
     id: types.space.SpaceId;
-    /** First key version wanted, at least 1. */
-    fromKeyVersion: number;
-    /** Last key version wanted; defaults to the space's current one. */
+    /** The lowest `atKeyVersion` wanted, at least 1; default 1. Version 1 has no rungs. */
+    fromKeyVersion?: number;
+    /** The highest `atKeyVersion` wanted; defaults to, and is capped at, the space's current key version. */
     toKeyVersion?: number;
-    /** Key versions per page, 1 to 256; default 64. */
+    /** Key versions per page, 1 to 256; default 256. */
     limit?: number;
 }
 
-export interface SpaceGetKeysResult {
-    /** The entries the caller can open — its own user entry and those of the groups it belongs to — for the versions
-     *  of the page, ascending by key version. */
-    keys: types.cloud.SpaceKeyEntry[];
-    /** Set when versions up to `toKeyVersion` remain: ask again from it. */
+export interface SpaceGetKeyArchiveResult {
+    /** Every rung at the versions of the page, ascending by `atKeyVersion` (then `targetKeyVersion`). */
+    rungs: types.cloud.SpaceRung[];
+    /** Set when versions up to `toKeyVersion` remain: ask again with it as `fromKeyVersion`. */
     nextKeyVersion?: number;
 }
 
@@ -891,8 +895,8 @@ export interface SpaceListModel extends types.core.ListModel {
 }
 
 export interface SpaceListResult {
-    /** `keys` of a listed space are those of its current key version only, as in `spaceGet`; older versions come
-     *  from `spaceGetKeys`. */
+    /** `keys` of a listed space are those of its current key version only, as in `spaceGet`; older versions are
+     *  reached down the rungs of `spaceGetKeyArchive`. */
     spaces: SpaceInfo[];
     count: number;
 }
@@ -900,7 +904,7 @@ export interface SpaceListResult {
 export interface SpaceAddRecipientsModel {
     id: types.space.SpaceId;
     recipients: types.cloud.SpaceRecipient[];
-    /** Every key version of the space, for every new recipient. */
+    /** The current key version only, one entry per new recipient: older versions are reached down the rungs. */
     keys: types.cloud.SpaceKeyEntry[];
     /** The next statement, op `add`: the recipients before, unchanged, and the new ones; the key version and `keyCommit` stay. */
     statement: types.cloud.SpaceStatement;
@@ -909,8 +913,14 @@ export interface SpaceAddRecipientsModel {
 export interface SpaceRotateKeyModel {
     id: types.space.SpaceId;
     keyId: types.core.KeyId;
-    /** The next key version, one entry per recipient that stays. */
+    /** The next key version, one entry per recipient that stays. Once the rotation lands, the wraps of older
+     *  versions are deleted: those versions are reached down the rungs. */
     keys: types.cloud.SpaceKeyEntry[];
+    /** The rungs of the next key version v: exactly one to each target of `LadderMath.rungSpansFor(v, 1)` — the unit
+     *  rung v -> v-1 and the aligned skips v -> v-2^j (v=2: [1]; v=4: [3,2]; v=8: [7,6,4]), each
+     *  `AES-256-GCM(K_v, iv, K_t, aad = "pmx-space-rung\0" || lp(spaceId) || u64be(v) || u64be(t))`. Anything else is
+     *  refused with `SPACE_KEYS_INVALID`. */
+    rungs: types.cloud.SpaceRung[];
     expectedKeyVersion: number;
     /** The next statement, op `rotate` (or `remove`): whoever stays, each group at its current epoch and key, at the new key version. */
     statement: types.cloud.SpaceStatement;
@@ -1028,12 +1038,12 @@ export interface IContextApi {
      */
     spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
     /**
-     * Reads a page of the wrapped keys of a space's older versions the caller can open: its own user entry and the
-     * entries of the groups it belongs to. For a recipient, as `spaceGet`.
+     * Reads a page of the rungs of a space's key ladder, by the key version they sit at. For a recipient, as
+     * `spaceGet`; needs the `context/spaceGetKeyArchive` ACL entry (in `context/READ`).
      * @param model id of the space, the key versions wanted and how many per page
-     * @returns the entries, ascending by key version, and where to continue
+     * @returns the rungs, ascending by key version, and where to continue
      */
-    spaceGetKeys(model: SpaceGetKeysModel): Promise<SpaceGetKeysResult>;
+    spaceGetKeyArchive(model: SpaceGetKeyArchiveModel): Promise<SpaceGetKeyArchiveResult>;
     /**
      * Reads the signed statements of a space's history, oldest first. For a recipient, as `spaceGet`.
      * @param model id of the space, the seq to read after, and how many
@@ -1053,7 +1063,7 @@ export interface IContextApi {
      */
     spaceDelete(model: SpaceIdModel): Promise<types.core.OK>;
     /**
-     * Adds recipients, with every version of the key wrapped for each. Managers only.
+     * Adds recipients, with the current version of the key wrapped for each. Managers only.
      * @param model id of the space, the new recipients and their wraps
      * @returns "OK"
      */

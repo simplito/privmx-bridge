@@ -248,6 +248,34 @@ export class LadderMath {
         return {ok: true};
     }
     
+    /**
+     * Validates the rungs submitted with a new key version of any ladder — a group's epoch or a space's key version:
+     * `validateRungSet` on their spans, then data in every rung. With `complete`, also every span the version owes
+     * (`rungSpansFor`), skips included: a space has one writer per version and no repair, so a skip left out is gone.
+     */
+    static validateRungSubmission(
+        rungs: {atKeyVersion: number, targetKeyVersion: number, data: string}[],
+        newEpoch: number,
+        eraFloor: number,
+        complete = false,
+    ): {ok: true} | {ok: false, problem: LadderProblem} {
+        const result = LadderMath.validateRungSet(rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion})), newEpoch, eraFloor);
+        if (!result.ok) {
+            return result;
+        }
+        if (complete) {
+            const missing = LadderMath.rungSpansFor(newEpoch, eraFloor).find(span => !rungs.some(rung => rung.targetKeyVersion === span.target));
+            if (missing) {
+                return {ok: false, problem: {kind: "RUNG_MISSING", newEpoch, requiredTarget: missing.target}};
+            }
+        }
+        const empty = rungs.find(rung => !rung.data);
+        if (empty) {
+            return {ok: false, problem: {kind: "EMPTY_RUNG_DATA", at: empty.atKeyVersion, target: empty.targetKeyVersion}};
+        }
+        return {ok: true};
+    }
+    
     private static assertEpoch(value: number, name: string): void {
         if (!Number.isInteger(value) || value < 1) {
             throw new Error(`invalid ${name}: ${value}`);
@@ -264,4 +292,6 @@ export type LadderProblem =
     | {kind: "DUPLICATE", rung: RungSpan}
     | {kind: "UNIT_RUNG_MISSING", newEpoch: number, requiredTarget: number}
     | {kind: "FUTURE_EPOCH", rung: RungSpan, currentEpoch: number}
-    | {kind: "NOT_CANONICAL", rung: RungSpan};
+    | {kind: "NOT_CANONICAL", rung: RungSpan}
+    | {kind: "RUNG_MISSING", newEpoch: number, requiredTarget: number}
+    | {kind: "EMPTY_RUNG_DATA", at: number, target: number};

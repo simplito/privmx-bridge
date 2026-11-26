@@ -18,6 +18,7 @@ import { TreeMath } from "./keytree/TreeMath";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
 import { AppException } from "../../api/AppException";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { LadderArchive } from "./keytree/LadderArchive";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
@@ -229,14 +230,8 @@ export class GroupStateRepository {
      * history is as large as an open one.
      */
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        const query = this.rungs.query(q => {
-            const conditions = [q.eq("groupId", groupId), ...GroupStateRepository.range(q, "atKeyVersion", fromKeyVersion, toKeyVersion)];
-            if (minTarget !== undefined) {
-                conditions.push(q.gte("targetKeyVersion", minTarget));
-            }
-            return q.andList(conditions);
-        }).sort("atKeyVersion", true);
-        const rungs = await query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE).array();
+        const rungs = await LadderArchive.readRungs(this.rungs, q => q.eq("groupId", groupId),
+            {from: fromKeyVersion, to: toKeyVersion, minTarget, limit: GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE});
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     

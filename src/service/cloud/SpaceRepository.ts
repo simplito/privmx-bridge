@@ -15,6 +15,7 @@ import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 import * as types from "../../types";
 import * as db from "../../db/Model";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { LadderArchive } from "./keytree/LadderArchive";
 
 export class SpaceRepository {
     
@@ -23,12 +24,14 @@ export class SpaceRepository {
     static readonly KEY_COLLECTION_NAME = "spaceKey";
     static readonly STATEMENT_COLLECTION_NAME = "spaceStatement";
     static readonly TOMBSTONE_COLLECTION_NAME = "spaceTombstone";
+    static readonly RUNG_COLLECTION_NAME = "spaceRung";
     
     constructor(
         private repository: MongoObjectRepository<types.space.SpaceId, db.space.Space>,
         private keys: MongoObjectRepository<string, db.space.SpaceKey>,
         private statements: MongoObjectRepository<string, db.space.SpaceStatementEntry>,
         private tombstones: MongoObjectRepository<types.space.SpaceId, db.space.SpaceTombstone>,
+        private rungs: MongoObjectRepository<string, db.space.SpaceRung>,
     ) {
     }
     
@@ -104,15 +107,22 @@ export class SpaceRepository {
         return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
     }
     
-    /** The caller's wraps — its own and its groups' — of key versions `from`..`to`, ascending. */
-    async getKeyRange(spaceId: types.space.SpaceId, userId: types.cloud.UserId, groupIds: types.group.GroupId[], from: number, to: number) {
-        const filter = {spaceId: spaceId, keyVersion: {$gte: from, $lte: to}, $or: [{userId: userId}, {groupId: {$in: groupIds}}]};
-        const list = await this.keys.collection.find(filter as mongodb.Filter<any>, this.keys.getOptions()).sort({keyVersion: 1}).toArray();
-        return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
+    /** The wraps of versions below `keyVersion`: once a rotation lands, readers reach those versions down the rungs. */
+    async deleteKeysBelow(spaceId: types.space.SpaceId, keyVersion: number) {
+        await this.keys.collection.deleteMany({spaceId: spaceId, keyVersion: {$lt: keyVersion}} as mongodb.Filter<any>, this.keys.getOptions());
     }
     
-    async deleteKeysOf(spaceId: types.space.SpaceId, groupIds: types.group.GroupId[], userIds: types.cloud.UserId[]) {
-        await this.keys.collection.deleteMany({spaceId: spaceId, $or: [{groupId: {$in: groupIds}}, {userId: {$in: userIds}}]} as mongodb.Filter<any>, this.keys.getOptions());
+    async insertRungs(spaceId: types.space.SpaceId, rungs: types.cloud.SpaceRung[]) {
+        if (rungs.length > 0) {
+            const docs = rungs.map(r => ({id: `${spaceId}/${r.atKeyVersion}/${r.targetKeyVersion}`, spaceId, atKeyVersion: r.atKeyVersion, targetKeyVersion: r.targetKeyVersion, data: r.data}));
+            await this.rungs.collection.insertMany(docs.map(d => this.rungs.convertToDbObj(d)), this.rungs.getOptions());
+        }
+    }
+    
+    /** The rungs at key versions `from`..`to`, ascending by `atKeyVersion`. */
+    async getRungs(spaceId: types.space.SpaceId, from: number, to: number): Promise<types.cloud.SpaceRung[]> {
+        const rungs = await LadderArchive.readRungs(this.rungs, q => q.eq("spaceId", spaceId), {from, to});
+        return rungs.map(rung => ({atKeyVersion: rung.atKeyVersion, targetKeyVersion: rung.targetKeyVersion, data: rung.data}));
     }
     
     /** Compare-and-swap on the document's `version`. False when somebody else wrote first. */
@@ -129,6 +139,7 @@ export class SpaceRepository {
         await this.repository.delete(space.id);
         await this.keys.deleteMany(q => q.eq("spaceId", space.id));
         await this.statements.deleteMany(q => q.eq("spaceId", space.id));
+        await this.rungs.deleteMany(q => q.eq("spaceId", space.id));
         await this.tombstones.insert({id: space.id, contextId: space.contextId});
     }
     

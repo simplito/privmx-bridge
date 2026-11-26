@@ -12,6 +12,7 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { LadderMath, RungSpan } from "../../../../service/cloud/keytree/LadderMath";
+import { LadderArchive } from "../../../../service/cloud/keytree/LadderArchive";
 
 /**
  * Unit tests for the Epoch Ladder rules.
@@ -227,7 +228,7 @@ describe("LadderMath.descentFloor", () => {
     it("reports the era boundary when only an era floor applies", () => {
         assert.deepStrictEqual(LadderMath.descentFloor(20), {floor: 20, reason: "ERA_BOUNDARY"});
     });
-
+    
 });
 
 describe("LadderMath.validateRungSet", () => {
@@ -357,5 +358,33 @@ describe("LadderMath.validateRepairSpan", () => {
     
     it("refuses non-integer epoch numbers", () => {
         problem(LadderMath.validateRepairSpan({at: 8, target: 7.5}, 8, 1), "NON_INTEGER");
+    });
+});
+
+describe("LadderMath.validateRungSubmission", () => {
+    const rungs = (at: number, targets: number[], data = "AA==") => targets.map(t => ({atKeyVersion: at, targetKeyVersion: t, data}));
+    const problem = (r: ReturnType<typeof LadderMath.validateRungSubmission>, kind: string) => {
+        assert.ok(!r.ok && r.problem.kind === kind, `expected ${kind}, got ${JSON.stringify(r)}`);
+    };
+    
+    it("takes a group's unit rung alone, but a complete set only with every skip", () => {
+        assert.deepStrictEqual(LadderMath.validateRungSubmission(rungs(8, [7]), 8, 1), {ok: true});
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 6]), 8, 1, true), "RUNG_MISSING");
+        assert.deepStrictEqual(LadderMath.validateRungSubmission(rungs(8, [4, 7, 6]), 8, 1, true), {ok: true});
+    });
+    
+    it("refuses what validateRungSet refuses, and a rung without data", () => {
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 7]), 8, 1, true), "DUPLICATE");
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 6, 4, 5]), 8, 1, true), "NOT_CANONICAL");
+        problem(LadderMath.validateRungSubmission(rungs(2, [1], ""), 2, 1, true), "EMPTY_RUNG_DATA");
+    });
+});
+
+describe("LadderArchive.versionPage", () => {
+    it("pages a window of key versions, capped at the current one", () => {
+        assert.deepStrictEqual(LadderArchive.versionPage(undefined, undefined, 10, 4), {from: 1, upTo: 4, empty: false, next: 5});
+        assert.deepStrictEqual(LadderArchive.versionPage(5, 99, 10, 256), {from: 5, upTo: 10, empty: false, next: undefined});
+        assert.deepStrictEqual(LadderArchive.versionPage(2, 3, 10, 1), {from: 2, upTo: 2, empty: false, next: 3});
+        assert.strictEqual(LadderArchive.versionPage(11, undefined, 10, 4).empty, true);
     });
 });

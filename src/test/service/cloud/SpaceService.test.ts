@@ -133,7 +133,7 @@ describe("a deleted space's id", () => {
             insert: async (doc: {id: string}) => {
                 log.push(`${name}.insert ${doc.id}`);
             },
-            insertMany: async () => {},
+            insertMany: async () => undefined,
             delete: async (id: string) => {
                 log.push(`${name}.delete ${id}`);
             },
@@ -141,11 +141,11 @@ describe("a deleted space's id", () => {
                 log.push(`${name}.deleteMany`);
             },
             get: async (id: types.space.SpaceId) => (name === "tombstones" && tombstoned.includes(id) ? {id} : null),
-            collection: {insertMany: async () => {}},
+            collection: {insertMany: async () => undefined},
             getOptions: () => ({}),
             convertToDbObj: (x: unknown) => x,
         });
-        const repo = new SpaceRepository(collection("spaces") as never, collection("keys") as never, collection("statements") as never, collection("tombstones") as never);
+        const repo = new SpaceRepository(collection("spaces") as never, collection("keys") as never, collection("statements") as never, collection("tombstones") as never, collection("rungs") as never);
         return {repo, log};
     }
     const space = {id: "s1" as types.space.SpaceId, contextId: "c" as types.context.ContextId, statement: {spaceId: "s1", seq: 1}} as unknown as Parameters<SpaceRepository["insert"]>[0];
@@ -154,6 +154,7 @@ describe("a deleted space's id", () => {
         const {repo, log} = repository();
         await repo.delete(space);
         assert.ok(log.includes("tombstones.insert s1"), JSON.stringify(log));
+        assert.ok(log.includes("keys.deleteMany") && log.includes("rungs.deleteMany"), "the wraps and the rungs go with the space");
         const taken = repository(["s1" as types.space.SpaceId]);
         await assert.rejects(() => taken.repo.insert(space, []), (e: unknown) => e instanceof DbDuplicateError);
         assert.ok(!taken.log.some(line => line.startsWith("spaces.insert")), "nothing written");
@@ -231,56 +232,89 @@ describe("which budget a change of a space's key spends", () => {
     });
 });
 
-describe("a space's key versions are served a page at a time", () => {
+describe("a rotation publishes exactly the canonical rungs of its key version", () => {
+    const rungs = (at: number, targets: number[], data = "AA==") => targets.map(t => ({atKeyVersion: at, targetKeyVersion: t, data: data as types.core.Base64}));
+    
+    it("takes the unit rung and the aligned skips, floor 1", () => {
+        SpaceService.assertRungs(rungs(2, [1]), 2);
+        SpaceService.assertRungs(rungs(3, [2]), 3);
+        SpaceService.assertRungs(rungs(4, [2, 3]), 4);
+        SpaceService.assertRungs(rungs(8, [7, 6, 4]), 8);
+        SpaceService.assertRungs(rungs(12, [11, 10, 8]), 12);
+    });
+    
+    it("SECURITY: refuses a set with a rung missing, extra, repeated, upward or at another version", () => {
+        const no = (f: () => void) => assert.throws(f, (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
+        no(() => SpaceService.assertRungs([], 2));
+        no(() => SpaceService.assertRungs(rungs(8, [7, 6]), 8));
+        no(() => SpaceService.assertRungs(rungs(8, [6, 4]), 8));
+        no(() => SpaceService.assertRungs(rungs(8, [7, 6, 4, 5]), 8));
+        no(() => SpaceService.assertRungs(rungs(8, [7, 6, 4, 4]), 8));
+        no(() => SpaceService.assertRungs(rungs(4, [3, 3]), 4));
+        no(() => SpaceService.assertRungs(rungs(3, [4]), 3));
+        no(() => SpaceService.assertRungs(rungs(3, [2]), 4));
+        no(() => SpaceService.assertRungs(rungs(2, [1], ""), 2));
+    });
+});
+
+describe("the rungs of a space are served a page of key versions at a time", () => {
     const space = {id: "s1", contextId: "c", keyVersion: 10, groups: [], users: []} as unknown as db.space.Space;
-    /** A service over a stand-in repository; the caller passes `access` as alice, a member of g1. */
-    function service(asBackend = false) {
-        const calls: {getKeys: unknown[][], getKeyRange: unknown[][]} = {getKeys: [], getKeyRange: []};
+    function service() {
+        const calls: {getKeys: unknown[][], getRungs: unknown[][]} = {getKeys: [], getRungs: []};
+        const acls: string[] = [];
         const repository = {
             get: async () => space,
             getKeys: async (...args: unknown[]) => {
                 calls.getKeys.push(args);
                 return [];
             },
-            getKeyRange: async (...args: unknown[]) => {
-                calls.getKeyRange.push(args);
+            getRungs: async (...args: unknown[]) => {
+                calls.getRungs.push(args);
                 return [];
             },
         };
         const created = new SpaceService({createSpaceRepository: () => repository} as never, null as never, "h" as types.core.Host, null as never, null as never,
             null as never, null as never, {} as Config);
         Object.assign(created, {
-            access: async () => asBackend ? undefined : {userId: alice, pubKey: pub, ownGroupIds: [g1], role: "user"},
+            access: async (_executor: unknown, _space: unknown, acl: string) => {
+                acls.push(acl);
+                return {userId: alice, pubKey: pub, ownGroupIds: [g1], role: "user"};
+            },
             getGroupEpochs: async () => new Map(),
         });
-        return {created, calls};
+        return {created, calls, acls};
     }
+    const id = "s1" as types.space.SpaceId;
     
     it("SECURITY: spaceGet serves the current version only, never every version", async () => {
         const {created, calls} = service();
-        await created.getSpace({} as never, "s1" as types.space.SpaceId);
+        await created.getSpace({} as never, id);
         assert.deepStrictEqual([...(calls.getKeys[0][3] as Map<string, number>)], [["s1", 10]]);
     });
     
-    it("spaceGetKeys pages by key version and says where to continue", async () => {
-        const {created, calls} = service();
-        const first = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 1, limit: 4});
-        assert.deepStrictEqual(calls.getKeyRange[0], ["s1", alice, [g1], 1, 4]);
+    it("pages by key version, says where to continue, and checks the archive's own ACL entry", async () => {
+        const {created, calls, acls} = service();
+        const first = await created.getKeyArchive({} as never, {id, limit: 4});
+        assert.deepStrictEqual(calls.getRungs[0], ["s1", 1, 4]);
         assert.strictEqual(first.nextKeyVersion, 5);
-        const last = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 5});
-        assert.deepStrictEqual(calls.getKeyRange[1], ["s1", alice, [g1], 5, 10], "default 64 versions, capped at the current one");
+        const last = await created.getKeyArchive({} as never, {id, fromKeyVersion: 5});
+        assert.deepStrictEqual(calls.getRungs[1], ["s1", 5, 10], "default 256 versions, capped at the current one");
         assert.strictEqual(last.nextKeyVersion, undefined);
-        const bounded = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 2, toKeyVersion: 3, limit: 1});
-        assert.deepStrictEqual(calls.getKeyRange[2], ["s1", alice, [g1], 2, 2]);
+        const bounded = await created.getKeyArchive({} as never, {id, fromKeyVersion: 2, toKeyVersion: 3, limit: 1});
+        assert.deepStrictEqual(calls.getRungs[2], ["s1", 2, 2]);
         assert.strictEqual(bounded.nextKeyVersion, 3);
-        const past = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 11});
-        assert.deepStrictEqual([past.keys, past.nextKeyVersion, calls.getKeyRange.length], [[], undefined, 3], "nothing past the current version");
+        const past = await created.getKeyArchive({} as never, {id, fromKeyVersion: 11});
+        assert.deepStrictEqual([past.rungs, past.nextKeyVersion, calls.getRungs.length], [[], undefined, 3], "nothing past the current version");
+        assert.ok(acls.every(acl => acl === "context/spaceGetKeyArchive"));
     });
-    
-    it("a backend is served no keys", async () => {
-        const {created, calls} = service(true);
-        assert.deepStrictEqual((await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 1})).keys, []);
-        assert.strictEqual(calls.getKeyRange.length, 0);
+});
+
+describe("a rotation's wraps replace the older versions'", () => {
+    it("deletes every wrap below the new version, whoever it was for", async () => {
+        const deleted: unknown[] = [];
+        const keys = {collection: {deleteMany: async (filter: unknown) => deleted.push(filter)}, getOptions: () => ({})};
+        await new SpaceRepository(null as never, keys as never, null as never, null as never, null as never).deleteKeysBelow("s1" as types.space.SpaceId, 7);
+        assert.deepStrictEqual(deleted, [{spaceId: "s1", keyVersion: {$lt: 7}}]);
     });
 });
 
@@ -298,7 +332,7 @@ describe("the spaces naming a group are read projected and a batch at a time", (
             getOptions: (options: object) => options,
             convertFromDbObjEx: (doc: {_id: string}) => ({...doc, id: doc._id}),
         };
-        const repo = new SpaceRepository(spaces as never, null as never, null as never, null as never);
+        const repo = new SpaceRepository(spaces as never, null as never, null as never, null as never, null as never);
         const seen: string[] = [];
         await repo.forEachByGroup(g1, space => {
             seen.push(space.id);

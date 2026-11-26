@@ -20,13 +20,10 @@ export class ContextApiValidator extends BaseValidator {
     static readonly MAX_ARCHIVE_SPANS = 128;
     /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
     static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
-    /** Wrapped keys per space call. Adding recipients sends every key version for each of them, so this is what
-     *  bounds recipients times versions in one `spaceAddRecipients`. An entry is at most ~5.2 KB of JSON (4 KB of
-     *  data, 1 KB of signature), so a call stays near 21 MB: well under the WebSocket's 100 MiB message limit,
-     *  which is the only bound a request body has (HTTP reads it whole). 16384 came to ~85 MB, at that limit.
-     *  ponytail: a space rotated more often than this divided by the recipients added cannot take them in one
-     *  call; serve the old versions from a ladder, as groups do, when a space gets that old. */
-    static readonly MAX_SPACE_KEY_ENTRIES = 4096;
+    /** Wrapped keys per space call: one key version's entries, one per recipient. */
+    static readonly MAX_SPACE_KEY_ENTRIES = SpaceService.MAX_RECIPIENTS;
+    /** Rungs per rotation: `LadderMath.rungSpansFor` owes at most 32 below 2^32 versions. */
+    static readonly MAX_SPACE_RUNGS = 64;
     
     constructor(
         private tv: TypesValidator,
@@ -207,8 +204,7 @@ export class ContextApiValidator extends BaseValidator {
         }));
         this.registerMethod("groupGetKeyArchive", this.builder.createObject({
             id: this.tv.groupId,
-            fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
-            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            ...this.archiveWindow(),
             spans: this.builder.optional(this.builder.createListWithMaxLength(this.builder.createObject({
                 at: this.builder.min(this.builder.int, 1),
                 target: this.builder.min(this.builder.int, 1),
@@ -281,10 +277,9 @@ export class ContextApiValidator extends BaseValidator {
             statement: spaceStatement,
         }));
         this.registerMethod("spaceGet", spaceId);
-        this.registerMethod("spaceGetKeys", this.builder.createObject({
+        this.registerMethod("spaceGetKeyArchive", this.builder.createObject({
             id: this.tv.spaceId,
-            fromKeyVersion: this.builder.min(this.builder.int, 1),
-            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            ...this.archiveWindow(),
             limit: this.builder.optional(this.builder.range(this.builder.int, 1, 256)),
         }));
         this.registerMethod("spaceGetStatements", this.builder.createObject({
@@ -307,6 +302,8 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.spaceId,
             keyId: this.tv.keyId,
             keys: spaceKeys,
+            // A group's rung shape: the ladder rules (`LadderMath.validateRungSubmission`) are the same.
+            rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, ContextApiValidator.MAX_SPACE_RUNGS),
             expectedKeyVersion: this.builder.min(this.builder.int, 1),
             statement: spaceStatement,
         };
@@ -323,5 +320,13 @@ export class ContextApiValidator extends BaseValidator {
         });
         this.registerMethod("spaceUpdatePublicMeta", metaUpdate(this.tv.spacePublicMeta));
         this.registerMethod("spaceUpdatePrivateMeta", metaUpdate(this.tv.spacePrivateMeta));
+    }
+    
+    /** The key-version window of a ladder archive read, a group's or a space's. */
+    private archiveWindow() {
+        return {
+            fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+        };
     }
 }

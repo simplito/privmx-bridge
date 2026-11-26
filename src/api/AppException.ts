@@ -144,7 +144,7 @@ export const API_ERROR_CODES = {
     "GROUP_LAST_MANAGER"                    : {code: 0x6225, message: "Group would be left without a manager"},
     "SPACE_DOES_NOT_EXIST"                  : {code: 0x6226, message: "Space does not exist"},
     "SPACE_VERSION_MISMATCH"                : {code: 0x6227, message: "Space has moved since this change was planned"},
-    "SPACE_KEYS_INVALID"                    : {code: 0x6228, message: "Submitted space keys do not cover the recipients or name an outdated group epoch"},
+    "SPACE_KEYS_INVALID"                    : {code: 0x6228, message: "Submitted space keys or rungs do not cover the recipients and key versions, or name an outdated group epoch"},
     "SPACE_LAST_MANAGER"                    : {code: 0x6229, message: "Space would be left without a manager"},
     "SPACE_STATEMENT_INVALID"               : {code: 0x622A, message: "Space statement does not continue the space's history or describe the change"},
     "SPACE_ROTATION_RATE_LIMIT"             : {code: 0x622C, message: "Space key rotation rate limit exceeded"},

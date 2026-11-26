@@ -127,8 +127,8 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.spaceGet", model);
     }
     
-    spaceGetKeys(model: contextApi.SpaceGetKeysModel): Promise<contextApi.SpaceGetKeysResult> {
-        return this.request("context.spaceGetKeys", model);
+    spaceGetKeyArchive(model: contextApi.SpaceGetKeyArchiveModel): Promise<contextApi.SpaceGetKeyArchiveResult> {
+        return this.request("context.spaceGetKeyArchive", model);
     }
     
     spaceGetStatements(model: contextApi.SpaceGetStatementsModel): Promise<contextApi.SpaceGetStatementsResult> {

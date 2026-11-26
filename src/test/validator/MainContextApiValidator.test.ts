@@ -734,12 +734,24 @@ it("a space's metadata is capped on its decoded bytes: 64 KiB public, 64 KiB plu
     expect(Utils.try(() => validator().validate("spaceUpdatePublicMeta", {id: "ab".repeat(32), meta: "!".repeat(64 * 1024 + 1), version: 1})).success).toBe(false);
 });
 
-it("ContextApiValidator.spaceGetKeys takes a version range and a page size of 1 to 256", () => {
-    const valid = (model: object) => Utils.try(() => validator().validate("spaceGetKeys", {id: "ab".repeat(32), ...model})).success;
-    expect(valid({fromKeyVersion: 1})).toBe(true);
+it("ContextApiValidator.spaceGetKeyArchive takes an optional version range and a page size of 1 to 256", () => {
+    const valid = (model: object) => Utils.try(() => validator().validate("spaceGetKeyArchive", {id: "ab".repeat(32), ...model})).success;
+    expect(valid({})).toBe(true);
     expect(valid({fromKeyVersion: 3, toKeyVersion: 9, limit: 256})).toBe(true);
     expect(valid({fromKeyVersion: 0})).toBe(false);
-    expect(valid({fromKeyVersion: 1, limit: 257})).toBe(false);
-    expect(valid({fromKeyVersion: 1, limit: 0})).toBe(false);
-    expect(valid({})).toBe(false);
+    expect(valid({limit: 257})).toBe(false);
+    expect(valid({limit: 0})).toBe(false);
+    expect(Utils.try(() => validator().validate("spaceGetKeys", {id: "ab".repeat(32), fromKeyVersion: 1})).success).toBe(false);
+});
+
+it("ContextApiValidator.spaceRotateKey takes the rungs of the new version in a group rung's shape, at most 64", () => {
+    const rung = (data = "AAAA") => ({atKeyVersion: 2, targetKeyVersion: 1, data});
+    const model = (rungs: unknown) => ({id: "ab".repeat(32), keyId: "k", keys: [{keyVersion: 2, recipient: {userId: "u"}, data: "AA==", signature: "AA=="}], expectedKeyVersion: 1, rungs,
+        statement: {spaceId: "ab".repeat(32), contextId: contextId, seq: 2, prevDigest: "ab".repeat(32), op: "rotate", date: 1, keyVersion: 2, keyCommit: "ab".repeat(32), groups: [], users: [],
+            signer: "u", signerPubKey: userKeys("janek").pub58, via: "", signature: Buffer.alloc(65).toString("base64"), viaSignature: ""}});
+    const valid = (rungs: unknown) => Utils.try(() => validator().validate("spaceRotateKey", model(rungs))).success;
+    expect(valid([rung()])).toBe(true);
+    expect(valid([])).toBe(true);
+    expect(valid(Array.from({length: 65}, () => rung()))).toBe(false);
+    expect(Utils.try(() => validator().validate("spaceRotateKey", {...model([]), rungs: undefined})).success).toBe(false);
 });
