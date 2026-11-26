@@ -88,7 +88,7 @@ it("stores a key entry under an id that tells groups from users", () => {
 it("refuses to wrap a group below its floors, and writes the group so a concurrent floor change conflicts", async () => {
     const touched: string[] = [];
     const repo = {
-        get: async (id: types.group.GroupId) => ({id, eraFloor: 3, archivePrunedBelow: id === g2 ? 5 : undefined}),
+        get: async (id: types.group.GroupId) => ({id, eraFloor: id === g2 ? 5 : 3}),
         touchLadder: async (group: {id: string}) => touched.push(group.id) > 0,
     } as never;
     const at = (groupId: types.group.GroupId, groupKeyVersion: number) => [{groupId, groupKeyVersion, role: "user" as const, groupPubKey: "k" as types.cloud.GroupPubKey}];

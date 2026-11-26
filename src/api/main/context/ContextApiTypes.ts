@@ -149,7 +149,8 @@ export interface GroupCreateModel {
      * the bridge assigns the group's id only once the statement is already signed.
      *
      * `commit.policy` carries the group's rules (`types.cloud.GroupRules`), all nine, each `managers`, `members`
-     * or `nobody`, signed by `policyHash` = `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) ||
+     * or `nobody` (clients default every rule to `managers` but `trimHistory` to `nobody`), signed by
+     * `policyHash` = `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) ||
      * lp(removeMembers) || lp(replaceMemberKeys) || lp(changeRoles) || lp(changeRules) || lp(changeVisibility) ||
      * lp(trimHistory) || lp(editPublicMeta) || lp(editPrivateMeta))`, `lp` a u32 big-endian length prefix. An
      * operation needs every rule whose responsibility it touches, as the rules stand before it:
@@ -160,7 +161,8 @@ export interface GroupCreateModel {
      * - reseat (`groupReseat`): `replaceMemberKeys`
      * - set roles: `changeRoles`; change the rules (`groupUpdatePolicy`): `changeRules`; set visibility:
      *   `changeVisibility`
-     * - cut the era, prune the archive, `abandonHistory` (on top of the removal's rules): `trimHistory`
+     * - rotate with `cutHistory`: `trimHistory` on top of the rotation (a removal with `abandonHistory` needs only
+     *   the removal's rules; the management `group/cutHistory` acts with server authority)
      * - write the public / private metadata: `editPublicMeta` / `editPrivateMeta`
      * - rotate the key, self-update: any member (rotation rate-limited per member)
      * - delete: any manager
@@ -247,10 +249,14 @@ export interface GroupRemoveMembersModel {
     expectedRosterVersion: number;
     /**
      * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
-     * `rungs` must be empty, and the era is cut at the new epoch in the same write, as `groupCutEra` would — so
-     * the caller needs `context/groupCutEra` as well, and members get an `eraCut` notification besides
-     * `memberRemoved`. Both metadata planes stay at the epoch they were written under, so they become unreadable
-     * until a manager rewrites them (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
+     * `rungs` must be empty, and the era is cut at the new epoch in the same write, deleting the rungs and epoch
+     * keys below it — so the caller needs the `context/groupCutHistory` ACL entry as well, and members get an
+     * `eraCut` notification besides `memberRemoved`. Refused with `GROUP_IN_USE` while a space names the group.
+     *
+     * Needs only the removal's rules, NOT `trimHistory`: it is the recovery path of a remover who lost the
+     * current key, and a security-relevant removal must not be blocked by a `trimHistory` of "nobody" (the
+     * default). Both metadata planes stay at the epoch they were written under, so they become unreadable until
+     * rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
      */
     abandonHistory?: boolean;
 }
@@ -313,20 +319,6 @@ export interface GroupGetTreeCommitsResult {
     genesisUsers?: types.cloud.UserId[];
     /** With seq 1: see `genesisUsers`. */
     genesisManagers?: types.cloud.UserId[];
-}
-
-/** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
-export interface GroupCutEraModel {
-    id: types.group.GroupId;
-    newFloor: number;
-    expectedKeyVersion: number;
-}
-
-/** Deletes rungs below `belowEpoch`, recording a watermark so clients can tell pruning from tampering. */
-export interface GroupPruneArchiveModel {
-    id: types.group.GroupId;
-    belowEpoch: number;
-    expectedKeyVersion: number;
 }
 
 /**
@@ -393,7 +385,6 @@ export interface GroupGetEpochKeysResult {
 export interface GroupGetKeyArchiveResult {
     keyVersion: number;
     eraFloor: number;
-    archivePrunedBelow?: number;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     rungs: types.cloud.GroupArchiveRung[];
 }
@@ -463,13 +454,22 @@ export interface GroupGenerateNewKeyModel {
     grantEdge: types.cloud.GroupTreeEdge;
     /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
     commit: types.cloud.GroupTreeCommitStatement;
-    /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. */
+    /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. Empty with `cutHistory`. */
     rungs: types.cloud.GroupArchiveRungSubmission[];
     /** The new metadata key wrapped once to the new grant public key. */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
+    /**
+     * A rotation that cuts history: the new epoch becomes the era floor in the same write, and every stored rung
+     * targeting below it and every archived epoch key below it are deleted. `rungs` must be empty. Needs the
+     * group's `trimHistory` rule (default "nobody"; narrowed by the context's `update`) and the
+     * `context/groupCutHistory` ACL entry besides the rotation's own. Members get an `eraCut` notification besides
+     * `keyRotated`. Refused with `GROUP_IN_USE` while a space names the group (remove the group from it first).
+     * Metadata below the floor is not refused: the client rewrites both planes at the new epoch right after.
+     */
+    cutHistory?: boolean;
 }
 
 /** Where the group's epoch is now. Informational: the loser re-reads and re-verifies before planning again. */
@@ -733,12 +733,11 @@ export interface GroupInfo {
     /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
     groupKeys: types.cloud.GroupKeysEntry[];
     eraFloor: number;
-    archivePrunedBelow?: number;
 }
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
 export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
-    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged"|"rolesChanged"|"membersReseated";
+    |"memberAdded"|"memberRemoved"|"eraCut"|"visibilityChanged"|"rolesChanged"|"membersReseated";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -984,8 +983,6 @@ export interface IContextApi {
      * @returns "OK"
      */
     groupSetVisibility(model: GroupSetVisibilityModel): Promise<types.core.OK>;
-    groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
-    groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupGetEpochKeys(model: GroupGetEpochKeysModel): Promise<GroupGetEpochKeysResult>;

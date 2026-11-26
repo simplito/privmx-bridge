@@ -101,6 +101,12 @@ export const test = testApi("client", "group/", ManagementGroupApi, new Manageme
             signature: "H3A2pG0rLwq8b1lQzT7S1x0dYcVn5mKe4uJfWgRkPq2sXhZyBtNvCaMoIiEeUuDdFf0GgHhJjKkLlZzXxCcVvBbNnMm=" as types.core.EccSignature,
         }],
     });
+    call("cutHistory", api => api.cutHistory({
+        groupId: groupId,
+        beforeEpoch: 3,
+    })).setResult({
+        eraFloor: 3,
+    });
     call("deleteGroup", api => api.deleteGroup({
         groupId: groupId,
     })).setResult("OK");

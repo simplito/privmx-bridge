@@ -202,7 +202,7 @@ export class GroupStateRepository {
     /**
      * The epoch each plane's head entry is keyed at, projected.
      *
-     * `cutEra` and `pruneArchive` ask this before dropping rungs: an entry stays at the epoch it was written
+     * The management `cutHistory` clamps its floor to these: an entry stays at the epoch it was written
      * under, so cutting below it would make that plane unreadable for everyone, permanently. Both planes,
      * because they move independently and only one of them may be stranded.
      */

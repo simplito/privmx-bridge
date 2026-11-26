@@ -414,8 +414,8 @@ export type GroupRuleWho = "managers"|"members"|"nobody";
 
 /**
  * A group's own rules, signed into every commit statement (`CommitStatement.rulesHash`), one responsibility
- * each. All nine are always present: a client fills the default (`managers`) for any it does not set before
- * signing, and anything partial, unknown or outside these values is refused. An operation needs every rule whose
+ * each. All nine are always present: a client fills the default (`managers`, but `nobody` for `trimHistory`)
+ * for any it does not set before signing, and anything partial, unknown or outside these values is refused. An operation needs every rule whose
  * responsibility it touches, checked against the rules as they stand before it.
  *
  * Fixed besides them: any member re-keys its own path (`groupSelfUpdate`) and rotates the group key (rate-limited
@@ -435,7 +435,8 @@ export interface GroupRules {
     changeRules: GroupRuleWho;
     /** Who may change who beside the members sees the group (`groupSetVisibility`) */
     changeVisibility: GroupRuleWho;
-    /** Who may cut the era, prune the archive, or remove with `abandonHistory` */
+    /** Who may delete the group's history: a rotation with `cutHistory`. Default "nobody". (A removal with
+     *  `abandonHistory` does not need it, and the management `group/cutHistory` acts with server authority.) */
     trimHistory: GroupRuleWho;
     /** Who may rewrite the public metadata */
     editPublicMeta: GroupRuleWho;

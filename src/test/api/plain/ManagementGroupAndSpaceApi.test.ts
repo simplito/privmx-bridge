@@ -24,7 +24,7 @@ const gone = "gone" as types.cloud.UserId;
 
 it("the backend's group and space APIs read and delete, and change nothing a member signs", () => {
     const methodsOf = (clazz: unknown) => ApiMethod.getExportedMethods(clazz as never).map(m => m.method).sort();
-    assert.deepStrictEqual(methodsOf(ManagementGroupApi), ["deleteGroup", "deleteManyGroups", "getGroup", "listGroupCommits", "listGroups", "listGroupsOfUser"]);
+    assert.deepStrictEqual(methodsOf(ManagementGroupApi), ["cutHistory", "deleteGroup", "deleteManyGroups", "getGroup", "listGroupCommits", "listGroups", "listGroupsOfUser"]);
     assert.deepStrictEqual(methodsOf(ManagementSpaceApi), ["deleteSpace", "getSpace", "listSpaces"]);
 });
 

@@ -189,8 +189,8 @@ export class SpaceService extends BaseContainerService {
     
     /**
      * Holds every group the space wraps at or above the group's floors, inside the space's transaction. The group
-     * document is written as well (`touchLadder`), so a floor raised concurrently (`groupCutEra`,
-     * `groupPruneArchive`, a removal abandoning history: each writes that document too) is a write conflict and
+     * document is written as well (`touchLadder`), so a floor raised concurrently (a history cut,
+     * a removal abandoning history: each writes that document too) is a write conflict and
      * one transaction re-runs against the other's result. A check alone would be write skew: each side would pass
      * against the other's old state, and the space would hold a key nobody can sign through any more.
      */
@@ -200,7 +200,7 @@ export class SpaceService extends BaseContainerService {
     static async assertGroupFloors(groupRepository: Pick<ReturnType<RepositoryFactory["createGroupRepository"]>, "get"|"touchLadder">, groups: db.space.Space["groups"]) {
         for (const g of groups) {
             const group = await groupRepository.get(g.groupId);
-            if (!group || g.groupKeyVersion < Math.max(group.eraFloor, group.archivePrunedBelow ?? 0) || !await groupRepository.touchLadder(group)) {
+            if (!group || g.groupKeyVersion < group.eraFloor || !await groupRepository.touchLadder(group)) {
                 throw new AppException("SPACE_KEYS_INVALID", `group '${g.groupId}' no longer reaches epoch ${g.groupKeyVersion}`);
             }
         }

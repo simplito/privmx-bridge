@@ -145,13 +145,13 @@ describe("CommitStatement shared vectors", () => {
     
     it("SECURITY: rules hash matches the shared vectors", () => {
         const all = vectors().rulesHash;
-        assert.strictEqual(all.length, 5);
+        assert.strictEqual(all.length, 6);
         for (const vector of all) {
             assert.strictEqual(CommitStatement.rulesHash(vector.rules, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
-        // The one the endpoint side compares against: the defaults, created by "alice".
+        // The one the endpoint side compares against: the defaults (all managers, trimHistory nobody), created by "alice".
         assert.strictEqual(CommitStatement.rulesHash(CommitStatement.DEFAULT_RULES, "alice" as types.cloud.UserId).toString("hex"),
-            "293d66587c59ddae7286ffcdeaa73afea8698e3e1f26b13c3e5dafa212372e77");
+            "6dfe3f16482ac7cf7cfd4751a784bc12488315209222a81b3c7a60c59f37bbd8");
     });
 });
 
@@ -374,7 +374,7 @@ describe("CommitStatement.rulesHash", () => {
         const base = hash(CommitStatement.DEFAULT_RULES);
         const seen = new Set([base]);
         for (const field of CommitStatement.RULE_FIELDS) {
-            const changed = hash({...CommitStatement.DEFAULT_RULES, [field]: "nobody"});
+            const changed = hash({...CommitStatement.DEFAULT_RULES, [field]: CommitStatement.DEFAULT_RULES[field] === "nobody" ? "members" : "nobody"});
             assert.ok(!seen.has(changed), field);
             seen.add(changed);
         }

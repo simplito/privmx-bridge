@@ -113,6 +113,7 @@ export class ContextApiValidator extends BaseValidator {
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
+            cutHistory: this.builder.optional(this.builder.bool),
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
             groupId: this.tv.groupId,
@@ -200,16 +201,6 @@ export class ContextApiValidator extends BaseValidator {
             groupId: this.tv.groupId,
             fromSeq: this.tv.intNonNegative,
             toSeq: this.builder.optional(this.builder.min(this.builder.int, 1)),
-        }));
-        this.registerMethod("groupCutEra", this.builder.createObject({
-            id: this.tv.groupId,
-            newFloor: this.builder.min(this.builder.int, 1),
-            expectedKeyVersion: this.builder.int,
-        }));
-        this.registerMethod("groupPruneArchive", this.builder.createObject({
-            id: this.tv.groupId,
-            belowEpoch: this.builder.min(this.builder.int, 1),
-            expectedKeyVersion: this.builder.int,
         }));
         this.registerMethod("groupRepairRung", this.builder.createObject({
             id: this.tv.groupId,

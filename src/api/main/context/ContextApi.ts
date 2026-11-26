@@ -228,22 +228,6 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     }
     
     @ApiMethod({})
-    async groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.cutEra(cloudUser, model);
-        this.requestLogger.setContextId(group.contextId);
-        return "OK";
-    }
-    
-    @ApiMethod({})
-    async groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
-        const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const group = await this.groupService.pruneArchive(cloudUser, model);
-        this.requestLogger.setContextId(group.contextId);
-        return "OK";
-    }
-    
-    @ApiMethod({})
     async groupRepairRung(model: contextApi.GroupRepairRungModel): Promise<types.core.OK> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const group = await this.groupService.repairRung(cloudUser, model);

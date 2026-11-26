@@ -207,7 +207,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldServePruneAndCutTheEpochLadder() {
+    async shouldServeAndCutTheEpochLadder() {
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
         await this.removeMember(carol);
@@ -215,12 +215,24 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.removeMember(alice);
         await this.verifyTheArchiveIsServedFromItsCollection();
         await this.verifyTheArchiveIsWindowed();
-        // The metadata entry is still the one `groupCreate` wrote at epoch 1 — removals move the roster plane and
-        // leave it alone — so the ladder cannot be cut out from under it until it is rewritten at the current epoch.
-        await this.verifyTheLadderCannotBeCutOutFromUnderTheMetadata();
-        await this.rewriteEachMetadataPlaneAtTheCurrentEpoch();
-        await this.verifyPruningDeletesRungsAndRecordsAWatermark();
-        await this.verifyCuttingAnEraDropsTheRungsBelowTheFloor();
+        // The metadata entries are still the ones `groupCreate` wrote at epoch 1 — removals move the roster plane
+        // and leave them alone — so the management cut clamps to them until each plane is rewritten.
+        await this.verifyTheManagementCutClampsToTheMetadata();
+        await this.verifyTheManagementCutDeletesBelowTheFloor();
+        await this.verifyARotationCutsHistoryUnderTrimHistory();
+    }
+    
+    @Test()
+    async shouldAbandonHistoryOnRemovalWhateverTrimHistorySays() {
+        // trimHistory is "nobody" by default; a removal by a manager who lost the current key must still go through.
+        await this.addMembersToContext([alice, bob, carol]);
+        await this.createTreeBackedGroup();
+        await this.removeMember(carol);
+        await this.removeMember(bob, true);
+        const document = await this.readGroupDocument();
+        assert(document.eraFloor === 3 && document.keyVersion === 3, `the era closes at the new epoch, got ${JSON.stringify([document.eraFloor, document.keyVersion])}`);
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId: this.requireGroupId()});
+        assert(rungs.length === 0, "and every rung below it is gone");
     }
     
     @Test()
@@ -410,7 +422,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     /** Removes a member the way an honest client does: from the state the server just served. */
-    private async removeMember(userId: types.cloud.UserId) {
+    private async removeMember(userId: types.cloud.UserId, abandonHistory = false) {
         const groupId = this.requireGroupId();
         const newEpoch = this.keyVersion + 1;
         const {plan, commit} = await this.commitFor({kind: "remove", committer: testData.userId, removed: [userId]}, epochKey(newEpoch));
@@ -423,7 +435,8 @@ export class GroupKeyTreeTests extends BaseTestSet {
             data: "group-data" as types.group.GroupData,
             transition: transition,
             commit: commit,
-            rungs: this.rungsFor(newEpoch),
+            rungs: abandonHistory ? [] : this.rungsFor(newEpoch),
+            ...(abandonHistory ? {abandonHistory: true} : {}),
             // The metadata key wrapped once to the group itself — the O(1) replacement for one wrap per member.
             groupKeys: {
                 group: groupId,
@@ -503,7 +516,7 @@ export class GroupKeyTreeTests extends BaseTestSet {
     
     /** Rotates the grant key as the test user, planned against what the bridge serves. Shared with Track F
      *  (03/04/09/11 extend its statement, not the edge). */
-    private async rotate() {
+    private async rotate(cutHistory = false) {
         const groupId = this.requireGroupId();
         const served = (await this.apis.contextApi.groupGet({groupId, scope: "full"})).group as unknown as ServedGroup;
         const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
@@ -518,9 +531,10 @@ export class GroupKeyTreeTests extends BaseTestSet {
                 groupId, groupPubKey: epochKey(newEpoch), rosterVersion: served.rosterVersion + 1,
                 users: served.users, managers: served.managers, ...(served.treeCommit ? {previous: served.treeCommit} : {}),
             }),
-            rungs: this.rungsFor(newEpoch),
+            rungs: cutHistory ? [] : this.rungsFor(newEpoch),
             expectedKeyVersion: this.keyVersion,
             expectedRosterVersion: this.rosterVersion,
+            ...(cutHistory ? {cutHistory: true} : {}),
         });
         assert(res === "OK", "groupGenerateNewKey did not return OK");
         this.keyVersion = newEpoch;
@@ -727,118 +741,84 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(served.rungs.length < all.rungs.length, "the window actually narrows the answer");
     }
     
+    /** The management cut, as a periodic retention job calls it: the effective floor comes back. */
+    private async managementCut(beforeEpoch?: number): Promise<number> {
+        this.helpers.authorizePlainApi();
+        const {eraFloor} = await this.plainApis.groupApi.cutHistory({groupId: this.requireGroupId(), ...(beforeEpoch === undefined ? {} : {beforeEpoch})});
+        return eraFloor;
+    }
+    
+    private async rewriteMeta(plane: "public"|"private") {
+        const model = {
+            id: this.requireGroupId(),
+            data: `group-${plane}-meta@current` as types.group.GroupData,
+            keyId: keyIdAt(this.keyVersion),
+            version: (plane === "public" ? this.publicMetaVersion : this.privateMetaVersion) as types.group.GroupVersion,
+        };
+        assert(await (plane === "public" ? this.apis.contextApi.groupUpdatePublicMeta(model) : this.apis.contextApi.groupUpdatePrivateMeta(model)) === "OK",
+            `the ${plane} metadata write did not return OK`);
+        if (plane === "public") {
+            this.publicMetaVersion += 1;
+        }
+        else {
+            this.privateMetaVersion += 1;
+        }
+    }
+    
     /**
-     * A floor above the metadata entry's epoch is refused, on both operations that raise one.
-     *
-     * The entry stays at the epoch it was written under, and its key is addressed to that epoch's grant key — the
-     * very key material a cut drops. Letting the floor past it would make `publicMeta`/`privateMeta` unreadable
-     * for everybody, permanently, so it is refused with the way out named.
+     * Each plane's entry stays at the epoch it was written under, and its key is addressed to that epoch's grant key
+     * — the very key material a cut drops. So the management cut never goes past the lowest of them: it clamps
+     * rather than refuses, so a periodic job always does what it safely can.
      */
-    private async verifyTheLadderCannotBeCutOutFromUnderTheMetadata() {
+    private async verifyTheManagementCutClampsToTheMetadata() {
         const groupId = this.requireGroupId();
         const before = await this.helpers.readCollection("groupArchiveRung", {groupId});
-        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupPruneArchive({
-            id: groupId, belowEpoch: 2, expectedKeyVersion: this.keyVersion,
-        }), "GROUP_META_UNREACHABLE");
-        await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupCutEra({
-            id: groupId, newFloor: 3, expectedKeyVersion: this.keyVersion,
-        }), "GROUP_META_UNREACHABLE");
+        assert(await this.managementCut() === 1, "both planes at epoch 1: nothing to cut");
+        await this.rewriteMeta("public");
+        assert(await this.managementCut() === 1, "the private plane still sits at epoch 1");
         const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
-        assert(rungs.length === before.length, `a refused cut deletes nothing, went from ${before.length} to ${rungs.length} rungs`);
-        const document = await this.readGroupDocument();
-        assert(document.eraFloor === 1 && document.archivePrunedBelow === undefined, "and records neither floor nor watermark");
+        assert(rungs.length === before.length, `a no-op cut deletes nothing, went from ${before.length} to ${rungs.length} rungs`);
+        assert((await this.readGroupDocument()).eraFloor === 1, "and records no floor");
+        await this.rewriteMeta("private");
     }
     
-    /**
-     * The way out the refusal names — but per plane, which is the point.
-     *
-     * The two planes lag independently, so rewriting one lifts one epoch and the cut stays refused until the
-     * other is rewritten too. This walks that: rewrite public, check the refusal now names only the private
-     * plane, then rewrite private and check the cut goes through. An implementation that took `min(public,
-     * private)` and named both planes unconditionally would pass every step but the middle one.
-     */
-    private async rewriteEachMetadataPlaneAtTheCurrentEpoch() {
+    private async verifyTheManagementCutDeletesBelowTheFloor() {
         const groupId = this.requireGroupId();
-        
-        const bothStranded = await this.expectCutRefusal();
-        assert(bothStranded.includes("groupUpdatePublicMeta") && bothStranded.includes("groupUpdatePrivateMeta"),
-            `with both planes lagging the refusal must name both, got ${bothStranded}`);
-        
-        assert(await this.apis.contextApi.groupUpdatePublicMeta({
-            id: groupId,
-            data: "group-public-meta@current" as types.group.GroupData,
-            keyId: keyIdAt(this.keyVersion),
-            version: this.publicMetaVersion as types.group.GroupVersion,
-        }) === "OK", "groupUpdatePublicMeta did not return OK");
-        this.publicMetaVersion += 1;
-        const [publicHead] = await this.helpers.readCollection("groupPublicMetaEntry", {groupId, version: this.publicMetaVersion});
-        assert(publicHead.keyVersion === this.keyVersion,
-            `the public entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(publicHead.keyVersion)}`);
-        
-        // The step a `min()`-only floor check fails: one plane is current, the other is not, and the message has
-        // to have stopped naming the plane that no longer needs rewriting.
-        const onlyPrivate = await this.expectCutRefusal();
-        assert(onlyPrivate.includes("groupUpdatePrivateMeta"),
-            `the private plane still lags, so the refusal must name it, got ${onlyPrivate}`);
-        assert(!onlyPrivate.includes("groupUpdatePublicMeta"),
-            `the public plane is current now, so the refusal must not still name it, got ${onlyPrivate}`);
-        assert(!onlyPrivate.includes("groupUpdatePolicy"),
-            `a policy write lifts no epoch, so it must never be offered as the fix, got ${onlyPrivate}`);
-        
-        assert(await this.apis.contextApi.groupUpdatePrivateMeta({
-            id: groupId,
-            data: "group-private-meta@current" as types.group.GroupData,
-            keyId: keyIdAt(this.keyVersion),
-            version: this.privateMetaVersion as types.group.GroupVersion,
-        }) === "OK", "groupUpdatePrivateMeta did not return OK");
-        this.privateMetaVersion += 1;
-        const [privateHead] = await this.helpers.readCollection("groupPrivateMetaEntry", {groupId, version: this.privateMetaVersion});
-        assert(privateHead.keyVersion === this.keyVersion,
-            `the private entry should now sit at the current epoch ${this.keyVersion}, got ${JSON.stringify(privateHead.keyVersion)}`);
-    }
-    
-    /** Runs the cut that must still be refused and hands back the message, so a caller can read what it names. */
-    private async expectCutRefusal(): Promise<string> {
-        try {
-            await this.apis.contextApi.groupCutEra({
-                id: this.requireGroupId(), newFloor: this.keyVersion, expectedKeyVersion: this.keyVersion,
-            });
-        }
-        catch (e) {
-            return JSON.stringify(e);
-        }
-        throw new Error("the cut was expected to be refused while a metadata plane still lags");
-    }
-    
-    private async verifyPruningDeletesRungsAndRecordsAWatermark() {
-        const groupId = this.requireGroupId();
-        const res = await this.apis.contextApi.groupPruneArchive({id: groupId, belowEpoch: 2, expectedKeyVersion: this.keyVersion});
-        assert(res === "OK", "groupPruneArchive did not return OK");
+        assert(await this.managementCut(2) === 2, "an explicit floor below everything needed stands");
+        assert(await this.managementCut(1) === 2, "SECURITY: a floor is never lowered");
+        assert(await this.managementCut() === this.keyVersion, "by default up to the current epoch");
         const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
-        assert(rungs.every(rung => rung.targetKeyVersion >= 2), "rungs below the watermark are deleted, not filtered on read");
+        assert(rungs.every(rung => rung.targetKeyVersion >= this.keyVersion), "rungs below the floor are deleted, not filtered on read");
         const document = await this.readGroupDocument();
-        assert(document.archivePrunedBelow === 2, "the watermark tells a client it was pruned, not tampered with");
-        const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId});
-        assert(epochRows.filter(row => row.keyVersion < this.keyVersion).length === 3,
-            "pruning is housekeeping: it leaves the epoch registry alone for a member still holding an old key");
-    }
-    
-    private async verifyCuttingAnEraDropsTheRungsBelowTheFloor() {
-        const groupId = this.requireGroupId();
-        const res = await this.apis.contextApi.groupCutEra({id: groupId, newFloor: 3, expectedKeyVersion: this.keyVersion});
-        assert(res === "OK", "groupCutEra did not return OK");
-        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
-        assert(rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor can be descended to any more");
-        const document = await this.readGroupDocument();
-        assert(document.eraFloor === 3, "the floor is recorded");
-        // Key material for the closed epochs goes with them: the registry entry has no rung to verify against
-        // any more, and the wrapped key is addressed to a grant key nobody can climb to. These are the two
-        // fields that otherwise grow with every rotation for the life of the group.
-        // They live one row per epoch in `groupEpochKey`, never on the document.
+        assert(document.eraFloor === this.keyVersion, "the floor is recorded");
         assert(!("keyHistory" in document) && !("groupKeys" in document), "per-epoch key material stays off the group document");
         const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId});
-        assert(epochRows.every(row => row.keyVersion >= 3),
+        assert(epochRows.every(row => row.keyVersion >= this.keyVersion),
             `the epoch rows below the floor must go, got ${JSON.stringify(epochRows.map(row => row.keyVersion))}`);
+    }
+    
+    /** A client cut is a rotation: the new epoch is the floor, it publishes no rungs, and everything below goes. */
+    private async verifyARotationCutsHistoryUnderTrimHistory() {
+        const groupId = this.requireGroupId();
+        // trimHistory defaults to nobody: even a manager is refused, and nothing moves.
+        await shouldThrowErrorWithCode2(() => this.rotate(true), "ACCESS_DENIED");
+        assert((await this.readGroupDocument()).keyVersion === this.keyVersion, "a refused cut rotates nothing");
+        const served = (await this.apis.contextApi.groupGet({groupId, scope: "plan"})).group as unknown as ServedGroup;
+        assert(await this.apis.contextApi.groupUpdatePolicy(policyCommitAgainst(served, testData.userId,
+            {...CommitStatement.DEFAULT_RULES, trimHistory: "members"})) === "OK", "groupUpdatePolicy did not return OK");
+        const floor = this.keyVersion + 1;
+        await this.rotate(true);
+        const document = await this.readGroupDocument();
+        assert(document.eraFloor === floor && document.keyVersion === floor, `the new epoch is the floor, got ${JSON.stringify([document.eraFloor, document.keyVersion])}`);
+        const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId});
+        assert(rungs.length === 0, "SECURITY: nothing is left to descend by");
+        const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId});
+        assert(epochRows.every(row => row.keyVersion >= floor), "nor any older epoch's key material");
+        // Whoever joins now finds nothing below the floor.
+        await this.addMember(alice, 1);
+        const archive = await this.apis.contextApi.groupGetKeyArchive({id: groupId});
+        assert(archive.eraFloor === floor && archive.rungs.length === 0 && archive.keyHistory.every(entry => entry.keyVersion >= floor),
+            `a newcomer cannot descend below the floor, got ${JSON.stringify(archive)}`);
     }
     
     private async verifyTheDefaultViewIsThePath() {

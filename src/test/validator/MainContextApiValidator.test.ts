@@ -620,21 +620,17 @@ it("ContextApiValidator refuses a tree commit without its statement, or with a m
     }
 });
 
-it("ContextApiValidator.groupCutEra valid", () => {
-    const model: contextApi.GroupCutEraModel = {id: groupId, newFloor: 5, expectedKeyVersion: 9};
-    const result = Utils.try(() => validator().validate("groupCutEra", model));
-    expect(result.success).toBe(true);
-});
-
-it("ContextApiValidator.groupCutEra rejects a floor below one", () => {
-    const result = Utils.try(() => validator().validate("groupCutEra", {id: groupId, newFloor: 0, expectedKeyVersion: 9}));
-    expect(result.success).toBe(false);
-});
-
-it("ContextApiValidator.groupPruneArchive valid", () => {
-    const model: contextApi.GroupPruneArchiveModel = {id: groupId, belowEpoch: 4, expectedKeyVersion: 9};
-    const result = Utils.try(() => validator().validate("groupPruneArchive", model));
-    expect(result.success).toBe(true);
+it("ContextApiValidator.groupGenerateNewKey takes cutHistory as a boolean, and the old cut and prune methods are gone", () => {
+    const tree = buildTree(["janek"], 1);
+    const model = {
+        id: groupId, groupPubKey, data: "someData" as types.group.GroupData, keyId, grantEdge: rotationGrantEdge(tree, 2),
+        commit: validStatement("rotate"), rungs: [], expectedKeyVersion: 1, expectedRosterVersion: 1,
+    };
+    expect(Utils.try(() => validator().validate("groupGenerateNewKey", {...model, cutHistory: true})).success).toBe(true);
+    expect(Utils.try(() => validator().validate("groupGenerateNewKey", {...model, cutHistory: "yes"})).success).toBe(false);
+    for (const method of ["groupCutEra", "groupPruneArchive"]) {
+        expect(Utils.try(() => validator().validate(method, {id: groupId, newFloor: 2, expectedKeyVersion: 1})).success).toBe(false);
+    }
 });
 
 it("ContextApiValidator.groupGetKeyArchive valid without a window", () => {

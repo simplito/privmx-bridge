@@ -27,7 +27,7 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupSetRolesModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupAddMembersModel, GroupGenerateNewKeyModel, GroupRemoveMembersModel, GroupSetRolesModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeValidator } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
@@ -504,7 +504,8 @@ export class GroupService extends BaseContainerService {
     
     /** Rotates the grant keypair without removing anybody: the epoch advances, the new grant key is wrapped to
      *  the unchanged root, or to the sole member of a one-leaf tree, the rungs keep the old epochs reachable.
-     *  One edge, whatever the group's size. */
+     *  One edge, whatever the group's size. With `cutHistory` it publishes no rungs and the new epoch becomes the
+     *  era floor instead: what is below it is deleted (the client-side history cut). */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const {rotated, solution} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
@@ -517,12 +518,26 @@ export class GroupService extends BaseContainerService {
             if (!this.policy.canRotateContainerKeys(user, context, oldGroup)) {
                 throw new AppException("ACCESS_DENIED");
             }
+            const newKeyVersion = oldGroup.keyVersion + 1;
+            if (model.cutHistory) {
+                // A cut also deletes history for every member: the signed `trimHistory` rule, and its ACL entry.
+                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutHistory", ["groupId=" + model.id]);
+                this.policy.require(user, context, oldGroup, "trimHistory");
+                if (model.rungs.length > 0) {
+                    // The new epoch is the floor: nothing may point down from it.
+                    throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "RUNGS_WITH_CUT_HISTORY", count: model.rungs.length});
+                }
+                // As for a removal abandoning history, metadata below the floor is not refused: the client carries
+                // both planes forward to the new epoch right after. A space holding the group below it is.
+                await this.assertSpacesSurviveFloor(session, model.id, newKeyVersion);
+            }
             await budget.reserve(GroupService.rateLimitKey("rotateBurst", model.id, user.userId), this.config.maxGroupRotationsPerMinute, DateUtils.minutes(1));
             await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
-            const newKeyVersion = oldGroup.keyVersion + 1;
             await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
             await this.assertGroupPubKeyIsNew(groupRepository, oldGroup, model.groupPubKey);
-            this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
+            if (!model.cutHistory) {
+                this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
+            }
             const groupKey = GroupService.buildSelfAddressedKey(oldGroup.id, model.groupKeys, model.keyId, newKeyVersion);
             // A rotation moves no node, so the statement vouches for the tree exactly as it stands.
             await this.chargingRefusals(budget, "rotate", model.id, user.userId, async () => {
@@ -544,6 +559,7 @@ export class GroupService extends BaseContainerService {
                 statement: model.commit,
                 rungs: model.rungs,
                 groupKey,
+                ...(model.cutHistory ? {cutHistory: true} : {}),
             });
             if (!result) {
                 const winner = await groupRepository.get(model.id);
@@ -552,6 +568,9 @@ export class GroupService extends BaseContainerService {
             return {rotated: result, solution: context.solution};
         }));
         this.groupNotificationService.sendUpdatedGroup(rotated, [], "keyRotated");
+        if (model.cutHistory) {
+            this.groupNotificationService.sendUpdatedGroup(rotated, [], "eraCut");
+        }
         // A rotation stales every room granted to the group as a removal does, and a live publication never writes
         // again: the event makes its publisher re-key.
         this.streamNotificationService.sendStreamRoomsUpdatedForGroup(rotated.id, solution);
@@ -667,8 +686,8 @@ export class GroupService extends BaseContainerService {
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, reseat ? "context/groupReseat" : "context/groupRemoveMembers", ["groupId=" + model.id]);
             if (model.abandonHistory) {
-                // It cuts the era as `groupCutEra` would, so it needs that permission too.
-                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
+                // It cuts history as a rotation with `cutHistory` would, so it needs that ACL entry too.
+                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutHistory", ["groupId=" + model.id]);
             }
             if (model.userIds.includes(user.userId)) {
                 // The remover mints the new grant key, so the member supposed to lose the epoch would be the one
@@ -678,16 +697,17 @@ export class GroupService extends BaseContainerService {
             // A reseat names its subjects the same way, and none of them leaves the roster.
             const leaving = new Set(reseat ? [] : model.userIds);
             const managers = oldGroup.managers.filter(u => !leaving.has(u));
-            // A removal takes a manager's role away too; a reseat replaces keys and nothing else. Abandoning
-            // history cuts the era as `groupCutEra` would: that call's rule as well as its ACL.
+            // A removal takes a manager's role away too; a reseat replaces keys and nothing else. Abandoning history
+            // deliberately does NOT take `trimHistory`: it is the recovery path of a remover who lost the current key,
+            // and a security-relevant removal must not be blocked by a group whose `trimHistory` is "nobody" (the
+            // default). The history it gives up is unreachable anyway: nobody can recover the old grant key.
             this.policy.require(user, usedContext, oldGroup,
                 ...(reseat ? ["replaceMemberKeys" as const] : ["removeMembers" as const]),
-                ...(!reseat && model.userIds.some(u => oldGroup.managers.includes(u)) ? ["changeRoles" as const] : []),
-                ...(model.abandonHistory ? ["trimHistory" as const] : []));
+                ...(!reseat && model.userIds.some(u => oldGroup.managers.includes(u)) ? ["changeRoles" as const] : []));
             GroupService.assertKeepsAManager(oldGroup.managers, managers);
             if (model.abandonHistory) {
                 // The era closes at the new epoch, so every space holding the group's key is stranded below it.
-                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1, true);
+                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1);
             }
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
@@ -796,64 +816,42 @@ export class GroupService extends BaseContainerService {
         }));
     }
     
-    /** Closes the current era: everything below the new floor becomes unreachable by descending. */
-    async cutEra(cloudUser: CloudUser, model: GroupCutEraModel) {
-        const group = await this.repositoryFactory.withTransaction(async session => {
+    /**
+     * `group/cutHistory` of the management API: raises the era floor without rotating, since the server holds no
+     * keys. The floor goes to `beforeEpoch` (default: the current epoch), clamped down to the lowest epoch still
+     * needed — each metadata plane's and every space's that holds the group — and never lowered. Rungs pointing
+     * below it and the epoch rows below it are deleted, not hidden: this is the retention guarantee.
+     *
+     * Server authority, like every management call: no group rule gates it. Returns the effective floor.
+     */
+    async cutHistory(executor: Executor, groupId: types.group.GroupId, beforeEpoch?: number) {
+        const {group, cut} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
-            const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
-            this.policy.require(user, usedContext, oldGroup, "trimHistory");
-            const keyVersion = oldGroup.keyVersion;
-            const currentFloor = oldGroup.eraFloor;
-            if (!Number.isInteger(model.newFloor) || model.newFloor < 1) {
-                throw new AppException("INVALID_PARAMS", "newFloor must be a positive integer");
+            const oldGroup = await groupRepository.get(groupId);
+            if (!oldGroup) {
+                throw new AppException("GROUP_DOES_NOT_EXIST");
             }
-            if (model.newFloor <= currentFloor) {
-                // Lowering a floor would resurrect epochs a previous cut deliberately abandoned.
-                throw new AppException("INVALID_PARAMS", `newFloor must be above the current floor ${currentFloor}`);
+            await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldGroup.contextId, () => {
+                throw new AppException("ACCESS_DENIED");
+            });
+            const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
+            const spaceEpochs = (await this.repositoryFactory.createSpaceRepository(session).getByGroup(groupId))
+                .flatMap(space => space.groups.filter(g => g.groupId === groupId).map(g => g.groupKeyVersion));
+            const floor = Math.min(beforeEpoch ?? oldGroup.keyVersion, oldGroup.keyVersion,
+                ...[heads.publicMeta, heads.privateMeta].filter((epoch): epoch is number => epoch !== null), ...spaceEpochs);
+            if (floor <= oldGroup.eraFloor) {
+                return {group: oldGroup, cut: false};
             }
-            if (model.newFloor > keyVersion) {
-                throw new AppException("INVALID_PARAMS", `newFloor cannot exceed the current epoch ${keyVersion}`);
-            }
-            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.newFloor);
-            await this.assertSpacesSurviveFloor(session, model.id, model.newFloor);
-            const result = await groupRepository.cutEra(oldGroup, model.newFloor);
+            const result = await groupRepository.cutHistory(oldGroup, floor);
             if (!result) {
-                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
+                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(groupId))!));
             }
-            return result;
+            return {group: result, cut: true};
         });
-        this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
-        return group;
-    }
-    
-    /** Deletes rungs below a watermark. Recorded separately from a cut era so a client that cannot descend
-     *  learns why — pruned, not tampered with. */
-    async pruneArchive(cloudUser: CloudUser, model: GroupPruneArchiveModel) {
-        const group = await this.repositoryFactory.withTransaction(async session => {
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
-            const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupPruneArchive", ["groupId=" + model.id]);
-            this.policy.require(user, usedContext, oldGroup, "trimHistory");
-            const keyVersion = oldGroup.keyVersion;
-            if (!Number.isInteger(model.belowEpoch) || model.belowEpoch < 1) {
-                throw new AppException("INVALID_PARAMS", "belowEpoch must be a positive integer");
-            }
-            if (model.belowEpoch > keyVersion) {
-                throw new AppException("INVALID_PARAMS", `belowEpoch cannot exceed the current epoch ${keyVersion}`);
-            }
-            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.belowEpoch);
-            await this.assertSpacesSurviveFloor(session, model.id, model.belowEpoch);
-            const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
-            if (!result) {
-                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
-            }
-            return result;
-        });
-        this.groupNotificationService.sendUpdatedGroup(group, [], "archivePruned");
-        return group;
+        if (cut) {
+            this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
+        }
+        return {eraFloor: group.eraFloor};
     }
     
     /**
@@ -889,7 +887,7 @@ export class GroupService extends BaseContainerService {
             await budget.reserve(GroupService.rateLimitKey("repair", model.id, user.userId));
             const {rung} = model;
             const span = {at: rung.atKeyVersion, target: rung.targetKeyVersion};
-            const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor, group.archivePrunedBelow);
+            const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor);
             if (!result.ok) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {...result.problem, at: span.at, target: span.target});
             }
@@ -925,7 +923,7 @@ export class GroupService extends BaseContainerService {
         // current one. Rungs pointing below the floor are never served, even if one were stored.
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const lastPast = group.keyVersion - 1;
-        const floor = Math.max(group.eraFloor, group.archivePrunedBelow ?? 0);
+        const floor = group.eraFloor;
         if (spans !== undefined) {
             // A client walking one descent path: the rungs of those spans and the rows of the epochs they join.
             const epochs = [...new Set(spans.flatMap(span => [span.at, span.target]))].filter(epoch => epoch <= lastPast);
@@ -955,50 +953,14 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Refuses to strand either metadata plane below a floor.
-     *
-     * Each plane's entry stays at the epoch it was written under — that is what stops a membership change from
-     * rewriting it — so cutting or pruning below that epoch would take away the only route to its key and make
-     * that plane unreadable for everyone, permanently. Before the planes were split this could not happen: every
-     * removal republished the metadata at the new epoch.
-     *
-     * One lookup by derived id per plane. The two planes move independently, so they may sit at different
-     * epochs and only one may be stranded. The message therefore names the stranded planes and the endpoint
-     * that lifts each one rather than leaving the caller to guess: it is a per-plane fix, and rewriting the
-     * wrong plane costs the client a signed envelope for nothing. It deliberately does not name
-     * `groupUpdatePolicy` — a policy write moves no counter and appends no entry, so it lifts no epoch, and
-     * advertising it would send the operator into a loop that can never clear the refusal.
+     * Refuses to strand a space below a floor a commit creates (a removal abandoning history, a rotation cutting
+     * it). A statement signed through the group has to verify under the group key the space holds; that floor is the
+     * new epoch, which no rotation of the space can reach first, so only dropping the group from the space can clear
+     * this. The spaces are not named — the caller may not be in them.
      */
-    private async assertMetaSurvivesFloor(
-        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
-        groupId: types.group.GroupId,
-        floor: number,
-    ) {
-        const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
-        const stranded = ([
-            {plane: "public", at: heads.publicMeta, fix: "context.groupUpdatePublicMeta"},
-            {plane: "private", at: heads.privateMeta, fix: "context.groupUpdatePrivateMeta"},
-        ] as const).filter(entry => entry.at !== null && entry.at < floor);
-        if (stranded.length > 0) {
-            const where = stranded.map(entry => `${entry.plane} metadata sits at epoch ${entry.at}`).join(" and ");
-            const how = stranded.map(entry => entry.fix).join(" and ");
-            throw new AppException("GROUP_META_UNREACHABLE",
-                `${where}, below the requested floor ${floor}; call ${how} first to rewrite ${stranded.length > 1 ? "them" : "it"} at the current epoch`);
-        }
-    }
-    
-    /**
-     * Refuses to strand a space below a floor. A statement signed through the group has to verify under the group
-     * key the space holds (the epoch it was last wrapped to); with that epoch unreachable nobody could sign one, and
-     * the space would stay stale for good.
-     */
-    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number, abandonsHistory = false) {
+    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number) {
         if (await this.repositoryFactory.createSpaceRepository(session).isGroupHeldBelow(groupId, floor)) {
-            // The floor of a removal abandoning history is the epoch it creates, so no rotation can reach it: only
-            // dropping the group from the space can. The spaces are not named — the caller may not be in them.
-            throw new AppException("GROUP_IN_USE", abandonsHistory
-                ? "a space holds the group's key; remove the group from every space that names it first, a removal that abandons history cannot keep them"
-                : `a space holds the group's key at an epoch below ${floor}; rotate that space's key to the group's current epoch, or remove the group from it, first`);
+            throw new AppException("GROUP_IN_USE", "a space holds the group's key; remove the group from every space that names it first, a commit that cuts history cannot keep them");
         }
     }
     
@@ -1288,7 +1250,7 @@ export class GroupService extends BaseContainerService {
      */
     private assertRungsAreValid(rungs: types.cloud.GroupArchiveRungSubmission[], newKeyVersion: number, group: db.group.Group) {
         const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
-        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor, group.archivePrunedBelow);
+        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor);
         if (!result.ok) {
             throw new AppException("GROUP_ARCHIVE_INVALID", result.problem);
         }

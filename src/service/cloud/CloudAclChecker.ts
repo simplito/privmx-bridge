@@ -30,8 +30,7 @@ export type AclFunctionNameX =
     | "context/groupReseat"
     | "context/groupSetRoles"
     | "context/groupSelfUpdate"
-    | "context/groupCutEra"
-    | "context/groupPruneArchive"
+    | "context/groupCutHistory"
     | "context/groupRepairRung"
     | "context/groupDelete"
     | "context/groupSendCustomEvent"
@@ -184,8 +183,7 @@ export class CloudAclChecker {
             "context/groupReseat": ["groupId"],
             "context/groupSetRoles": ["groupId"],
             "context/groupSelfUpdate": ["groupId"],
-            "context/groupCutEra": ["groupId"],
-            "context/groupPruneArchive": ["groupId"],
+            "context/groupCutHistory": ["groupId"],
             "context/groupRepairRung": ["groupId"],
             "context/groupDelete": ["groupId"],
             "context/groupSendCustomEvent": ["groupId"],

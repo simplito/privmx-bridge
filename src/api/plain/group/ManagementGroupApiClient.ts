@@ -35,6 +35,10 @@ export class ManagementGroupApiClient implements groupApi.IGroupApi {
         return await this.requester.request("group/listGroupCommits", model);
     }
     
+    async cutHistory(model: groupApi.CutHistoryModel): Promise<groupApi.CutHistoryResult> {
+        return await this.requester.request("group/cutHistory", model);
+    }
+    
     async deleteGroup(model: groupApi.DeleteGroupModel): Promise<types.core.OK> {
         return await this.requester.request("group/deleteGroup", model);
     }

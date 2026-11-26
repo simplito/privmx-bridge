@@ -29,7 +29,7 @@ import { DateUtils } from "../../../utils/DateUtils";
 import { AppException } from "../../../api/AppException";
 import { CloudAclChecker } from "../../../service/cloud/CloudAclChecker";
 import { PolicyService } from "../../../service/cloud/PolicyService";
-import { CloudUser } from "../../../CommonTypes";
+import { CloudUser, PlainUser } from "../../../CommonTypes";
 import { CloudAccessValidator } from "../../../service/cloud/CloudAccessValidator";
 import { ActiveUsersMap } from "../../../cluster/master/ipcServices/ActiveUsers";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
@@ -169,8 +169,12 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
     mock(repositoryFactory, "createGroupRepository", () => groupRepository);
     mock(repositoryFactory, "createContextUserRepository", () => contextUserRepository);
     // A space naming the group, holding its key at `spaceAtGroupKeyVersion`.
-    mock(repositoryFactory, "createSpaceRepository", (() => ({isGroupHeldBelow: async (_id: types.group.GroupId, keyVersion: number) =>
-        options.spaceAtGroupKeyVersion !== undefined && options.spaceAtGroupKeyVersion < keyVersion})) as never);
+    mock(repositoryFactory, "createSpaceRepository", (() => ({
+        isGroupHeldBelow: async (_id: types.group.GroupId, keyVersion: number) =>
+            options.spaceAtGroupKeyVersion !== undefined && options.spaceAtGroupKeyVersion < keyVersion,
+        getByGroup: async (id: types.group.GroupId) => options.spaceAtGroupKeyVersion === undefined ? []
+            : [{groups: [{groupId: id, groupKeyVersion: options.spaceAtGroupKeyVersion}, {groupId: "other", groupKeyVersion: 1}]}],
+    })) as never);
     mock(repositoryFactory, "withTransaction", f => f({} as mongodb.ClientSession));
     
     mock(cloudKeyService, "checkUsersExistance", async () => {});
@@ -212,14 +216,12 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         Array.from({length: to - from}, (_, i) => from + i + 1).map(seq => ({
             seq, statement: {seq}, ...(seq === 1 ? {genesis: {users: group.users, managers: group.managers}} : {}),
         }))) as never);
-    // Where each metadata entry sits. Cutting or pruning above either would strand it, so the service reads
-    // both first.
+    // Where each metadata entry sits. The management cut clamps its floor to both.
     mock(groupRepository.state, "getMetaHeadKeyVersions", (async () => ({
         publicMeta: options.publicMetaKeyVersion ?? group.keyVersion,
         privateMeta: options.privateMetaKeyVersion ?? group.keyVersion,
     })) as never);
-    mock(groupRepository, "cutEra", (options.casMiss ? async () => null : async (g: db.group.Group, floor: number) => ({...g, eraFloor: floor})) as never);
-    mock(groupRepository, "pruneArchive", (options.casMiss ? async () => null : async (g: db.group.Group, below: number) => ({...g, archivePrunedBelow: below})) as never);
+    mock(groupRepository, "cutHistory", (options.casMiss ? async () => null : async (g: db.group.Group, floor: number) => ({...g, eraFloor: floor})) as never);
     
     mock(contextUserRepository, "getUsers", async () => []);
     mock(activeUsersMap, "getUsersState", async () => []);
@@ -235,6 +237,9 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         return {user, context: options.contextPolicy ? {...myContext, policy: options.contextPolicy} : myContext};
     });
     mock(cloudAccessValidator, "checkIfCanExecuteInContext", async (executor, ctx, onCloudUser) => {
+        if (executor.type === "plain") {
+            return myContext;
+        }
         const ctxId = typeof ctx === "string" ? ctx : ctx.id;
         const {user, context} = await cloudAccessValidator.getUserFromContext(executor as CloudUser, ctxId);
         await onCloudUser(user, context);
@@ -691,11 +696,11 @@ it("removeMember abandoning history takes no rungs and has storage close the era
     assert.deepStrictEqual(kinds, ["memberRemoved", "eraCut"]);
 });
 
-it("removeMember abandoning history needs the right to cut the era as well", async () => {
+it("removeMember abandoning history needs the groupCutHistory ACL entry as well", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group);
     const acl = janekUser.acl;
-    janekUser.acl = ["ALLOW ALL", "DENY context/groupCutEra"].join("\n") as types.cloud.ContextAcl;
+    janekUser.acl = ["ALLOW ALL", "DENY context/groupCutHistory"].join("\n") as types.cloud.ContextAcl;
     try {
         await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
         hasOneCall(groupRepository.removeMembersWithTransition);
@@ -722,18 +727,6 @@ it("removeMember refuses a rung reaching below a cut era", async () => {
         atKeyVersion: EPOCH + 1,
         targetKeyVersion: 2,
         data: "rung:below-floor" as types.core.UserKeyData,
-    });
-    await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, model));
-});
-
-it("removeMember refuses a rung reaching below the prune watermark", async () => {
-    const group = treeBackedGroup({archivePrunedBelow: 4});
-    const {groupService} = createGroupService(group);
-    const model = removalModel(group, 2);
-    model.rungs.push({
-        atKeyVersion: EPOCH + 1,
-        targetKeyVersion: 3,
-        data: "rung:below-watermark" as types.core.UserKeyData,
     });
     await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.removeMembers(janekCloudUser, model));
 });
@@ -912,80 +905,114 @@ it("removeMember still accepts a removal with no metadata rotation at all", asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// era floor and pruning
+// cutting history
 // ─────────────────────────────────────────────────────────────────────────────
 
-it("cutEra raises the floor", async () => {
-    const {groupService, groupRepository} = createGroupService();
-    await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH});
-    hasOneCall(groupRepository.cutEra);
+/** The management API's executor: server authority. */
+const SERVER: PlainUser = {type: "plain", solutions: ["*" as types.cloud.SolutionId]};
+
+/** A rotation by janek that cuts history: no rungs. */
+function cutModel(group: TreeGroup) {
+    return {...rotationModel(group), rungs: [], cutHistory: true};
+}
+
+it("a rotation with cutHistory publishes no rungs and sets the floor at the new epoch", async () => {
+    const group = withRules({trimHistory: "managers"});
+    const {groupService, groupRepository, groupNotificationService} = createGroupService(group);
+    await groupService.generateNewGroupKey(janekCloudUser, cutModel(group));
+    const params = (groupRepository.generateNewGroupKey as unknown as {mock: {calls: {cutHistory?: boolean, rungs: unknown[]}[][]}}).mock.calls[0][0];
+    assert.strictEqual(params.cutHistory, true);
+    assert.deepStrictEqual(params.rungs, []);
+    const kinds = (groupNotificationService.sendUpdatedGroup as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[2]);
+    assert.deepStrictEqual(kinds, ["keyRotated", "eraCut"]);
 });
 
-it("cutEra refuses to lower a floor, which would resurrect abandoned epochs", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup({eraFloor: 4}));
-    await expectFailure("INVALID_PARAMS", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 2, expectedKeyVersion: EPOCH}));
-    hasNoCalls(groupRepository.cutEra);
+it("SECURITY: a rotation with cutHistory refuses rungs: nothing may point below the new floor", async () => {
+    const group = withRules({trimHistory: "managers"});
+    const {groupService, groupRepository} = createGroupService(group);
+    const e = await expectFailure("GROUP_ARCHIVE_INVALID", () => groupService.generateNewGroupKey(janekCloudUser, {...cutModel(group), rungs: rotationModel(group).rungs}));
+    assert.strictEqual((e.getData() as {kind: string}).kind, "RUNGS_WITH_CUT_HISTORY");
+    hasNoCalls(groupRepository.generateNewGroupKey);
 });
 
-it("cutEra refuses a floor above the current epoch", async () => {
+it("SECURITY: a rotation with cutHistory takes trimHistory: nobody (the default) refuses it, members allows a plain member", async () => {
+    const closed = withRules({trimHistory: "nobody"});
+    const refused = createGroupService(closed);
+    await expectFailure("ACCESS_DENIED", () => refused.groupService.generateNewGroupKey(janekCloudUser, cutModel(closed)));
+    hasNoCalls(refused.groupRepository.generateNewGroupKey);
+    assert.deepStrictEqual(refused.groupRotationRateLimiter.kept, [], "refused before any budget");
+    // The same rotation without the cut is any member's.
+    await refused.groupService.generateNewGroupKey(janekCloudUser, rotationModel(closed));
+    hasOneCall(refused.groupRepository.generateNewGroupKey);
+    
+    const open = withRules({trimHistory: "members"});
+    const member = createGroupService(open);
+    // The gate comes before the statement is read, so alice is refused or let through on the rule alone.
+    await expectFailure("GROUP_TREE_INVALID", () => member.groupService.generateNewGroupKey(aliceCloudUser, cutModel(open)));
+    const managersOnly = withRules({trimHistory: "managers"});
+    const notMember = createGroupService(managersOnly);
+    await expectFailure("ACCESS_DENIED", () => notMember.groupService.generateNewGroupKey(aliceCloudUser, cutModel(managersOnly)));
+});
+
+it("SECURITY: the context's update vetoes a rotation that cuts history, not a plain one", async () => {
+    const group = withRules({trimHistory: "managers"});
+    const vetoed = createGroupService(group, {contextPolicy: {group: {update: "none"}}});
+    await expectFailure("ACCESS_DENIED", () => vetoed.groupService.generateNewGroupKey(janekCloudUser, cutModel(group)));
+    await vetoed.groupService.generateNewGroupKey(janekCloudUser, rotationModel(group));
+    hasOneCall(vetoed.groupRepository.generateNewGroupKey);
+});
+
+it("a rotation with cutHistory refuses while a space holds the group's key, and not over metadata below the floor", async () => {
+    const group = withRules({trimHistory: "managers"});
+    const spaced = createGroupService(group, {spaceAtGroupKeyVersion: EPOCH});
+    const e = await expectFailure("GROUP_IN_USE", () => spaced.groupService.generateNewGroupKey(janekCloudUser, cutModel(group)));
+    expect(e.data).not.toContain("rotate");
+    hasNoCalls(spaced.groupRepository.generateNewGroupKey);
+    // The client rewrites both planes at the new epoch right after, as after a removal abandoning history.
+    const stale = createGroupService(group, {publicMetaKeyVersion: 2, privateMetaKeyVersion: 3});
+    await stale.groupService.generateNewGroupKey(janekCloudUser, cutModel(group));
+    hasOneCall(stale.groupRepository.generateNewGroupKey);
+});
+
+it("the management cut defaults to the current epoch and reports the effective floor", async () => {
+    const {groupService, groupRepository, groupNotificationService} = createGroupService();
+    assert.deepStrictEqual(await groupService.cutHistory(SERVER, groupId), {eraFloor: EPOCH});
+    assert.deepStrictEqual([...groupRepository.cutHistory.mock.calls[0]].slice(1), [EPOCH]);
+    const kinds = (groupNotificationService.sendUpdatedGroup as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[2]);
+    assert.deepStrictEqual(kinds, ["eraCut"]);
+});
+
+it("the management cut never goes above the current epoch", async () => {
     const {groupService} = createGroupService();
-    await expectFailure("INVALID_PARAMS", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: EPOCH + 1, expectedKeyVersion: EPOCH}));
+    assert.deepStrictEqual(await groupService.cutHistory(SERVER, groupId, EPOCH + 10), {eraFloor: EPOCH});
 });
 
-// An entry stays at the epoch it was written under, so a floor above it takes away the only route to its key —
-// permanently, for everybody. The planes move independently, so only one may be stranded, and the message has to
-// name which: rewriting the wrong plane costs the client a freshly signed envelope for nothing. Written as four
-// cases because an implementation that only takes `min(public, private)` passes the first, second and fourth and
-// fails the "and not the other plane" half of the first two.
-it("cutEra refuses a floor that strands the public plane, and names only that plane", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 2, privateMetaKeyVersion: EPOCH});
-    const e = await expectFailure("GROUP_META_UNREACHABLE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("groupUpdatePublicMeta");
-    expect(e.data).not.toContain("groupUpdatePrivateMeta");
-    // Never the policy method: a policy write moves no counter and appends no entry, so it lifts no epoch, and
-    // naming it would send the operator into a loop that can never clear the refusal.
-    expect(e.data).not.toContain("groupUpdatePolicy");
-    hasNoCalls(groupRepository.cutEra);
+it("SECURITY: the management cut clamps down to the epoch each metadata plane and every space needs", async () => {
+    const publicLow = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 2, privateMetaKeyVersion: 4});
+    assert.deepStrictEqual(await publicLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 2});
+    const privateLow = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 4, privateMetaKeyVersion: 3});
+    assert.deepStrictEqual(await privateLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 3});
+    // Only this group's entry in the space counts.
+    const spaced = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 4});
+    assert.deepStrictEqual(await spaced.groupService.cutHistory(SERVER, groupId), {eraFloor: 4});
+    // An explicit floor below all of them stands.
+    const explicit = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 4});
+    assert.deepStrictEqual(await explicit.groupService.cutHistory(SERVER, groupId, 3), {eraFloor: 3});
 });
 
-it("cutEra refuses a floor that strands the private plane, and names only that plane", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: EPOCH, privateMetaKeyVersion: 2});
-    const e = await expectFailure("GROUP_META_UNREACHABLE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("groupUpdatePrivateMeta");
-    expect(e.data).not.toContain("groupUpdatePublicMeta");
-    expect(e.data).not.toContain("groupUpdatePolicy");
-    hasNoCalls(groupRepository.cutEra);
+it("SECURITY: the management cut never lowers a floor; with nothing to change it is a no-op", async () => {
+    const {groupService, groupRepository, groupNotificationService} = createGroupService(treeBackedGroup({eraFloor: 4}), {spaceAtGroupKeyVersion: 2});
+    assert.deepStrictEqual(await groupService.cutHistory(SERVER, groupId), {eraFloor: 4});
+    hasNoCalls(groupRepository.cutHistory);
+    hasNoCalls(groupNotificationService.sendUpdatedGroup);
 });
 
-it("cutEra names both planes when both are stranded", async () => {
-    const {groupService} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 2, privateMetaKeyVersion: 2});
-    const e = await expectFailure("GROUP_META_UNREACHABLE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("groupUpdatePublicMeta");
-    expect(e.data).toContain("groupUpdatePrivateMeta");
-});
-
-it("cutEra allows a floor both planes sit at or above", async () => {
-    // Without this the three refusals above would also pass with the check hardwired to refuse everything.
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 3, privateMetaKeyVersion: 4});
-    await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH});
-    hasOneCall(groupRepository.cutEra);
-});
-
-// A statement signed through the group has to verify under the key a space holds for it; an unreachable epoch
-// there would leave the space stale for good.
-it("cutEra refuses a floor above the epoch a space holds the group's key at", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 2});
-    const e = await expectFailure("GROUP_IN_USE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("rotate");
-    hasNoCalls(groupRepository.cutEra);
-    await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 2, expectedKeyVersion: EPOCH});
-    hasOneCall(groupRepository.cutEra);
-});
-
-it("pruneArchive refuses a watermark above the epoch a space holds the group's key at", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 2});
-    await expectFailure("GROUP_IN_USE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
-    hasNoCalls(groupRepository.pruneArchive);
+it("the management cut is server authority: no group rule gates it, a member cannot call it", async () => {
+    const closed = createGroupService(withRules({trimHistory: "nobody"}));
+    assert.deepStrictEqual(await closed.groupService.cutHistory(SERVER, groupId, 3), {eraFloor: 3});
+    const member = createGroupService();
+    await expectFailure("ACCESS_DENIED", () => member.groupService.cutHistory(janekCloudUser, groupId, 3));
+    hasNoCalls(member.groupRepository.cutHistory);
 });
 
 it("removeMember abandoning history refuses while a space holds the group's key", async () => {
@@ -998,39 +1025,6 @@ it("removeMember abandoning history refuses while a space holds the group's key"
     // An ordinary removal leaves the epoch reachable, so the space can still be moved on.
     await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
     hasOneCall(groupRepository.removeMembersWithTransition);
-});
-
-it("cutEra requires a manager", async () => {
-    const {groupService} = createGroupService();
-    await expectFailure("ACCESS_DENIED", () => groupService.cutEra(aliceCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-});
-
-it("pruneArchive records a watermark", async () => {
-    const {groupService, groupRepository} = createGroupService();
-    await groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH});
-    hasOneCall(groupRepository.pruneArchive);
-});
-
-it("pruneArchive refuses a watermark that strands the public plane, and names only that plane", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 2, privateMetaKeyVersion: EPOCH});
-    const e = await expectFailure("GROUP_META_UNREACHABLE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("groupUpdatePublicMeta");
-    expect(e.data).not.toContain("groupUpdatePrivateMeta");
-    hasNoCalls(groupRepository.pruneArchive);
-});
-
-it("pruneArchive refuses a watermark that strands the private plane, and names only that plane", async () => {
-    const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: EPOCH, privateMetaKeyVersion: 2});
-    const e = await expectFailure("GROUP_META_UNREACHABLE", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
-    expect(e.data).toContain("groupUpdatePrivateMeta");
-    expect(e.data).not.toContain("groupUpdatePublicMeta");
-    hasNoCalls(groupRepository.pruneArchive);
-});
-
-it("pruneArchive refuses to prune past the current epoch", async () => {
-    const {groupService, groupRepository} = createGroupService();
-    await expectFailure("INVALID_PARAMS", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: EPOCH + 2, expectedKeyVersion: EPOCH}));
-    hasNoCalls(groupRepository.pruneArchive);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1073,14 +1067,12 @@ it("getKeyArchive windows keyHistory in the query", async () => {
 });
 
 it("SECURITY: getKeyArchive never serves a rung below the floor", async () => {
-    // A row left below a cut era or a prune watermark (a repair that raced the cut, a future bug) stays unserved.
+    // A row left below a history cut (a repair that raced the cut, a future bug) stays unserved.
     const below: types.cloud.GroupArchiveRung = {atKeyVersion: 4, targetKeyVersion: 1, data: "stale" as types.core.UserKeyData};
-    for (const floors of [{eraFloor: 3}, {eraFloor: 1, archivePrunedBelow: 3}]) {
-        const {groupService, getRungFloor} = createGroupService({...treeBackedGroup(), ...floors}, {rungs: [...ladder, below]});
-        const result = await groupService.getKeyArchive(janekCloudUser, groupId);
-        assert.strictEqual(getRungFloor(), 3);
-        assert(result.rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor");
-    }
+    const {groupService, getRungFloor} = createGroupService({...treeBackedGroup(), eraFloor: 3}, {rungs: [...ladder, below]});
+    const result = await groupService.getKeyArchive(janekCloudUser, groupId);
+    assert.strictEqual(getRungFloor(), 3);
+    assert(result.rungs.every(rung => rung.targetKeyVersion >= 3), "nothing below the floor");
 });
 
 it("getKeyArchive is readable by an ordinary member", async () => {
@@ -1897,19 +1889,12 @@ function createRepairStore(overrides: Partial<TreeGroup> = {}, stored: types.clo
             }
             tx!.writes.push(state => state.rungs.push({...rung, author}));
         }) as never);
-        mock(repository, "cutEra", (async (g: db.group.Group, floor: number) => {
+        mock(repository, "cutHistory", (async (g: db.group.Group, floor: number) => {
             writeGroup(tx!, state => {
                 state.group.eraFloor = floor;
                 state.rungs = state.rungs.filter(rung => rung.targetKeyVersion >= floor);
             });
             return {...g, eraFloor: floor};
-        }) as never);
-        mock(repository, "pruneArchive", (async (g: db.group.Group, below: number) => {
-            writeGroup(tx!, state => {
-                state.group.archivePrunedBelow = below;
-                state.rungs = state.rungs.filter(rung => rung.targetKeyVersion >= below);
-            });
-            return {...g, archivePrunedBelow: below};
         }) as never);
         mock(repository.state, "getArchiveRungs", (async (_id: types.group.GroupId, _from?: number, _to?: number, minTarget?: number) =>
             view().rungs.filter(rung => rung.targetKeyVersion >= (minTarget ?? 0))) as never);
@@ -2007,13 +1992,12 @@ it("SECURITY: repairRung refuses a caller without a seat", async () => {
     assert.strictEqual(store.groupRotationRateLimiter.kept.length, 0, "refused before the budget");
 });
 
-it("SECURITY: repairRung refuses a span above the current epoch, not owed, below the floor or below the watermark", async () => {
+it("SECURITY: repairRung refuses a span above the current epoch, not owed, or below the floor", async () => {
     const cases: [Partial<TreeGroup>, number, number, string][] = [
         [{}, EPOCH + 1, EPOCH, "FUTURE_EPOCH"],
         [{keyVersion: 8}, 8, 5, "NOT_CANONICAL"],
         [{keyVersion: 8}, 8, 9, "DIRECTION"],
         [{keyVersion: 8, eraFloor: 6}, 8, 4, "BELOW_ERA_FLOOR"],
-        [{keyVersion: 8, eraFloor: 1, archivePrunedBelow: 6}, 8, 4, "BELOW_PRUNE_WATERMARK"],
     ];
     for (const [overrides, at, target, kind] of cases) {
         const store = createRepairStore(overrides, []);
@@ -2049,8 +2033,8 @@ it("repairRung refuses a group of an unsupported tree version", async () => {
     assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
 });
 
-for (const floorChange of ["cutEra", "pruneArchive"] as const) {
-    it(`SECURITY: a repair racing ${floorChange} leaves no rung below the new floor`, async () => {
+{
+    it("SECURITY: a repair racing a management history cut leaves no rung below the new floor", async () => {
         // Without the write to the group document the repair, validated against the old floor, would land its
         // rung after the floor change deleted everything below it: a rung below the floor, served forever.
         const store = createRepairStore({keyVersion: 8}, [{atKeyVersion: 8, targetKeyVersion: 6, data: "opener" as types.core.UserKeyData, author: janek}]);
@@ -2059,15 +2043,10 @@ for (const floorChange of ["cutEra", "pruneArchive"] as const) {
         repair.catch(() => {});
         await paused.reached;
         const manager = cloudUserOf("janek");
-        if (floorChange === "cutEra") {
-            await store.groupService.cutEra(manager, {id: groupId, newFloor: 7, expectedKeyVersion: 8});
-        }
-        else {
-            await store.groupService.pruneArchive(manager, {id: groupId, belowEpoch: 7, expectedKeyVersion: 8});
-        }
+        assert.deepStrictEqual(await store.groupService.cutHistory(SERVER, groupId, 7), {eraFloor: 7});
         paused.resume();
         const error = await expectFailure("GROUP_ARCHIVE_INVALID", () => repair);
-        assert.strictEqual((error.getData() as {kind: string}).kind, floorChange === "cutEra" ? "BELOW_ERA_FLOOR" : "BELOW_PRUNE_WATERMARK");
+        assert.strictEqual((error.getData() as {kind: string}).kind, "BELOW_ERA_FLOOR");
         assert.deepStrictEqual(store.rungs(), []);
         const served = await store.groupService.getKeyArchive(manager, groupId);
         assert.deepStrictEqual(served.rungs, []);
@@ -2156,29 +2135,20 @@ it("SECURITY: a reseat takes replaceMemberKeys, not removeMembers", async () => 
     hasNoCalls(groupRepository.removeMembersWithTransition);
 });
 
-it("SECURITY: cutting the era, pruning and abandoning history take trimHistory, managers included", async () => {
+it("SECURITY: a removal abandoning history needs only the removal's rules, not trimHistory", async () => {
+    // The recovery path of a remover who lost the current key: a "nobody" trimHistory (the default) must not
+    // block a security-relevant removal.
     const group = withRules({trimHistory: "nobody"});
-    const {groupService, groupRepository} = createGroupService(group);
-    await expectFailure("ACCESS_DENIED", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
-    await expectFailure("ACCESS_DENIED", () => groupService.pruneArchive(janekCloudUser, {id: groupId, belowEpoch: 3, expectedKeyVersion: EPOCH}));
-    await expectFailure("ACCESS_DENIED", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
-    hasNoCalls(groupRepository.cutEra);
-    hasNoCalls(groupRepository.pruneArchive);
-    // The removal itself is not trimHistory's.
-    await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
+    const {groupService, groupRepository, groupNotificationService} = createGroupService(group);
+    await groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true});
     hasOneCall(groupRepository.removeMembersWithTransition);
-});
-
-it("trimHistory open to members lets a plain member cut the era", async () => {
-    const group = withRules({trimHistory: "members"});
-    const {groupService, groupRepository} = createGroupService(group);
-    await groupService.cutEra(aliceCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH});
-    hasOneCall(groupRepository.cutEra);
+    const kinds = (groupNotificationService.sendUpdatedGroup as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[2]);
+    assert.deepStrictEqual(kinds, ["memberRemoved", "eraCut"]);
 });
 
 it("SECURITY: the context's update vetoes the roster, history and metadata rules; updatePolicy the role, rule and visibility ones", async () => {
-    const update = createGroupService(treeBackedGroup(), {contextPolicy: {group: {update: "none"}}});
-    await expectFailure("ACCESS_DENIED", () => update.groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    const update = createGroupService(withRules({trimHistory: "managers"}), {contextPolicy: {group: {update: "none"}}});
+    await expectFailure("ACCESS_DENIED", () => update.groupService.generateNewGroupKey(janekCloudUser, cutModel(update.group)));
     await expectFailure("ACCESS_DENIED", () => update.groupService.removeMembers(janekCloudUser, removalModel(update.group, 2)));
     await update.groupService.updatePolicy(janekCloudUser, policyModel(update.group, OTHER_RULES));
     hasOneCall(update.groupRepository.updatePolicyWithStatement);

@@ -113,6 +113,18 @@ export interface DeleteGroupModel {
     groupId: types.group.GroupId;
 }
 
+export interface CutHistoryModel {
+    /** Group's ID */
+    groupId: types.group.GroupId;
+    /** Epoch to cut below; defaults to the group's current epoch. Clamped down to the lowest epoch still needed. */
+    beforeEpoch?: number;
+}
+
+export interface CutHistoryResult {
+    /** The group's era floor afterwards: everything below it is deleted */
+    eraFloor: number;
+}
+
 export interface DeleteManyGroupsModel {
     /** List of groups to delete */
     groupIds: types.group.GroupId[];
@@ -182,6 +194,17 @@ export interface IGroupApi {
     * @returns List of statements
     */
     listGroupCommits(model: ListGroupCommitsModel): Promise<ListGroupCommitsResult>;
+    
+    /**
+    * Deletes a group's history below an epoch: raises its era floor and deletes the archive rungs and epoch keys
+    * below it, so members cannot reach those epochs any more. Does not rotate (the server holds no keys), so the
+    * floor is at most the current epoch, and it is clamped down to the lowest epoch still needed: each metadata
+    * plane's and every Space's that holds the group. A floor is never lowered; when nothing changes this is a
+    * no-op. Members get a groupUpdated event with changeKind "eraCut". Meant for a periodic retention job.
+    * @param model Group's ID, optional epoch to cut below (default: the current epoch)
+    * @returns The effective era floor
+    */
+    cutHistory(model: CutHistoryModel): Promise<CutHistoryResult>;
     
     /**
     * Deletes the group with given ID

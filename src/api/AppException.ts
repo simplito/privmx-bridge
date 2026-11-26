@@ -140,7 +140,6 @@ export const API_ERROR_CODES = {
     "GROUP_HAS_NO_TREE"                     : {code: 0x6220, message: "Group is not backed by a key tree"},
     "GROUP_MEMBER_LIMIT_EXCEEDED"           : {code: 0x6221, message: "Group would exceed the configured member limit"},
     "GROUP_META_KEY_MISMATCH"               : {code: 0x6222, message: "Group metadata write must use the current epoch's key"},
-    "GROUP_META_UNREACHABLE"                : {code: 0x6223, message: "Group metadata entry would become unreadable; rewrite the affected metadata plane first"},
     "GROUP_ROSTER_VERSION_MISMATCH"         : {code: 0x6224, message: "Group roster has moved since this change was planned"},
     "GROUP_LAST_MANAGER"                    : {code: 0x6225, message: "Group would be left without a manager"},
     "SPACE_DOES_NOT_EXIST"                  : {code: 0x6226, message: "Space does not exist"},

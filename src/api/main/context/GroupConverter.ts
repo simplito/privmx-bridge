@@ -201,7 +201,6 @@ export class GroupConverter {
             // Handed back so the caller does not have to find them in `leafAssignment` itself.
             ...(forUserIds === undefined ? {} : {subjectLeafPositions: subjects}),
             ...(forNewMembers === undefined ? {} : {nextFreeSeats: seats}),
-            ...(group.archivePrunedBelow !== undefined ? {archivePrunedBelow: group.archivePrunedBelow} : {}),
         };
     }
     
@@ -272,9 +271,6 @@ export class GroupConverter {
             keyHistory: GroupConverter.keyHistory(group, epochKeys),
             rungs: rungs,
         };
-        if (group.archivePrunedBelow !== undefined) {
-            res.archivePrunedBelow = group.archivePrunedBelow;
-        }
         return res;
     }
     

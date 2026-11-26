@@ -81,7 +81,7 @@ export class CommitStatement {
     /** What a client fills in for a rule it does not set, before signing. The bridge never fills anything in. */
     static readonly DEFAULT_RULES: types.cloud.GroupRules = Object.freeze({
         addMembers: "managers", removeMembers: "managers", replaceMemberKeys: "managers", changeRoles: "managers", changeRules: "managers",
-        changeVisibility: "managers", trimHistory: "managers", editPublicMeta: "managers", editPrivateMeta: "managers",
+        changeVisibility: "managers", trimHistory: "nobody", editPublicMeta: "managers", editPrivateMeta: "managers",
     });
     
     /**

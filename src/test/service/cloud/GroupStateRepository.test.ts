@@ -296,7 +296,7 @@ it("epoch rows: one per (group, epoch), read in order, cut as a range below the 
 });
 
 it("SECURITY: a new epoch's key is looked up among every statement of the group, which no era cut removes", async () => {
-    // Epoch rows go below the floor (`cutEra`, `abandonHistory`), so a check against them forgot every key down
+    // Epoch rows go below the floor (`cutHistory`, `abandonHistory`), so a check against them forgot every key down
     // there — keys every member of those epochs, removed ones included, holds the private half of.
     const key = "EarlierGroupPubKey" as unknown as types.cloud.GroupPubKey;
     const {repository, captured} = createStateRepository({commits: [{id: GroupStateRepository.treeCommitId(groupId, 1)} as db.group.GroupTreeCommit]});

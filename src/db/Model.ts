@@ -302,10 +302,8 @@ export namespace group {
          * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
          */
         leafAssignment: types.cloud.UserId[];
-        /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
+        /** Oldest epoch reachable by descending: a history cut deletes everything below it. */
         eraFloor: number;
-        /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
-        archivePrunedBelow?: number;
         /**
          * Bumped by every `groupRepairRung`. The write is what serialises a repair against every floor change and
          * every other repair of the group: they all write this document, so a concurrent one is a write conflict
@@ -418,7 +416,7 @@ export namespace group {
      *
      * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
      * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
-     * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable. The
+     * the management `cutHistory` clamps its floor to it, or the metadata would become unreadable. The
      * two planes move independently, so they may sit at different epochs and only one may be stranded.
      *
      * One row per group per plane: `id` is derived from `groupId` and the plane alone, and a write replaces it.
@@ -462,8 +460,8 @@ export namespace group {
      * epoch: the grant public key it was born with (what `keyHistory` serves for the epochs behind the current one)
      * and, when that commit carried one, the group's own metadata key wrapped **once** to that grant key (what
      * `groupKeys` serves). A row per epoch rather than two arrays on the group document, which grew with every
-     * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. `cutEra` drops the rows
-     * below its floor; `pruneArchive` leaves them. The grant-key reuse check does not read these rows (they go with the era);
+     * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. A history cut drops the rows
+     * below its floor. The grant-key reuse check does not read these rows (they go with the era);
      * it reads the statements in `groupTreeCommit`, which no cut removes.
      *
      * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch missing

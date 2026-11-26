@@ -181,7 +181,6 @@ export class GroupRepository {
         const filter = {
             _id: oldGroup.id,
             eraFloor: oldGroup.eraFloor,
-            archivePrunedBelow: oldGroup.archivePrunedBelow ?? {$exists: false},
         };
         const result = await this.repository.collection.updateOne(filter, {$inc: {ladderRev: 1}}, this.repository.getOptions());
         return result.matchedCount > 0;
@@ -227,10 +226,8 @@ export class GroupRepository {
         // An invariant, not a client error: `createGroup` writes the document and both entries in one
         // transaction, so only a group left over from an older build of this branch can be missing either.
         // Reported the same way as the missing roster counter below — nothing the caller sends changes the
-        // answer, and the group has to be recreated. Deliberately not `GROUP_META_UNREACHABLE`: that one means
-        // an entry exists but sits below the requested epoch floor, which a metadata rewrite lifts. A missing
-        // entry lifts for nothing. This is also what keeps both `GroupState` planes non-nullable, so the
-        // converter never has to think about it.
+        // answer, and the group has to be recreated. This is also what keeps both `GroupState` planes
+        // non-nullable, so the converter never has to think about it.
         if (!publicMeta) {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no public metadata entry; it predates the metadata planes and must be recreated`);
         }
@@ -346,7 +343,7 @@ export class GroupRepository {
         data: types.group.GroupData,
         rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
-        /** Close the era at the new epoch in the same write, as `cutEra` would. */
+        /** Close the era at the new epoch in the same write, deleting what is below it. */
         abandonHistory?: boolean,
     }): Promise<db.group.Group|null> {
         const {oldGroup, modifier, removedUsers, commit} = params;
@@ -466,38 +463,20 @@ export class GroupRepository {
     }
     
     /**
-     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do the epoch rows below it —
-     * nothing can verify or open them once nobody can climb there.
-     *
-     * `pruneArchive` deliberately does **not** drop those: a member still holding an old epoch key locally has
-     * to keep being able to verify it. Cutting an era is what says those epochs are gone for good.
+     * Raises the era floor to `newFloor` without a new epoch (`group/cutHistory` of the management API): the rungs
+     * pointing below it go, and so do the epoch rows below it — deleted, not hidden, since nothing can verify or
+     * open them once nobody can climb there.
      */
-    async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = oldGroup.keyVersion;
+    async cutHistory(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
         const changes: Partial<db.group.Group> = {
             eraFloor: newFloor,
             lastModificationDate: DateUtils.now(),
         };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
+        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes)) {
             return null;
         }
         await this.state.deleteRungsTargetingBelow(oldGroup.id, newFloor);
         await this.state.deleteEpochKeysBelow(oldGroup.id, newFloor);
-        return {...oldGroup, ...changes};
-    }
-    
-    /** Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
-     *  archive was pruned rather than left suspecting tampering. */
-    async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const changes: Partial<db.group.Group> = {
-            archivePrunedBelow: Math.max(oldGroup.archivePrunedBelow ?? 0, belowEpoch),
-            lastModificationDate: DateUtils.now(),
-        };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.deleteRungsTargetingBelow(oldGroup.id, belowEpoch);
         return {...oldGroup, ...changes};
     }
     
@@ -754,6 +733,8 @@ export class GroupRepository {
         statement: types.cloud.GroupTreeCommitStatement,
         rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
+        /** Close the era at the new epoch in the same write, deleting what is below it. */
+        cutHistory?: boolean,
     }): Promise<db.group.Group | null> {
         const {oldGroup, modifier} = params;
         const now = DateUtils.now();
@@ -768,6 +749,7 @@ export class GroupRepository {
             rosterVersion: version,
             keyVersion: expectedKeyVersion + 1,
             treeCommitSeq: params.statement.seq,
+            ...(params.cutHistory ? {eraFloor: expectedKeyVersion + 1} : {}),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
             return null;
@@ -787,6 +769,10 @@ export class GroupRepository {
         await this.state.insertTreeCommit(oldGroup.id, params.statement);
         await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
+        if (params.cutHistory) {
+            await this.state.deleteRungsTargetingBelow(oldGroup.id, expectedKeyVersion + 1);
+            await this.state.deleteEpochKeysBelow(oldGroup.id, expectedKeyVersion + 1);
+        }
         return {...oldGroup, ...changes};
     }
     

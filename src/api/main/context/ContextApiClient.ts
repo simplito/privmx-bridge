@@ -103,14 +103,6 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupSetVisibility", model);
     }
     
-    groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
-        return this.request("context.groupCutEra", model);
-    }
-    
-    groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
-        return this.request("context.groupPruneArchive", model);
-    }
-    
     groupRepairRung(model: contextApi.GroupRepairRungModel): Promise<types.core.OK> {
         return this.request("context.groupRepairRung", model);
     }
