@@ -435,8 +435,9 @@ export interface GroupRules {
     changeRules: GroupRuleWho;
     /** Who may change who beside the members sees the group (`groupSetVisibility`) */
     changeVisibility: GroupRuleWho;
-    /** Who may delete the group's history: a rotation with `cutHistory`. Default "nobody". (A removal with
-     *  `abandonHistory` does not need it, and the management `group/cutHistory` acts with server authority.) */
+    /** Who may delete the group's history: a rotation with `cutHistory` (with both edit rules). Default "nobody".
+     *  A removal with `abandonHistory` takes it or `changeRules`; the management `group/cutHistory` acts with
+     *  server authority. */
     trimHistory: GroupRuleWho;
     /** Who may rewrite the public metadata */
     editPublicMeta: GroupRuleWho;

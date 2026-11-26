@@ -47,13 +47,19 @@ export class SpaceRepository {
         return this.repository.get(id);
     }
     
-    /** @param onlyFor narrows to the spaces this user is a recipient of, directly or through one of the groups. */
-    async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space, onlyFor?: {userId: types.cloud.UserId, groupIds: types.group.GroupId[]}) {
+    /**
+     * @param onlyFor narrows to the spaces this user is a recipient of, directly or through one of the groups.
+     * @param groupId narrows to the spaces naming this group.
+     */
+    async getPage(contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space, onlyFor?: {userId: types.cloud.UserId, groupIds: types.group.GroupId[]},
+        groupId?: types.group.GroupId) {
         const mongoQueries = listParams.query ? [MongoQueryConverter.convertQuery(listParams.query)] : [];
         // In the same `$match` as `contextId`, so no query from `listParams` can widen it back.
-        const match = onlyFor === undefined
-            ? {contextId: contextId}
-            : {contextId: contextId, $or: [{"users.userId": onlyFor.userId}, {"groups.groupId": {$in: onlyFor.groupIds}}]};
+        const match = {
+            contextId: contextId,
+            ...(onlyFor === undefined ? {} : {$or: [{"users.userId": onlyFor.userId}, {"groups.groupId": {$in: onlyFor.groupIds}}]}),
+            ...(groupId === undefined ? {} : {"groups.groupId": groupId}),
+        };
         return this.repository.getMatchingPage([{$match: match}, ...mongoQueries], listParams, sortBy);
     }
     

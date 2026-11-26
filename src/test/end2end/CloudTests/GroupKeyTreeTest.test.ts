@@ -223,8 +223,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldAbandonHistoryOnRemovalWhateverTrimHistorySays() {
-        // trimHistory is "nobody" by default; a removal by a manager who lost the current key must still go through.
+    async shouldAbandonHistoryOnRemovalWithChangeRulesWhenTrimHistoryIsNobody() {
+        // trimHistory is "nobody" by default; a manager who lost the current key, holding changeRules (default:
+        // managers), may still remove abandoning history.
         await this.addMembersToContext([alice, bob, carol]);
         await this.createTreeBackedGroup();
         await this.removeMember(carol);

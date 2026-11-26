@@ -945,13 +945,23 @@ it("SECURITY: a rotation with cutHistory takes trimHistory: nobody (the default)
     await refused.groupService.generateNewGroupKey(janekCloudUser, rotationModel(closed));
     hasOneCall(refused.groupRepository.generateNewGroupKey);
     
-    const open = withRules({trimHistory: "members"});
+    const open = withRules({trimHistory: "members", editPublicMeta: "members", editPrivateMeta: "members"});
     const member = createGroupService(open);
-    // The gate comes before the statement is read, so alice is refused or let through on the rule alone.
+    // The gate comes before the statement is read, so alice is refused or let through on the rules alone.
     await expectFailure("GROUP_TREE_INVALID", () => member.groupService.generateNewGroupKey(aliceCloudUser, cutModel(open)));
     const managersOnly = withRules({trimHistory: "managers"});
     const notMember = createGroupService(managersOnly);
     await expectFailure("ACCESS_DENIED", () => notMember.groupService.generateNewGroupKey(aliceCloudUser, cutModel(managersOnly)));
+});
+
+it("SECURITY: a rotation with cutHistory also takes both edit rules: it strands both metadata planes below the new floor", async () => {
+    for (const plane of ["editPublicMeta", "editPrivateMeta"] as const) {
+        const group = withRules({trimHistory: "members", editPublicMeta: "members", editPrivateMeta: "members", [plane]: "managers"});
+        const {groupService, groupRepository} = createGroupService(group);
+        const e = await expectFailure("ACCESS_DENIED", () => groupService.generateNewGroupKey(aliceCloudUser, cutModel(group)));
+        expect(String(e.data)).toContain(plane);
+        hasNoCalls(groupRepository.generateNewGroupKey);
+    }
 });
 
 it("SECURITY: the context's update vetoes a rotation that cuts history, not a plain one", async () => {
@@ -962,12 +972,12 @@ it("SECURITY: the context's update vetoes a rotation that cuts history, not a pl
     hasOneCall(vetoed.groupRepository.generateNewGroupKey);
 });
 
-it("a rotation with cutHistory refuses while a space holds the group's key, and not over metadata below the floor", async () => {
+it("a rotation with cutHistory goes ahead while a space holds the group's key, and over metadata below the floor", async () => {
+    // The spaces go stale as on any rotation; the cutter re-keys each through the group under its old pin.
     const group = withRules({trimHistory: "managers"});
     const spaced = createGroupService(group, {spaceAtGroupKeyVersion: EPOCH});
-    const e = await expectFailure("GROUP_IN_USE", () => spaced.groupService.generateNewGroupKey(janekCloudUser, cutModel(group)));
-    expect(e.data).not.toContain("rotate");
-    hasNoCalls(spaced.groupRepository.generateNewGroupKey);
+    await spaced.groupService.generateNewGroupKey(janekCloudUser, cutModel(group));
+    hasOneCall(spaced.groupRepository.generateNewGroupKey);
     // The client rewrites both planes at the new epoch right after, as after a removal abandoning history.
     const stale = createGroupService(group, {publicMetaKeyVersion: 2, privateMetaKeyVersion: 3});
     await stale.groupService.generateNewGroupKey(janekCloudUser, cutModel(group));
@@ -2135,15 +2145,37 @@ it("SECURITY: a reseat takes replaceMemberKeys, not removeMembers", async () => 
     hasNoCalls(groupRepository.removeMembersWithTransition);
 });
 
-it("SECURITY: a removal abandoning history needs only the removal's rules, not trimHistory", async () => {
-    // The recovery path of a remover who lost the current key: a "nobody" trimHistory (the default) must not
-    // block a security-relevant removal.
+it("a removal abandoning history is allowed with changeRules even when trimHistory is nobody", async () => {
+    // The recovery path of a key-less remover stays open under the default trimHistory: whoever may change the
+    // rules could grant itself trimHistory anyway.
     const group = withRules({trimHistory: "nobody"});
     const {groupService, groupRepository, groupNotificationService} = createGroupService(group);
     await groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true});
     hasOneCall(groupRepository.removeMembersWithTransition);
     const kinds = (groupNotificationService.sendUpdatedGroup as unknown as {mock: {calls: unknown[][]}}).mock.calls.map(call => call[2]);
     assert.deepStrictEqual(kinds, ["memberRemoved", "eraCut"]);
+});
+
+it("SECURITY: a plain remover with neither trimHistory nor changeRules cannot abandon history", async () => {
+    // Claiming the key is lost must not let whoever may merely remove wipe everybody's history.
+    const group = withRules({removeMembers: "members", editPublicMeta: "members", editPrivateMeta: "members"});
+    const {groupService, groupRepository} = createGroupService(group);
+    const e = await expectFailure("ACCESS_DENIED", () => groupService.removeMembers(aliceCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+    expect(String(e.data)).toContain("trimHistory or changeRules");
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+    // trimHistory alone opens it (the refusal after this is the statement, signed by somebody else).
+    const trimming = withRules({removeMembers: "members", trimHistory: "members", editPublicMeta: "members", editPrivateMeta: "members"});
+    const allowed = createGroupService(trimming);
+    await expectFailure("GROUP_TREE_INVALID", () => allowed.groupService.removeMembers(aliceCloudUser, {...removalModel(trimming, 2), rungs: [], abandonHistory: true}));
+});
+
+it("SECURITY: a removal abandoning history takes both edit rules: it strands both metadata planes", async () => {
+    const group = withRules({editPrivateMeta: "nobody"});
+    const {groupService, groupRepository} = createGroupService(group);
+    await expectFailure("ACCESS_DENIED", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+    await groupService.removeMembers(janekCloudUser, removalModel(group, 2));
+    hasOneCall(groupRepository.removeMembersWithTransition);
 });
 
 it("SECURITY: the context's update vetoes the roster, history and metadata rules; updatePolicy the role, rule and visibility ones", async () => {

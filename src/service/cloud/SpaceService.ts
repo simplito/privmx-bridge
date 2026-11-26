@@ -125,6 +125,8 @@ export class SpaceService extends BaseContainerService {
     static assertStatement(st: types.cloud.SpaceStatement, x: {
         spaceId: types.space.SpaceId, contextId: types.context.ContextId, prior?: Pick<db.space.Space, "seq"|"statement"|"groups"|"users">,
         op: types.cloud.SpaceStatementOp, keyVersion: number, after: Recipients, caller: Caller, managerOnly: boolean,
+        /** The era floor of the group named in `via`, when there is one. */
+        viaFloor?: number,
     }) {
         const bad = (why: string): never => {
             throw new AppException("SPACE_STATEMENT_INVALID", why);
@@ -179,6 +181,13 @@ export class SpaceService extends BaseContainerService {
             }
             if (!SpaceStatement.verifyViaSignature(st, group!.groupPubKey)) {
                 bad("viaSignature does not verify under the key the space holds for the group");
+            }
+            // A pin below the group's floor is a key a history cut retired. It still signs exactly one thing: the
+            // statement that moves the group to an epoch at or above the floor, which is how the member who cut (or
+            // any other still holding the old key) brings the space along. Nothing else.
+            if (x.viaFloor !== undefined && group!.groupKeyVersion < x.viaFloor
+                && !x.after.groups.some(g => g.groupId === st.via && g.groupKeyVersion >= x.viaFloor!)) {
+                bad(`the key the space holds for the group is below its floor ${x.viaFloor}: it only signs moving the group to epoch ${x.viaFloor} or later`);
             }
             role = group!.role;
         }
@@ -256,7 +265,8 @@ export class SpaceService extends BaseContainerService {
         return {space, statements: await repository.getStatements(model.id, model.fromSeq, model.limit)};
     }
     
-    async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space) {
+    /** @param groupId narrows the page to the spaces naming that group (still only those the caller can see). */
+    async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space, groupId?: types.group.GroupId) {
         let caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined;
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!context) {
@@ -267,7 +277,7 @@ export class SpaceService extends BaseContainerService {
             caller = {userId: user.userId, ownGroupIds: await this.getCallerGroupIds(contextId, user.userId)};
         });
         const page = await this.repositoryFactory.createSpaceRepository().getPage(contextId, listParams, sortBy,
-            caller && {userId: caller.userId, groupIds: caller.ownGroupIds});
+            caller && {userId: caller.userId, groupIds: caller.ownGroupIds}, groupId);
         return {list: await this.views(page.list, caller, true), count: page.count};
     }
     
@@ -336,6 +346,7 @@ export class SpaceService extends BaseContainerService {
         const after = {groups: [...space.groups, ...groups], users: [...space.users, ...users]};
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: "add", keyVersion: space.keyVersion, after, caller: user, managerOnly: true,
+            viaFloor: await this.viaFloor(model.statement),
         });
         const changed = await this.write(space, user.userId, after, repository => repository.insertKeys(space.id, model.keys), model.statement);
         this.spaceNotificationService.sendUpdatedSpace(changed, "recipientsAdded");
@@ -370,7 +381,7 @@ export class SpaceService extends BaseContainerService {
         const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
-            caller: user, managerOnly: removing,
+            caller: user, managerOnly: removing, viaFloor: await this.viaFloor(model.statement),
         });
         const changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
             if (removing) {
@@ -449,6 +460,13 @@ export class SpaceService extends BaseContainerService {
             }
         });
         return {...space, ...all, version: space.version + 1};
+    }
+    
+    /** The era floor of the group a statement is signed through, if any. */
+    private async viaFloor(statement: types.cloud.SpaceStatement) {
+        // ponytail: read outside the space's transaction; a group the statement removes is not touched there, so a floor
+        // raised concurrently could let one below-floor removal through. Upgrade path: touch the via group in `write`.
+        return statement.via === "" ? undefined : (await this.repositoryFactory.createGroupRepository().get(statement.via))?.eraFloor;
     }
     
     /** Splits recipients into groups and users, after checking each exists in the context under the key given. */

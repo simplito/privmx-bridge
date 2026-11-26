@@ -521,15 +521,18 @@ export class GroupService extends BaseContainerService {
             const newKeyVersion = oldGroup.keyVersion + 1;
             if (model.cutHistory) {
                 // A cut also deletes history for every member: the signed `trimHistory` rule, and its ACL entry.
+                // Both metadata planes always sit below the new floor (each is written at or below the current
+                // epoch), so the cutter has to be one who may rewrite each: it carries both forward right after.
                 this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutHistory", ["groupId=" + model.id]);
-                this.policy.require(user, context, oldGroup, "trimHistory");
+                this.policy.require(user, context, oldGroup, "trimHistory", "editPublicMeta", "editPrivateMeta");
                 if (model.rungs.length > 0) {
                     // The new epoch is the floor: nothing may point down from it.
                     throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "RUNGS_WITH_CUT_HISTORY", count: model.rungs.length});
                 }
-                // As for a removal abandoning history, metadata below the floor is not refused: the client carries
-                // both planes forward to the new epoch right after. A space holding the group below it is.
-                await this.assertSpacesSurviveFloor(session, model.id, newKeyVersion);
+                // Spaces holding the group below the new floor are not refused: they go stale as on any rotation,
+                // and the cutter, who still holds the old epoch key, re-keys each through the group under the
+                // pinned key it holds (`SpaceService.assertStatement`). Until it has, another member who still has
+                // the old key can finish; that is the only window in which a space can be left behind.
             }
             await budget.reserve(GroupService.rateLimitKey("rotateBurst", model.id, user.userId), this.config.maxGroupRotationsPerMinute, DateUtils.minutes(1));
             await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
@@ -697,13 +700,20 @@ export class GroupService extends BaseContainerService {
             // A reseat names its subjects the same way, and none of them leaves the roster.
             const leaving = new Set(reseat ? [] : model.userIds);
             const managers = oldGroup.managers.filter(u => !leaving.has(u));
-            // A removal takes a manager's role away too; a reseat replaces keys and nothing else. Abandoning history
-            // deliberately does NOT take `trimHistory`: it is the recovery path of a remover who lost the current key,
-            // and a security-relevant removal must not be blocked by a group whose `trimHistory` is "nobody" (the
-            // default). The history it gives up is unreachable anyway: nobody can recover the old grant key.
+            // A removal takes a manager's role away too; a reseat replaces keys and nothing else.
             this.policy.require(user, usedContext, oldGroup,
                 ...(reseat ? ["replaceMemberKeys" as const] : ["removeMembers" as const]),
                 ...(!reseat && model.userIds.some(u => oldGroup.managers.includes(u)) ? ["changeRoles" as const] : []));
+            if (model.abandonHistory) {
+                // Abandoning history deletes it for everybody, so a removal alone does not entitle it: it takes
+                // `trimHistory`, or `changeRules`, whose holder could grant itself `trimHistory` anyway. That keeps
+                // the recovery path of a key-less remover open under a "nobody" trimHistory (the default) without
+                // handing it to whoever may merely remove; a key-less remover with neither leaves the removal to a
+                // member who still holds the key. Both metadata planes end up below the new floor, so, as for a
+                // rotation that cuts, the remover also has to be one who may rewrite each.
+                this.policy.requireAny(user, usedContext, oldGroup, "trimHistory", "changeRules");
+                this.policy.require(user, usedContext, oldGroup, "editPublicMeta", "editPrivateMeta");
+            }
             GroupService.assertKeepsAManager(oldGroup.managers, managers);
             if (model.abandonHistory) {
                 // The era closes at the new epoch, so every space holding the group's key is stranded below it.
@@ -953,14 +963,14 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Refuses to strand a space below a floor a commit creates (a removal abandoning history, a rotation cutting
-     * it). A statement signed through the group has to verify under the group key the space holds; that floor is the
-     * new epoch, which no rotation of the space can reach first, so only dropping the group from the space can clear
-     * this. The spaces are not named — the caller may not be in them.
+     * Refuses to strand a space below the floor a removal abandoning history creates. Unlike a rotation that cuts,
+     * nobody can re-key such a space through the group afterwards: the remover lost the old key, and the pin the
+     * space holds is that key's. So only dropping the group from the space can clear this. The spaces are not
+     * named — the caller may not be in them.
      */
     private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number) {
         if (await this.repositoryFactory.createSpaceRepository(session).isGroupHeldBelow(groupId, floor)) {
-            throw new AppException("GROUP_IN_USE", "a space holds the group's key; remove the group from every space that names it first, a commit that cuts history cannot keep them");
+            throw new AppException("GROUP_IN_USE", "a space holds the group's key; remove the group from every space that names it first, a removal that abandons history cannot keep them");
         }
     }
     
@@ -1495,6 +1505,13 @@ class GroupPolicy extends BasePolicy<Omit<db.group.Group, "policy">, never> {
         const who = group.policy?.[rule];
         const ruled = who === "members" ? isManager || group.users.includes(user.userId) : who === "managers" && isManager;
         return ruled && this.contextAllows(user, context, group, GroupPolicy.VETO[rule]);
+    }
+    
+    /** Throws unless `allows` at least one of `rules`. */
+    requireAny(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, ...rules: (keyof types.cloud.GroupRules)[]) {
+        if (!rules.some(rule => this.allows(user, context, group, rule))) {
+            throw new AppException("ACCESS_DENIED", `the group's ${rules.join(" or ")} rule is not met`);
+        }
     }
     
     /** Throws unless `allows` every one of `rules`. */

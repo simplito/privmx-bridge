@@ -161,8 +161,9 @@ export interface GroupCreateModel {
      * - reseat (`groupReseat`): `replaceMemberKeys`
      * - set roles: `changeRoles`; change the rules (`groupUpdatePolicy`): `changeRules`; set visibility:
      *   `changeVisibility`
-     * - rotate with `cutHistory`: `trimHistory` on top of the rotation (a removal with `abandonHistory` needs only
-     *   the removal's rules; the management `group/cutHistory` acts with server authority)
+     * - rotate with `cutHistory`: `trimHistory`, `editPublicMeta` and `editPrivateMeta` on top of the rotation; a
+     *   removal with `abandonHistory`: `trimHistory` or `changeRules`, plus both edit rules, on top of the
+     *   removal's (the management `group/cutHistory` acts with server authority)
      * - write the public / private metadata: `editPublicMeta` / `editPrivateMeta`
      * - rotate the key, self-update: any member (rotation rate-limited per member)
      * - delete: any manager
@@ -251,12 +252,15 @@ export interface GroupRemoveMembersModel {
      * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
      * `rungs` must be empty, and the era is cut at the new epoch in the same write, deleting the rungs and epoch
      * keys below it — so the caller needs the `context/groupCutHistory` ACL entry as well, and members get an
-     * `eraCut` notification besides `memberRemoved`. Refused with `GROUP_IN_USE` while a space names the group.
+     * `eraCut` notification besides `memberRemoved`. Refused with `GROUP_IN_USE` while a space names the group:
+     * nobody holding the old key is left to re-key it through the group.
      *
-     * Needs only the removal's rules, NOT `trimHistory`: it is the recovery path of a remover who lost the
-     * current key, and a security-relevant removal must not be blocked by a `trimHistory` of "nobody" (the
-     * default). Both metadata planes stay at the epoch they were written under, so they become unreadable until
-     * rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
+     * Besides the removal's rules it needs `trimHistory` OR `changeRules` (whose holder could grant itself
+     * `trimHistory` anyway), so the recovery path of a remover who lost the current key stays open under a
+     * "nobody" trimHistory without handing it to whoever may merely remove; a key-less remover with neither leaves
+     * the removal to a member who still holds the key. Both metadata planes end up below the new floor, unreadable
+     * until rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`), so it needs `editPublicMeta` and
+     * `editPrivateMeta` as well.
      */
     abandonHistory?: boolean;
 }
@@ -464,10 +468,17 @@ export interface GroupGenerateNewKeyModel {
     /**
      * A rotation that cuts history: the new epoch becomes the era floor in the same write, and every stored rung
      * targeting below it and every archived epoch key below it are deleted. `rungs` must be empty. Needs the
-     * group's `trimHistory` rule (default "nobody"; narrowed by the context's `update`) and the
+     * group's `trimHistory` rule (default "nobody") and, because both metadata planes always end up below the new
+     * floor, `editPublicMeta` and `editPrivateMeta` too (all narrowed by the context's `update`), plus the
      * `context/groupCutHistory` ACL entry besides the rotation's own. Members get an `eraCut` notification besides
-     * `keyRotated`. Refused with `GROUP_IN_USE` while a space names the group (remove the group from it first).
-     * Metadata below the floor is not refused: the client rewrites both planes at the new epoch right after.
+     * `keyRotated`.
+     *
+     * Right after, the cutter, still holding the old epoch key, rewrites both metadata planes at the new epoch and
+     * re-keys every space naming the group (`spaceList` with `groupId`): a `spaceRotateKey` signed via the group
+     * under the space's pinned key, now below the floor, which the bridge accepts only for a statement moving the
+     * group to an epoch at or above the floor. Those spaces show `keyIsStale` until then. If the cutter stops
+     * halfway, any member still holding the old epoch key can finish; that is the only window in which a space can
+     * be left behind.
      */
     cutHistory?: boolean;
 }
@@ -866,6 +877,8 @@ export interface SpaceGetResult {
 export interface SpaceListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
     sortBy?: "createDate"|"lastModificationDate";
+    /** Only the spaces naming this group, e.g. those a member re-keys through the group after a history cut. */
+    groupId?: types.group.GroupId;
 }
 
 export interface SpaceListResult {
@@ -1006,8 +1019,8 @@ export interface IContextApi {
      */
     spaceGetStatements(model: SpaceGetStatementsModel): Promise<SpaceGetStatementsResult>;
     /**
-     * Lists the spaces of a context the caller is a recipient of.
-     * @param model context and paging
+     * Lists the spaces of a context the caller is a recipient of, optionally only those naming a group.
+     * @param model context, paging, optional group
      * @returns the spaces, each with the wraps of its current key the caller can open
      */
     spaceList(model: SpaceListModel): Promise<SpaceListResult>;

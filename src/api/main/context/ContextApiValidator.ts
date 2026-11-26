@@ -291,6 +291,7 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("spaceList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
+            groupId: this.builder.optional(this.tv.groupId),
         }));
         this.registerMethod("spaceAddRecipients", this.builder.createObject({
             id: this.tv.spaceId,

@@ -148,6 +148,10 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => this.removeOrReseat(closed, bob, "reseat", [carol]), "ACCESS_DENIED");
         await this.removeOrReseat(closed, bob, "remove", [carol]);
         assert(!(await this.read(closed)).users.includes(carol), "a member should have removed carol");
+        // Claiming the key is lost does not let a plain remover wipe everybody's history: that takes trimHistory
+        // or changeRules too.
+        const editable = await this.createGroup({removeMembers: "members", editPublicMeta: "members", editPrivateMeta: "members"});
+        await shouldThrowErrorWithCode2(() => this.removeOrReseat(editable, bob, "remove", [carol], true), "ACCESS_DENIED");
         // replaceMemberKeys alone opens reseating.
         const reseatable = await this.createGroup({replaceMemberKeys: "members"});
         await this.removeOrReseat(reseatable, bob, "reseat", [carol]);
@@ -195,7 +199,7 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         assert(res === "OK", "groupSetRoles did not return OK");
     }
     
-    private async removeOrReseat(groupId: types.group.GroupId, as: types.cloud.UserId, kind: "remove"|"reseat", userIds: types.cloud.UserId[]) {
+    private async removeOrReseat(groupId: types.group.GroupId, as: types.cloud.UserId, kind: "remove"|"reseat", userIds: types.cloud.UserId[], abandonHistory = false) {
         const served = await this.read(groupId, as, "full");
         const newEpoch = served.keyVersion + 1;
         const groupPubKey = newGroupKey();
@@ -210,7 +214,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
             data: "roster" as types.group.GroupData,
             transition: removalOf(plan, served.keyVersion),
             commit: commit,
-            rungs: rungsFor(newEpoch, served.eraFloor),
+            rungs: abandonHistory ? [] : rungsFor(newEpoch, served.eraFloor),
+            ...(abandonHistory ? {abandonHistory: true} : {}),
             groupKeys: {group: groupId, groupEpoch: newEpoch, keyId: keyId, data: `metadata-key@${newEpoch}` as types.core.UserKeyData},
             expectedKeyVersion: served.keyVersion,
             expectedRosterVersion: served.rosterVersion,

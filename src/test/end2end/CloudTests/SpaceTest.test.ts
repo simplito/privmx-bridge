@@ -21,7 +21,8 @@ import { Crypto } from "../../../utils/crypto/Crypto";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
 import { signSpaceStatement, UnsignedSpaceStatement } from "../../testUtils/SpaceFixtures";
-import { buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rungsFor, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rotationGrantEdge, rotationStatement, rungsFor, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * A space: one key in versions, wrapped for groups and users. The bridge never reads a wrap, so the tests put
@@ -282,6 +283,38 @@ export class SpaceTests extends BaseTestSet {
     }
     
     @Test()
+    async shouldLetACutterRekeyItsSpacesUnderTheRetiredPin() {
+        const groupId = await this.createGroup({trimHistory: "managers"});
+        const recipients: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "manager"}];
+        const spaceId = await this.createSpace(recipients);
+        const other = await this.createSpace([{userId: me, pubKey: myPub, role: "manager"}]);
+        // The spaces naming the group, as the cutter finds them.
+        const named = await this.apis.contextApi.spaceList({contextId: testData.contextId, skip: 0, limit: 100, sortOrder: "asc", groupId});
+        assert(named.count === 1 && named.spaces[0].id === spaceId, `spaceList by groupId should give only ${spaceId}, got ${JSON.stringify(named.spaces.map(s => s.id))}`);
+        const all = await this.apis.contextApi.spaceList({contextId: testData.contextId, skip: 0, limit: 100, sortOrder: "asc"});
+        assert(all.spaces.some(s => s.id === other), "without the filter every space the caller sees is listed");
+        
+        // A cut does not wait for the space: it goes stale, as on any rotation.
+        await this.cutHistory(groupId);
+        const stale = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
+        assert(stale.keyIsStale && stale.groups[0].groupKeyVersion === 1, "the space still pins the retired epoch, and is stale");
+        const asBob = await this.apiOf(bob);
+        // Under the retired pin the group signs nothing but the move past the floor.
+        const carolDirect: Recipient = {userId: carol, pubKey: carolIdentity.pub58 as types.cloud.UserPubKey, role: "user"};
+        await shouldThrowErrorWithCode2(async () => asBob.spaceAddRecipients({
+            id: spaceId, recipients: [carolDirect], keys: this.keysFor([carolDirect], 1), statement: await this.next(spaceId, "add", bob, {add: [carolDirect]}),
+        }), "SPACE_STATEMENT_INVALID");
+        // The re-key: signed via the group with the key the space pins (epoch 1, below the floor), wrapping to epoch 2.
+        const rotated = await asBob.spaceRotateKey({
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2), expectedKeyVersion: 1,
+            statement: await this.next(spaceId, "rotate", bob),
+        });
+        assert(rotated.keyVersion === 2, `the re-key should give key version 2, got ${rotated.keyVersion}`);
+        const fresh = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
+        assert(!fresh.keyIsStale && fresh.groups[0].groupKeyVersion === 2, "the space is fresh, at the group's new epoch");
+    }
+    
+    @Test()
     async shouldChainEveryChangeToTheStatementBeforeItAndServeTheHistory() {
         const groupId = await this.createGroup();
         const recipients: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}];
@@ -503,8 +536,34 @@ export class SpaceTests extends BaseTestSet {
         this.usersAdded = true;
     }
     
+    /** A rotation by janek that cuts the group's history: the new epoch is the floor. */
+    private async cutHistory(groupId: types.group.GroupId) {
+        const served = (await this.apis.contextApi.groupGet({groupId, scope: "full"})).group as unknown as ServedGroup;
+        const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+        const newEpoch = served.keyVersion + 1;
+        const groupKey = ECUtils.generateKeyPair();
+        this.groupKeys.get(groupId)!.set(newEpoch, groupKey.keyPair);
+        const groupPubKey = groupKey.pub58 as unknown as types.cloud.GroupPubKey;
+        const res = await this.apis.contextApi.groupGenerateNewKey({
+            id: groupId,
+            groupPubKey,
+            keyId: `group-key-${newEpoch}` as types.core.KeyId,
+            data: "roster" as types.group.GroupData,
+            grantEdge: rotationGrantEdge(tree, newEpoch),
+            commit: rotationStatement(tree, (served.treeCommit?.seq ?? 0) + 1, newEpoch, me, {
+                groupId, groupPubKey, rosterVersion: served.rosterVersion + 1, users: served.users, managers: served.managers,
+                ...(served.treeCommit ? {previous: served.treeCommit} : {}),
+            }),
+            rungs: [],
+            expectedKeyVersion: served.keyVersion,
+            expectedRosterVersion: served.rosterVersion,
+            cutHistory: true,
+        });
+        assert(res === "OK", "a rotation cutting history did not return OK");
+    }
+    
     /** janek manages it, bob and carol are its users. */
-    private async createGroup(): Promise<types.group.GroupId> {
+    private async createGroup(changes: Partial<types.cloud.GroupRules> = {}): Promise<types.group.GroupId> {
         await this.addUsers();
         const users = [bob, carol];
         const managers = [me];
@@ -523,7 +582,7 @@ export class SpaceTests extends BaseTestSet {
             privateMeta: "PRIV" as types.group.GroupData,
             keyId: "group-key-1" as types.core.KeyId,
             tree: tree,
-            commit: creationStatement(tree, me, {groupId: resourceId, groupPubKey, users, managers}),
+            commit: creationStatement(tree, me, {groupId: resourceId, groupPubKey, users, managers, policy: {...CommitStatement.DEFAULT_RULES, ...changes}}),
         });
         this.groupKeys.set(res.groupId, new Map([[1, groupKey.keyPair]]));
         return res.groupId;
