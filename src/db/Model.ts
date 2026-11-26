@@ -232,6 +232,16 @@ export namespace space {
         version: number;
     }
     
+    /**
+     * Left behind by a deleted space. Ids are derived from `(contextId, resourceId)`, so without it anybody could
+     * create a new space under a deleted one's id, with a fresh chain, and be taken for that space. Pruned with its
+     * context, as a group's is.
+     */
+    export interface SpaceTombstone {
+        id: types.space.SpaceId;
+        contextId: types.context.ContextId;
+    }
+    
     /** One entry of a space's history. Written once, never changed. */
     export interface SpaceStatementEntry {
         /** `<spaceId>/<seq>`: a second statement at one seq cannot be stored. */

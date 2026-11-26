@@ -14,6 +14,7 @@ import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
 import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 import * as types from "../../types";
 import * as db from "../../db/Model";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
 
 export class SpaceRepository {
     
@@ -21,11 +22,13 @@ export class SpaceRepository {
     static readonly COLLECTION_ID_PROP = "id";
     static readonly KEY_COLLECTION_NAME = "spaceKey";
     static readonly STATEMENT_COLLECTION_NAME = "spaceStatement";
+    static readonly TOMBSTONE_COLLECTION_NAME = "spaceTombstone";
     
     constructor(
         private repository: MongoObjectRepository<types.space.SpaceId, db.space.Space>,
         private keys: MongoObjectRepository<string, db.space.SpaceKey>,
         private statements: MongoObjectRepository<string, db.space.SpaceStatementEntry>,
+        private tombstones: MongoObjectRepository<types.space.SpaceId, db.space.SpaceTombstone>,
     ) {
     }
     
@@ -58,6 +61,10 @@ export class SpaceRepository {
     }
     
     async insert(space: db.space.Space, keys: types.cloud.SpaceKeyEntry[]) {
+        // A deleted space's id stays taken: a new space under it would pass for the old one.
+        if (await this.tombstones.get(space.id)) {
+            throw new DbDuplicateError();
+        }
         await this.repository.insert(space);
         await this.insertStatement(space.statement);
         await this.insertKeys(space.id, keys);
@@ -111,10 +118,16 @@ export class SpaceRepository {
         return result.matchedCount === 1;
     }
     
-    async delete(id: types.space.SpaceId) {
-        await this.repository.delete(id);
-        await this.keys.deleteMany(q => q.eq("spaceId", id));
-        await this.statements.deleteMany(q => q.eq("spaceId", id));
+    async delete(space: Pick<db.space.Space, "id"|"contextId">) {
+        await this.repository.delete(space.id);
+        await this.keys.deleteMany(q => q.eq("spaceId", space.id));
+        await this.statements.deleteMany(q => q.eq("spaceId", space.id));
+        await this.tombstones.insert({id: space.id, contextId: space.contextId});
+    }
+    
+    /** The tombstones of a deleted context's spaces: nobody can create a space there any more, so they guard nothing. */
+    async deleteTombstonesOfContext(contextId: types.context.ContextId) {
+        await this.tombstones.deleteMany(q => q.eq("contextId", contextId));
     }
     
     async isGroupReferenced(groupId: types.group.GroupId) {

@@ -403,7 +403,7 @@ export class SpaceService extends BaseContainerService {
         if (caller && caller.role !== "manager") {
             throw new AppException("ACCESS_DENIED");
         }
-        await this.repositoryFactory.withTransaction(session => this.repositoryFactory.createSpaceRepository(session).delete(id));
+        await this.repositoryFactory.withTransaction(session => this.repositoryFactory.createSpaceRepository(session).delete(space));
         this.spaceNotificationService.sendDeletedSpace(space);
         return space;
     }
@@ -412,9 +412,11 @@ export class SpaceService extends BaseContainerService {
     async deleteSpacesByContext(contextId: types.context.ContextId, solution: types.cloud.SolutionId) {
         const repository = this.repositoryFactory.createSpaceRepository();
         for (const space of await repository.getByContext(contextId)) {
-            await repository.delete(space.id);
+            await repository.delete(space);
             this.spaceNotificationService.sendDeletedSpace(space, solution);
         }
+        // The tombstones just written and those of spaces deleted earlier one by one.
+        await repository.deleteTombstonesOfContext(contextId);
     }
     
     private async getForChange(cloudUser: CloudUser, id: types.space.SpaceId, acl: SpaceAcl, managerOnly: boolean) {

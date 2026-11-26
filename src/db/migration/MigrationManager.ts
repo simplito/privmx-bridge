@@ -50,6 +50,7 @@ import { Migration076GroupEpochKeyLookups } from "./Migration076GroupEpochKeyLoo
 import { Migration077SpaceCollections } from "./Migration077SpaceCollections";
 import { Migration078SpaceStatements } from "./Migration078SpaceStatements";
 import { Migration079ResourceIdPerContext } from "./Migration079ResourceIdPerContext";
+import { Migration080SpaceTombstones } from "./Migration080SpaceTombstones";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -105,6 +106,7 @@ export class MigrationManager {
         Migration077SpaceCollections,
         Migration078SpaceStatements,
         Migration079ResourceIdPerContext,
+        Migration080SpaceTombstones,
     ];
     static DB_VERSION: string|null = null;
     

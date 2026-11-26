@@ -15,6 +15,7 @@ import * as types from "../../../types";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceRepository } from "../../../service/cloud/SpaceRepository";
 import { AppException } from "../../../api/AppException";
+import { DbDuplicateError } from "../../../error/DbDuplicateError";
 
 const g1 = "g1" as types.group.GroupId;
 const g2 = "g2" as types.group.GroupId;
@@ -117,4 +118,45 @@ it("refuses a statement dated off the bridge's clock, as a group statement is", 
     assert.match(check(Date.now() + 60 * 60 * 1000), /date/);
     // On time it gets past the date, to the next check.
     assert.match(check(Date.now()), /key version/);
+});
+
+describe("a deleted space's id", () => {
+    /** A space repository over stand-ins: what was inserted, deleted and tombstoned, by collection. */
+    function repository(tombstoned: types.space.SpaceId[] = []) {
+        const log: string[] = [];
+        const collection = (name: string) => ({
+            insert: async (doc: {id: string}) => {
+                log.push(`${name}.insert ${doc.id}`);
+            },
+            insertMany: async () => {},
+            delete: async (id: string) => {
+                log.push(`${name}.delete ${id}`);
+            },
+            deleteMany: async () => {
+                log.push(`${name}.deleteMany`);
+            },
+            get: async (id: types.space.SpaceId) => (name === "tombstones" && tombstoned.includes(id) ? {id} : null),
+            collection: {insertMany: async () => {}},
+            getOptions: () => ({}),
+            convertToDbObj: (x: unknown) => x,
+        });
+        const repo = new SpaceRepository(collection("spaces") as never, collection("keys") as never, collection("statements") as never, collection("tombstones") as never);
+        return {repo, log};
+    }
+    const space = {id: "s1" as types.space.SpaceId, contextId: "c" as types.context.ContextId, statement: {spaceId: "s1", seq: 1}} as unknown as Parameters<SpaceRepository["insert"]>[0];
+    
+    it("SECURITY: stays taken: deleting leaves a tombstone, and a space cannot be created under it again", async () => {
+        const {repo, log} = repository();
+        await repo.delete(space);
+        assert.ok(log.includes("tombstones.insert s1"), JSON.stringify(log));
+        const taken = repository(["s1" as types.space.SpaceId]);
+        await assert.rejects(() => taken.repo.insert(space, []), (e: unknown) => e instanceof DbDuplicateError);
+        assert.ok(!taken.log.some(line => line.startsWith("spaces.insert")), "nothing written");
+    });
+    
+    it("tombstones go with their context", async () => {
+        const {repo, log} = repository();
+        await repo.deleteTombstonesOfContext("c" as types.context.ContextId);
+        assert.deepStrictEqual(log, ["tombstones.deleteMany"]);
+    });
 });
