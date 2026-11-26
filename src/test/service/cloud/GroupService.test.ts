@@ -285,7 +285,7 @@ it("SECURITY: creating a group visible to the context takes the changeVisibility
     const allowed = createGroupService();
     // A copy: the service marks the created group visible, and the shared fixture must stay as it is.
     mock(allowed.groupRepository, "createGroup", async () => ({...group}));
-    mock(allowed.groupRepository, "setVisibility", async () => {});
+    mock(allowed.groupRepository, "setVisibility", async () => true);
     await create(allowed, CommitStatement.DEFAULT_RULES);
     hasOneCall(allowed.groupRepository.createGroup);
     hasOneCall(allowed.groupRepository.setVisibility);
@@ -706,16 +706,26 @@ it("SECURITY: updatePolicy follows the group's signed changeRules rule, not a co
 
 it("SECURITY: setVisibility follows the group's signed changeVisibility rule", async () => {
     const closed = createGroupService(false, {}, rules({changeVisibility: "nobody"}));
-    mock(closed.groupRepository, "setVisibility", async () => {});
+    mock(closed.groupRepository, "setVisibility", async () => true);
     await expectRefusal("ACCESS_DENIED", () => closed.groupService.setVisibility(janekCloudUser, groupId, "context"));
     hasNoCalls(closed.groupRepository.setVisibility);
     const member = createGroupService();
-    mock(member.groupRepository, "setVisibility", async () => {});
+    mock(member.groupRepository, "setVisibility", async () => true);
     await expectRefusal("ACCESS_DENIED", () => member.groupService.setVisibility(aliceCloudUser, groupId, "context"));
     const open = createGroupService(false, {}, rules({changeVisibility: "members"}));
-    mock(open.groupRepository, "setVisibility", async () => {});
+    mock(open.groupRepository, "setVisibility", async () => true);
     await open.groupService.setVisibility(aliceCloudUser, groupId, "context");
     hasOneCall(open.groupRepository.setVisibility);
+});
+
+it("SECURITY: setVisibility writes only on the statement chain it checked the rules against", async () => {
+    // A rules or roles commit landing between the check and the write moves treeCommitSeq: the write misses.
+    const raced = createGroupService(false, {}, rules({changeVisibility: "members"}));
+    mock(raced.groupRepository, "setVisibility", async () => false);
+    await expectRefusal("ROTATED_ALREADY", () => raced.groupService.setVisibility(aliceCloudUser, groupId, "context"));
+    const [, , seq] = raced.groupRepository.setVisibility.mock.calls[0];
+    assert.strictEqual(seq, group.treeCommitSeq, "compare-and-swap on the seq the check read");
+    hasNoCalls(raced.groupNotificationService.sendUpdatedGroup);
 });
 
 it("a context that forbids overwriting its policy no longer has a say over a group's signed rules", async () => {

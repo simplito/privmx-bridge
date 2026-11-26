@@ -134,7 +134,8 @@ export class SpaceService extends BaseContainerService {
             const epoch = groupEpochs.get(key.recipient.groupId);
             const wrappedTo = key.recipient.groupKeyVersion;
             if (epoch === undefined || wrappedTo > epoch || (key.keyVersion === currentVersion && wrappedTo !== epoch)) {
-                throw new AppException("SPACE_KEYS_INVALID", `group '${key.recipient.groupId}' is at epoch ${epoch}, the entry names ${wrappedTo}`);
+                // Without the group's epoch: the caller may not be a member and must not learn it from here.
+                throw new AppException("SPACE_KEYS_INVALID", `the entry for group '${key.recipient.groupId}' names epoch ${wrappedTo}, not the group's current one`);
             }
         }
     }

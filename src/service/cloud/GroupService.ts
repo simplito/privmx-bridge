@@ -142,7 +142,10 @@ export class GroupService extends BaseContainerService {
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + group.id]);
         this.policy.require(user, context, group, "changeVisibility");
         if ((group.visibleTo ?? "members") !== visibleTo) {
-            await groupRepository.setVisibility(group.id, visibleTo);
+            // Compare-and-swap on the statement chain the check above was made against.
+            if (!await groupRepository.setVisibility(group.id, visibleTo, group.treeCommitSeq ?? 0)) {
+                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(group.id)) ?? group));
+            }
             group.visibleTo = visibleTo;
             this.groupNotificationService.sendUpdatedGroup(group, [], "visibilityChanged");
         }

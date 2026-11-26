@@ -608,8 +608,17 @@ export class GroupRepository {
     
     /** Sets who beside the members may read the group's identity key, roster and statements. Touches nothing a
      *  statement signs, so it moves no counter and needs no CAS. */
-    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context") {
-        await this.repository.collection.updateOne({_id: groupId} as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
+    /**
+     * Sets the visibility, only while the statement chain is where the caller's check read it: a rules or roles
+     * commit landing in between (which could take the right away) moves `treeCommitSeq`, and the write then misses.
+     * A group being created passes no seq: it is written in the creation's own transaction.
+     *
+     * @returns false on a miss, nothing written
+     */
+    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context", expectedTreeCommitSeq?: number) {
+        const filter = {_id: groupId, ...(expectedTreeCommitSeq === undefined ? {} : {treeCommitSeq: expectedTreeCommitSeq})};
+        const result = await this.repository.collection.updateOne(filter as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
+        return result.matchedCount > 0;
     }
     
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
