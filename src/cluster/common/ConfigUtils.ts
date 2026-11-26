@@ -82,6 +82,10 @@ export interface Config {
      *  spending one never blocks another — above all, nothing but `remove` ever blocks a removal. A floor of 1 keeps
      *  a misconfiguration from making revocation impossible. */
     maxGroupRotationsPerHour: number,
+    /** `PMX_MAX_GROUP_ROTATIONS_PER_MINUTE` (default 3): how many times a minute one member may rotate one group's
+     *  key (limiter key `rotateBurst|<groupId>|<userId>`), on top of its hourly `rotate` budget. Any member may
+     *  rotate, and every rotation stales every container granted to the group, so a burst is capped too. Floor 1. */
+    maxGroupRotationsPerMinute: number,
     streams: {
         enabled: boolean;
         mediaServer: {
@@ -195,6 +199,7 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             TypesValidator.MAX_GROUP_MEMBERS,
         ),
         maxGroupRotationsPerHour: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_HOUR || "", 10) || 60, 1),
+        maxGroupRotationsPerMinute: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_MINUTE || "", 10) || 3, 1),
         streams: {
             enabled: Boolean(process.env.PMX_STREAM_ENABLED === "true"),
             mediaServer: {
