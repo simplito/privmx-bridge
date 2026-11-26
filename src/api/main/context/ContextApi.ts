@@ -352,9 +352,9 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async spaceGetKeyArchive(model: contextApi.SpaceGetKeyArchiveModel): Promise<contextApi.SpaceGetKeyArchiveResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const {space, rungs, nextKeyVersion} = await this.spaceService.getKeyArchive(cloudUser, model);
+        const {space, rungs, keys, nextKeyVersion} = await this.spaceService.getKeyArchive(cloudUser, model);
         this.requestLogger.setContextId(space.contextId);
-        return {rungs, ...(nextKeyVersion === undefined ? {} : {nextKeyVersion})};
+        return {rungs, keys: keys.map(k => SpaceConverter.convertKey(k)), ...(nextKeyVersion === undefined ? {} : {nextKeyVersion})};
     }
     
     @ApiMethod({})

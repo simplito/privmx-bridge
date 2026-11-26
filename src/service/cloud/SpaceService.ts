@@ -161,11 +161,12 @@ export class SpaceService extends BaseContainerService {
      * Whether its signer was entitled is the readers' question, with one part answered here as well: the
      * standing the signer claims has to be one it has and one that allows the change. A statement the readers
      * would refuse must not get into the history, or every reader would stop at it for good.
+     * @returns the role the statement's standing has in the space before the change
      */
     static assertStatement(st: types.cloud.SpaceStatement, x: {
         spaceId: types.space.SpaceId, contextId: types.context.ContextId, prior?: Pick<db.space.Space, "seq"|"statement"|"groups"|"users">,
         op: types.cloud.SpaceStatementOp, keyVersion: number, after: Recipients, caller: Caller, managerOnly: boolean,
-    }) {
+    }): types.cloud.ContainerRole {
         const bad = (why: string): never => {
             throw new AppException("SPACE_STATEMENT_INVALID", why);
         };
@@ -225,6 +226,7 @@ export class SpaceService extends BaseContainerService {
         if (x.managerOnly && role !== "manager") {
             bad("the change takes a manager, and the standing the statement names is not one");
         }
+        return role!;
     }
     
     /**
@@ -287,17 +289,24 @@ export class SpaceService extends BaseContainerService {
         return this.view(space, await this.access(executor, space, "context/spaceGet"), true);
     }
     
-    /** A page of the space's rungs, by the key version they sit at; every rung of a page's versions comes whole. */
+    /**
+     * A page of the space's rungs, by the key version they sit at, every rung of a page's versions whole, with the
+     * caller's own wraps (its user entry and its groups') of those versions that still have them. A backend (no
+     * user) is served the rungs only.
+     */
     async getKeyArchive(executor: Executor, model: SpaceGetKeyArchiveModel) {
         const repository = this.repositoryFactory.createSpaceRepository();
         const space = await repository.get(model.id);
         if (!space) {
             throw new AppException("SPACE_DOES_NOT_EXIST");
         }
-        await this.access(executor, space, "context/spaceGetKeyArchive");
+        const caller = await this.access(executor, space, "context/spaceGetKeyArchive");
         const page = LadderArchive.versionPage(model.fromKeyVersion, model.toKeyVersion, space.keyVersion, model.limit ?? SpaceService.RUNG_PAGE);
-        const rungs = page.empty ? [] : await repository.getRungs(space.id, page.from, page.upTo);
-        return {space, rungs, nextKeyVersion: page.next};
+        const [rungs, keys] = page.empty ? [[], []] : await Promise.all([
+            repository.getRungs(space.id, page.from, page.upTo),
+            caller ? repository.getKeyRange(space.id, caller.userId, caller.ownGroupIds, page.from, page.upTo) : [],
+        ]);
+        return {space, rungs, keys, nextKeyVersion: page.next};
     }
     
     async getStatements(executor: Executor, model: SpaceGetStatementsModel) {
@@ -423,7 +432,7 @@ export class SpaceService extends BaseContainerService {
         SpaceService.assertRungs(model.rungs, keyVersion);
         // The new key is wrapped to each group's current epoch: `assertKeysCover` just held the entries to that.
         const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
-        SpaceService.assertStatement(model.statement, {
+        const standing = SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
             caller: user, managerOnly: removing,
         });
@@ -432,9 +441,16 @@ export class SpaceService extends BaseContainerService {
         const held = await this.reserveRotation(space.id, user.userId, SpaceService.rotationBudget(removing, staying, groupEpochs));
         let changed: db.space.Space;
         try {
-            // The older versions' wraps go, the removed recipients' with them: from now on they are reached down the rungs.
             changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
-                await repository.deleteKeysBelow(space.id, keyVersion);
+                if (removing) {
+                    await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
+                }
+                // The bridge cannot open a rung, so a rotation with garbage rungs must not take the older wraps with
+                // it unless its signer could delete the whole space anyway: only a manager's prunes them. Readers then
+                // reach the older versions down the rungs; after anybody else's rotation they keep their wraps too.
+                if (standing === "manager") {
+                    await repository.deleteKeysBelow(space.id, keyVersion);
+                }
                 await repository.insertKeys(space.id, model.keys);
                 await repository.insertRungs(space.id, model.rungs);
             }, model.statement);

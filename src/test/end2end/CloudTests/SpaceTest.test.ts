@@ -129,6 +129,9 @@ export class SpaceTests extends BaseTestSet {
         assert(fresh.keys.length === 2 && fresh.keys.every(k => k.keyVersion === 2), `only the current version is wrapped, got ${fresh.keys.length} entries`);
         const archive = await (await this.apiOf(bob)).spaceGetKeyArchive({id: spaceId});
         assert(JSON.stringify(archive.rungs) === JSON.stringify(this.rungsOf(2)) && archive.nextKeyVersion === undefined, `version 1 is reached down the rung: ${JSON.stringify(archive)}`);
+        // Bob is no manager: the bridge cannot check his rungs, so his rotation keeps the older wraps.
+        assert(archive.keys.map(k => `${k.keyVersion}:${"groupId" in k.recipient ? "g" : "u"}`).join() === "1:g,2:g", `bob keeps his group's wraps of both versions: ${JSON.stringify(archive.keys)}`);
+        assert((await this.apis.contextApi.spaceGetKeyArchive({id: spaceId})).keys.length === 4, "janek's own and his group's wraps of both versions");
         
         // A rotation planned against the old version loses.
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRotateKey({
@@ -389,16 +392,19 @@ export class SpaceTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3), rung(4, 2), rung(4, 1)]), "SPACE_KEYS_INVALID");
         assert((await rotate(4, this.rungsOf(4))).keyVersion === 4, "rotation to 4");
         
-        // The older versions' wraps are gone: a reader descends from the current one.
+        // A manager's rotation prunes the older versions' wraps: a reader descends from the current one.
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.keys.length === 2 && space.keys.every(k => k.keyVersion === 4), `only version 4 is wrapped: ${JSON.stringify(space.keys)}`);
+        const mine = await this.apis.contextApi.spaceGetKeyArchive({id: spaceId});
+        assert(mine.keys.length === 2 && mine.keys.every(k => k.keyVersion === 4), `the older wraps are gone: ${JSON.stringify(mine.keys)}`);
         const asBob = await this.apiOf(bob);
         const all = await asBob.spaceGetKeyArchive({id: spaceId});
+        assert(all.keys.length === 1 && "groupId" in all.keys[0].recipient && all.keys[0].keyVersion === 4, `bob gets his group's wrap only: ${JSON.stringify(all.keys)}`);
         const spans = (rungs: types.cloud.SpaceRung[]) => rungs.map(r => `${r.atKeyVersion}->${r.targetKeyVersion}`).join();
         assert(spans(all.rungs) === "2->1,3->2,4->2,4->3" && all.nextKeyVersion === undefined, `the whole ladder: ${spans(all.rungs)}`);
         assert(all.rungs.every(r => r.data === rung(r.atKeyVersion, r.targetKeyVersion).data), "a rung comes back as it was sent");
         const first = await asBob.spaceGetKeyArchive({id: spaceId, limit: 2});
-        assert(spans(first.rungs) === "2->1" && first.nextKeyVersion === 3, `first page: ${JSON.stringify(first)}`);
+        assert(spans(first.rungs) === "2->1" && first.nextKeyVersion === 3 && first.keys.length === 0, `first page: ${JSON.stringify(first)}`);
         const rest = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: first.nextKeyVersion, limit: 2});
         assert(spans(rest.rungs) === "3->2,4->2,4->3" && rest.nextKeyVersion === undefined, `second page: ${JSON.stringify(rest)}`);
         const window = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});

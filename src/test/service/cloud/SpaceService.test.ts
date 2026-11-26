@@ -259,8 +259,8 @@ describe("a rotation publishes exactly the canonical rungs of its key version", 
 
 describe("the rungs of a space are served a page of key versions at a time", () => {
     const space = {id: "s1", contextId: "c", keyVersion: 10, groups: [], users: []} as unknown as db.space.Space;
-    function service() {
-        const calls: {getKeys: unknown[][], getRungs: unknown[][]} = {getKeys: [], getRungs: []};
+    function service(asBackend = false) {
+        const calls: {getKeys: unknown[][], getRungs: unknown[][], getKeyRange: unknown[][]} = {getKeys: [], getRungs: [], getKeyRange: []};
         const acls: string[] = [];
         const repository = {
             get: async () => space,
@@ -272,13 +272,17 @@ describe("the rungs of a space are served a page of key versions at a time", () 
                 calls.getRungs.push(args);
                 return [];
             },
+            getKeyRange: async (...args: unknown[]) => {
+                calls.getKeyRange.push(args);
+                return [];
+            },
         };
         const created = new SpaceService({createSpaceRepository: () => repository} as never, null as never, "h" as types.core.Host, null as never, null as never,
             null as never, null as never, {} as Config);
         Object.assign(created, {
             access: async (_executor: unknown, _space: unknown, acl: string) => {
                 acls.push(acl);
-                return {userId: alice, pubKey: pub, ownGroupIds: [g1], role: "user"};
+                return asBackend ? undefined : {userId: alice, pubKey: pub, ownGroupIds: [g1], role: "user"};
             },
             getGroupEpochs: async () => new Map(),
         });
@@ -306,6 +310,13 @@ describe("the rungs of a space are served a page of key versions at a time", () 
         const past = await created.getKeyArchive({} as never, {id, fromKeyVersion: 11});
         assert.deepStrictEqual([past.rungs, past.nextKeyVersion, calls.getRungs.length], [[], undefined, 3], "nothing past the current version");
         assert.ok(acls.every(acl => acl === "context/spaceGetKeyArchive"));
+        assert.deepStrictEqual(calls.getKeyRange, [["s1", alice, [g1], 1, 4], ["s1", alice, [g1], 5, 10], ["s1", alice, [g1], 2, 2]], "the caller's own wraps of the same versions");
+    });
+    
+    it("a backend is served the rungs and no wraps", async () => {
+        const {created, calls} = service(true);
+        const page = await created.getKeyArchive({} as never, {id});
+        assert.deepStrictEqual([page.keys, calls.getRungs.length, calls.getKeyRange.length], [[], 1, 0]);
     });
 });
 

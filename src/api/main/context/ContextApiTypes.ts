@@ -885,6 +885,10 @@ export interface SpaceGetKeyArchiveModel {
 export interface SpaceGetKeyArchiveResult {
     /** Every rung at the versions of the page, ascending by `atKeyVersion` (then `targetKeyVersion`). */
     rungs: types.cloud.SpaceRung[];
+    /** The caller's own wraps — its user entry and those of the groups it belongs to — of the page's versions that
+     *  still have them, ascending by key version: a manager's rotation deletes the wraps of older versions, anybody
+     *  else's keeps them. */
+    keys: types.cloud.SpaceKeyEntry[];
     /** Set when versions up to `toKeyVersion` remain: ask again with it as `fromKeyVersion`. */
     nextKeyVersion?: number;
 }
@@ -913,8 +917,10 @@ export interface SpaceAddRecipientsModel {
 export interface SpaceRotateKeyModel {
     id: types.space.SpaceId;
     keyId: types.core.KeyId;
-    /** The next key version, one entry per recipient that stays. Once the rotation lands, the wraps of older
-     *  versions are deleted: those versions are reached down the rungs. */
+    /** The next key version, one entry per recipient that stays. When the statement's standing is a manager's
+     *  (a user the space names as manager, or a manager group it acts through), the wraps of older versions are
+     *  deleted once the rotation lands, and those versions are reached down the rungs; a rotation by anybody else
+     *  keeps them, since the bridge cannot check a rung. A removed recipient's wraps are always deleted. */
     keys: types.cloud.SpaceKeyEntry[];
     /** The rungs of the next key version v: exactly one to each target of `LadderMath.rungSpansFor(v, 1)` — the unit
      *  rung v -> v-1 and the aligned skips v -> v-2^j (v=2: [1]; v=4: [3,2]; v=8: [7,6,4]), each
@@ -1038,10 +1044,11 @@ export interface IContextApi {
      */
     spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
     /**
-     * Reads a page of the rungs of a space's key ladder, by the key version they sit at. For a recipient, as
-     * `spaceGet`; needs the `context/spaceGetKeyArchive` ACL entry (in `context/READ`).
+     * Reads a page of the rungs of a space's key ladder, by the key version they sit at, with the caller's own wraps
+     * of those versions that still have them. For a recipient, as `spaceGet`; needs the `context/spaceGetKeyArchive`
+     * ACL entry (in `context/READ`).
      * @param model id of the space, the key versions wanted and how many per page
-     * @returns the rungs, ascending by key version, and where to continue
+     * @returns the rungs and the caller's wraps, ascending by key version, and where to continue
      */
     spaceGetKeyArchive(model: SpaceGetKeyArchiveModel): Promise<SpaceGetKeyArchiveResult>;
     /**

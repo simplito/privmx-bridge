@@ -203,8 +203,8 @@ export namespace space {
     
     /**
      * A space: one key, in versions, wrapped for several groups and users. It holds no data of its own. The
-     * wraps of the current version live in `spaceKey`, one document per recipient; older versions are reached down
-     * the rungs in `spaceRung`. The document stays of a size that follows the recipients, not the rotations.
+     * wraps live in `spaceKey`, one document per version and recipient, those of older versions only until a
+     * manager's rotation; older versions are reached down the rungs in `spaceRung`. The document stays of a size that follows the recipients, not the rotations.
      */
     export interface Space {
         id: types.space.SpaceId;
@@ -268,7 +268,8 @@ export namespace space {
         signature: types.core.Base64;
     }
     
-    /** One rung of a space's key ladder (`types.cloud.SpaceRung`). Kept for every version, while `SpaceKey` holds the current one only. */
+    /** One rung of a space's key ladder (`types.cloud.SpaceRung`). Kept for every version; `SpaceKey` rows of older
+     *  versions go with a manager's rotation. */
     export interface SpaceRung {
         /** `<spaceId>/<atKeyVersion>/<targetKeyVersion>`: one rung per span. */
         id: string;
