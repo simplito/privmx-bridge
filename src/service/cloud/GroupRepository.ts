@@ -634,12 +634,6 @@ export class GroupRepository {
         await this.state.markDeleted(group.id, group.contextId);
     }
     
-    /**
-     * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
-     *
-     * Projected, because this runs on every container read and every item write into a group-granted container.
-     * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
-     */
     /** Each group's current epoch and the identity key of that epoch. Groups of another context are left out. */
     async getKeyHeads(contextId: types.context.ContextId, groupIds: types.group.GroupId[]) {
         const map = new Map<types.group.GroupId, {keyVersion: number, groupPubKey: types.cloud.GroupPubKey}>();
@@ -656,6 +650,12 @@ export class GroupRepository {
         return map;
     }
     
+    /**
+     * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
+     *
+     * Projected, because this runs on every container read and every item write into a group-granted container.
+     * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
+     */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
             return new Map();

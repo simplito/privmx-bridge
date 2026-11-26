@@ -408,7 +408,6 @@ export interface ContextInnerPolicy {
     sendCustomNotification?: PolicyEntry;
 }
 
-/** @doctype string */
 /** Who of a group's members a rule lets act. */
 export type GroupRuleWho = "managers"|"members"|"nobody";
 
@@ -441,6 +440,7 @@ export interface GroupRules {
     editPrivateMeta: GroupRuleWho;
 }
 
+/** @doctype string */
 export type PolicyEntry = "inherit"|"yes"|"no"|"default"|"none"|"all"|"user"|"owner"|"manager"|"itemOwner"|"itemOwner&user"|"itemOwner&user,manager"|"owner&user"|"manager&owner"|"itemOwner,manager"|"itemOwner,owner"|"itemOwner,manager,owner"|"manager,owner"|(string&{__policyEntry: never});
 export type PolicyBooleanEntry = "inherit"|"default"|"yes"|"no";
 

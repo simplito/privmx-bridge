@@ -185,11 +185,12 @@ export class GroupStateRepository {
         return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
-    /** The group's public-metadata entry — a lookup by derived id. */
+    /** The public-metadata entries of several groups — one lookup by derived ids. */
     async getPublicMetaHeads(groupIds: types.group.GroupId[]): Promise<db.group.GroupPublicMetaEntry[]> {
         return this.publicMetaEntries.getMulti(groupIds.map(id => GroupStateRepository.publicMetaEntryId(id)));
     }
     
+    /** The group's public-metadata entry — a lookup by derived id. */
     async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
         return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));
     }
