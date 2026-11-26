@@ -164,13 +164,9 @@ export class PolicyService {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
         }
         if (policy.group) {
-            // A group's own rules decide who may keep a manager seat (`changeRoles`, and a group with managers keeps
-            // one); these two would be settable and read by nothing.
-            for (const field of ["updaterCanBeRemovedFromManagers", "ownerCanBeRemovedFromManagers"] as const) {
-                if (policy.group[field] !== undefined) {
-                    throw new AppException("INVALID_PARAMS", `policy.group.${field} is not allowed here`);
-                }
-            }
+            // Deprecated for groups: `policy.group.updaterCanBeRemovedFromManagers` and `ownerCanBeRemovedFromManagers`
+            // are still accepted (3.1.0 took them, and contexts store them) but nothing reads them any more: a group's
+            // own rules decide who may keep a manager seat (`changeRoles`, and a group with managers keeps one).
             this.validateContainerPolicyForContext("policy.group", policy.group);
         }
     }

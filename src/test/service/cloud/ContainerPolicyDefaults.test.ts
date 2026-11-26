@@ -117,17 +117,10 @@ it("a context may set a group policy at all", async () => {
     new PolicyService().validateContextPolicy({group: {listAll: "all", get: "manager"}});
 });
 
-it("SECURITY: a context's group policy may not set the manager-seat booleans: a group's own rules decide that", async () => {
+it("a context's group policy still takes the deprecated manager-seat booleans, as 3.1.0 did", async () => {
+    // Accepted and ignored: a group's own rules decide who keeps a manager seat.
     for (const field of ["updaterCanBeRemovedFromManagers", "ownerCanBeRemovedFromManagers"] as const) {
-        let refused = false;
-        try {
-            new PolicyService().validateContextPolicy({group: {[field]: "no"}});
-        }
-        catch (e) {
-            refused = AppException.is(e, "INVALID_PARAMS");
-        }
-        expect(refused).toBe(true);
-        // Every other container keeps them.
+        new PolicyService().validateContextPolicy({group: {[field]: "no"}});
         new PolicyService().validateContextPolicy({thread: {[field]: "no"}});
     }
 });
