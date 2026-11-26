@@ -861,7 +861,26 @@ export interface SpaceIdModel {
 }
 
 export interface SpaceGetResult {
+    /** `keys` are those of the current key version only; older versions come from `spaceGetKeys`. */
     space: SpaceInfo;
+}
+
+export interface SpaceGetKeysModel {
+    id: types.space.SpaceId;
+    /** First key version wanted, at least 1. */
+    fromKeyVersion: number;
+    /** Last key version wanted; defaults to the space's current one. */
+    toKeyVersion?: number;
+    /** Key versions per page, 1 to 256; default 64. */
+    limit?: number;
+}
+
+export interface SpaceGetKeysResult {
+    /** The entries the caller can open — its own user entry and those of the groups it belongs to — for the versions
+     *  of the page, ascending by key version. */
+    keys: types.cloud.SpaceKeyEntry[];
+    /** Set when versions up to `toKeyVersion` remain: ask again from it. */
+    nextKeyVersion?: number;
 }
 
 export interface SpaceListModel extends types.core.ListModel {
@@ -870,7 +889,8 @@ export interface SpaceListModel extends types.core.ListModel {
 }
 
 export interface SpaceListResult {
-    /** `keys` of a listed space are those of its current key version only; `spaceGet` serves every version. */
+    /** `keys` of a listed space are those of its current key version only, as in `spaceGet`; older versions come
+     *  from `spaceGetKeys`. */
     spaces: SpaceInfo[];
     count: number;
 }
@@ -999,9 +1019,16 @@ export interface IContextApi {
     /**
      * Reads a space. For a recipient: a user it names, or a member of a group it names.
      * @param model id of the space
-     * @returns the space with the wrapped keys the caller can open
+     * @returns the space with the wrapped keys of its current version the caller can open
      */
     spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
+    /**
+     * Reads a page of the wrapped keys of a space's older versions the caller can open: its own user entry and the
+     * entries of the groups it belongs to. For a recipient, as `spaceGet`.
+     * @param model id of the space, the key versions wanted and how many per page
+     * @returns the entries, ascending by key version, and where to continue
+     */
+    spaceGetKeys(model: SpaceGetKeysModel): Promise<SpaceGetKeysResult>;
     /**
      * Reads the signed statements of a space's history, oldest first. For a recipient, as `spaceGet`.
      * @param model id of the space, the seq to read after, and how many
@@ -1038,7 +1065,8 @@ export interface IContextApi {
      * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`. Each user may rotate one space
      * `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` times a minute (default 3) and `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` times an
      * hour (default 60); past either it is refused with `SPACE_ROTATION_RATE_LIMIT`, data `{retryAt}`. A rotation that
-     * only replaces a stale key (`keyIsStale`: a recipient group past the epoch the key was wrapped to) is not counted.
+     * only replaces a stale key (`keyIsStale`: a recipient group past the epoch the key was wrapped to) is not counted
+     * against the hourly limit, only against a per-minute limit of its own (same value).
      * @param model id of the space, the new key's id and its wraps
      * @returns the new key version
      */

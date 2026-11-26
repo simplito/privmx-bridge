@@ -12,6 +12,7 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import * as types from "../../../types";
+import * as db from "../../../db/Model";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceRepository } from "../../../service/cloud/SpaceRepository";
 import { AppException } from "../../../api/AppException";
@@ -211,10 +212,74 @@ describe("which budget a change of a space's key spends", () => {
         await reserve("remove");
     });
     
-    it("SECURITY: a rotation that only replaces a stale key spends nothing; a gratuitous one spends the rotation budget", () => {
+    it("SECURITY: a rotation that only replaces a stale key spends the stale burst only; a gratuitous one the rotation budget", async () => {
         // g2 has moved to epoch 5 since the key was wrapped to it at 4: stale, so the rotation is forced, not chosen.
-        assert.strictEqual(SpaceService.rotationBudget(false, [{groupId: g1, groupKeyVersion: 3}, {groupId: g2, groupKeyVersion: 4}], epochs), undefined);
+        assert.strictEqual(SpaceService.rotationBudget(false, [{groupId: g1, groupKeyVersion: 3}, {groupId: g2, groupKeyVersion: 4}], epochs), "stale");
+        // Stale re-keys are capped per minute (a user naming many groups of its own could rotate them in turn), but
+        // spend no hourly budget, which stays untouched for gratuitous rotations.
+        const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+        const created = new SpaceService(null as never, null as never, "h" as types.core.Host, null as never, null as never, null as never, limiter,
+            {maxSpaceRotationsPerMinute: 3, maxSpaceRotationsPerHour: 1} as Config);
+        const reserve = (kind: string) => (created as unknown as {reserveRotation: (s: string, u: string, k: string) => Promise<string[]>}).reserveRotation("s1", "alice", kind);
+        for (let i = 0; i < 3; i++) {
+            assert.deepStrictEqual(await reserve("stale"), ["spaceRotateStaleBurst|s1|alice"]);
+        }
+        await assert.rejects(() => reserve("stale"), (e: unknown) => AppException.is(e, "SPACE_ROTATION_RATE_LIMIT"));
+        await reserve("rotate");
         assert.strictEqual(SpaceService.rotationBudget(false, [{groupId: g1, groupKeyVersion: 3}, {groupId: g2, groupKeyVersion: 5}], epochs), "rotate");
         assert.strictEqual(SpaceService.rotationBudget(false, [], epochs), "rotate", "a space of users only is never stale");
+    });
+});
+
+describe("a space's key versions are served a page at a time", () => {
+    const space = {id: "s1", contextId: "c", keyVersion: 10, groups: [], users: []} as unknown as db.space.Space;
+    /** A service over a stand-in repository; the caller passes `access` as alice, a member of g1. */
+    function service(asBackend = false) {
+        const calls: {getKeys: unknown[][], getKeyRange: unknown[][]} = {getKeys: [], getKeyRange: []};
+        const repository = {
+            get: async () => space,
+            getKeys: async (...args: unknown[]) => {
+                calls.getKeys.push(args);
+                return [];
+            },
+            getKeyRange: async (...args: unknown[]) => {
+                calls.getKeyRange.push(args);
+                return [];
+            },
+        };
+        const created = new SpaceService({createSpaceRepository: () => repository} as never, null as never, "h" as types.core.Host, null as never, null as never,
+            null as never, null as never, {} as Config);
+        Object.assign(created, {
+            access: async () => asBackend ? undefined : {userId: alice, pubKey: pub, ownGroupIds: [g1], role: "user"},
+            getGroupEpochs: async () => new Map(),
+        });
+        return {created, calls};
+    }
+    
+    it("SECURITY: spaceGet serves the current version only, never every version", async () => {
+        const {created, calls} = service();
+        await created.getSpace({} as never, "s1" as types.space.SpaceId);
+        assert.deepStrictEqual([...(calls.getKeys[0][3] as Map<string, number>)], [["s1", 10]]);
+    });
+    
+    it("spaceGetKeys pages by key version and says where to continue", async () => {
+        const {created, calls} = service();
+        const first = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 1, limit: 4});
+        assert.deepStrictEqual(calls.getKeyRange[0], ["s1", alice, [g1], 1, 4]);
+        assert.strictEqual(first.nextKeyVersion, 5);
+        const last = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 5});
+        assert.deepStrictEqual(calls.getKeyRange[1], ["s1", alice, [g1], 5, 10], "default 64 versions, capped at the current one");
+        assert.strictEqual(last.nextKeyVersion, undefined);
+        const bounded = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 2, toKeyVersion: 3, limit: 1});
+        assert.deepStrictEqual(calls.getKeyRange[2], ["s1", alice, [g1], 2, 2]);
+        assert.strictEqual(bounded.nextKeyVersion, 3);
+        const past = await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 11});
+        assert.deepStrictEqual([past.keys, past.nextKeyVersion, calls.getKeyRange.length], [[], undefined, 3], "nothing past the current version");
+    });
+    
+    it("a backend is served no keys", async () => {
+        const {created, calls} = service(true);
+        assert.deepStrictEqual((await created.getKeys({} as never, {id: "s1" as types.space.SpaceId, fromKeyVersion: 1})).keys, []);
+        assert.strictEqual(calls.getKeyRange.length, 0);
     });
 });

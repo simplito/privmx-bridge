@@ -75,6 +75,7 @@ describe("CloudAclChecker.verifyAccess", () => {
         ["ALLOW WRITE", "context/groupUpdatePrivateMeta", [], true],
         ["ALLOW context/WRITE", "context/groupUpdatePolicy", [], true],
         ["ALLOW context/ALL", "context/groupUpdatePublicMeta", [], true],
+        ["ALLOW context/READ", "context/spaceGetKeys", ["spaceId=s"], true],
         ["ALLOW context/READ", "context/groupUpdatePublicMeta", [], false],
         ["ALLOW context/READ", "context/groupUpdatePolicy", [], false],
         // One plane's grant carries neither the other plane nor the policy. This is the split, as an ACL fact.

@@ -104,6 +104,13 @@ export class SpaceRepository {
         return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
     }
     
+    /** The caller's wraps — its own and its groups' — of key versions `from`..`to`, ascending. */
+    async getKeyRange(spaceId: types.space.SpaceId, userId: types.cloud.UserId, groupIds: types.group.GroupId[], from: number, to: number) {
+        const filter = {spaceId: spaceId, keyVersion: {$gte: from, $lte: to}, $or: [{userId: userId}, {groupId: {$in: groupIds}}]};
+        const list = await this.keys.collection.find(filter as mongodb.Filter<any>, this.keys.getOptions()).sort({keyVersion: 1}).toArray();
+        return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
+    }
+    
     async deleteKeysOf(spaceId: types.space.SpaceId, groupIds: types.group.GroupId[], userIds: types.cloud.UserId[]) {
         await this.keys.collection.deleteMany({spaceId: spaceId, $or: [{groupId: {$in: groupIds}}, {userId: {$in: userIds}}]} as mongodb.Filter<any>, this.keys.getOptions());
     }

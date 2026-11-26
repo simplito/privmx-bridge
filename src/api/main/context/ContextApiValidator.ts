@@ -281,6 +281,12 @@ export class ContextApiValidator extends BaseValidator {
             statement: spaceStatement,
         }));
         this.registerMethod("spaceGet", spaceId);
+        this.registerMethod("spaceGetKeys", this.builder.createObject({
+            id: this.tv.spaceId,
+            fromKeyVersion: this.builder.min(this.builder.int, 1),
+            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            limit: this.builder.optional(this.builder.range(this.builder.int, 1, 256)),
+        }));
         this.registerMethod("spaceGetStatements", this.builder.createObject({
             id: this.tv.spaceId,
             fromSeq: this.tv.intNonNegative,

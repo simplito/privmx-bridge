@@ -28,12 +28,12 @@ import { SpaceStatement } from "./SpaceStatement";
 import { CommitStatement } from "./keytree/CommitStatement";
 import { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { Config } from "../../cluster/common/ConfigUtils";
-import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
+import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetKeysModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
 
 type Caller = {userId: types.cloud.UserId, pubKey: types.cloud.UserPubKey, ownGroupIds: types.group.GroupId[]};
 type Recipients = Pick<db.space.Space, "groups"|"users">;
 
-type SpaceAcl = "context/spaceGetStatements"|"context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
+type SpaceAcl = "context/spaceGetStatements"|"context/spaceGetKeys"|"context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
     |"context/spaceRemoveRecipients"|"context/spaceRotateKey"|"context/spaceUpdatePublicMeta"|"context/spaceUpdatePrivateMeta";
 
 /** A space with what one caller is served of it. `keys` is empty for a caller that is not a user. */
@@ -51,6 +51,8 @@ export class SpaceService extends BaseContainerService {
     
     /** Recipients of one space, groups and users together. */
     static readonly MAX_RECIPIENTS = 128;
+    /** Key versions per `spaceGetKeys` page when the caller names no limit. */
+    static readonly KEY_PAGE = 64;
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -92,14 +94,16 @@ export class SpaceService extends BaseContainerService {
      * else does — a member rotating a recipient group, which makes the space stale and the next writer re-key it —
      * can use up the allowance a manager removes somebody with; it stays limited because each removal also adds a
      * key version. A rotation that only replaces a stale key (a recipient group past the epoch the key was wrapped
-     * to) spends nothing: it is what a group's own, already rate-limited, epoch change forces, and once it lands the
-     * space is fresh, so there is one such rotation per epoch change. Only a gratuitous rotation spends `spaceRotate`.
+     * to) spends no hourly budget: it is what a group's own, already rate-limited, epoch change forces. It does spend
+     * a per-minute budget of its own (`spaceRotateStaleBurst`), since a user naming many groups of its own could
+     * otherwise rotate them in turn and re-key the space as fast as it likes. Only a gratuitous rotation spends
+     * `spaceRotate`.
      */
-    static rotationBudget(removing: boolean, staying: {groupId: types.group.GroupId, groupKeyVersion: number}[], groupEpochs: GroupEpochs): "rotate"|"remove"|undefined {
+    static rotationBudget(removing: boolean, staying: {groupId: types.group.GroupId, groupKeyVersion: number}[], groupEpochs: GroupEpochs): "rotate"|"remove"|"stale" {
         if (removing) {
             return "remove";
         }
-        return SpaceService.isStale({groups: staying}, groupEpochs) ? undefined : "rotate";
+        return SpaceService.isStale({groups: staying}, groupEpochs) ? "stale" : "rotate";
     }
     
     private static recipientKey(recipient: {groupId: types.group.GroupId}|{userId: types.cloud.UserId}) {
@@ -262,7 +266,24 @@ export class SpaceService extends BaseContainerService {
         if (!space) {
             throw new AppException("SPACE_DOES_NOT_EXIST");
         }
-        return this.view(space, await this.access(executor, space, "context/spaceGet"), false);
+        // The current version only: the older ones are paged (`getKeys`), or one read could carry thousands of versions.
+        return this.view(space, await this.access(executor, space, "context/spaceGet"), true);
+    }
+    
+    /** A page of the older key versions' wraps the caller can open; a backend (no user) is served none. */
+    async getKeys(executor: Executor, model: SpaceGetKeysModel) {
+        const repository = this.repositoryFactory.createSpaceRepository();
+        const space = await repository.get(model.id);
+        if (!space) {
+            throw new AppException("SPACE_DOES_NOT_EXIST");
+        }
+        const caller = await this.access(executor, space, "context/spaceGetKeys");
+        const last = Math.min(model.toKeyVersion ?? space.keyVersion, space.keyVersion);
+        const upTo = Math.min(last, model.fromKeyVersion + (model.limit ?? SpaceService.KEY_PAGE) - 1);
+        const keys = caller && model.fromKeyVersion <= upTo
+            ? await repository.getKeyRange(space.id, caller.userId, caller.ownGroupIds, model.fromKeyVersion, upTo)
+            : [];
+        return {space, keys, nextKeyVersion: upTo < last ? upTo + 1 : undefined};
     }
     
     async getStatements(executor: Executor, model: SpaceGetStatementsModel) {
@@ -393,8 +414,7 @@ export class SpaceService extends BaseContainerService {
         });
         // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited
         // (`rotationBudget` says which budget, if any, this one spends).
-        const budget = SpaceService.rotationBudget(removing, staying, groupEpochs);
-        const held = budget ? await this.reserveRotation(space.id, user.userId, budget) : [];
+        const held = await this.reserveRotation(space.id, user.userId, SpaceService.rotationBudget(removing, staying, groupEpochs));
         let changed: db.space.Space;
         try {
             changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
@@ -487,15 +507,15 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
-     * Reserves one unit of each of the caller's two budgets of `kind` for the space — `maxSpaceRotationsPerMinute`
-     * a minute and `maxSpaceRotationsPerHour` an hour, removals and rotations each their own — or hands back what it
-     * took and refuses.
+     * Reserves one unit of each of the caller's budgets of `kind` for the space — `maxSpaceRotationsPerMinute` a
+     * minute and `maxSpaceRotationsPerHour` an hour, removals and rotations each their own, a stale re-key only the
+     * per-minute one — or hands back what it took and refuses.
      */
-    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId, kind: "rotate"|"remove"): Promise<string[]> {
-        const prefix = kind === "remove" ? "spaceRemove" : "spaceRotate";
+    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId, kind: "rotate"|"remove"|"stale"): Promise<string[]> {
+        const prefix = kind === "remove" ? "spaceRemove" : kind === "stale" ? "spaceRotateStale" : "spaceRotate";
         const budgets = [
             {key: `${prefix}Burst|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerMinute, windowMs: DateUtils.minutes(1)},
-            {key: `${prefix}|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour},
+            ...(kind === "stale" ? [] : [{key: `${prefix}|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour}]),
         ];
         const held: string[] = [];
         for (const budget of budgets) {

@@ -11,9 +11,19 @@ limitations under the License.
 
 import * as contextApi from "./ContextApiTypes";
 import * as types from "../../../types";
+import * as db from "../../../db/Model";
 import type { SpaceView } from "../../../service/cloud/SpaceService";
 
 export class SpaceConverter {
+    
+    static convertKey(k: db.space.SpaceKey): types.cloud.SpaceKeyEntry {
+        return {
+            keyVersion: k.keyVersion,
+            recipient: k.groupId !== undefined ? {groupId: k.groupId, groupKeyVersion: k.groupKeyVersion!} : {userId: k.userId!},
+            data: k.data,
+            signature: k.signature,
+        };
+    }
     
     static convertSpace(view: SpaceView): contextApi.SpaceInfo {
         const space = view.space;
@@ -32,15 +42,7 @@ export class SpaceConverter {
             seq: space.seq,
             statement: space.statement,
             keyIsStale: view.keyIsStale,
-            keys: view.keys.map(k => {
-                const entry: types.cloud.SpaceKeyEntry = {
-                    keyVersion: k.keyVersion,
-                    recipient: k.groupId !== undefined ? {groupId: k.groupId, groupKeyVersion: k.groupKeyVersion!} : {userId: k.userId!},
-                    data: k.data,
-                    signature: k.signature,
-                };
-                return entry;
-            }),
+            keys: view.keys.map(k => SpaceConverter.convertKey(k)),
             publicMeta: space.publicMeta,
             privateMeta: space.privateMeta,
             publicMetaVersion: space.publicMetaVersion,

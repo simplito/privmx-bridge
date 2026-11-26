@@ -733,3 +733,13 @@ it("a space's metadata is capped on its decoded bytes: 64 KiB public, 64 KiB plu
     // Anything but base64 is counted as it is sent.
     expect(Utils.try(() => validator().validate("spaceUpdatePublicMeta", {id: "ab".repeat(32), meta: "!".repeat(64 * 1024 + 1), version: 1})).success).toBe(false);
 });
+
+it("ContextApiValidator.spaceGetKeys takes a version range and a page size of 1 to 256", () => {
+    const valid = (model: object) => Utils.try(() => validator().validate("spaceGetKeys", {id: "ab".repeat(32), ...model})).success;
+    expect(valid({fromKeyVersion: 1})).toBe(true);
+    expect(valid({fromKeyVersion: 3, toKeyVersion: 9, limit: 256})).toBe(true);
+    expect(valid({fromKeyVersion: 0})).toBe(false);
+    expect(valid({fromKeyVersion: 1, limit: 257})).toBe(false);
+    expect(valid({fromKeyVersion: 1, limit: 0})).toBe(false);
+    expect(valid({})).toBe(false);
+});
