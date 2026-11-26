@@ -147,11 +147,23 @@ export class SpaceRepository {
         return !!await this.repository.collection.findOne(filter as mongodb.Filter<any>, {...this.repository.getOptions(), projection: {_id: 1}});
     }
     
-    async getByGroup(groupId: types.group.GroupId) {
-        return this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).array();
+    private static readonly NOTICE_PROJECTION = {
+        contextId: 1, keyVersion: 1, publicMetaVersion: 1, privateMetaVersion: 1, "groups.groupId": 1, "users.userId": 1,
+    };
+    
+    /** Calls `each` with every space naming the group, projected to what a notice needs, a cursor batch at a time. */
+    async forEachByGroup(groupId: types.group.GroupId, each: (space: db.space.SpaceNotice) => void|Promise<void>) {
+        const cursor = this.repository.collection.find({"groups.groupId": groupId} as mongodb.Filter<any>,
+            this.repository.getOptions<mongodb.FindOptions>({projection: SpaceRepository.NOTICE_PROJECTION, batchSize: 100}));
+        for await (const doc of cursor) {
+            await each(this.repository.convertFromDbObjEx(doc as unknown as db.space.SpaceNotice));
+        }
     }
     
-    async getByContext(contextId: types.context.ContextId) {
-        return this.repository.findAll(q => q.eq("contextId", contextId));
+    /** The spaces of a context, projected to what their deletion and its notice need. */
+    async getByContext(contextId: types.context.ContextId): Promise<db.space.SpaceNotice[]> {
+        const list = await this.repository.collection.find({contextId: contextId} as mongodb.Filter<any>,
+            this.repository.getOptions<mongodb.FindOptions>({projection: SpaceRepository.NOTICE_PROJECTION})).toArray();
+        return list.map(doc => this.repository.convertFromDbObjEx(doc as unknown as db.space.SpaceNotice));
     }
 }

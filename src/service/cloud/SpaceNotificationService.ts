@@ -43,14 +43,14 @@ export class SpaceNotificationService {
     }
     
     /** Every recipient: the users the space names and the members of the groups it names. */
-    private async recipientKeys(space: db.space.Space, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
+    private async recipientKeys(space: db.space.SpaceNotice, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
         const {groupsByUser} = await this.repositoryFactory.createGroupRepository().getGranteeView([...space.groups.map(g => g.groupId), ...alsoGroups]);
         const userIds = [...new Set([...space.users.map(u => u.userId), ...groupsByUser.keys(), ...alsoUsers])];
         const contextUsers = await this.repositoryFactory.createContextUserRepository().getUsers(space.contextId, userIds);
         return contextUsers.map(user => user.userPubKey);
     }
     
-    private changedData(space: db.space.Space, changeKind: contextApi.SpaceChangeKind): contextApi.SpaceChangedEventData {
+    private changedData(space: db.space.SpaceNotice, changeKind: contextApi.SpaceChangeKind): contextApi.SpaceChangedEventData {
         return {
             spaceId: space.id,
             contextId: space.contextId,
@@ -73,7 +73,7 @@ export class SpaceNotificationService {
     }
     
     /** @param alsoUsers and @param alsoGroups recipients no longer in the space, told once more so their clients can let go. */
-    sendUpdatedSpace(space: db.space.Space, changeKind: contextApi.SpaceChangeKind, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
+    sendUpdatedSpace(space: db.space.SpaceNotice, changeKind: contextApi.SpaceChangeKind, alsoUsers: types.cloud.UserId[] = [], alsoGroups: types.group.GroupId[] = []) {
         this.safe("spaceUpdated", async () => {
             await this.sendToBackend(space.contextId, {channel: "space", type: "spaceUpdated", data: this.changedData(space, changeKind), timestamp: DateUtils.now()});
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceUpdatedEvent>(
@@ -87,14 +87,12 @@ export class SpaceNotificationService {
     /** A recipient group moved to a new epoch: every space that names it now holds a stale key. */
     sendKeyStaleOfGroup(groupId: types.group.GroupId) {
         this.safe("spaceKeyStale", async () => {
-            for (const space of await this.repositoryFactory.createSpaceRepository().getByGroup(groupId)) {
-                this.sendUpdatedSpace(space, "keyStale");
-            }
+            await this.repositoryFactory.createSpaceRepository().forEachByGroup(groupId, space => this.sendUpdatedSpace(space, "keyStale"));
         });
     }
     
     /** @param solution the context's, when the context is already deleted. */
-    sendDeletedSpace(space: db.space.Space, solution?: types.cloud.SolutionId) {
+    sendDeletedSpace(space: db.space.SpaceNotice, solution?: types.cloud.SolutionId) {
         this.safe("spaceDeleted", async () => {
             await this.sendToBackend(space.contextId, {channel: "space", type: "spaceDeleted", data: {spaceId: space.id, contextId: space.contextId}, timestamp: DateUtils.now()}, solution);
             this.webSocketSender.sendCloudEventAtChannel<contextApi.SpaceDeletedEvent>(

@@ -242,6 +242,12 @@ export namespace space {
         contextId: types.context.ContextId;
     }
     
+    /** What a space's notifications and its deletion read of it: the counters and who its recipients are. */
+    export type SpaceNotice = Pick<Space, "id"|"contextId"|"keyVersion"|"publicMetaVersion"|"privateMetaVersion"> & {
+        groups: Pick<Space["groups"][number], "groupId">[];
+        users: Pick<Space["users"][number], "userId">[];
+    };
+    
     /** One entry of a space's history. Written once, never changed. */
     export interface SpaceStatementEntry {
         /** `<spaceId>/<seq>`: a second statement at one seq cannot be stored. */

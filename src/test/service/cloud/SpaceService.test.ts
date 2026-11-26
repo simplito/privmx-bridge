@@ -283,3 +283,30 @@ describe("a space's key versions are served a page at a time", () => {
         assert.strictEqual(calls.getKeyRange.length, 0);
     });
 });
+
+describe("the spaces naming a group are read projected and a batch at a time", () => {
+    it("reads only what a notice needs, through a cursor", async () => {
+        const asked: {filter: unknown, options: {projection?: object, batchSize?: number}}[] = [];
+        const docs = [{_id: "s1", contextId: "c", keyVersion: 2, groups: [{groupId: g1}], users: []}, {_id: "s2", contextId: "c", keyVersion: 1, groups: [{groupId: g1}], users: [{userId: alice}]}];
+        const spaces = {
+            collection: {find: (filter: unknown, options: {projection?: object, batchSize?: number}) => {
+                asked.push({filter, options});
+                return (async function* () {
+                    yield* docs;
+                })();
+            }},
+            getOptions: (options: object) => options,
+            convertFromDbObjEx: (doc: {_id: string}) => ({...doc, id: doc._id}),
+        };
+        const repo = new SpaceRepository(spaces as never, null as never, null as never, null as never);
+        const seen: string[] = [];
+        await repo.forEachByGroup(g1, space => {
+            seen.push(space.id);
+        });
+        assert.deepStrictEqual(seen, ["s1", "s2"]);
+        assert.deepStrictEqual(asked[0].filter, {"groups.groupId": g1});
+        assert.ok(asked[0].options.batchSize! > 0, "a cursor batch, not one array");
+        const fields = Object.keys(asked[0].options.projection!);
+        assert.ok(!fields.includes("publicMeta") && !fields.includes("privateMeta") && !fields.includes("statement"), "no metadata nor statement");
+    });
+});
