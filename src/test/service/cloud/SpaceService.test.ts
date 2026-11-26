@@ -146,10 +146,14 @@ describe("a statement signed via a group under a pin below the group's floor", (
             spaceId, contextId, seq: 2, prevDigest: SpaceStatement.digest(created), op: "rotate", date: Date.now(), keyVersion: 2, keyCommit: "cd".repeat(32),
             ...after, signer: alice, signerPubKey: signerPub, via: sales,
         }, signer, oldGroupKey);
+        // The signature under the retired pin verifies like any other; the floor rule is the write's.
         SpaceService.assertStatement(st, {
             spaceId, contextId, prior, op: "rotate", keyVersion: 2, after,
-            caller: {userId: alice, pubKey: signerPub, ownGroupIds: [sales]}, managerOnly: false, viaFloor,
+            caller: {userId: alice, pubKey: signerPub, ownGroupIds: [sales]}, managerOnly: false,
         });
+        if (viaFloor !== undefined) {
+            SpaceService.assertViaPin(sales, prior.groups, after.groups, viaFloor);
+        }
     };
     
     it("is accepted when it moves the group to the floor or above: the re-key after a history cut", () => {

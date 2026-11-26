@@ -125,8 +125,6 @@ export class SpaceService extends BaseContainerService {
     static assertStatement(st: types.cloud.SpaceStatement, x: {
         spaceId: types.space.SpaceId, contextId: types.context.ContextId, prior?: Pick<db.space.Space, "seq"|"statement"|"groups"|"users">,
         op: types.cloud.SpaceStatementOp, keyVersion: number, after: Recipients, caller: Caller, managerOnly: boolean,
-        /** The era floor of the group named in `via`, when there is one. */
-        viaFloor?: number,
     }) {
         const bad = (why: string): never => {
             throw new AppException("SPACE_STATEMENT_INVALID", why);
@@ -182,17 +180,24 @@ export class SpaceService extends BaseContainerService {
             if (!SpaceStatement.verifyViaSignature(st, group!.groupPubKey)) {
                 bad("viaSignature does not verify under the key the space holds for the group");
             }
-            // A pin below the group's floor is a key a history cut retired. It still signs exactly one thing: the
-            // statement that moves the group to an epoch at or above the floor, which is how the member who cut (or
-            // any other still holding the old key) brings the space along. Nothing else.
-            if (x.viaFloor !== undefined && group!.groupKeyVersion < x.viaFloor
-                && !x.after.groups.some(g => g.groupId === st.via && g.groupKeyVersion >= x.viaFloor!)) {
-                bad(`the key the space holds for the group is below its floor ${x.viaFloor}: it only signs moving the group to epoch ${x.viaFloor} or later`);
-            }
             role = group!.role;
         }
         if (x.managerOnly && role !== "manager") {
             bad("the change takes a manager, and the standing the statement names is not one");
+        }
+    }
+    
+    /**
+     * A pin below the via group's floor is a key a history cut retired. It still signs exactly one thing: the
+     * statement that moves the group to an epoch at or above the floor, which is how the member who cut (or any
+     * other still holding the old key) brings the space along. Nothing else. Checked inside the space's write, with
+     * the via group's document written too (`write`), so a floor raised concurrently is a write conflict.
+     */
+    static assertViaPin(via: types.group.GroupId, before: db.space.Space["groups"], after: db.space.Space["groups"], floor: number) {
+        const pin = before.find(g => g.groupId === via);
+        if (pin && pin.groupKeyVersion < floor && !after.some(g => g.groupId === via && g.groupKeyVersion >= floor)) {
+            throw new AppException("SPACE_STATEMENT_INVALID",
+                `the key the space holds for the group is below its floor ${floor}: it only signs moving the group to epoch ${floor} or later`);
         }
     }
     
@@ -346,7 +351,6 @@ export class SpaceService extends BaseContainerService {
         const after = {groups: [...space.groups, ...groups], users: [...space.users, ...users]};
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: "add", keyVersion: space.keyVersion, after, caller: user, managerOnly: true,
-            viaFloor: await this.viaFloor(model.statement),
         });
         const changed = await this.write(space, user.userId, after, repository => repository.insertKeys(space.id, model.keys), model.statement);
         this.spaceNotificationService.sendUpdatedSpace(changed, "recipientsAdded");
@@ -381,7 +385,7 @@ export class SpaceService extends BaseContainerService {
         const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
-            caller: user, managerOnly: removing, viaFloor: await this.viaFloor(model.statement),
+            caller: user, managerOnly: removing,
         });
         const changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
             if (removing) {
@@ -451,8 +455,20 @@ export class SpaceService extends BaseContainerService {
             if (!await repository.update(space, all)) {
                 throw new AppException("SPACE_VERSION_MISMATCH");
             }
+            const groupRepository = this.repositoryFactory.createGroupRepository(session);
+            if (statement && statement.via !== "") {
+                // The via group's floor, read and written in this transaction: a floor raised concurrently conflicts.
+                // First, so a statement under a retired pin is told so rather than that the space falls below a floor.
+                const via = await groupRepository.get(statement.via);
+                if (via) {
+                    SpaceService.assertViaPin(statement.via, space.groups, changes.groups ?? space.groups, via.eraFloor);
+                    if (!await groupRepository.touchLadder(via)) {
+                        throw new AppException("SPACE_KEYS_INVALID", `group '${statement.via}' changed its floor meanwhile`);
+                    }
+                }
+            }
             if (changes.groups) {
-                await SpaceService.assertGroupFloors(this.repositoryFactory.createGroupRepository(session), changes.groups);
+                await SpaceService.assertGroupFloors(groupRepository, changes.groups);
             }
             await keys?.(repository);
             if (statement) {
@@ -460,13 +476,6 @@ export class SpaceService extends BaseContainerService {
             }
         });
         return {...space, ...all, version: space.version + 1};
-    }
-    
-    /** The era floor of the group a statement is signed through, if any. */
-    private async viaFloor(statement: types.cloud.SpaceStatement) {
-        // ponytail: read outside the space's transaction; a group the statement removes is not touched there, so a floor
-        // raised concurrently could let one below-floor removal through. Upgrade path: touch the via group in `write`.
-        return statement.via === "" ? undefined : (await this.repositoryFactory.createGroupRepository().get(statement.via))?.eraFloor;
     }
     
     /** Splits recipients into groups and users, after checking each exists in the context under the key given. */
