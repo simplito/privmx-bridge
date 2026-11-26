@@ -16,6 +16,9 @@ import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceRepository } from "../../../service/cloud/SpaceRepository";
 import { AppException } from "../../../api/AppException";
 import { DbDuplicateError } from "../../../error/DbDuplicateError";
+import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
+import { CacheWithTTL } from "../../../utils/CacheWithTTL";
+import type { Config } from "../../../cluster/common/ConfigUtils";
 
 const g1 = "g1" as types.group.GroupId;
 const g2 = "g2" as types.group.GroupId;
@@ -158,5 +161,34 @@ describe("a deleted space's id", () => {
         const {repo, log} = repository();
         await repo.deleteTombstonesOfContext("c" as types.context.ContextId);
         assert.deepStrictEqual(log, ["tombstones.deleteMany"]);
+    });
+});
+
+describe("space rotations are rate-limited per user and space", () => {
+    const service = (perMinute: number, perHour: number) => {
+        const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+        const created = new SpaceService(null as never, null as never, "h" as types.core.Host, null as never, null as never, null as never, limiter,
+            {maxSpaceRotationsPerMinute: perMinute, maxSpaceRotationsPerHour: perHour} as Config);
+        return (created as unknown as {reserveRotation: (spaceId: string, userId: string) => Promise<string[]>}).reserveRotation.bind(created);
+    };
+    
+    it("SECURITY: a burst past the per-minute budget is refused with a retry time, per user and space", async () => {
+        const reserve = service(3, 60);
+        for (let i = 0; i < 3; i++) {
+            await reserve("s1", "alice");
+        }
+        await assert.rejects(() => reserve("s1", "alice"), (e: unknown) => AppException.is(e, "SPACE_ROTATION_RATE_LIMIT") && typeof (e.data as {retryAt?: number}).retryAt === "number");
+        await reserve("s1", "bob");
+        await reserve("s2", "alice");
+    });
+    
+    it("SECURITY: the hourly budget holds too, and a refusal hands back the unit it took", async () => {
+        const reserve = service(10, 2);
+        await reserve("s1", "alice");
+        await reserve("s1", "alice");
+        // Refused by the hourly budget: the burst unit taken first is given back, so it is not spent for nothing.
+        for (let i = 0; i < 20; i++) {
+            await assert.rejects(() => reserve("s1", "alice"), (e: unknown) => AppException.is(e, "SPACE_ROTATION_RATE_LIMIT"));
+        }
     });
 });

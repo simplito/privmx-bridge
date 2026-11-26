@@ -26,6 +26,8 @@ import { ByteWriter } from "./keytree/ByteWriter";
 import { DateUtils } from "../../utils/DateUtils";
 import { SpaceStatement } from "./SpaceStatement";
 import { CommitStatement } from "./keytree/CommitStatement";
+import { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
+import { Config } from "../../cluster/common/ConfigUtils";
 import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
 
 type Caller = {userId: types.cloud.UserId, pubKey: types.cloud.UserPubKey, ownGroupIds: types.group.GroupId[]};
@@ -57,6 +59,8 @@ export class SpaceService extends BaseContainerService {
         private cloudAclChecker: CloudAclChecker,
         private cloudAccessValidator: CloudAccessValidator,
         private spaceNotificationService: SpaceNotificationService,
+        private rotationRateLimiter: GroupRotationRateLimiter,
+        private config: Config,
     ) {
         super(repositoryFactory, activeUsersMap, host);
     }
@@ -372,12 +376,24 @@ export class SpaceService extends BaseContainerService {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
             caller: user, managerOnly: removing,
         });
-        const changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
-            if (removing) {
-                await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
+        // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited.
+        const held = await this.reserveRotation(space.id, user.userId);
+        let changed: db.space.Space;
+        try {
+            changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
+                if (removing) {
+                    await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
+                }
+                await repository.insertKeys(space.id, model.keys);
+            }, model.statement);
+        }
+        catch (e) {
+            // Only a rotation that landed is charged.
+            for (const key of held) {
+                await this.rotationRateLimiter.release({key});
             }
-            await repository.insertKeys(space.id, model.keys);
-        }, model.statement);
+            throw e;
+        }
         this.spaceNotificationService.sendUpdatedSpace(changed, removing ? "recipientsRemoved" : "keyRotated", removedUsers, removedGroups);
         return changed;
     }
@@ -451,6 +467,29 @@ export class SpaceService extends BaseContainerService {
             }
         });
         return {...space, ...all, version: space.version + 1};
+    }
+    
+    /**
+     * Reserves one unit of each of the caller's two rotation budgets for the space — `maxSpaceRotationsPerMinute`
+     * a minute and `maxSpaceRotationsPerHour` an hour — or hands back what it took and refuses.
+     */
+    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId): Promise<string[]> {
+        const budgets = [
+            {key: `spaceRotateBurst|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerMinute, windowMs: DateUtils.minutes(1)},
+            {key: `spaceRotate|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour},
+        ];
+        const held: string[] = [];
+        for (const budget of budgets) {
+            const {allowed, retryAt} = await this.rotationRateLimiter.reserve(budget);
+            if (!allowed) {
+                for (const key of held) {
+                    await this.rotationRateLimiter.release({key});
+                }
+                throw new AppException("SPACE_ROTATION_RATE_LIMIT", {retryAt});
+            }
+            held.push(budget.key);
+        }
+        return held;
     }
     
     /** Splits recipients into groups and users, after checking each exists in the context under the key given. */

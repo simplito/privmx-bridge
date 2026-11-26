@@ -1019,13 +1019,16 @@ export interface IContextApi {
      */
     spaceAddRecipients(model: SpaceAddRecipientsModel): Promise<types.core.OK>;
     /**
-     * Removes recipients and moves the space to a new key they do not get. Managers only.
+     * Removes recipients and moves the space to a new key they do not get. Managers only. Rate-limited as
+     * `spaceRotateKey` is.
      * @param model id of the space, who leaves, the new key's id and its wraps for those who stay
      * @returns the new key version
      */
     spaceRemoveRecipients(model: SpaceRemoveRecipientsModel): Promise<SpaceRotateKeyResult>;
     /**
-     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`.
+     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`. Each user may rotate one space
+     * `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` times a minute (default 3) and `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` times an
+     * hour (default 60); past either it is refused with `SPACE_ROTATION_RATE_LIMIT`, data `{retryAt}`.
      * @param model id of the space, the new key's id and its wraps
      * @returns the new key version
      */
