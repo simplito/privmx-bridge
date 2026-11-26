@@ -151,6 +151,13 @@ export type AclFunctionNameX =
 
 export class CloudAclChecker {
     
+    /** Renamed functions: an ACL stored under the old name keeps meaning the new one, ALLOW and DENY alike, so a
+     *  rename can never turn a DENY into nothing. */
+    static readonly ALIASES: Record<string, AclFunctionNameX> = {
+        "context/groupCutEra": "context/groupCutHistory",
+        "context/groupPruneArchive": "context/groupCutHistory",
+    };
+    
     private functions: types.cloud.AclFunctions;
     private groups = new Map<types.cloud.AclGroupName, types.cloud.AclFunctions>();
     
@@ -396,7 +403,7 @@ export class CloudAclChecker {
         if (parts.length < 2) {
             throw new Error(`Expected at least 2 parameters in line ${index + 1}`);
         }
-        const action = parts[1];
+        const action = CloudAclChecker.ALIASES[parts[1]] ?? parts[1];
         if (action in this.functions) {
             const actionArgs = this.functions[action as types.cloud.AclFunctionName];
             const args = parts.slice(2);
@@ -444,7 +451,7 @@ export class CloudAclChecker {
     }
     
     private fnMatch(acl: string[], fnName: AclFunctionNameX, args: string[]) {
-        const fnNameOrGroupName = acl[1];
+        const fnNameOrGroupName = CloudAclChecker.ALIASES[acl[1]] ?? acl[1];
         if (fnNameOrGroupName === fnName) {
             return this.argsMatch(acl.slice(2), args);
         }

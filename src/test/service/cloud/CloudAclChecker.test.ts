@@ -174,3 +174,18 @@ describe("CloudAclChecker.validateAcl", () => {
         }
     });
 });
+
+describe("CloudAclChecker renamed functions", () => {
+    it("SECURITY: a stored DENY on an old name still blocks the method it was renamed to", () => {
+        const checker: CloudAclChecker = new CloudAclChecker();
+        for (const old of ["context/groupCutEra", "context/groupPruneArchive"]) {
+            const acl = asAcl(["ALLOW ALL", `DENY ${old}`]);
+            checker.validateAcl(acl, 100);
+            assert.throws(() => checker.verifyAccess(acl, "context/groupCutHistory", ["groupId=g"]));
+            // And a scoped one, as a stored ACL may carry it.
+            assert.throws(() => checker.verifyAccess(asAcl(["ALLOW ALL", `DENY ${old} groupId=g`]), "context/groupCutHistory", ["groupId=g"]));
+            // An ALLOW under the old name grants the new one, as it granted the old.
+            checker.verifyAccess(asAcl(["DENY ALL", `ALLOW ${old}`]), "context/groupCutHistory", ["groupId=g"]);
+        }
+    });
+});
