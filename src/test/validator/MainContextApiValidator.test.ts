@@ -10,6 +10,7 @@ limitations under the License.
 */
 
 import "q2-test";
+import * as assert from "assert";
 import * as types from "../../types";
 import * as contextApi from "../../api/main/context/ContextApiTypes";
 import { ContextApiValidator } from "../../api/main/context/ContextApiValidator";
@@ -18,6 +19,8 @@ import { Utils } from "../../utils/Utils";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { Base58 } from "../../utils/crypto/Base58";
 import { buildTree, rotationGrantEdge, rungsFor, signStatement, userKeys } from "../testUtils/TreeFixtures";
+import * as fs from "fs";
+import * as path from "path";
 
 const groupPubKey = ECUtils.generateKeyPair().pub58 as unknown as types.cloud.GroupPubKey;
 const contextId = "MyContextId" as types.context.ContextId;
@@ -77,6 +80,16 @@ it("groupCreate and groupUpdatePolicy refuse a statement without its policy", ()
     const commit = validStatement("policy");
     delete commit.policy;
     expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+});
+
+it("SECURITY: every rules object the shared vectors call invalid is refused", () => {
+    // Read from `src`, like the other shared fixtures: the build copies TypeScript only.
+    const {invalidRules} = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../..", "src/test/fixtures/keytree-vectors.json"), "utf8")) as {invalidRules: unknown[]};
+    assert.ok(invalidRules.length > 0);
+    for (const policy of invalidRules) {
+        const commit = {...validStatement("policy"), policy} as types.cloud.GroupTreeCommitStatement;
+        assert.strictEqual(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success, false, JSON.stringify(policy));
+    }
 });
 
 it("SECURITY: group rules are closed: a missing, unknown or out-of-range rule is refused", () => {

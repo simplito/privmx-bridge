@@ -125,7 +125,9 @@ describe("CommitStatement signature", () => {
 /** The vectors `test/fixtures/keytree/reference.py` in the endpoint writes from the spec; this is a byte-identical copy. */
 interface Vectors {
     signedBytes: {statement: Omit<types.cloud.GroupTreeCommitStatement, "signature">, expectedHex: string}[];
-    rulesHash: {rules: types.cloud.GroupRules, creator: types.cloud.UserId, expectedHex: string}[];
+    policyHash: {policy: types.cloud.GroupRules, creator: types.cloud.UserId, expectedHex: string}[];
+    /** Rules objects every implementation must refuse: missing, unknown or out-of-range. */
+    invalidRules: unknown[];
 }
 
 function vectors(): Vectors {
@@ -144,10 +146,10 @@ describe("CommitStatement shared vectors", () => {
     });
     
     it("SECURITY: rules hash matches the shared vectors", () => {
-        const all = vectors().rulesHash;
-        assert.strictEqual(all.length, 6);
+        const all = vectors().policyHash;
+        assert.strictEqual(all.length, 7);
         for (const vector of all) {
-            assert.strictEqual(CommitStatement.rulesHash(vector.rules, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
+            assert.strictEqual(CommitStatement.rulesHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
         // The one the endpoint side compares against: the defaults (all managers, trimHistory nobody), created by "alice".
         assert.strictEqual(CommitStatement.rulesHash(CommitStatement.DEFAULT_RULES, "alice" as types.cloud.UserId).toString("hex"),
