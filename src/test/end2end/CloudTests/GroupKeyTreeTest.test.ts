@@ -227,6 +227,9 @@ export class GroupKeyTreeTests extends BaseTestSet {
         assert(document.eraFloor === 3 && document.keyVersion === 3, `the era closes at the new epoch, got ${JSON.stringify([document.eraFloor, document.keyVersion])}`);
         const rungs = await this.helpers.readCollection("groupArchiveRung", {groupId: this.requireGroupId()});
         assert(rungs.length === 0, "and every rung below it is gone");
+        const epochRows = await this.helpers.readCollection("groupEpochKey", {groupId: this.requireGroupId()});
+        assert(epochRows.length > 0 && epochRows.every(row => row.keyVersion >= 3),
+            `and every epoch key row below it, got ${JSON.stringify(epochRows.map(row => row.keyVersion))}`);
     }
     
     @Test()

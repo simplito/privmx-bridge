@@ -1774,6 +1774,19 @@ function createRepairStore(overrides: Partial<TreeGroup> = {}, stored: types.clo
         mock(repository.state, "getArchiveRungs", (async (_id: types.group.GroupId, _from?: number, _to?: number, minTarget?: number) =>
             view().rungs.filter(rung => rung.targetKeyVersion >= (minTarget ?? 0))) as never);
         mock(repository.state, "getEpochKeys", (async () => []) as never);
+        // A removal abandoning history, as storage sees it: the epoch moves, the floor with it, and every rung below
+        // the floor goes - one write to the group document, like the real one's.
+        mock(repository, "removeMembersWithTransition", (async (params: {oldGroup: db.group.Group, abandonHistory?: boolean}) => {
+            const floor = params.oldGroup.keyVersion + 1;
+            writeGroup(tx!, state => {
+                state.group.keyVersion = floor;
+                if (params.abandonHistory) {
+                    state.group.eraFloor = floor;
+                    state.rungs = state.rungs.filter(rung => rung.targetKeyVersion >= floor);
+                }
+            });
+            return {...params.oldGroup, keyVersion: floor, ...(params.abandonHistory ? {eraFloor: floor} : {})};
+        }) as never);
         return repository;
     };
     mock(service.repositoryFactory, "createGroupRepository", ((tx?: Tx) => repositoryFor(tx)) as never);
@@ -1906,6 +1919,27 @@ it("repairRung refuses a group of an unsupported tree version", async () => {
     const store = createRepairStore({treeVersion: 2});
     const error = await expectFailure("GROUP_TREE_INVALID", () => store.groupService.repairRung(cloudUserOf("alice"), repairOf(EPOCH, EPOCH - 1)));
     assert.ok(JSON.stringify(error.getData()).includes("UNSUPPORTED_TREE_VERSION"));
+});
+
+it("SECURITY: a repair racing a removal that abandons history leaves no rung below the new floor", async () => {
+    // Without the write to the group document the repair, validated against the old floor, would land its rung
+    // after the removal deleted everything below the new floor: a rung below the floor, served forever.
+    const store = createRepairStore({keyVersion: 8}, [{atKeyVersion: 8, targetKeyVersion: 6, data: "opener" as types.core.UserKeyData, author: janek}]);
+    const paused = store.pauseAfterRead();
+    const repair = store.groupService.repairRung(cloudUserOf("alice"), repairOf(8, 6));
+    repair.catch(() => {});
+    await paused.reached;
+    // The removal's own write, in a transaction of its own, while the repair waits between its read and its write.
+    await store.repositoryFactory.withTransaction(async session => {
+        const repository = store.repositoryFactory.createGroupRepository(session);
+        await repository.removeMembersWithTransition({oldGroup: (await repository.get(groupId))!, abandonHistory: true} as never);
+    });
+    assert.strictEqual(store.storedGroup().eraFloor, 9);
+    paused.resume();
+    await expectFailure("GROUP_ARCHIVE_INVALID", () => repair);
+    assert.deepStrictEqual(store.rungs(), [], "the repair re-ran against the new floor and stored nothing");
+    const served = await store.groupService.getKeyArchive(cloudUserOf("janek"), groupId);
+    assert.deepStrictEqual(served.rungs, []);
 });
 
 it("SECURITY: five concurrent repairs of one span store at most four rungs", async () => {
