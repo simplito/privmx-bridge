@@ -227,14 +227,7 @@ describe("LadderMath.descentFloor", () => {
     it("reports the era boundary when only an era floor applies", () => {
         assert.deepStrictEqual(LadderMath.descentFloor(20), {floor: 20, reason: "ERA_BOUNDARY"});
     });
-    
-    it("prefers PRUNED when the watermark is the stronger constraint", () => {
-        assert.deepStrictEqual(LadderMath.descentFloor(20, 8000), {floor: 8000, reason: "PRUNED"});
-    });
-    
-    it("keeps the era boundary when it is higher than the watermark", () => {
-        assert.deepStrictEqual(LadderMath.descentFloor(9000, 8000), {floor: 9000, reason: "ERA_BOUNDARY"});
-    });
+
 });
 
 describe("LadderMath.validateRungSet", () => {
@@ -261,8 +254,8 @@ describe("LadderMath.validateRungSet", () => {
     
     it("refuses a span the epoch does not owe, so a commit's rungs stay within the canonical ~33 spans", () => {
         problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1), "NOT_CANONICAL");
-        // A skip below the effective floor is not owed either, whichever of the two floors it is.
-        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5), "BELOW_PRUNE_WATERMARK");
+        // A skip below the floor is not owed either.
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 5), "BELOW_ERA_FLOOR");
         ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 6}], 8, 1));
         // Never more than the owed spans: one commit cannot file 256 rungs at targets of its choosing.
         const many = Array.from({length: 200}, (_, i) => ({at: 1024, target: 1023 - i}));
@@ -289,13 +282,6 @@ describe("LadderMath.validateRungSet", () => {
     
     it("rejects a rung targeting below the era floor", () => {
         problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 3}], 8, 5), "BELOW_ERA_FLOOR");
-    });
-    
-    it("rejects a rung targeting below the prune watermark", () => {
-        problem(
-            LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5),
-            "BELOW_PRUNE_WATERMARK",
-        );
     });
     
     it("rejects duplicates in one submission", () => {
@@ -363,14 +349,10 @@ describe("LadderMath.validateRepairSpan", () => {
         problem(LadderMath.validateRepairSpan({at: 5, target: 4}, 8, 5), "BELOW_ERA_FLOOR");
     });
     
-    it("SECURITY: refuses a span below the prune watermark", () => {
-        problem(LadderMath.validateRepairSpan({at: 8, target: 4}, 8, 1, 5), "BELOW_PRUNE_WATERMARK");
-    });
-    
     it("a skip clamped away by the floor is not canonical either", () => {
         // At floor 5, epoch 8 owes (8,7) and (8,6); (8,4) is below the floor, so nothing else.
         ok(LadderMath.validateRepairSpan({at: 8, target: 6}, 8, 5));
-        problem(LadderMath.validateRepairSpan({at: 16, target: 8}, 16, 1, 9), "BELOW_PRUNE_WATERMARK");
+        problem(LadderMath.validateRepairSpan({at: 16, target: 8}, 16, 9), "BELOW_ERA_FLOOR");
     });
     
     it("refuses non-integer epoch numbers", () => {

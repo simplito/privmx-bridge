@@ -161,31 +161,23 @@ export class LadderMath {
         return 2 * Math.ceil(Math.log2(delta + 1)) + 2;
     }
     
-    /** The floor a descent cannot pass: the higher of the era floor and the prune watermark. `reason` lets a
-     *  client tell "not available to you" from "deleted" instead of surfacing a decryption failure. */
-    static descentFloor(eraFloor: number, prunedBelow?: number): {floor: number, reason: "ERA_BOUNDARY"|"PRUNED"|"NONE"} {
+    /** The floor a descent cannot pass: the era floor. `reason` lets a client tell "not available to you" from a
+     *  decryption failure. */
+    static descentFloor(eraFloor: number): {floor: number, reason: "ERA_BOUNDARY"|"NONE"} {
         LadderMath.assertEpoch(eraFloor, "eraFloor");
-        if (prunedBelow === undefined) {
-            return {floor: eraFloor, reason: eraFloor > 1 ? "ERA_BOUNDARY" : "NONE"};
-        }
-        LadderMath.assertEpoch(prunedBelow, "prunedBelow");
-        if (prunedBelow > eraFloor) {
-            return {floor: prunedBelow, reason: "PRUNED"};
-        }
         return {floor: eraFloor, reason: eraFloor > 1 ? "ERA_BOUNDARY" : "NONE"};
     }
     
     /**
      * Validates the span of a repair rung: one more rung for a span an epoch already published, appended later by
      * any seated member holding both keys. Only canonical spans (the unit rung and the aligned skips an epoch
-     * at `at` publishes above the effective floor), so a repair can neither point upwards, nor below a floor, nor
+     * at `at` publishes above the era floor), so a repair can neither point upwards, nor below a floor, nor
      * add a route the descent bound and the storage bound do not already cover.
      */
     static validateRepairSpan(
         span: RungSpan,
         currentEpoch: number,
         eraFloor: number,
-        prunedBelow?: number,
     ): {ok: true} | {ok: false, problem: LadderProblem} {
         LadderMath.assertEpoch(currentEpoch, "currentEpoch");
         LadderMath.assertEpoch(eraFloor, "eraFloor");
@@ -201,11 +193,7 @@ export class LadderMath {
         if (span.target < eraFloor) {
             return {ok: false, problem: {kind: "BELOW_ERA_FLOOR", rung: span, eraFloor}};
         }
-        if (prunedBelow !== undefined && span.target < prunedBelow) {
-            return {ok: false, problem: {kind: "BELOW_PRUNE_WATERMARK", rung: span, prunedBelow}};
-        }
-        const floor = Math.max(eraFloor, prunedBelow ?? 1);
-        if (!LadderMath.rungSpansFor(span.at, floor).some(owed => owed.target === span.target)) {
+        if (!LadderMath.rungSpansFor(span.at, eraFloor).some(owed => owed.target === span.target)) {
             return {ok: false, problem: {kind: "NOT_CANONICAL", rung: span}};
         }
         return {ok: true};
@@ -215,7 +203,7 @@ export class LadderMath {
      * Validates a submitted rung set for an epoch being created. Pure; the caller reports the errors.
      *
      * `target < at` on every rung is the entire security guarantee of this layer. Also checked: the rung is
-     * addressed to the epoch being created, targets nothing below the era floor or prune watermark, its span is
+     * addressed to the epoch being created, targets nothing below the era floor, its span is
      * one the epoch owes (`rungSpansFor`), the unit rung is present, and no span is duplicated: a commit has one author, and the rule is one rung per span per
      * author.
      */
@@ -223,12 +211,11 @@ export class LadderMath {
         submitted: RungSpan[],
         newEpoch: number,
         eraFloor: number,
-        prunedBelow?: number,
     ): {ok: true} | {ok: false, problem: LadderProblem} {
         LadderMath.assertEpoch(newEpoch, "newEpoch");
         LadderMath.assertEpoch(eraFloor, "eraFloor");
         
-        const canonical = LadderMath.rungSpansFor(newEpoch, Math.max(eraFloor, prunedBelow ?? 1));
+        const canonical = LadderMath.rungSpansFor(newEpoch, eraFloor);
         const seen = new Set<string>();
         for (const rung of submitted) {
             if (!Number.isInteger(rung.at) || !Number.isInteger(rung.target)) {
@@ -242,9 +229,6 @@ export class LadderMath {
             }
             if (rung.target < eraFloor) {
                 return {ok: false, problem: {kind: "BELOW_ERA_FLOOR", rung, eraFloor}};
-            }
-            if (prunedBelow !== undefined && rung.target < prunedBelow) {
-                return {ok: false, problem: {kind: "BELOW_PRUNE_WATERMARK", rung, prunedBelow}};
             }
             // Only the spans the epoch owes (unit rung and aligned skips above the floor), as for a repair: what
             // bounds an epoch's rungs to ~33 spans and makes a descent path, or a page of the archive, cover them.
@@ -277,7 +261,6 @@ export type LadderProblem =
     | {kind: "DIRECTION", rung: RungSpan}
     | {kind: "WRONG_EPOCH", rung: RungSpan, expected: number}
     | {kind: "BELOW_ERA_FLOOR", rung: RungSpan, eraFloor: number}
-    | {kind: "BELOW_PRUNE_WATERMARK", rung: RungSpan, prunedBelow: number}
     | {kind: "DUPLICATE", rung: RungSpan}
     | {kind: "UNIT_RUNG_MISSING", newEpoch: number, requiredTarget: number}
     | {kind: "FUTURE_EPOCH", rung: RungSpan, currentEpoch: number}

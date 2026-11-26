@@ -75,32 +75,28 @@ function dumpLadder(out: string[]): void {
     }
     
     out.push("FLOORS");
-    const floors: [number, number][] = [[1, -1], [20, -1], [20, 8000], [9000, 8000], [1, 5]];
-    for (const [era, pruned] of floors) {
-        const result = pruned < 0 ? LadderMath.descentFloor(era) : LadderMath.descentFloor(era, pruned);
-        out.push(`  era=${era} pruned=${pruned} floor=${result.floor} reason=${result.reason}`);
+    for (const era of [1, 20, 9000]) {
+        const result = LadderMath.descentFloor(era);
+        out.push(`  era=${era} floor=${result.floor} reason=${result.reason}`);
     }
     
     out.push("VALIDATIONS");
-    const cases: {spans: RungSpan[], epoch: number, floor: number, pruned: number}[] = [
-        {spans: [], epoch: 1, floor: 1, pruned: -1},
-        {spans: [], epoch: 20, floor: 20, pruned: -1},
-        {spans: [], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 7}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 7}, {at: 8, target: 5}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 8}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 9}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 7, target: 6}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 6}], epoch: 8, floor: 1, pruned: -1},
-        {spans: [{at: 8, target: 7}, {at: 8, target: 3}], epoch: 8, floor: 5, pruned: -1},
-        {spans: [{at: 8, target: 7}, {at: 8, target: 4}], epoch: 8, floor: 1, pruned: 5},
-        {spans: [{at: 8, target: 7}, {at: 8, target: 7}], epoch: 8, floor: 1, pruned: -1},
+    const cases: {spans: RungSpan[], epoch: number, floor: number}[] = [
+        {spans: [], epoch: 1, floor: 1},
+        {spans: [], epoch: 20, floor: 20},
+        {spans: [], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 7}], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 7}, {at: 8, target: 5}], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 8}], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 9}], epoch: 8, floor: 1},
+        {spans: [{at: 7, target: 6}], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 6}], epoch: 8, floor: 1},
+        {spans: [{at: 8, target: 7}, {at: 8, target: 3}], epoch: 8, floor: 5},
+        {spans: [{at: 8, target: 7}, {at: 8, target: 7}], epoch: 8, floor: 1},
     ];
     for (let i = 0; i < cases.length; i++) {
         const c = cases[i];
-        const result = c.pruned < 0
-            ? LadderMath.validateRungSet(c.spans, c.epoch, c.floor)
-            : LadderMath.validateRungSet(c.spans, c.epoch, c.floor, c.pruned);
+        const result = LadderMath.validateRungSet(c.spans, c.epoch, c.floor);
         const problem = result.ok ? "OK" : result.problem.kind;
         out.push(`  case=${i} ok=${result.ok ? 1 : 0} problem=${problem}`);
     }
