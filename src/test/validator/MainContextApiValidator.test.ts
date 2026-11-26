@@ -719,3 +719,11 @@ it("ContextApiValidator.groupSendCustomEvent rejects a payload over the 16 KB ce
     const result = Utils.try(() => validator().validate("groupSendCustomEvent", model));
     expect(result.success).toBe(false);
 });
+
+it("a space's metadata is at most 64 KiB, a group's still a megabyte", () => {
+    const meta = (bytes: number) => "a".repeat(bytes);
+    const update = (bytes: number) => Utils.try(() => validator().validate("spaceUpdatePublicMeta", {id: "ab".repeat(32), meta: meta(bytes), version: 1})).success;
+    expect(update(64 * 1024 - 16)).toBe(true);
+    expect(update(64 * 1024 + 1)).toBe(false);
+    expect(Utils.try(() => validator().validate("spaceUpdatePrivateMeta", {id: "ab".repeat(32), meta: meta(64 * 1024 + 1), version: 1})).success).toBe(false);
+});

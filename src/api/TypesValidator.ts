@@ -77,6 +77,8 @@ export class TypesValidator {
     cloudKeyEntrySet: Validator;
     groupId: Validator;
     groupData: Validator;
+    /** A space's public or private metadata: at most 64 KiB, so a page of spaces stays a few megabytes. */
+    spaceMeta: Validator;
     groupPubKey: Validator;
     groupTreeNode: Validator;
     groupTreeEdge: Validator;
@@ -290,6 +292,13 @@ export class TypesValidator {
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
+        this.spaceMeta = this.builder.createCustom(value => {
+            const size = this.getValueSize(value, "<root>");
+            const maxSize = 64 * 1024;
+            if (size > maxSize) {
+                throw new Error("Invalid length! Expected max " + maxSize + ", get " + size);
+            }
+        });
         this.groupPubKey = this.eccPubCompressed;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,

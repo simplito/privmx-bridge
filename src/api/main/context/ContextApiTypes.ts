@@ -545,7 +545,11 @@ export interface GroupGetManyModel {
     groupIds: types.group.GroupId[];
 }
 
-/** One result per requested id, in order. A group that cannot be served has its error here and fails nothing else. */
+/**
+ * One result per requested id, in order. A group that cannot be served has its error here and fails nothing else.
+ * Past a 32 MiB response the remaining ids are not read and are answered `GROUP_BATCH_SIZE_EXCEEDED`: read those
+ * one by one (`groupGet`). The first group is always served.
+ */
 export type GroupGetManyEntry = {group: GroupInfo}|{error: {code: types.core.ErrorCode, message: types.core.ErrorMessage}};
 
 export interface GroupGetManyResult {
@@ -827,6 +831,7 @@ export interface SpaceCreateModel {
     keyId: types.core.KeyId;
     /** Key version 1, one entry per recipient. */
     keys: types.cloud.SpaceKeyEntry[];
+    /** At most 64 KiB, as is `privateMeta`: a space is a key holder, and a page of `spaceList` carries both. */
     publicMeta: types.space.SpaceData;
     privateMeta: types.space.SpaceData;
     /** Statement 1, op `create`: signed by the caller, naming the recipients, each group at its current epoch and key. */
@@ -899,6 +904,7 @@ export interface SpaceRotateKeyResult {
 
 export interface SpaceUpdateMetaModel {
     id: types.space.SpaceId;
+    /** At most 64 KiB. */
     meta: types.space.SpaceData;
     /** The version of that metadata the caller read. */
     version: number;

@@ -25,6 +25,14 @@ import * as contextApi from "./ContextApiTypes";
 import * as types from "../../../types";
 export class ContextApi extends BaseApi implements contextApi.IContextApi {
     
+    /** What one `groupGetMany` answer may carry before the rest of its ids are left for single reads. */
+    static readonly GROUP_GET_MANY_MAX_BYTES = 32 * 1024 * 1024;
+    
+    private static batchSizeExceeded(): contextApi.GroupGetManyEntry {
+        const e = new AppException("GROUP_BATCH_SIZE_EXCEEDED");
+        return {error: {code: e.getCode(), message: e.getMessage()}};
+    }
+    
     constructor(
         contextApiValidator: ContextApiValidator,
         private contextService: ContextService,
@@ -137,11 +145,27 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     async groupGetMany(model: contextApi.GroupGetManyModel): Promise<contextApi.GroupGetManyResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
         const results: contextApi.GroupGetManyEntry[] = [];
+        // Each group can be megabytes (its roster data and both metadata planes), so the answer stops growing past a
+        // budget: what is left is answered GROUP_BATCH_SIZE_EXCEEDED, unread, for the caller to read one by one.
+        // The first group is always served, so no batch fails outright.
+        let size = 0;
+        let full = false;
         for (const groupId of model.groupIds) {
+            if (full) {
+                results.push(ContextApi.batchSizeExceeded());
+                continue;
+            }
             try {
                 const {group, state} = await this.groupService.getGroupWithState(cloudUser, groupId, undefined, undefined);
                 const info = this.groupConverter.convertGroup(cloudUser.getUser(group.contextId), group, state, "path");
                 info.treeCommits = await this.groupService.getTreeCommitsAt(group, GroupConverter.vouchingSeqs(info.treeNodes));
+                const bytes = Buffer.byteLength(JSON.stringify(info));
+                if (size > 0 && size + bytes > ContextApi.GROUP_GET_MANY_MAX_BYTES) {
+                    full = true;
+                    results.push(ContextApi.batchSizeExceeded());
+                    continue;
+                }
+                size += bytes;
                 results.push({group: info});
             }
             catch (e) {
