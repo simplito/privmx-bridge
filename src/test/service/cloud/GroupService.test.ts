@@ -266,6 +266,22 @@ it("SECURITY: creating a group visible to the context takes the changeVisibility
     const vetoed = createGroupService(false, {group: {updatePolicy: "none"}});
     await expectRefusal("ACCESS_DENIED", () => create(vetoed, CommitStatement.DEFAULT_RULES));
     hasNoCalls(vetoed.groupRepository.createGroup);
+    // The ACL entry of groupSetVisibility too: a caller denied it cannot create a group already visible.
+    const denied = createGroupService();
+    const acl = janekUser.acl;
+    janekUser.acl = ["ALLOW ALL", "DENY context/groupSetVisibility"].join("\n") as types.cloud.ContextAcl;
+    try {
+        await expectRefusal("ACCESS_DENIED", () => create(denied, CommitStatement.DEFAULT_RULES));
+        hasNoCalls(denied.groupRepository.createGroup);
+        // The same caller creates a group visible to its members only.
+        mock(denied.groupRepository, "createGroup", async () => ({...group}));
+        await denied.groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId,
+            CommitStatement.DEFAULT_RULES, tree, creationWith(CommitStatement.DEFAULT_RULES));
+        hasOneCall(denied.groupRepository.createGroup);
+    }
+    finally {
+        janekUser.acl = acl;
+    }
     const allowed = createGroupService();
     // A copy: the service marks the created group visible, and the shared fixture must stay as it is.
     mock(allowed.groupRepository, "createGroup", async () => ({...group}));

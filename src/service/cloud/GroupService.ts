@@ -254,8 +254,10 @@ export class GroupService extends BaseContainerService {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
         if (visibleTo === "context") {
-            // What `setVisibility` would ask afterwards: the `changeVisibility` rule, judged against the rules and the
-            // roster being created, with the context's `updatePolicy` veto.
+            // What `setVisibility` would ask afterwards: its ACL entry (scoped to the id the group will have), and the
+            // `changeVisibility` rule judged against the rules and roster being created, with the context's
+            // `updatePolicy` veto.
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + CommitStatement.groupId(contextId, resourceId)]);
             const draft = {creator: user.userId, users, managers, policy} as db.group.Group;
             this.policy.require(user, context, draft, "changeVisibility");
         }
