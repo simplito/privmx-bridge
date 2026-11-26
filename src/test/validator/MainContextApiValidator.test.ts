@@ -84,13 +84,8 @@ it("groupCreate and groupUpdatePolicy refuse a statement without its policy", ()
 
 it("SECURITY: every rules object the shared vectors call invalid is refused", () => {
     // Read from `src`, like the other shared fixtures: the build copies TypeScript only.
-    const {invalidRules, policyHash} = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../..", "src/test/fixtures/keytree-vectors.json"), "utf8")) as {invalidRules: unknown[], policyHash: {policy: unknown}[]};
-    // ponytail: skipped while the shared fixtures still carry nine rules (one of their "invalid" objects is a valid
-    // eight-rule one); runs by itself once the Endpoint regenerates them.
-    if (Object.keys(policyHash[0].policy as object).length !== 8) {
-        return;
-    }
-    assert.ok(invalidRules.length > 0);
+    const {invalidRules} = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../..", "src/test/fixtures/keytree-vectors.json"), "utf8")) as {invalidRules: unknown[]};
+    assert.strictEqual(invalidRules.length, 10);
     for (const policy of invalidRules) {
         const commit = {...validStatement("policy"), policy} as types.cloud.GroupTreeCommitStatement;
         assert.strictEqual(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success, false, JSON.stringify(policy));

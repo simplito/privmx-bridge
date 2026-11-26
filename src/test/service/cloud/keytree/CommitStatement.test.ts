@@ -148,11 +148,7 @@ describe("CommitStatement shared vectors", () => {
     
     it("SECURITY: rules hash matches the shared vectors", () => {
         const all = vectors().policyHash;
-        // ponytail: the shared fixtures still carry nine rules until the Endpoint regenerates them for eight; this
-        // check runs by itself once they do (and the own vectors below hold the eight-rule preimage meanwhile).
-        if (!CommitStatement.isRules(all[0].policy)) {
-            return;
-        }
+        assert.strictEqual(all.length, 6);
         for (const vector of all) {
             assert.strictEqual(CommitStatement.rulesHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
