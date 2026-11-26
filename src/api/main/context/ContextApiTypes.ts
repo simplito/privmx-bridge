@@ -831,8 +831,9 @@ export interface SpaceCreateModel {
     keyId: types.core.KeyId;
     /** Key version 1, one entry per recipient. */
     keys: types.cloud.SpaceKeyEntry[];
-    /** At most 64 KiB, as is `privateMeta`: a space is a key holder, and a page of `spaceList` carries both. */
+    /** At most 64 KiB once base64-decoded: a space is a key holder, and a page of `spaceList` carries both planes. */
     publicMeta: types.space.SpaceData;
+    /** At most 64 KiB plus 4 KiB for the envelope it is sealed in, once base64-decoded. */
     privateMeta: types.space.SpaceData;
     /** Statement 1, op `create`: signed by the caller, naming the recipients, each group at its current epoch and key. */
     statement: types.cloud.SpaceStatement;
@@ -904,7 +905,8 @@ export interface SpaceRotateKeyResult {
 
 export interface SpaceUpdateMetaModel {
     id: types.space.SpaceId;
-    /** At most 64 KiB. */
+    /** Base64-decoded, at most 64 KiB for the public plane and 64 KiB plus a 4 KiB envelope allowance for the
+     *  private one. */
     meta: types.space.SpaceData;
     /** The version of that metadata the caller read. */
     version: number;

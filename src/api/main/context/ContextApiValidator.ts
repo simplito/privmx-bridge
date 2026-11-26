@@ -276,8 +276,8 @@ export class ContextApiValidator extends BaseValidator {
             recipients: spaceRecipients,
             keyId: this.tv.keyId,
             keys: spaceKeys,
-            publicMeta: this.tv.spaceMeta,
-            privateMeta: this.tv.spaceMeta,
+            publicMeta: this.tv.spacePublicMeta,
+            privateMeta: this.tv.spacePrivateMeta,
             statement: spaceStatement,
         }));
         this.registerMethod("spaceGet", spaceId);
@@ -310,12 +310,12 @@ export class ContextApiValidator extends BaseValidator {
             groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS)),
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS)),
         }));
-        const metaUpdate = this.builder.createObject({
+        const metaUpdate = (meta: typeof this.tv.spacePublicMeta) => this.builder.createObject({
             id: this.tv.spaceId,
-            meta: this.tv.spaceMeta,
+            meta: meta,
             version: this.builder.min(this.builder.int, 1),
         });
-        this.registerMethod("spaceUpdatePublicMeta", metaUpdate);
-        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate);
+        this.registerMethod("spaceUpdatePublicMeta", metaUpdate(this.tv.spacePublicMeta));
+        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate(this.tv.spacePrivateMeta));
     }
 }
