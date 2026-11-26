@@ -514,7 +514,11 @@ export interface GroupGetResult {
     group: GroupInfo;
 }
 
-/** Who may read a group's identity key, roster and statements beside its members. */
+/**
+ * Who may read a group's identity key, roster and statements beside its members. "context" exposes the whole signed
+ * membership history (past members, removals, their dates) through `groupGetTreeCommits`; narrowing it later does
+ * not retract what was already read.
+ */
 export type GroupVisibility = "members"|"context";
 
 export interface GroupGetManyModel {
@@ -947,6 +951,8 @@ export interface IContextApi {
     groupGetPublicKey(model: GroupGetPublicKeyModel): Promise<GroupGetPublicKeyResult>;
     /**
      * Sets who may read the group's identity key, roster and statements beside its members. Managers only.
+     * Making a group visible to the context exposes its whole signed membership history (past members, removals,
+     * their dates) through `groupGetTreeCommits`; narrowing it later does not retract what was already read.
      * @param model id of the group and the new visibility
      * @returns "OK"
      */

@@ -194,6 +194,9 @@ export class SpaceService extends BaseContainerService {
      * one transaction re-runs against the other's result. A check alone would be write skew: each side would pass
      * against the other's old state, and the space would hold a key nobody can sign through any more.
      */
+    // ponytail: every space write touches each named group's document, so concurrent writes to many spaces sharing
+    // a group serialize on that document. Upgrade path: have floor-raising ops bump the spaces naming the group
+    // instead, and keep `touchLadder` only for groups newly added to a space.
     static async assertGroupFloors(groupRepository: Pick<ReturnType<RepositoryFactory["createGroupRepository"]>, "get"|"touchLadder">, groups: db.space.Space["groups"]) {
         for (const g of groups) {
             const group = await groupRepository.get(g.groupId);

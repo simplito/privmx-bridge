@@ -972,7 +972,8 @@ it("cutEra allows a floor both planes sit at or above", async () => {
 // there would leave the space stale for good.
 it("cutEra refuses a floor above the epoch a space holds the group's key at", async () => {
     const {groupService, groupRepository} = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 2});
-    await expectFailure("GROUP_IN_USE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    const e = await expectFailure("GROUP_IN_USE", () => groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 3, expectedKeyVersion: EPOCH}));
+    expect(e.data).toContain("rotate");
     hasNoCalls(groupRepository.cutEra);
     await groupService.cutEra(janekCloudUser, {id: groupId, newFloor: 2, expectedKeyVersion: EPOCH});
     hasOneCall(groupRepository.cutEra);
@@ -987,7 +988,9 @@ it("pruneArchive refuses a watermark above the epoch a space holds the group's k
 it("removeMember abandoning history refuses while a space holds the group's key", async () => {
     const group = treeBackedGroup();
     const {groupService, groupRepository} = createGroupService(group, {spaceAtGroupKeyVersion: EPOCH});
-    await expectFailure("GROUP_IN_USE", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+    const e = await expectFailure("GROUP_IN_USE", () => groupService.removeMembers(janekCloudUser, {...removalModel(group, 2), rungs: [], abandonHistory: true}));
+    // No rotation can reach the epoch the removal creates, so the advice must not offer one.
+    expect(e.data).not.toContain("rotate");
     hasNoCalls(groupRepository.removeMembersWithTransition);
     // An ordinary removal leaves the epoch reachable, so the space can still be moved on.
     await groupService.removeMembers(janekCloudUser, removalModel(group, 2));

@@ -703,7 +703,7 @@ export class GroupService extends BaseContainerService {
             }
             if (model.abandonHistory) {
                 // The era closes at the new epoch, so every space holding the group's key is stranded below it.
-                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1);
+                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1, true);
             }
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
@@ -1008,10 +1008,13 @@ export class GroupService extends BaseContainerService {
      * key the space holds (the epoch it was last wrapped to); with that epoch unreachable nobody could sign one, and
      * the space would stay stale for good.
      */
-    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number) {
+    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number, abandonsHistory = false) {
         if (await this.repositoryFactory.createSpaceRepository(session).isGroupHeldBelow(groupId, floor)) {
-            throw new AppException("GROUP_IN_USE",
-                `a space holds the group's key at an epoch below ${floor}; rotate that space's key to the group's current epoch, or remove the group from it, first`);
+            // The floor of a removal abandoning history is the epoch it creates, so no rotation can reach it: only
+            // dropping the group from the space can. The spaces are not named — the caller may not be in them.
+            throw new AppException("GROUP_IN_USE", abandonsHistory
+                ? "a space holds the group's key; remove the group from every space that names it first, a removal that abandons history cannot keep them"
+                : `a space holds the group's key at an epoch below ${floor}; rotate that space's key to the group's current epoch, or remove the group from it, first`);
         }
     }
     
