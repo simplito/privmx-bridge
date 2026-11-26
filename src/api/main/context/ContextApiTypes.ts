@@ -169,7 +169,9 @@ export interface GroupCreateModel {
      * - rotate the key, self-update: any member (rotation rate-limited per member)
      * - delete: any manager
      *
-     * A group that has managers keeps at least one (`GROUP_LAST_MANAGER`). The creator holds no privilege. The
+     * A group that has managers keeps at least one (`GROUP_LAST_MANAGER`). The creator holds no privilege, but
+     * the context's `policy.group.creatorHasToBeManager` (default "yes") still requires the creator to be among
+     * `managers` at creation (`ACCESS_DENIED` otherwise); creation itself is gated by `policy.group.create`. The
      * context's `policy.group` can only narrow: `update` narrows `addMembers`, `removeMembers`,
      * `replaceMemberKeys` and both metadata rules, `updatePolicy` narrows `changeRoles`,
      * `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete` deletion.
@@ -999,7 +1001,10 @@ export interface IContextApi {
      */
     groupGetPublicKey(model: GroupGetPublicKeyModel): Promise<GroupGetPublicKeyResult>;
     /**
-     * Sets who may read the group's identity key, roster and statements beside its members. Managers only.
+     * Sets who may read the group's identity key, roster and statements beside its members. Needs the group's
+     * `changeVisibility` rule (default: managers), narrowed by the context's `policy.group.updatePolicy`, and the
+     * `context/groupSetVisibility` ACL entry. Refused with `ROTATED_ALREADY` when a commit landed since the rules were
+     * read.
      * Making a group visible to the context exposes its whole signed membership history (past members, removals,
      * their dates) through `groupGetTreeCommits`; narrowing it later does not retract what was already read.
      * @param model id of the group and the new visibility

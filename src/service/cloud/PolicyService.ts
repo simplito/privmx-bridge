@@ -130,6 +130,10 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             delete: "itemOwner&user,manager",
         },
     },
+    // Read for groups: get, listMy, listAll, create, creatorHasToBeManager and sendCustomNotification. A group's own
+    // signed rules decide everything else, and the context's update, rotateKeys, updatePolicy and delete only veto
+    // when a context sets them itself, so these defaults of theirs (and canOverwriteContextPolicy) are ignored for
+    // groups. Kept, not removed, so a 3.1.0 context reading `inherit`/`default` sees the table it always did.
     group: {
         get: "user",
         listMy: "all",
