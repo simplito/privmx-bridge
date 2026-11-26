@@ -124,7 +124,8 @@ export interface GroupCreateModel {
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-    /** Defaults to "members". */
+    /** Defaults to "members". "context" takes the `changeVisibility` rule of the rules being created, for the creator
+     *  in the roster being created, narrowed by the context's `updatePolicy`. */
     visibleTo?: GroupVisibility;
     /** The roster/tree plane's first entry: carries the roster tag and no metadata. */
     data: types.group.GroupData;

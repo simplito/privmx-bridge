@@ -256,6 +256,25 @@ it("Should create group", async () => {
     hasOneCall(groupNotificationService.sendCreatedGroup);
 });
 
+it("SECURITY: creating a group visible to the context takes the changeVisibility rule it is created with, and the context's veto", async () => {
+    const create = (service: ReturnType<typeof createGroupService>, policy: types.cloud.GroupRules) =>
+        service.groupService.createGroup(janekCloudUser, resourceId, contextId, undefined, groupPubKey, [janek, alice], [janek], data, data, data, keyId, policy,
+            tree, creationWith(policy), undefined, "context");
+    const closed = createGroupService();
+    await expectRefusal("ACCESS_DENIED", () => create(closed, rules({changeVisibility: "nobody"})));
+    hasNoCalls(closed.groupRepository.createGroup);
+    const vetoed = createGroupService(false, {group: {updatePolicy: "none"}});
+    await expectRefusal("ACCESS_DENIED", () => create(vetoed, CommitStatement.DEFAULT_RULES));
+    hasNoCalls(vetoed.groupRepository.createGroup);
+    const allowed = createGroupService();
+    // A copy: the service marks the created group visible, and the shared fixture must stay as it is.
+    mock(allowed.groupRepository, "createGroup", async () => ({...group}));
+    mock(allowed.groupRepository, "setVisibility", async () => {});
+    await create(allowed, CommitStatement.DEFAULT_RULES);
+    hasOneCall(allowed.groupRepository.createGroup);
+    hasOneCall(allowed.groupRepository.setVisibility);
+});
+
 it("Should fail to create group as an unknown user", async () => {
     const {groupService, groupRepository} = createGroupService();
     try {

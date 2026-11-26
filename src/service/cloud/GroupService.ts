@@ -253,9 +253,11 @@ export class GroupService extends BaseContainerService {
         if (allUsers.length === 0) {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
-        if (visibleTo === "context" && !managers.includes(user.userId)) {
-            // As `setVisibility` would ask of it afterwards: showing a roster to the context is a manager's call.
-            throw new AppException("ACCESS_DENIED", "only a manager may make a group visible to the context");
+        if (visibleTo === "context") {
+            // What `setVisibility` would ask afterwards: the `changeVisibility` rule, judged against the rules and the
+            // roster being created, with the context's `updatePolicy` veto.
+            const draft = {creator: user.userId, users, managers, policy} as db.group.Group;
+            this.policy.require(user, context, draft, "changeVisibility");
         }
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
         const newGroupKey = GroupService.buildSelfAddressedKey(undefined, groupKeys, keyId, 1);
