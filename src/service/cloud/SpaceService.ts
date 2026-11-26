@@ -87,6 +87,21 @@ export class SpaceService extends BaseContainerService {
         });
     }
     
+    /**
+     * Which rotation budget a change of key spends. A removal spends its own (`spaceRemove`), so nothing anybody
+     * else does — a member rotating a recipient group, which makes the space stale and the next writer re-key it —
+     * can use up the allowance a manager removes somebody with; it stays limited because each removal also adds a
+     * key version. A rotation that only replaces a stale key (a recipient group past the epoch the key was wrapped
+     * to) spends nothing: it is what a group's own, already rate-limited, epoch change forces, and once it lands the
+     * space is fresh, so there is one such rotation per epoch change. Only a gratuitous rotation spends `spaceRotate`.
+     */
+    static rotationBudget(removing: boolean, staying: {groupId: types.group.GroupId, groupKeyVersion: number}[], groupEpochs: GroupEpochs): "rotate"|"remove"|undefined {
+        if (removing) {
+            return "remove";
+        }
+        return SpaceService.isStale({groups: staying}, groupEpochs) ? undefined : "rotate";
+    }
+    
     private static recipientKey(recipient: {groupId: types.group.GroupId}|{userId: types.cloud.UserId}) {
         return "groupId" in recipient ? "g:" + recipient.groupId : "u:" + recipient.userId;
     }
@@ -376,8 +391,10 @@ export class SpaceService extends BaseContainerService {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
             caller: user, managerOnly: removing,
         });
-        // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited.
-        const held = await this.reserveRotation(space.id, user.userId);
+        // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited
+        // (`rotationBudget` says which budget, if any, this one spends).
+        const budget = SpaceService.rotationBudget(removing, staying, groupEpochs);
+        const held = budget ? await this.reserveRotation(space.id, user.userId, budget) : [];
         let changed: db.space.Space;
         try {
             changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
@@ -470,13 +487,15 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
-     * Reserves one unit of each of the caller's two rotation budgets for the space — `maxSpaceRotationsPerMinute`
-     * a minute and `maxSpaceRotationsPerHour` an hour — or hands back what it took and refuses.
+     * Reserves one unit of each of the caller's two budgets of `kind` for the space — `maxSpaceRotationsPerMinute`
+     * a minute and `maxSpaceRotationsPerHour` an hour, removals and rotations each their own — or hands back what it
+     * took and refuses.
      */
-    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId): Promise<string[]> {
+    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId, kind: "rotate"|"remove"): Promise<string[]> {
+        const prefix = kind === "remove" ? "spaceRemove" : "spaceRotate";
         const budgets = [
-            {key: `spaceRotateBurst|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerMinute, windowMs: DateUtils.minutes(1)},
-            {key: `spaceRotate|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour},
+            {key: `${prefix}Burst|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerMinute, windowMs: DateUtils.minutes(1)},
+            {key: `${prefix}|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour},
         ];
         const held: string[] = [];
         for (const budget of budgets) {

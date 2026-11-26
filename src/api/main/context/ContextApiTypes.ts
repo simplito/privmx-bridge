@@ -1025,8 +1025,9 @@ export interface IContextApi {
      */
     spaceAddRecipients(model: SpaceAddRecipientsModel): Promise<types.core.OK>;
     /**
-     * Removes recipients and moves the space to a new key they do not get. Managers only. Rate-limited as
-     * `spaceRotateKey` is.
+     * Removes recipients and moves the space to a new key they do not get. Managers only. Rate-limited with the
+     * limits of `spaceRotateKey` but in a budget of its own, so rotations (a writer re-keying a stale space) never use
+     * up a manager's allowance to remove.
      * @param model id of the space, who leaves, the new key's id and its wraps for those who stay
      * @returns the new key version
      */
@@ -1034,7 +1035,8 @@ export interface IContextApi {
     /**
      * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`. Each user may rotate one space
      * `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` times a minute (default 3) and `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` times an
-     * hour (default 60); past either it is refused with `SPACE_ROTATION_RATE_LIMIT`, data `{retryAt}`.
+     * hour (default 60); past either it is refused with `SPACE_ROTATION_RATE_LIMIT`, data `{retryAt}`. A rotation that
+     * only replaces a stale key (`keyIsStale`: a recipient group past the epoch the key was wrapped to) is not counted.
      * @param model id of the space, the new key's id and its wraps
      * @returns the new key version
      */

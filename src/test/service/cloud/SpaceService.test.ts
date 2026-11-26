@@ -19,6 +19,7 @@ import { DbDuplicateError } from "../../../error/DbDuplicateError";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { CacheWithTTL } from "../../../utils/CacheWithTTL";
 import type { Config } from "../../../cluster/common/ConfigUtils";
+import type { GroupEpochs } from "../../../api/main/GroupKeys";
 
 const g1 = "g1" as types.group.GroupId;
 const g2 = "g2" as types.group.GroupId;
@@ -169,7 +170,8 @@ describe("space rotations are rate-limited per user and space", () => {
         const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
         const created = new SpaceService(null as never, null as never, "h" as types.core.Host, null as never, null as never, null as never, limiter,
             {maxSpaceRotationsPerMinute: perMinute, maxSpaceRotationsPerHour: perHour} as Config);
-        return (created as unknown as {reserveRotation: (spaceId: string, userId: string) => Promise<string[]>}).reserveRotation.bind(created);
+        const reserve = (created as unknown as {reserveRotation: (spaceId: string, userId: string, kind: "rotate"|"remove") => Promise<string[]>}).reserveRotation.bind(created);
+        return (spaceId: string, userId: string, kind: "rotate"|"remove" = "rotate") => reserve(spaceId, userId, kind);
     };
     
     it("SECURITY: a burst past the per-minute budget is refused with a retry time, per user and space", async () => {
@@ -190,5 +192,29 @@ describe("space rotations are rate-limited per user and space", () => {
         for (let i = 0; i < 20; i++) {
             await assert.rejects(() => reserve("s1", "alice"), (e: unknown) => AppException.is(e, "SPACE_ROTATION_RATE_LIMIT"));
         }
+    });
+});
+
+describe("which budget a change of a space's key spends", () => {
+    const epochs = new Map([[g1, 3], [g2, 5]]) as GroupEpochs;
+    
+    it("SECURITY: a removal spends its own budget, which rotations cannot use up", async () => {
+        assert.strictEqual(SpaceService.rotationBudget(true, [{groupId: g1, groupKeyVersion: 3}], epochs), "remove");
+        const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+        const created = new SpaceService(null as never, null as never, "h" as types.core.Host, null as never, null as never, null as never, limiter,
+            {maxSpaceRotationsPerMinute: 10, maxSpaceRotationsPerHour: 2} as Config);
+        const reserve = (kind: "rotate"|"remove") => (created as unknown as {reserveRotation: (s: string, u: string, k: string) => Promise<string[]>}).reserveRotation("s1", "manager", kind);
+        await reserve("rotate");
+        await reserve("rotate");
+        await assert.rejects(() => reserve("rotate"), (e: unknown) => AppException.is(e, "SPACE_ROTATION_RATE_LIMIT"));
+        // The rotation budget is spent; removing still goes, on its own.
+        await reserve("remove");
+    });
+    
+    it("SECURITY: a rotation that only replaces a stale key spends nothing; a gratuitous one spends the rotation budget", () => {
+        // g2 has moved to epoch 5 since the key was wrapped to it at 4: stale, so the rotation is forced, not chosen.
+        assert.strictEqual(SpaceService.rotationBudget(false, [{groupId: g1, groupKeyVersion: 3}, {groupId: g2, groupKeyVersion: 4}], epochs), undefined);
+        assert.strictEqual(SpaceService.rotationBudget(false, [{groupId: g1, groupKeyVersion: 3}, {groupId: g2, groupKeyVersion: 5}], epochs), "rotate");
+        assert.strictEqual(SpaceService.rotationBudget(false, [], epochs), "rotate", "a space of users only is never stale");
     });
 });

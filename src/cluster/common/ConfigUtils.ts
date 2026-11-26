@@ -87,9 +87,10 @@ export interface Config {
      *  rotate, and every rotation stales every container granted to the group, so a burst is capped too. Floor 1. */
     maxGroupRotationsPerMinute: number,
     /** `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` (default 60) and `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` (default 3): how often
-     *  one user may move one space to a new key (`spaceRotateKey`, `spaceRemoveRecipients`), limiter keys
-     *  `spaceRotate|<spaceId>|<userId>` and `spaceRotateBurst|<spaceId>|<userId>`. Every rotation adds a key version
-     *  every later recipient needs a wrap of. Floor 1. */
+     *  one user may move one space to a new key: `spaceRotateKey` on `spaceRotate|<spaceId>|<userId>` and
+     *  `spaceRotateBurst|…`, and, in budgets of their own, `spaceRemoveRecipients` on `spaceRemove|…` and
+     *  `spaceRemoveBurst|…`. A rotation that only replaces a stale key spends nothing. Every rotation adds a key
+     *  version every later recipient needs a wrap of. Floor 1. */
     maxSpaceRotationsPerHour: number,
     maxSpaceRotationsPerMinute: number,
     streams: {
