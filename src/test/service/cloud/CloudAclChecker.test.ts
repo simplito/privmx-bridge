@@ -184,8 +184,28 @@ describe("CloudAclChecker renamed functions", () => {
             assert.throws(() => checker.verifyAccess(acl, "context/groupCutHistory", ["groupId=g"]));
             // And a scoped one, as a stored ACL may carry it.
             assert.throws(() => checker.verifyAccess(asAcl(["ALLOW ALL", `DENY ${old} groupId=g`]), "context/groupCutHistory", ["groupId=g"]));
-            // An ALLOW under the old name grants the new one, as it granted the old.
-            checker.verifyAccess(asAcl(["DENY ALL", `ALLOW ${old}`]), "context/groupCutHistory", ["groupId=g"]);
+            // Whatever comes after it.
+            assert.throws(() => checker.verifyAccess(asAcl([`DENY ${old}`, "ALLOW ALL", "ALLOW context/groupCutHistory"]), "context/groupCutHistory", ["groupId=g"]));
         }
+    });
+    
+    it("SECURITY: a DENY on one old name is not undone by an ALLOW on the other, in either order", () => {
+        const checker: CloudAclChecker = new CloudAclChecker();
+        for (const lines of [
+            ["DENY context/groupCutEra", "ALLOW context/groupPruneArchive"],
+            ["ALLOW context/groupPruneArchive", "DENY context/groupCutEra"],
+            ["DENY context/groupPruneArchive", "ALLOW context/groupCutEra"],
+            ["ALLOW context/groupCutEra", "DENY context/groupPruneArchive"],
+        ]) {
+            assert.throws(() => checker.verifyAccess(asAcl(lines), "context/groupCutHistory", ["groupId=g"]), lines.join(" / "));
+        }
+    });
+    
+    it("only ALLOW groupCutEra grants the cut: the old prune was weaker", () => {
+        const checker: CloudAclChecker = new CloudAclChecker();
+        checker.verifyAccess(asAcl(["DENY ALL", "ALLOW context/groupCutEra"]), "context/groupCutHistory", ["groupId=g"]);
+        assert.throws(() => checker.verifyAccess(asAcl(["DENY ALL", "ALLOW context/groupPruneArchive"]), "context/groupCutHistory", ["groupId=g"]));
+        // Neither touches any other function.
+        assert.throws(() => checker.verifyAccess(asAcl(["ALLOW context/groupCutEra"]), "context/groupRotateKeys", ["groupId=g"]));
     });
 });

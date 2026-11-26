@@ -151,12 +151,19 @@ export type AclFunctionNameX =
 
 export class CloudAclChecker {
     
-    /** Renamed functions: an ACL stored under the old name keeps meaning the new one, ALLOW and DENY alike, so a
-     *  rename can never turn a DENY into nothing. */
-    static readonly ALIASES: Record<string, AclFunctionNameX> = {
-        "context/groupCutEra": "context/groupCutHistory",
-        "context/groupPruneArchive": "context/groupCutHistory",
-    };
+    /**
+     * Retired function names an ACL stored by 3.1.0 may still carry, and what they mean now. Both merged into
+     * `context/groupCutHistory`, which is stronger than the old prune: so a DENY on either old name denies the cut
+     * whatever the line order, and only `groupCutEra` grants it on an ALLOW line (`groupPruneArchive` grants nothing).
+     */
+    static readonly RETIRED = {
+        "context/groupCutEra": {now: "context/groupCutHistory", allows: true},
+        "context/groupPruneArchive": {now: "context/groupCutHistory", allows: false},
+    } as const satisfies Record<string, {now: AclFunctionNameX, allows: boolean}>;
+    
+    private static retired(name: string) {
+        return (CloudAclChecker.RETIRED as Record<string, {now: AclFunctionNameX, allows: boolean}>)[name];
+    }
     
     private functions: types.cloud.AclFunctions;
     private groups = new Map<types.cloud.AclGroupName, types.cloud.AclFunctions>();
@@ -403,7 +410,7 @@ export class CloudAclChecker {
         if (parts.length < 2) {
             throw new Error(`Expected at least 2 parameters in line ${index + 1}`);
         }
-        const action = CloudAclChecker.ALIASES[parts[1]] ?? parts[1];
+        const action = CloudAclChecker.retired(parts[1])?.now ?? parts[1];
         if (action in this.functions) {
             const actionArgs = this.functions[action as types.cloud.AclFunctionName];
             const args = parts.slice(2);
@@ -443,6 +450,20 @@ export class CloudAclChecker {
         let allow = false;
         for (const aclEntry of acl.split("\n")) {
             const parts = aclEntry.split(" ");
+            const retired = CloudAclChecker.retired(parts[1]);
+            if (retired) {
+                if (retired.now !== fnName || !this.argsMatch(parts.slice(2), args)) {
+                    continue;
+                }
+                if (parts[0] === "DENY") {
+                    // A DENY stored under a retired name wins over any later line.
+                    return false;
+                }
+                if (retired.allows) {
+                    allow = true;
+                }
+                continue;
+            }
             if (this.fnMatch(parts, fnName, args)) {
                 allow = parts[0] === "ALLOW";
             }
@@ -451,7 +472,7 @@ export class CloudAclChecker {
     }
     
     private fnMatch(acl: string[], fnName: AclFunctionNameX, args: string[]) {
-        const fnNameOrGroupName = CloudAclChecker.ALIASES[acl[1]] ?? acl[1];
+        const fnNameOrGroupName = acl[1];
         if (fnNameOrGroupName === fnName) {
             return this.argsMatch(acl.slice(2), args);
         }
