@@ -40,7 +40,6 @@ const group: managementGroupApi.Group = {
         changeRoles: "managers",
         changeRules: "managers",
         changeVisibility: "managers",
-        trimHistory: "managers",
         editPublicMeta: "members",
         editPrivateMeta: "managers",
     },
@@ -100,14 +99,6 @@ export const test = testApi("client", "group/", ManagementGroupApi, new Manageme
             removed: [],
             signature: "H3A2pG0rLwq8b1lQzT7S1x0dYcVn5mKe4uJfWgRkPq2sXhZyBtNvCaMoIiEeUuDdFf0GgHhJjKkLlZzXxCcVvBbNnMm=" as types.core.EccSignature,
         }],
-    });
-    call("cutHistory", api => api.cutHistory({
-        groupId: groupId,
-        beforeEpoch: 3,
-    })).setResult({
-        eraFloor: 2,
-        clampedBy: "space",
-        spaceId: "c5d0e6f0b1a24a7e9f3c1d2b3a4e5f60c5d0e6f0b1a24a7e9f3c1d2b3a4e5f60" as types.space.SpaceId,
     });
     call("deleteGroup", api => api.deleteGroup({
         groupId: groupId,

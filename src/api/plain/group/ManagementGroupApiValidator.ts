@@ -38,11 +38,6 @@ export class ManagementGroupApiValidator extends BaseValidator {
             limit: this.builder.range(this.builder.int, 1, 100),
         }));
         
-        this.registerMethod("cutHistory", this.builder.createObject({
-            groupId: this.tv.groupId,
-            beforeEpoch: this.builder.optional(this.builder.min(this.builder.int, 1)),
-        }));
-        
         this.registerMethod("deleteGroup", this.builder.createObject({
             groupId: this.tv.groupId,
         }));

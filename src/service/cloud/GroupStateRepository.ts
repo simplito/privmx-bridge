@@ -199,24 +199,6 @@ export class GroupStateRepository {
         return this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId));
     }
     
-    /**
-     * The epoch each plane's head entry is keyed at, projected.
-     *
-     * The management `cutHistory` clamps its floor to these: an entry stays at the epoch it was written
-     * under, so cutting below it would make that plane unreadable for everyone, permanently. Both planes,
-     * because they move independently and only one of them may be stranded.
-     */
-    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
-        const [publicHead, privateHead] = await Promise.all([
-            this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId)),
-            this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId)),
-        ]);
-        return {
-            publicMeta: publicHead ? publicHead.keyVersion : null,
-            privateMeta: privateHead ? privateHead.keyVersion : null,
-        };
-    }
-    
     /** Replaces the group's public-metadata entry: one row per group, so a later version supersedes rather
      *  than piles up. */
     async writePublicMetaEntry(entry: db.group.GroupPublicMetaEntry): Promise<void> {

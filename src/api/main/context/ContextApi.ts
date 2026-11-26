@@ -336,7 +336,7 @@ export class ContextApi extends BaseApi implements contextApi.IContextApi {
     @ApiMethod({})
     async spaceList(model: contextApi.SpaceListModel): Promise<contextApi.SpaceListResult> {
         const cloudUser = this.sessionService.validateContextSessionAndGetCloudUser();
-        const page = await this.spaceService.listSpaces(cloudUser, model.contextId, model, model.sortBy || "createDate", model.groupId);
+        const page = await this.spaceService.listSpaces(cloudUser, model.contextId, model, model.sortBy || "createDate");
         this.requestLogger.setContextId(model.contextId);
         return {spaces: page.list.map(x => SpaceConverter.convertSpace(x)), count: page.count};
     }

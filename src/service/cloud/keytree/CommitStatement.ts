@@ -77,10 +77,10 @@ export class CommitStatement {
     
     /** Every rule in the order `rulesHash` signs them. */
     static readonly RULE_FIELDS = ["addMembers", "removeMembers", "replaceMemberKeys", "changeRoles", "changeRules", "changeVisibility",
-        "trimHistory", "editPublicMeta", "editPrivateMeta"] as const;
+        "editPublicMeta", "editPrivateMeta"] as const;
     
     /**
-     * Whether `value` is a rules object: exactly the nine rules, each a valid value. A group stored before the rules
+     * Whether `value` is a rules object: exactly the eight rules, each a valid value. A group stored before the rules
      * format holds something else under `policy`; it is refused with `GROUP_RULES_UNSUPPORTED`, never hashed.
      */
     static isRules(value: unknown): value is types.cloud.GroupRules {
@@ -94,13 +94,13 @@ export class CommitStatement {
     /** What a client fills in for a rule it does not set, before signing. The bridge never fills anything in. */
     static readonly DEFAULT_RULES: types.cloud.GroupRules = Object.freeze({
         addMembers: "managers", removeMembers: "managers", replaceMemberKeys: "managers", changeRoles: "managers", changeRules: "managers",
-        changeVisibility: "managers", trimHistory: "nobody", editPublicMeta: "managers", editPrivateMeta: "managers",
+        changeVisibility: "managers", editPublicMeta: "managers", editPrivateMeta: "managers",
     });
     
     /**
      * `PH`: what every statement signs of the group's rules, and the creator. `H("pmx-group-rules-v1\0" ||
      * lp(creator) || lp(addMembers) || lp(removeMembers) || lp(replaceMemberKeys) || lp(changeRoles) ||
-     * lp(changeRules) || lp(changeVisibility) || lp(trimHistory) || lp(editPublicMeta) || lp(editPrivateMeta))`. The creator holds no privilege; it is bound so a genesis cannot be replayed as another's.
+     * lp(changeRules) || lp(changeVisibility) || lp(editPublicMeta) || lp(editPrivateMeta))`. The creator holds no privilege; it is bound so a genesis cannot be replayed as another's.
      */
     static rulesHash(rules: types.cloud.GroupRules, creator: types.cloud.UserId): Buffer {
         if (!CommitStatement.isRules(rules)) {

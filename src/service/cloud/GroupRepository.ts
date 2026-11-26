@@ -463,24 +463,6 @@ export class GroupRepository {
     }
     
     /**
-     * Raises the era floor to `newFloor` without a new epoch (`group/cutHistory` of the management API): the rungs
-     * pointing below it go, and so do the epoch rows below it — deleted, not hidden, since nothing can verify or
-     * open them once nobody can climb there.
-     */
-    async cutHistory(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
-        const changes: Partial<db.group.Group> = {
-            eraFloor: newFloor,
-            lastModificationDate: DateUtils.now(),
-        };
-        if (!await this.casRotate(oldGroup, oldGroup.keyVersion, changes)) {
-            return null;
-        }
-        await this.state.deleteRungsTargetingBelow(oldGroup.id, newFloor);
-        await this.state.deleteEpochKeysBelow(oldGroup.id, newFloor);
-        return {...oldGroup, ...changes};
-    }
-    
-    /**
      * The public metadata plane only: the private plane, the roster, the tree, the epoch, the group's `keyId`
      * and the policy are all untouched.
      *
@@ -733,8 +715,6 @@ export class GroupRepository {
         statement: types.cloud.GroupTreeCommitStatement,
         rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
-        /** Close the era at the new epoch in the same write, deleting what is below it. */
-        cutHistory?: boolean,
     }): Promise<db.group.Group | null> {
         const {oldGroup, modifier} = params;
         const now = DateUtils.now();
@@ -749,7 +729,6 @@ export class GroupRepository {
             rosterVersion: version,
             keyVersion: expectedKeyVersion + 1,
             treeCommitSeq: params.statement.seq,
-            ...(params.cutHistory ? {eraFloor: expectedKeyVersion + 1} : {}),
         };
         if (!await this.casRotate(oldGroup, expectedKeyVersion, changes, oldGroup.rosterVersion, oldGroup.treeCommitSeq)) {
             return null;
@@ -769,10 +748,6 @@ export class GroupRepository {
         await this.state.insertTreeCommit(oldGroup.id, params.statement);
         await this.state.insertRungs(oldGroup.id, modifier, params.rungs);
         await this.state.writeEpochKey(oldGroup.id, expectedKeyVersion + 1, params.newGroupPubKey, params.groupKey);
-        if (params.cutHistory) {
-            await this.state.deleteRungsTargetingBelow(oldGroup.id, expectedKeyVersion + 1);
-            await this.state.deleteEpochKeysBelow(oldGroup.id, expectedKeyVersion + 1);
-        }
         return {...oldGroup, ...changes};
     }
     

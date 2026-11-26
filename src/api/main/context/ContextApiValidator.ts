@@ -113,7 +113,6 @@ export class ContextApiValidator extends BaseValidator {
             groupKeys: this.builder.optional(this.tv.cloudGroupKeyEntrySet),
             expectedKeyVersion: this.builder.int,
             expectedRosterVersion: this.builder.int,
-            cutHistory: this.builder.optional(this.builder.bool),
         }));
         this.registerMethod("groupDelete", this.builder.createObject({
             groupId: this.tv.groupId,
@@ -291,7 +290,6 @@ export class ContextApiValidator extends BaseValidator {
         this.registerMethod("spaceList", this.builder.addFields(this.tv.listModel, {
             contextId: this.tv.cloudContextId,
             sortBy: this.builder.optional(this.builder.createEnum(["createDate", "lastModificationDate"])),
-            groupId: this.builder.optional(this.tv.groupId),
         }));
         this.registerMethod("spaceAddRecipients", this.builder.createObject({
             id: this.tv.spaceId,

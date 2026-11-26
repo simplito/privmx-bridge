@@ -24,12 +24,12 @@ const gone = "gone" as types.cloud.UserId;
 
 it("the backend's group and space APIs read and delete, and change nothing a member signs", () => {
     const methodsOf = (clazz: unknown) => ApiMethod.getExportedMethods(clazz as never).map(m => m.method).sort();
-    assert.deepStrictEqual(methodsOf(ManagementGroupApi), ["cutHistory", "deleteGroup", "deleteManyGroups", "getGroup", "listGroupCommits", "listGroups", "listGroupsOfUser"]);
+    assert.deepStrictEqual(methodsOf(ManagementGroupApi), ["deleteGroup", "deleteManyGroups", "getGroup", "listGroupCommits", "listGroups", "listGroupsOfUser"]);
     assert.deepStrictEqual(methodsOf(ManagementSpaceApi), ["deleteSpace", "getSpace", "listSpaces"]);
 });
 
 /** Rules other than the defaults, served as stored. */
-const RULES: types.cloud.GroupRules = {...CommitStatement.DEFAULT_RULES, addMembers: "members", trimHistory: "nobody"};
+const RULES: types.cloud.GroupRules = {...CommitStatement.DEFAULT_RULES, addMembers: "members", changeVisibility: "nobody"};
 
 it("serves a group's members with roles and keys, its signed rules, and no private field", () => {
     const group = {

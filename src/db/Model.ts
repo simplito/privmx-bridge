@@ -275,7 +275,7 @@ export namespace group {
         /** Who may read the group's identity key, roster and statements beside its members: nobody (absent or
          *  "members"), or every user of the context ("context"). The bridge's own setting; no statement signs it. */
         visibleTo?: "members"|"context";
-        /** The group's signed rules, all nine. */
+        /** The group's signed rules, all eight. */
         policy: types.cloud.GroupRules;
         /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
          *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
@@ -416,7 +416,7 @@ export namespace group {
      *
      * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
      * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
-     * the management `cutHistory` clamps its floor to it, or the metadata would become unreadable. The
+     * a removal abandoning history leaves it below the floor, unreadable until rewritten. The
      * two planes move independently, so they may sit at different epochs and only one may be stranded.
      *
      * One row per group per plane: `id` is derived from `groupId` and the plane alone, and a write replaces it.

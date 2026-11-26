@@ -91,12 +91,6 @@ export class ManagementGroupApi extends ManagementBaseApi implements managementG
         return {commits};
     }
     
-    @ApiMethod({errorCodes: ["GROUP_DOES_NOT_EXIST", "ROTATED_ALREADY"] })
-    async cutHistory(model: managementGroupApi.CutHistoryModel): Promise<managementGroupApi.CutHistoryResult> {
-        this.validateScope("group");
-        return this.groupService.cutHistory(this.getPlainUser(), model.groupId, model.beforeEpoch);
-    }
-    
     @ApiMethod({errorCodes: ["GROUP_DOES_NOT_EXIST", "GROUP_IN_USE"] })
     async deleteGroup(model: managementGroupApi.DeleteGroupModel): Promise<types.core.OK> {
         this.validateScope("group");

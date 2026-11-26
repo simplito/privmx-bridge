@@ -188,24 +188,9 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
-     * A pin below the via group's floor is a key a history cut retired. It still signs a statement that moves the
-     * via group to an epoch at or above the floor — a `spaceRotateKey`, or a `spaceRemoveRecipients` that keeps the
-     * group — which is how the member who cut (or any other still holding the old key) brings the space along.
-     * Nothing that leaves the group below the floor. Checked inside the space's write, with
-     * the via group's document written too (`write`), so a floor raised concurrently is a write conflict.
-     */
-    static assertViaPin(via: types.group.GroupId, before: db.space.Space["groups"], after: db.space.Space["groups"], floor: number) {
-        const pin = before.find(g => g.groupId === via);
-        if (pin && pin.groupKeyVersion < floor && !after.some(g => g.groupId === via && g.groupKeyVersion >= floor)) {
-            throw new AppException("SPACE_STATEMENT_INVALID",
-                `the key the space holds for the group is below its floor ${floor}: it only signs moving the group to epoch ${floor} or later`);
-        }
-    }
-    
-    /**
      * Holds every group the space wraps at or above the group's floors, inside the space's transaction. The group
-     * document is written as well (`touchLadder`), so a floor raised concurrently (a history cut,
-     * a removal abandoning history: each writes that document too) is a write conflict and
+     * document is written as well (`touchLadder`), so a floor raised concurrently (a removal
+     * abandoning history writes that document too) is a write conflict and
      * one transaction re-runs against the other's result. A check alone would be write skew: each side would pass
      * against the other's old state, and the space would hold a key nobody can sign through any more.
      */
@@ -271,8 +256,7 @@ export class SpaceService extends BaseContainerService {
         return {space, statements: await repository.getStatements(model.id, model.fromSeq, model.limit)};
     }
     
-    /** @param groupId narrows the page to the spaces naming that group (still only those the caller can see). */
-    async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space, groupId?: types.group.GroupId) {
+    async listSpaces(executor: Executor, contextId: types.context.ContextId, listParams: types.core.ListModel, sortBy: keyof db.space.Space) {
         let caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined;
         const context = await this.repositoryFactory.createContextRepository().get(contextId);
         if (!context) {
@@ -283,7 +267,7 @@ export class SpaceService extends BaseContainerService {
             caller = {userId: user.userId, ownGroupIds: await this.getCallerGroupIds(contextId, user.userId)};
         });
         const page = await this.repositoryFactory.createSpaceRepository().getPage(contextId, listParams, sortBy,
-            caller && {userId: caller.userId, groupIds: caller.ownGroupIds}, groupId);
+            caller && {userId: caller.userId, groupIds: caller.ownGroupIds});
         return {list: await this.views(page.list, caller, true), count: page.count};
     }
     
@@ -456,20 +440,8 @@ export class SpaceService extends BaseContainerService {
             if (!await repository.update(space, all)) {
                 throw new AppException("SPACE_VERSION_MISMATCH");
             }
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            if (statement && statement.via !== "") {
-                // The via group's floor, read and written in this transaction: a floor raised concurrently conflicts.
-                // First, so a statement under a retired pin is told so rather than that the space falls below a floor.
-                const via = await groupRepository.get(statement.via);
-                if (via) {
-                    SpaceService.assertViaPin(statement.via, space.groups, changes.groups ?? space.groups, via.eraFloor);
-                    if (!await groupRepository.touchLadder(via)) {
-                        throw new AppException("SPACE_KEYS_INVALID", `group '${statement.via}' changed its floor meanwhile`);
-                    }
-                }
-            }
             if (changes.groups) {
-                await SpaceService.assertGroupFloors(groupRepository, changes.groups);
+                await SpaceService.assertGroupFloors(this.repositoryFactory.createGroupRepository(session), changes.groups);
             }
             await keys?.(repository);
             if (statement) {

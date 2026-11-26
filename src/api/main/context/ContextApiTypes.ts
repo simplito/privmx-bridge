@@ -148,11 +148,11 @@ export interface GroupCreateModel {
      * The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
      * the bridge assigns the group's id only once the statement is already signed.
      *
-     * `commit.policy` carries the group's rules (`types.cloud.GroupRules`), all nine, each `managers`, `members`
-     * or `nobody` (clients default every rule to `managers` but `trimHistory` to `nobody`), signed by
-     * `policyHash` = `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) ||
-     * lp(removeMembers) || lp(replaceMemberKeys) || lp(changeRoles) || lp(changeRules) || lp(changeVisibility) ||
-     * lp(trimHistory) || lp(editPublicMeta) || lp(editPrivateMeta))`, `lp` a u32 big-endian length prefix. An
+     * `commit.policy` carries the group's rules (`types.cloud.GroupRules`), all eight, each `managers`, `members`
+     * or `nobody` (clients default every rule to `managers`), signed by `policyHash` =
+     * `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) || lp(removeMembers) ||
+     * lp(replaceMemberKeys) || lp(changeRoles) || lp(changeRules) || lp(changeVisibility) || lp(editPublicMeta) ||
+     * lp(editPrivateMeta))`, `lp` a u32 big-endian length prefix. An
      * operation needs every rule whose responsibility it touches, as the rules stand before it:
      *
      * - add a plain member: `addMembers`; add a manager: `addMembers` + `changeRoles`
@@ -161,16 +161,15 @@ export interface GroupCreateModel {
      * - reseat (`groupReseat`): `replaceMemberKeys`
      * - set roles: `changeRoles`; change the rules (`groupUpdatePolicy`): `changeRules`; set visibility:
      *   `changeVisibility`
-     * - rotate with `cutHistory`: `trimHistory`, `editPublicMeta` and `editPrivateMeta` on top of the rotation; a
-     *   removal with `abandonHistory`: `trimHistory` or `changeRules`, plus both edit rules, on top of the
-     *   removal's (the management `group/cutHistory` acts with server authority)
+     * - a removal with `abandonHistory`: `changeRules`, `editPublicMeta` and `editPrivateMeta` on top of the
+     *   removal's
      * - write the public / private metadata: `editPublicMeta` / `editPrivateMeta`
      * - rotate the key, self-update: any member (rotation rate-limited per member)
      * - delete: any manager
      *
      * A group that has managers keeps at least one (`GROUP_LAST_MANAGER`). The creator holds no privilege. The
      * context's `policy.group` can only narrow: `update` narrows `addMembers`, `removeMembers`,
-     * `replaceMemberKeys`, `trimHistory` and both metadata rules, `updatePolicy` narrows `changeRoles`,
+     * `replaceMemberKeys` and both metadata rules, `updatePolicy` narrows `changeRoles`,
      * `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete` deletion.
      */
     commit: types.cloud.GroupTreeCommitStatement;
@@ -251,16 +250,15 @@ export interface GroupRemoveMembersModel {
     /**
      * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
      * `rungs` must be empty, and the era is cut at the new epoch in the same write, deleting the rungs and epoch
-     * keys below it — so the caller needs the `context/groupCutHistory` ACL entry as well, and members get an
+     * keys below it — so the caller needs the `context/groupCutEra` ACL entry as well, and members get an
      * `eraCut` notification besides `memberRemoved`. Refused with `GROUP_IN_USE` while a space names the group:
      * nobody holding the old key is left to re-key it through the group.
      *
-     * Besides the removal's rules it needs `trimHistory` OR `changeRules` (whose holder could grant itself
-     * `trimHistory` anyway), so the recovery path of a remover who lost the current key stays open under a
-     * "nobody" trimHistory without handing it to whoever may merely remove; a key-less remover with neither leaves
-     * the removal to a member who still holds the key. Both metadata planes end up below the new floor, unreadable
-     * until rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`), so it needs `editPublicMeta` and
-     * `editPrivateMeta` as well.
+     * Besides the removal's rules it needs `changeRules`: deleting everybody's history is not a removal's to do,
+     * and whoever may change the rules could grant itself anything they gate anyway. A key-less remover without
+     * it leaves the removal to a member who still holds the key. Both metadata planes end up below the new floor,
+     * unreadable until rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`), so it needs
+     * `editPublicMeta` and `editPrivateMeta` as well.
      */
     abandonHistory?: boolean;
 }
@@ -458,30 +456,13 @@ export interface GroupGenerateNewKeyModel {
     grantEdge: types.cloud.GroupTreeEdge;
     /** The rotation's commit statement: an empty path, the tree as it stands, the new epoch and grant key. */
     commit: types.cloud.GroupTreeCommitStatement;
-    /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. Empty with `cutHistory`. */
+    /** One epoch's worth of rungs, so the new epoch can still descend to the old ones. */
     rungs: types.cloud.GroupArchiveRungSubmission[];
     /** The new metadata key wrapped once to the new grant public key. */
     groupKeys?: types.cloud.GroupKeyEntrySet;
     expectedKeyVersion: number;
     /** @see GroupAddMembersModel.expectedRosterVersion */
     expectedRosterVersion: number;
-    /**
-     * A rotation that cuts history: the new epoch becomes the era floor in the same write, and every stored rung
-     * targeting below it and every archived epoch key below it are deleted. `rungs` must be empty. Needs the
-     * group's `trimHistory` rule (default "nobody") and, because both metadata planes always end up below the new
-     * floor, `editPublicMeta` and `editPrivateMeta` too (all narrowed by the context's `update`), plus the
-     * `context/groupCutHistory` ACL entry besides the rotation's own. Members get an `eraCut` notification besides
-     * `keyRotated`.
-     *
-     * Right after, the cutter, still holding the old epoch key, rewrites both metadata planes at the new epoch and
-     * re-keys every space naming the group (`spaceList` with `groupId`): a `spaceRotateKey` signed via the group
-     * under the space's pinned key, now below the floor. The bridge accepts such a retired pin only on a statement
-     * that moves the group to an epoch at or above the floor (a `spaceRotateKey`, or a `spaceRemoveRecipients`
-     * keeping the group). Those spaces show `keyIsStale` until then. If the cutter stops
-     * halfway, any member still holding the old epoch key can finish; that is the only window in which a space can
-     * be left behind.
-     */
-    cutHistory?: boolean;
 }
 
 /** Where the group's epoch is now. Informational: the loser re-reads and re-verifies before planning again. */
@@ -878,8 +859,6 @@ export interface SpaceGetResult {
 export interface SpaceListModel extends types.core.ListModel {
     contextId: types.context.ContextId;
     sortBy?: "createDate"|"lastModificationDate";
-    /** Only the spaces naming this group, e.g. those a member re-keys through the group after a history cut. */
-    groupId?: types.group.GroupId;
 }
 
 export interface SpaceListResult {
@@ -1020,8 +999,8 @@ export interface IContextApi {
      */
     spaceGetStatements(model: SpaceGetStatementsModel): Promise<SpaceGetStatementsResult>;
     /**
-     * Lists the spaces of a context the caller is a recipient of, optionally only those naming a group.
-     * @param model context, paging, optional group
+     * Lists the spaces of a context the caller is a recipient of.
+     * @param model context and paging
      * @returns the spaces, each with the wraps of its current key the caller can open
      */
     spaceList(model: SpaceListModel): Promise<SpaceListResult>;

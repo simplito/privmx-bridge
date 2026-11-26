@@ -471,53 +471,29 @@ it("a policy commit that loses the CAS stores nothing", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// cutting history
+// abandoning history
 // ─────────────────────────────────────────────────────────────────────────────
 
-it("the management cut raises the floor and drops the key material for the epochs it closes", async () => {
-    // Below the floor there is nothing left to do with either: the registry entry has no rung to verify
-    // against, and the ciphertext is addressed to a grant key nobody can climb to.
-    const {repository, state, updates} = createRepository();
-    const result = await repository.cutHistory(group(), 4);
-    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["eraFloor", "lastModificationDate"]);
-    assert.strictEqual(result?.eraFloor, 4);
-    assert.deepStrictEqual(state.deleteEpochKeysBelow.mock.calls.map(call => [...call]), [[groupId, 4]]);
-    assert.deepStrictEqual(state.deleteRungsTargetingBelow.mock.calls.map(call => [...call]), [[groupId, 4]]);
-});
-
-it("a rotation with cutHistory sets the floor at the new epoch in the same write and deletes below it", async () => {
-    const {repository, state, updates} = createRepository();
-    await repository.generateNewGroupKey({
-        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
-        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs: [], cutHistory: true,
-    });
-    assert.strictEqual(updates[0].set.eraFloor, EPOCH + 1);
-    assert.strictEqual(updates[0].set.keyVersion, EPOCH + 1);
-    assert.deepStrictEqual(state.deleteRungsTargetingBelow.mock.calls.map(call => [...call]), [[groupId, EPOCH + 1]]);
-    assert.deepStrictEqual(state.deleteEpochKeysBelow.mock.calls.map(call => [...call]), [[groupId, EPOCH + 1]]);
-    // A plain rotation deletes nothing.
-    const plain = createRepository();
-    await plain.repository.generateNewGroupKey({
-        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
-        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs: rungsFor(EPOCH + 1, 1),
-    });
-    assert.strictEqual("eraFloor" in plain.updates[0].set, false);
-    hasNoCalls(plain.state.deleteRungsTargetingBelow);
-});
-
-it("SECURITY: cutting history or abandoning it leaves every statement in place", async () => {
-    // The grant-key reuse check reads the statements for every key the group ever had; if either of these took statements
+it("SECURITY: abandoning history leaves every statement in place", async () => {
+    // The grant-key reuse check reads the statements for every key the group ever had; if this took statements
     // with it, the keys below the floor would be forgotten again.
     const deletes = (state: ReturnType<typeof createRepository>["state"]) => (Object.keys(state) as (keyof typeof state)[])
         .filter(name => /^delete|^markDeleted$/.test(name) && state[name].mock.calls.length > 0).sort();
-    const cut = createRepository();
-    await cut.repository.cutHistory(group(), 4);
-    assert.deepStrictEqual(deletes(cut.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
     const abandoned = createRepository();
     await abandoned.repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
     assert.deepStrictEqual(deletes(abandoned.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
-    hasNoCalls(cut.state.deleteState);
     hasNoCalls(abandoned.state.deleteState);
+});
+
+it("a plain rotation moves no floor and deletes nothing", async () => {
+    const {repository, state, updates} = createRepository();
+    await repository.generateNewGroupKey({
+        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
+        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs: rungsFor(EPOCH + 1, 1),
+    });
+    assert.strictEqual("eraFloor" in updates[0].set, false);
+    hasNoCalls(state.deleteRungsTargetingBelow);
+    hasNoCalls(state.deleteEpochKeysBelow);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

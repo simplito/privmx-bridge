@@ -504,8 +504,7 @@ export class GroupService extends BaseContainerService {
     
     /** Rotates the grant keypair without removing anybody: the epoch advances, the new grant key is wrapped to
      *  the unchanged root, or to the sole member of a one-leaf tree, the rungs keep the old epochs reachable.
-     *  One edge, whatever the group's size. With `cutHistory` it publishes no rungs and the new epoch becomes the
-     *  era floor instead: what is below it is deleted (the client-side history cut). */
+     *  One edge, whatever the group's size. */
     async generateNewGroupKey(cloudUser: CloudUser, model: GroupGenerateNewKeyModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
         const {rotated, solution} = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
@@ -519,28 +518,11 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             }
             const newKeyVersion = oldGroup.keyVersion + 1;
-            if (model.cutHistory) {
-                // A cut also deletes history for every member: the signed `trimHistory` rule, and its ACL entry.
-                // Both metadata planes always sit below the new floor (each is written at or below the current
-                // epoch), so the cutter has to be one who may rewrite each: it carries both forward right after.
-                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutHistory", ["groupId=" + model.id]);
-                this.policy.require(user, context, oldGroup, "trimHistory", "editPublicMeta", "editPrivateMeta");
-                if (model.rungs.length > 0) {
-                    // The new epoch is the floor: nothing may point down from it.
-                    throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "RUNGS_WITH_CUT_HISTORY", count: model.rungs.length});
-                }
-                // Spaces holding the group below the new floor are not refused: they go stale as on any rotation,
-                // and the cutter, who still holds the old epoch key, re-keys each through the group under the
-                // pinned key it holds (`SpaceService.assertStatement`). Until it has, another member who still has
-                // the old key can finish; that is the only window in which a space can be left behind.
-            }
             await budget.reserve(GroupService.rateLimitKey("rotateBurst", model.id, user.userId), this.config.maxGroupRotationsPerMinute, DateUtils.minutes(1));
             await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
             await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
             await this.assertGroupPubKeyIsNew(groupRepository, oldGroup, model.groupPubKey);
-            if (!model.cutHistory) {
-                this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
-            }
+            this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
             const groupKey = GroupService.buildSelfAddressedKey(oldGroup.id, model.groupKeys, model.keyId, newKeyVersion);
             // A rotation moves no node, so the statement vouches for the tree exactly as it stands.
             await this.chargingRefusals(budget, "rotate", model.id, user.userId, async () => {
@@ -562,7 +544,6 @@ export class GroupService extends BaseContainerService {
                 statement: model.commit,
                 rungs: model.rungs,
                 groupKey,
-                ...(model.cutHistory ? {cutHistory: true} : {}),
             });
             if (!result) {
                 const winner = await groupRepository.get(model.id);
@@ -571,9 +552,6 @@ export class GroupService extends BaseContainerService {
             return {rotated: result, solution: context.solution};
         }));
         this.groupNotificationService.sendUpdatedGroup(rotated, [], "keyRotated");
-        if (model.cutHistory) {
-            this.groupNotificationService.sendUpdatedGroup(rotated, [], "eraCut");
-        }
         // A rotation stales every room granted to the group as a removal does, and a live publication never writes
         // again: the event makes its publisher re-key.
         this.streamNotificationService.sendStreamRoomsUpdatedForGroup(rotated.id, solution);
@@ -689,8 +667,8 @@ export class GroupService extends BaseContainerService {
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, reseat ? "context/groupReseat" : "context/groupRemoveMembers", ["groupId=" + model.id]);
             if (model.abandonHistory) {
-                // It cuts history as a rotation with `cutHistory` would, so it needs that ACL entry too.
-                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutHistory", ["groupId=" + model.id]);
+                // It cuts the era, so it needs that ACL entry too, as in 3.1.0.
+                this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
             }
             if (model.userIds.includes(user.userId)) {
                 // The remover mints the new grant key, so the member supposed to lose the epoch would be the one
@@ -706,13 +684,10 @@ export class GroupService extends BaseContainerService {
                 ...(!reseat && model.userIds.some(u => oldGroup.managers.includes(u)) ? ["changeRoles" as const] : []));
             if (model.abandonHistory) {
                 // Abandoning history deletes it for everybody, so a removal alone does not entitle it: it takes
-                // `trimHistory`, or `changeRules`, whose holder could grant itself `trimHistory` anyway. That keeps
-                // the recovery path of a key-less remover open under a "nobody" trimHistory (the default) without
-                // handing it to whoever may merely remove; a key-less remover with neither leaves the removal to a
-                // member who still holds the key. Both metadata planes end up below the new floor, so, as for a
-                // rotation that cuts, the remover also has to be one who may rewrite each.
-                this.policy.requireAny(user, usedContext, oldGroup, "trimHistory", "changeRules");
-                this.policy.require(user, usedContext, oldGroup, "editPublicMeta", "editPrivateMeta");
+                // `changeRules`, whose holder could grant itself anything the rules gate anyway; a key-less remover
+                // without it leaves the removal to a member who still holds the key. Both metadata planes end up
+                // below the new floor, so the remover also has to be one who may rewrite each.
+                this.policy.require(user, usedContext, oldGroup, "changeRules", "editPublicMeta", "editPrivateMeta");
             }
             GroupService.assertKeepsAManager(oldGroup.managers, managers);
             if (model.abandonHistory) {
@@ -824,56 +799,6 @@ export class GroupService extends BaseContainerService {
             }
             return oldGroup;
         }));
-    }
-    
-    /**
-     * `group/cutHistory` of the management API: raises the era floor without rotating, since the server holds no
-     * keys. The floor goes to `beforeEpoch` (default: the current epoch), clamped down to the lowest epoch still
-     * needed — each metadata plane's and every space's that holds the group — and never lowered. Rungs pointing
-     * below it and the epoch rows below it are deleted, not hidden: this is the retention guarantee.
-     *
-     * Server authority, like every management call: no group rule gates it. Returns the effective floor and, when
-     * something held the floor below the requested one, what (`metadata`, or a `space` and its id).
-     */
-    async cutHistory(executor: Executor, groupId: types.group.GroupId, beforeEpoch?: number) {
-        const {group, cut, clamped} = await this.repositoryFactory.withTransaction(async session => {
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const oldGroup = await groupRepository.get(groupId);
-            if (!oldGroup) {
-                throw new AppException("GROUP_DOES_NOT_EXIST");
-            }
-            await this.cloudAccessValidator.checkIfCanExecuteInContext(executor, oldGroup.contextId, () => {
-                throw new AppException("ACCESS_DENIED");
-            });
-            const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
-            const spaces = await this.repositoryFactory.createSpaceRepository(session).getByGroup(groupId);
-            let floor = Math.min(beforeEpoch ?? oldGroup.keyVersion, oldGroup.keyVersion);
-            let clamp: {clampedBy: "metadata"|"space", spaceId?: types.space.SpaceId}|undefined;
-            for (const epoch of [heads.publicMeta, heads.privateMeta]) {
-                if (epoch !== null && epoch < floor) {
-                    floor = epoch;
-                    clamp = {clampedBy: "metadata"};
-                }
-            }
-            for (const space of spaces) {
-                for (const g of space.groups.filter(entry => entry.groupId === groupId && entry.groupKeyVersion < floor)) {
-                    floor = g.groupKeyVersion;
-                    clamp = {clampedBy: "space", spaceId: space.id};
-                }
-            }
-            if (floor <= oldGroup.eraFloor) {
-                return {group: oldGroup, cut: false, clamped: clamp};
-            }
-            const result = await groupRepository.cutHistory(oldGroup, floor);
-            if (!result) {
-                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(groupId))!));
-            }
-            return {group: result, cut: true, clamped: clamp};
-        });
-        if (cut) {
-            this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
-        }
-        return {eraFloor: group.eraFloor, ...clamped};
     }
     
     /**
@@ -1499,14 +1424,14 @@ type StatementExpectation = Omit<ExpectedStatement, "treeVersion"|"rosterHash"|"
 /**
  * A group's rules are its own, signed ones (`types.cloud.GroupRules`, `CommitStatement.rulesHash`), never the
  * context's. The context keeps only a veto: it can deny what a rule allows, never allow what it denies. Its
- * `update` narrows `addMembers`, `removeMembers`, `replaceMemberKeys`, `trimHistory` and both metadata rules,
+ * `update` narrows `addMembers`, `removeMembers`, `replaceMemberKeys` and both metadata rules,
  * `updatePolicy` narrows `changeRoles`, `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete`
  * deletion. Reading and listing stay the context's (`get`, `listMy`, `listAll`), as for every container.
  */
 class GroupPolicy extends BasePolicy<Omit<db.group.Group, "policy">, never> {
     
     private static readonly VETO = {
-        addMembers: "update", removeMembers: "update", replaceMemberKeys: "update", trimHistory: "update",
+        addMembers: "update", removeMembers: "update", replaceMemberKeys: "update",
         editPublicMeta: "update", editPrivateMeta: "update",
         changeRoles: "updatePolicy", changeRules: "updatePolicy", changeVisibility: "updatePolicy",
     } as const satisfies Record<keyof types.cloud.GroupRules, "update"|"updatePolicy">;
@@ -1521,13 +1446,6 @@ class GroupPolicy extends BasePolicy<Omit<db.group.Group, "policy">, never> {
         const who = group.policy?.[rule];
         const ruled = who === "members" ? isManager || group.users.includes(user.userId) : who === "managers" && isManager;
         return ruled && this.contextAllows(user, context, group, GroupPolicy.VETO[rule]);
-    }
-    
-    /** Throws unless `allows` at least one of `rules`. */
-    requireAny(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, ...rules: (keyof types.cloud.GroupRules)[]) {
-        if (!rules.some(rule => this.allows(user, context, group, rule))) {
-            throw new AppException("ACCESS_DENIED", `the group's ${rules.join(" or ")} rule is not met`);
-        }
     }
     
     /** Throws unless `allows` every one of `rules`. */

@@ -15,10 +15,6 @@ import * as types from "../../../types";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceRepository } from "../../../service/cloud/SpaceRepository";
 import { AppException } from "../../../api/AppException";
-import * as elliptic from "elliptic";
-import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
-import { signSpaceStatement } from "../../testUtils/SpaceFixtures";
 
 const g1 = "g1" as types.group.GroupId;
 const g2 = "g2" as types.group.GroupId;
@@ -121,52 +117,4 @@ it("refuses a statement dated off the bridge's clock, as a group statement is", 
     assert.match(check(Date.now() + 60 * 60 * 1000), /date/);
     // On time it gets past the date, to the next check.
     assert.match(check(Date.now()), /key version/);
-});
-
-describe("a statement signed via a group under a pin below the group's floor", () => {
-    const key = (hex: string) => new elliptic.ec("secp256k1").keyFromPrivate(hex.repeat(32), "hex");
-    const signer = key("11");
-    const oldGroupKey = key("22");
-    const newGroupKey = key("33");
-    const sales = "sales" as types.group.GroupId;
-    const signerPub = ECUtils.publicToBase58DER(signer) as types.cloud.UserPubKey;
-    const groupAt = (groupKeyVersion: number, k: elliptic.ec.KeyPair) =>
-        ({groupId: sales, role: "manager" as const, groupKeyVersion, groupPubKey: ECUtils.publicToBase58DER(k) as unknown as types.cloud.GroupPubKey});
-    const spaceId = "ab".repeat(32) as types.space.SpaceId;
-    const contextId = "ctx" as types.context.ContextId;
-    const created = signSpaceStatement({
-        spaceId, contextId, seq: 1, prevDigest: "", op: "create", date: Date.now() - 1000, keyVersion: 1, keyCommit: "ef".repeat(32),
-        groups: [groupAt(3, oldGroupKey)], users: [], signer: alice, signerPubKey: signerPub, via: sales,
-    }, signer, oldGroupKey);
-    const prior = {seq: 1, statement: created, groups: [groupAt(3, oldGroupKey)], users: []};
-    /** A rotation by alice, signed via sales under the pinned (epoch 3) key, moving sales to `toEpoch`. */
-    const check = (toEpoch: number, viaFloor?: number) => {
-        const after = {groups: [groupAt(toEpoch, newGroupKey)], users: []};
-        const st = signSpaceStatement({
-            spaceId, contextId, seq: 2, prevDigest: SpaceStatement.digest(created), op: "rotate", date: Date.now(), keyVersion: 2, keyCommit: "cd".repeat(32),
-            ...after, signer: alice, signerPubKey: signerPub, via: sales,
-        }, signer, oldGroupKey);
-        // The signature under the retired pin verifies like any other; the floor rule is the write's.
-        SpaceService.assertStatement(st, {
-            spaceId, contextId, prior, op: "rotate", keyVersion: 2, after,
-            caller: {userId: alice, pubKey: signerPub, ownGroupIds: [sales]}, managerOnly: false,
-        });
-        if (viaFloor !== undefined) {
-            SpaceService.assertViaPin(sales, prior.groups, after.groups, viaFloor);
-        }
-    };
-    
-    it("is accepted when it moves the group to the floor or above: the re-key after a history cut", () => {
-        check(5, 5);
-        check(6, 5);
-    });
-    
-    it("SECURITY: is refused when it leaves the group below the floor", () => {
-        assert.throws(() => check(4, 5), (e: unknown) => AppException.is(e, "SPACE_STATEMENT_INVALID") && String(e.data).includes("below its floor 5"));
-    });
-    
-    it("is untouched when the pin is at or above the floor", () => {
-        check(4, 3);
-        check(4);
-    });
 });

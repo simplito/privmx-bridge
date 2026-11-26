@@ -533,7 +533,7 @@ export class TypesValidator {
             item: this.builder.optional(this.itemPolicy),
         });
         // A creation's and a policy commit's statement carries the rules it signs (`policyHash`): closed enums, all
-        // nine required, nothing else. A rule that could be left out or misspelt would hash as something no client
+        // eight required, nothing else. A rule that could be left out or misspelt would hash as something no client
         // meant to sign.
         const who = this.builder.createEnum(["managers", "members", "nobody"]);
         const groupRules = this.builder.createObject({
@@ -543,7 +543,6 @@ export class TypesValidator {
             changeRoles: who,
             changeRules: who,
             changeVisibility: who,
-            trimHistory: who,
             editPublicMeta: who,
             editPrivateMeta: who,
         });

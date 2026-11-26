@@ -30,7 +30,8 @@ export type AclFunctionNameX =
     | "context/groupReseat"
     | "context/groupSetRoles"
     | "context/groupSelfUpdate"
-    | "context/groupCutHistory"
+    | "context/groupCutEra"
+    | "context/groupPruneArchive"
     | "context/groupRepairRung"
     | "context/groupDelete"
     | "context/groupSendCustomEvent"
@@ -151,20 +152,6 @@ export type AclFunctionNameX =
 
 export class CloudAclChecker {
     
-    /**
-     * Retired function names an ACL stored by 3.1.0 may still carry, and what they mean now. Both merged into
-     * `context/groupCutHistory`, which is stronger than the old prune: so a DENY on either old name denies the cut
-     * whatever the line order, and only `groupCutEra` grants it on an ALLOW line (`groupPruneArchive` grants nothing).
-     */
-    static readonly RETIRED = {
-        "context/groupCutEra": {now: "context/groupCutHistory", allows: true},
-        "context/groupPruneArchive": {now: "context/groupCutHistory", allows: false},
-    } as const satisfies Record<string, {now: AclFunctionNameX, allows: boolean}>;
-    
-    private static retired(name: string) {
-        return (CloudAclChecker.RETIRED as Record<string, {now: AclFunctionNameX, allows: boolean}>)[name];
-    }
-    
     private functions: types.cloud.AclFunctions;
     private groups = new Map<types.cloud.AclGroupName, types.cloud.AclFunctions>();
     
@@ -197,7 +184,8 @@ export class CloudAclChecker {
             "context/groupReseat": ["groupId"],
             "context/groupSetRoles": ["groupId"],
             "context/groupSelfUpdate": ["groupId"],
-            "context/groupCutHistory": ["groupId"],
+            "context/groupCutEra": ["groupId"],
+            "context/groupPruneArchive": ["groupId"],
             "context/groupRepairRung": ["groupId"],
             "context/groupDelete": ["groupId"],
             "context/groupSendCustomEvent": ["groupId"],
@@ -410,7 +398,7 @@ export class CloudAclChecker {
         if (parts.length < 2) {
             throw new Error(`Expected at least 2 parameters in line ${index + 1}`);
         }
-        const action = CloudAclChecker.retired(parts[1])?.now ?? parts[1];
+        const action = parts[1];
         if (action in this.functions) {
             const actionArgs = this.functions[action as types.cloud.AclFunctionName];
             const args = parts.slice(2);
@@ -450,20 +438,6 @@ export class CloudAclChecker {
         let allow = false;
         for (const aclEntry of acl.split("\n")) {
             const parts = aclEntry.split(" ");
-            const retired = CloudAclChecker.retired(parts[1]);
-            if (retired) {
-                if (retired.now !== fnName || !this.argsMatch(parts.slice(2), args)) {
-                    continue;
-                }
-                if (parts[0] === "DENY") {
-                    // A DENY stored under a retired name wins over any later line.
-                    return false;
-                }
-                if (retired.allows) {
-                    allow = true;
-                }
-                continue;
-            }
             if (this.fnMatch(parts, fnName, args)) {
                 allow = parts[0] === "ALLOW";
             }

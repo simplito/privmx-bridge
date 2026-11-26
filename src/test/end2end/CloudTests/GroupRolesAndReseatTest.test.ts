@@ -148,8 +148,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => this.removeOrReseat(closed, bob, "reseat", [carol]), "ACCESS_DENIED");
         await this.removeOrReseat(closed, bob, "remove", [carol]);
         assert(!(await this.read(closed)).users.includes(carol), "a member should have removed carol");
-        // Claiming the key is lost does not let a plain remover wipe everybody's history: that takes trimHistory
-        // or changeRules too.
+        // Claiming the key is lost does not let a plain remover wipe everybody's history: that takes changeRules
+        // too.
         const editable = await this.createGroup({removeMembers: "members", editPublicMeta: "members", editPrivateMeta: "members"});
         await shouldThrowErrorWithCode2(() => this.removeOrReseat(editable, bob, "remove", [carol], true), "ACCESS_DENIED");
         // replaceMemberKeys alone opens reseating.
