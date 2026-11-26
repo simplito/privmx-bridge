@@ -70,7 +70,7 @@ function group(overrides: Partial<db.group.Group> = {}): db.group.Group {
         publicMetaVersion: 7 as types.group.GroupVersion,
         privateMetaVersion: 11 as types.group.GroupVersion,
         rosterVersion: 5,
-        policy: {},
+        policy: CommitStatement.DEFAULT_RULES,
         keyVersion: EPOCH,
         eraFloor: 1,
         treeCommitSeq: 3,
@@ -448,7 +448,7 @@ it("a policy commit stores the policy and its statement under the commit CAS, an
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
     // entry that commits it would leave the group unreadable. So: neither. The statement chain moves.
     const {repository, state, updates, replacements} = createRepository();
-    const result = await repository.updatePolicyWithStatement(group(), janek, {get: "all"} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    const result = await repository.updatePolicyWithStatement(group(), janek, {...CommitStatement.DEFAULT_RULES, addMembers: "members"}, statement(4, "policy"));
     assert.ok(result);
     assert.strictEqual(replacements.length, 0);
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
@@ -466,7 +466,7 @@ it("a policy commit stores the policy and its statement under the commit CAS, an
 
 it("a policy commit that loses the CAS stores nothing", async () => {
     const {repository, state} = createRepository({casMiss: true});
-    const result = await repository.updatePolicyWithStatement(group(), janek, {} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    const result = await repository.updatePolicyWithStatement(group(), janek, CommitStatement.DEFAULT_RULES, statement(4, "policy"));
     assert.strictEqual(result, null, "the caller turns this into ROTATED_ALREADY");
     hasNoCalls(state.insertTreeCommit);
 });
@@ -533,7 +533,7 @@ it("pruning the archive touches no key material", async () => {
 it("a new tree-backed group keeps its seating and writes the rest beside the document", async () => {
     const {repository, state, inserted} = createRepository();
     const tree = buildTree(SEATING, 1);
-    const created = await repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, data, keyId, {}, tree, statement(1, "create"));
+    const created = await repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, data, keyId, CommitStatement.DEFAULT_RULES, tree, statement(1, "create"));
     assert.strictEqual(created.publicMetaVersion, 1);
     assert.strictEqual(created.privateMetaVersion, 1);
     assert.strictEqual(created.rosterVersion, 1, "all three planes start at 1 and diverge from there");
@@ -574,7 +574,7 @@ it("SECURITY: a deleted group's id cannot be created again", async () => {
     // Ids derive from (contextId, resourceId): a new group under a deleted one's id would pass for it.
     const {repository, inserted} = createRepository({deleted: true});
     await assert.rejects(() => repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol],
-        data, data, data, keyId, {}, buildTree(SEATING, 1), statement(1, "create")), DbDuplicateError);
+        data, data, data, keyId, CommitStatement.DEFAULT_RULES, buildTree(SEATING, 1), statement(1, "create")), DbDuplicateError);
     assert.deepStrictEqual(inserted, []);
 });
 

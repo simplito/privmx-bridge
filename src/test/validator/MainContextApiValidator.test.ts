@@ -33,7 +33,8 @@ function validStatement(op: types.cloud.GroupTreeCommitOp = "add"): types.cloud.
         committerPubKey: userKeys("janek").pub58, committerSeat: 0,
         path: [{nodeIndex: 3, generation: 1, publicKey: groupPubKey as unknown as types.core.EccPubKey, subtreeHash: "ef".repeat(32)}],
         addedUsers: ["nowy" as types.cloud.UserId], addedManagers: [], removed: [],
-        ...(op === "create" || op === "policy" ? {policy: {update: "user"}} : {}),
+        ...(op === "create" || op === "policy" ? {policy: {addMembers: "members", removeMembers: "managers", replaceMemberKeys: "managers", changeRoles: "nobody",
+            changeRules: "managers", changeVisibility: "managers", trimHistory: "managers", editPublicMeta: "managers", editPrivateMeta: "members"}} : {}),
     });
 }
 
@@ -76,6 +77,29 @@ it("groupCreate and groupUpdatePolicy refuse a statement without its policy", ()
     const commit = validStatement("policy");
     delete commit.policy;
     expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+});
+
+it("SECURITY: group rules are closed: a missing, unknown or out-of-range rule is refused", () => {
+    const rules = validStatement("policy").policy!;
+    const partial: Partial<types.cloud.GroupRules> = {...rules};
+    delete partial.trimHistory;
+    const bad: unknown[] = [
+        partial,
+        {...rules, history: "shared"},
+        {...rules, update: "manager"},
+        {...rules, addMembers: "manager"},
+        {...rules, removeMembers: "all"},
+        {...rules, editPublicMeta: "managers,members"},
+        {...rules, manage: "managers"},
+        {...rules, changeRoles: null},
+        {},
+    ];
+    for (const policy of bad) {
+        const commit = {...validStatement("policy"), policy} as types.cloud.GroupTreeCommitStatement;
+        expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit, expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(false);
+        expect(Utils.try(() => validator().validate("groupCreate", {...validGroupCreate(), commit: {...validStatement("create"), policy}})).success).toBe(false);
+    }
+    expect(Utils.try(() => validator().validate("groupUpdatePolicy", {id: groupId, commit: validStatement("policy"), expectedKeyVersion: 1, expectedRosterVersion: 2})).success).toBe(true);
 });
 
 it("ContextApiValidator.groupCreate accepts the data a group of sixteen thousand needs", () => {

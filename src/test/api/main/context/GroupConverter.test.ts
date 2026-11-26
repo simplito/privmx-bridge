@@ -24,6 +24,7 @@ import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
+import { CommitStatement } from "../../../../service/cloud/keytree/CommitStatement";
 
 /** What each read path is allowed to serve: `groupGet` the whole group, `groupList` no state at all. */
 
@@ -55,7 +56,7 @@ const group: db.group.Group = {
     privateMetaVersion: 11 as types.group.GroupVersion,
     rosterVersion: 4,
     keyVersion: 3,
-    policy: {},
+    policy: CommitStatement.DEFAULT_RULES,
     numLeaves: tree.numLeaves,
     leafAssignment: tree.leafAssignment,
     eraFloor: 2,

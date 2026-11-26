@@ -144,8 +144,32 @@ export interface GroupCreateModel {
      * `edges` what those nodes owe plus the grant edge. The creator must be among the members.
      */
     tree: types.cloud.GroupTreeState;
-    /** The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
-     *  the bridge assigns the group's id only once the statement is already signed. */
+    /**
+     * The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
+     * the bridge assigns the group's id only once the statement is already signed.
+     *
+     * `commit.policy` carries the group's rules (`types.cloud.GroupRules`), all nine, each `managers`, `members`
+     * or `nobody`, signed by `policyHash` = `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) ||
+     * lp(removeMembers) || lp(replaceMemberKeys) || lp(changeRoles) || lp(changeRules) || lp(changeVisibility) ||
+     * lp(trimHistory) || lp(editPublicMeta) || lp(editPrivateMeta))`, `lp` a u32 big-endian length prefix. An
+     * operation needs every rule whose responsibility it touches, as the rules stand before it:
+     *
+     * - add a plain member: `addMembers`; add a manager: `addMembers` + `changeRoles`
+     * - remove a plain member: `removeMembers`; a manager: `removeMembers` + `changeRoles`; yourself: refused,
+     *   another member removes you
+     * - reseat (`groupReseat`): `replaceMemberKeys`
+     * - set roles: `changeRoles`; change the rules (`groupUpdatePolicy`): `changeRules`; set visibility:
+     *   `changeVisibility`
+     * - cut the era, prune the archive, `abandonHistory` (on top of the removal's rules): `trimHistory`
+     * - write the public / private metadata: `editPublicMeta` / `editPrivateMeta`
+     * - rotate the key, self-update: any member (rotation rate-limited per member)
+     * - delete: any manager
+     *
+     * A group that has managers keeps at least one (`GROUP_LAST_MANAGER`). The creator holds no privilege. The
+     * context's `policy.group` can only narrow: `update` narrows `addMembers`, `removeMembers`,
+     * `replaceMemberKeys`, `trimHistory` and both metadata rules, `updatePolicy` narrows `changeRoles`,
+     * `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete` deletion.
+     */
     commit: types.cloud.GroupTreeCommitStatement;
 }
 
@@ -235,7 +259,7 @@ export interface GroupRemoveMembersModel {
  * Changes the role of members already in the group, as a signed `roles` commit. No key moves: a role decides what
  * the bridge and the other members accept from somebody, not what they can read.
  *
- * Needs the signed `updatePolicy` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
+ * Needs the `changeRoles` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
  * managers with none.
  */
 export interface GroupSetRolesModel {
@@ -406,15 +430,15 @@ export interface GroupUpdatePrivateMetaModel {
 }
 
 /**
- * Sets the group's container policy, as a signed commit (op `policy`): the rules that govern commits are part of the
- * signed group state, so a policy change is chained, CAS-ed and checked like any other commit.
+ * Sets the group's rules (`types.cloud.GroupRules`), as a signed commit (op `policy`) under the `changeRules` rule: the
+ * rules are part of the signed group state, so a change is chained, CAS-ed and checked like any other commit.
  *
  * Neither metadata plane moves and no epoch advances; the tree and roster stay as they are.
  */
 export interface GroupUpdatePolicyModel {
     id: types.group.GroupId;
-    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new policy in
-     *  `commit.policy` (`{}` resets every rule to the v3 defaults the statements sign). */
+    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new rules in
+     *  `commit.policy`, all nine. */
     commit: types.cloud.GroupTreeCommitStatement;
     /** Current epoch (CAS). */
     expectedKeyVersion: number;
@@ -551,7 +575,8 @@ export interface GroupPublicInfo {
     rosterVersion: number;
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`). */
+    policy: types.cloud.GroupRules;
     visibleTo: GroupVisibility;
     /** The latest commit statement. Signed; the client checks it. */
     treeCommit: types.cloud.GroupTreeCommitStatement;
@@ -599,7 +624,8 @@ export interface GroupSummary {
     rosterVersion: number;
     keyVersion: number;
     visibleTo: GroupVisibility;
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`). */
+    policy: types.cloud.GroupRules;
 }
 
 export interface GroupDataEntry {
@@ -666,7 +692,8 @@ export interface GroupInfo {
     keyVersion: number;
     visibleTo: GroupVisibility;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`). */
+    policy: types.cloud.GroupRules;
     history: GroupHistoryEntryInfo[];
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
     /** Layout of the tree. 2 for every group the current API creates; anything else is a group from before the
@@ -923,7 +950,7 @@ export interface IContextApi {
      * Re-admits members whose long-term key was replaced: a removal in every respect but one, its subjects keep
      * their seats and their place on the roster. The epoch advances, so whoever still holds a subject's old key
      * reads nothing written afterwards. Takes what `groupRemoveMembers` takes; the statement's op is `reseat` and
-     * its `removed` names the subjects. Needs the signed `removeMembers` rule.
+     * its `removed` names the subjects. Needs the `replaceMemberKeys` rule.
      * @param model group's id, the members to reseat, the new grant key, the transition, the statement and the rungs
      * @returns "OK"
      */

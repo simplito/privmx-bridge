@@ -17,6 +17,7 @@ import { TypesValidator } from "../../api/TypesValidator";
 import { ECUtils } from "../../utils/crypto/ECUtils";
 import { signStatement, userKeys } from "../testUtils/TreeFixtures";
 import * as types from "../../types";
+import { CommitStatement } from "../../service/cloud/keytree/CommitStatement";
 
 /**
  * The limits that decide how large a group may be. They all derive from `MAX_GROUP_MEMBERS`; these tests are
@@ -61,7 +62,7 @@ function createModel(overrides: Record<string, unknown> = {}) {
         commit: signStatement({
             seq: 1, prevDigest: "", op: "create", groupId: RESOURCE_ID, treeVersion: 2, date: 0, keyVersion: 1, groupPubKey: PUB_KEY as unknown as types.cloud.GroupPubKey,
             rosterVersion: 1, rosterHash: "00".repeat(32), treeHash: "00".repeat(32), policyHash: "00".repeat(32), committer: "manager" as types.cloud.UserId,
-            committerPubKey: userKeys("manager").pub58, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], policy: {},
+            committerPubKey: userKeys("manager").pub58, committerSeat: 0, path: [], addedUsers: [], addedManagers: [], removed: [], policy: CommitStatement.DEFAULT_RULES,
         }),
         ...overrides,
     };

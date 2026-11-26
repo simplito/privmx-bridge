@@ -180,12 +180,12 @@ export class GroupKeyTreeTests extends BaseTestSet {
         await this.createTreeBackedGroup();
         const groupId = this.requireGroupId();
         const served = (await this.apis.contextApi.groupGet({groupId, scope: "plan"})).group as unknown as ServedGroup;
-        const request = policyCommitAgainst(served, testData.userId, {update: "user", get: "all"});
+        const request = policyCommitAgainst(served, testData.userId, {...CommitStatement.DEFAULT_RULES, addMembers: "members"});
         assert(await this.apis.contextApi.groupUpdatePolicy(request) === "OK", "groupUpdatePolicy did not return OK");
         const {group} = await this.apis.contextApi.groupGet({groupId});
         assert(group.treeCommit?.seq === 2 && group.treeCommit.op === "policy", "the policy statement is the latest");
-        assert.deepStrictEqual(group.policy, {update: "user", get: "all"}, "the stored policy is the one it carries");
-        assert(group.treeCommit.policyHash === CommitStatement.policyHash(group.policy, group.creator).toString("hex"), "and signs");
+        assert.deepStrictEqual(group.policy, {...CommitStatement.DEFAULT_RULES, addMembers: "members"}, "the stored rules are the ones it carries");
+        assert(group.treeCommit.policyHash === CommitStatement.rulesHash(group.policy, group.creator).toString("hex"), "and signs");
         assert(group.keyVersion === 1 && group.rosterVersion === 1, "no epoch and no roster moved");
         const {commits} = await this.apis.contextApi.groupGetTreeCommits({groupId, fromSeq: 0});
         assert.deepStrictEqual(commits.map(c => [c.seq, c.op]), [[1, "create"], [2, "policy"]]);

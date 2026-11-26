@@ -249,7 +249,7 @@ export class GroupRepository {
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.group.GroupData, publicMeta: types.group.GroupData, privateMeta: types.group.GroupData,
-        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
+        keyId: types.core.KeyId, policy: types.cloud.GroupRules,
         tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement, groupKey?: types.cloud.GroupKeyEntry) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
@@ -588,7 +588,7 @@ export class GroupRepository {
      * @returns null on a CAS miss, in which case nothing has been written
      */
     async updatePolicyWithStatement(oldGroup: db.group.Group, modifier: types.cloud.UserId,
-        policy: types.cloud.ContainerPolicy, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
+        policy: types.cloud.GroupRules, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
         const changes: Partial<db.group.Group> = {
             policy: policy,
             treeCommitSeq: statement.seq,

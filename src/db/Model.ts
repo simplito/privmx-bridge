@@ -275,7 +275,8 @@ export namespace group {
         /** Who may read the group's identity key, roster and statements beside its members: nobody (absent or
          *  "members"), or every user of the context ("context"). The bridge's own setting; no statement signs it. */
         visibleTo?: "members"|"context";
-        policy?: types.cloud.ContainerPolicy;
+        /** The group's signed rules, all nine. */
+        policy: types.cloud.GroupRules;
         /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
          *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
          *  `groupPublicMetaEntry`. */

@@ -523,8 +523,6 @@ export class TypesValidator {
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
             rotateKeys: policyEntry,
-            addMembers: policyEntry,
-            removeMembers: policyEntry,
             creatorHasToBeManager: policyEntry,
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
@@ -534,14 +532,27 @@ export class TypesValidator {
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
         });
-        // A creation's and a policy commit's statement carries the policy it signs (`policyHash`); defined here
-        // because the policy validators are.
-        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
-            policy: this.builder.optional(this.containerPolicy),
+        // A creation's and a policy commit's statement carries the rules it signs (`policyHash`): closed enums, all
+        // nine required, nothing else. A rule that could be left out or misspelt would hash as something no client
+        // meant to sign.
+        const who = this.builder.createEnum(["managers", "members", "nobody"]);
+        const groupRules = this.builder.createObject({
+            addMembers: who,
+            removeMembers: who,
+            replaceMemberKeys: who,
+            changeRoles: who,
+            changeRules: who,
+            changeVisibility: who,
+            trimHistory: who,
+            editPublicMeta: who,
+            editPrivateMeta: who,
         });
-        // Required where the op is `create` or `policy`, so the service never hashes a policy nobody sent.
+        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.builder.optional(groupRules),
+        });
+        // Required where the op is `create` or `policy`, so the service never hashes rules nobody sent.
         this.groupTreeCommitStatementWithPolicy = this.builder.addFields(this.groupTreeCommitStatement, {
-            policy: this.containerPolicy,
+            policy: groupRules,
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),

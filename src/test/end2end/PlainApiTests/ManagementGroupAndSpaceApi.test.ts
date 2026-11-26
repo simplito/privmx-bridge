@@ -17,6 +17,7 @@ import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { buildTree, creationStatement, registerUserKey, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 import { signSpaceStatement } from "../../testUtils/SpaceFixtures";
 import { SpaceService } from "../../../service/cloud/SpaceService";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * What an application's backend reads of groups and spaces: enough to decide whether a write may be stored
@@ -38,7 +39,7 @@ export class ManagementGroupAndSpaceApiTests extends BaseTestSet {
     
     @Test()
     async shouldServeWhatABackendNeedsToDecideWhetherToStoreAWrite() {
-        const groupId = await this.createGroup({addMembers: "user" as types.cloud.PolicyEntry});
+        const groupId = await this.createGroup({addMembers: "members"});
         const spaceId = await this.createSpace(groupId);
         
         // The check a backend makes before it stores an envelope: is the author in, and is the epoch current.
@@ -54,7 +55,7 @@ export class ManagementGroupAndSpaceApiTests extends BaseTestSet {
         assert(group.contextId === testData.contextId && group.creator === me, "identity mismatch");
         assert(group.keyVersion === 1 && group.rosterVersion === 1 && group.lastCommitSeq === 1, "counters of a new group");
         assert(JSON.stringify(group.members) === JSON.stringify([{userId: me, pubKey: myPub, role: "manager"}, {userId: bob, pubKey: bobPub, role: "user"}]), `members mismatch: ${JSON.stringify(group.members)}`);
-        assert(JSON.stringify(group.rules) === JSON.stringify({addMembers: "user", removeMembers: "manager", updateMeta: "manager"}), `rules mismatch: ${JSON.stringify(group.rules)}`);
+        assert(JSON.stringify(group.rules) === JSON.stringify({...CommitStatement.DEFAULT_RULES, addMembers: "members"}), `rules mismatch: ${JSON.stringify(group.rules)}`);
         assert(group.visibleTo === "members" && group.publicMeta === "PUB", "visibility or public metadata mismatch");
         for (const field of ["privateMeta", "treeNodes", "treeEdges", "groupKeys", "data", "history", "policy"]) {
             assert(!(field in group), `group/getGroup must not serve '${field}'`);
@@ -128,7 +129,8 @@ export class ManagementGroupAndSpaceApiTests extends BaseTestSet {
         return res.spaceId;
     }
     
-    private async createGroup(policy: types.cloud.ContainerPolicy = {}, withBob = true): Promise<types.group.GroupId> {
+    private async createGroup(changes: Partial<types.cloud.GroupRules> = {}, withBob = true): Promise<types.group.GroupId> {
+        const policy = {...CommitStatement.DEFAULT_RULES, ...changes};
         this.helpers.authorizePlainApi();
         if (!this.bobAdded) {
             const res = await this.plainApis.contextApi.addUserToContext({contextId: testData.contextId, userId: bob, userPubKey: bobPub, acl: "ALLOW ALL" as types.cloud.ContextAcl});

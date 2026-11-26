@@ -24,6 +24,7 @@ import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { AppException } from "../../../api/AppException";
 import { DbDuplicateError } from "../../../error/DbDuplicateError";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * Moving the state out of the document is only worth anything if a change costs writes proportional to what
@@ -146,6 +147,7 @@ function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
         publicMetaVersion: 1 as types.group.GroupVersion,
         privateMetaVersion: 1 as types.group.GroupVersion,
         rosterVersion: 1,
+        policy: CommitStatement.DEFAULT_RULES,
         keyVersion: 1,
         eraFloor: 1,
         numLeaves: tree.numLeaves,

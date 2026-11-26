@@ -17,7 +17,6 @@ import { GroupService, ManagementGroupView } from "../../../service/cloud/GroupS
 import { AuthorizationDetector } from "../../../service/auth/AuthorizationDetector";
 import { AuthorizationHolder } from "../../../service/auth/AuthorizationHolder";
 import { AppException } from "../../AppException";
-import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import * as types from "../../../types";
 
 /**
@@ -52,11 +51,7 @@ export class ManagementGroupApi extends ManagementBaseApi implements managementG
                 ...group.managers.map(userId => member(userId, "manager")),
                 ...group.users.filter(userId => !group.managers.includes(userId)).map(userId => member(userId, "user")),
             ],
-            rules: {
-                addMembers: CommitStatement.resolveMemberRule(group.policy, "addMembers"),
-                removeMembers: CommitStatement.resolveMemberRule(group.policy, "removeMembers"),
-                updateMeta: CommitStatement.resolve(group.policy, "update"),
-            },
+            rules: group.policy,
             visibleTo: group.visibleTo ?? "members",
             publicMeta: view.publicMeta,
         };

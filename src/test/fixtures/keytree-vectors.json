@@ -125,115 +125,6 @@
       "expectedHex": "706d782d747265652d636f6d6d697400000000056772702d3100000002000000000000000a0000002055555555555555555555555555555555555555555555555555555555555555550800000199c82cc00300000000000000050000000347504b000000000000000bd42481d52a260799898e5b45a151ab0cfc6e8ebca9ecc8c87b3f87a7c6783a9db4db5638b91886d6a97283612ab5a836890e362e279f43dc77f8e059dc17598dd444fab7a2429a6663d10e8ec022569d1fcbd498d5fa3089a017f320a0dcde4b00000005616c6963650000000341504b0000000000000001000000030000000200000003706b33111111111111111111111111111111111111111111111111111111111111111100000000000000000000000100000003626f62"
     }
   ],
-  "policyHash": [
-    {
-      "policy": {},
-      "creator": "alice",
-      "expectedHex": "d444fab7a2429a6663d10e8ec022569d1fcbd498d5fa3089a017f320a0dcde4b"
-    },
-    {
-      "policy": {
-        "update": "inherit",
-        "rotateKeys": "inherit",
-        "updatePolicy": "inherit",
-        "ownerCanBeRemovedFromManagers": "inherit"
-      },
-      "creator": "alice",
-      "expectedHex": "d444fab7a2429a6663d10e8ec022569d1fcbd498d5fa3089a017f320a0dcde4b"
-    },
-    {
-      "policy": {
-        "update": "default",
-        "rotateKeys": "default",
-        "updatePolicy": "default",
-        "ownerCanBeRemovedFromManagers": "default"
-      },
-      "creator": "alice",
-      "expectedHex": "d444fab7a2429a6663d10e8ec022569d1fcbd498d5fa3089a017f320a0dcde4b"
-    },
-    {
-      "policy": {
-        "update": "user",
-        "rotateKeys": "manager,owner",
-        "updatePolicy": "owner",
-        "ownerCanBeRemovedFromManagers": "no"
-      },
-      "creator": "alice",
-      "expectedHex": "271dde78b4cce7b4ebe3738ebefb9d7ad379a35e3b49b1191277b1363de6f296"
-    },
-    {
-      "policy": {
-        "update": "user",
-        "rotateKeys": "manager,owner",
-        "updatePolicy": "owner",
-        "ownerCanBeRemovedFromManagers": "no",
-        "get": "all",
-        "delete": "none",
-        "sendCustomNotification": "user",
-        "item": {
-          "get": "user"
-        }
-      },
-      "creator": "alice",
-      "expectedHex": "271dde78b4cce7b4ebe3738ebefb9d7ad379a35e3b49b1191277b1363de6f296"
-    },
-    {
-      "policy": {
-        "update": "user",
-        "rotateKeys": "manager,owner",
-        "updatePolicy": "owner",
-        "ownerCanBeRemovedFromManagers": "no"
-      },
-      "creator": "bob",
-      "expectedHex": "1437efb08ac5780ea78d15ae2daa97b9f5b0f0bfdd8b5a3a6803c5be9023eac9"
-    },
-    {
-      "policy": {
-        "update": "user",
-        "rotateKeys": "manager,owner",
-        "updatePolicy": "owner",
-        "ownerCanBeRemovedFromManagers": "no",
-        "addMembers": "inherit",
-        "removeMembers": "default"
-      },
-      "creator": "alice",
-      "expectedHex": "271dde78b4cce7b4ebe3738ebefb9d7ad379a35e3b49b1191277b1363de6f296"
-    },
-    {
-      "policy": {
-        "addMembers": "user"
-      },
-      "creator": "alice",
-      "expectedHex": "5204f50886c53d34836980f3547dd89cd6e044976b9728e6791883af0098a8b0"
-    },
-    {
-      "policy": {
-        "addMembers": "user",
-        "removeMembers": "manager,owner"
-      },
-      "creator": "alice",
-      "expectedHex": "1a1ece539674022c888fea5ddc07301e0238e310ae661aee1a4dcbb7785eb039"
-    },
-    {
-      "policy": {
-        "addMembers": "manager,owner",
-        "removeMembers": "user"
-      },
-      "creator": "alice",
-      "expectedHex": "5b8c69498b17261463fa9bef9f049e177be6304a494a547ebdb5185438bb0f37"
-    },
-    {
-      "policy": {
-        "update": "user",
-        "rotateKeys": "manager,owner",
-        "updatePolicy": "owner",
-        "ownerCanBeRemovedFromManagers": "no",
-        "removeMembers": "none"
-      },
-      "creator": "alice",
-      "expectedHex": "9cf6a23ca29a5f2635e5dd2e990a9cee6c7e48c316fc77b3277f31a72e4dcb85"
-    }
-  ],
   "spaceStatement": [
     {
       "statement": {
@@ -402,6 +293,83 @@
       "keyVersion": 1,
       "keyHex": "2222222222222222222222222222222222222222222222222222222222222222",
       "expectedHex": "43523ed32d941d35c27bbff748f54c42611972ca8d2e8abf201b7a4ddc6dad2a"
+    }
+  ],
+  "rulesHash": [
+    {
+      "rules": {
+        "addMembers": "managers",
+        "removeMembers": "managers",
+        "replaceMemberKeys": "managers",
+        "changeRoles": "managers",
+        "changeRules": "managers",
+        "changeVisibility": "managers",
+        "trimHistory": "managers",
+        "editPublicMeta": "managers",
+        "editPrivateMeta": "managers"
+      },
+      "creator": "alice",
+      "expectedHex": "293d66587c59ddae7286ffcdeaa73afea8698e3e1f26b13c3e5dafa212372e77"
+    },
+    {
+      "rules": {
+        "addMembers": "managers",
+        "removeMembers": "managers",
+        "replaceMemberKeys": "managers",
+        "changeRoles": "managers",
+        "changeRules": "managers",
+        "changeVisibility": "managers",
+        "trimHistory": "managers",
+        "editPublicMeta": "managers",
+        "editPrivateMeta": "managers"
+      },
+      "creator": "bob",
+      "expectedHex": "83704acfe39c99a755517ae4a56360a3c0f8dc130c52fe56cf553e5b4a43e477"
+    },
+    {
+      "rules": {
+        "addMembers": "members",
+        "removeMembers": "nobody",
+        "replaceMemberKeys": "members",
+        "changeRoles": "managers",
+        "changeRules": "managers",
+        "changeVisibility": "managers",
+        "trimHistory": "nobody",
+        "editPublicMeta": "members",
+        "editPrivateMeta": "managers"
+      },
+      "creator": "alice",
+      "expectedHex": "757d92df6e2bef81c90c3aaccddc69642b36a66a0ed15ba807b2ccff639fed9a"
+    },
+    {
+      "rules": {
+        "addMembers": "members",
+        "removeMembers": "members",
+        "replaceMemberKeys": "members",
+        "changeRoles": "members",
+        "changeRules": "members",
+        "changeVisibility": "members",
+        "trimHistory": "members",
+        "editPublicMeta": "members",
+        "editPrivateMeta": "members"
+      },
+      "creator": "alice",
+      "expectedHex": "833ecdd293832d6ac5daa240242a15b72eb9e9cc8102c2d5de59e86641217586"
+    },
+    {
+      "rules": {
+        "addMembers": "managers",
+        "removeMembers": "managers",
+        "replaceMemberKeys": "managers",
+        "changeRoles": "nobody",
+        "changeRules": "nobody",
+        "changeVisibility": "members",
+        "trimHistory": "managers",
+        "editPublicMeta": "managers",
+        "editPrivateMeta": "members"
+      },
+      "creator": "alice",
+      "expectedHex": "f6f11160baa6217326dbd3e1c8fb2c3a9bbc59253df0ebb60fa7e13eabc42db8"
     }
   ]
 }

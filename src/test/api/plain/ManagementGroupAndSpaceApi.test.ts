@@ -16,6 +16,7 @@ import * as db from "../../../db/Model";
 import { ApiMethod } from "../../../api/Decorators";
 import { ManagementGroupApi } from "../../../api/plain/group/ManagementGroupApi";
 import { ManagementSpaceApi } from "../../../api/plain/space/ManagementSpaceApi";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 const alice = "alice" as types.cloud.UserId;
 const bob = "bob" as types.cloud.UserId;
@@ -27,14 +28,17 @@ it("the backend's group and space APIs read and delete, and change nothing a mem
     assert.deepStrictEqual(methodsOf(ManagementSpaceApi), ["deleteSpace", "getSpace", "listSpaces"]);
 });
 
-it("serves a group's members with roles and keys, its resolved rules, and no private field", () => {
+/** Rules other than the defaults, served as stored. */
+const RULES: types.cloud.GroupRules = {...CommitStatement.DEFAULT_RULES, addMembers: "members", trimHistory: "nobody"};
+
+it("serves a group's members with roles and keys, its signed rules, and no private field", () => {
     const group = {
         id: "g" as types.group.GroupId, contextId: "c" as types.context.ContextId, creator: alice,
         createDate: 1 as types.core.Timestamp, lastModificationDate: 2 as types.core.Timestamp,
         // `gone` left the context and has no key there.
         users: [bob, gone], managers: [alice],
         keyVersion: 4, rosterVersion: 6, treeCommitSeq: 9,
-        policy: {update: "user", removeMembers: "owner"} as types.cloud.ContainerPolicy,
+        policy: RULES,
         leafAssignment: [alice, bob, gone], numLeaves: 4, keyId: "k" as types.core.KeyId,
     } as unknown as db.group.Group;
     const converted = ManagementGroupApi.convertGroup({group, pubKeys: new Map([[alice, "A" as types.cloud.UserPubKey], [bob, "B" as types.cloud.UserPubKey]]), publicMeta: "meta"});
@@ -42,8 +46,7 @@ it("serves a group's members with roles and keys, its resolved rules, and no pri
         id: "g", contextId: "c", creator: alice, createDate: 1, lastModificationDate: 2,
         keyVersion: 4, rosterVersion: 6, lastCommitSeq: 9,
         members: [{userId: alice, pubKey: "A", role: "manager"}, {userId: bob, pubKey: "B", role: "user"}, {userId: gone, pubKey: null, role: "user"}],
-        // An unset roster rule follows `update`; a set one stands.
-        rules: {addMembers: "user", removeMembers: "owner", updateMeta: "user"},
+        rules: RULES,
         visibleTo: "members",
         publicMeta: "meta",
     });

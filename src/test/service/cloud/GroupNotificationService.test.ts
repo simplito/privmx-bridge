@@ -24,6 +24,7 @@ import { createMock, hasNoCalls, mock } from "../../testUtils/TestUtils";
 import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { buildTree } from "../../testUtils/TreeFixtures";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * A group event says what changed, not what the group now looks like.
@@ -62,6 +63,7 @@ function group(memberCount = 3): db.group.Group {
         publicMetaVersion: 7 as types.group.GroupVersion,
         privateMetaVersion: 11 as types.group.GroupVersion,
         rosterVersion: 9,
+        policy: CommitStatement.DEFAULT_RULES,
         keyVersion: 4,
         numLeaves: 4,
         leafAssignment: [janek, alice],

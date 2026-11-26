@@ -245,7 +245,7 @@ export interface GroupTreeCommitStatement {
     rosterHash: string;
     /** Hex SHA-256 of the tree after the commit. */
     treeHash: string;
-    /** Hex `CommitStatement.policyHash` of the group's policy after the commit: the four commit rules and the creator. */
+    /** Hex `CommitStatement.rulesHash` of the group's rules after the commit, and the creator. */
     policyHash: string;
     committer: UserId;
     /** The committer's context public key when it signed — what the signature verifies against. */
@@ -256,9 +256,9 @@ export interface GroupTreeCommitStatement {
     addedUsers: UserId[];
     addedManagers: UserId[];
     removed: UserId[];
-    /** The group's whole policy after the commit, present exactly on `create` and `policy`. Not signed itself: bound
-     *  by `policyHash`, which covers the rules that govern commits. */
-    policy?: ContainerPolicy;
+    /** The group's rules after the commit, present exactly on `create` and `policy`. Not signed itself: bound by
+     *  `policyHash`, which covers every one of them. */
+    policy?: GroupRules;
     /** Base64 compact ECDSA (65 bytes) over SHA-256 of the signed bytes. */
     signature: types.core.EccSignature;
 }
@@ -379,10 +379,6 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     delete?: PolicyEntry;
     /** Determines who can rotate container keys */
     rotateKeys?: PolicyEntry;
-    /** Groups only: who can add members. Absent, `inherit` or `default`: whoever `update` allows. */
-    addMembers?: PolicyEntry;
-    /** Groups only: who can remove or reseat members. Absent, `inherit` or `default`: whoever `update` allows. */
-    removeMembers?: PolicyEntry;
     /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
     /** Determines whether the creator has to be added to the list of managers */
@@ -413,6 +409,40 @@ export interface ContextInnerPolicy {
 }
 
 /** @doctype string */
+/** Who of a group's members a rule lets act. */
+export type GroupRuleWho = "managers"|"members"|"nobody";
+
+/**
+ * A group's own rules, signed into every commit statement (`CommitStatement.rulesHash`), one responsibility
+ * each. All nine are always present: a client fills the default (`managers`) for any it does not set before
+ * signing, and anything partial, unknown or outside these values is refused. An operation needs every rule whose
+ * responsibility it touches, checked against the rules as they stand before it.
+ *
+ * Fixed besides them: any member re-keys its own path (`groupSelfUpdate`) and rotates the group key (rate-limited
+ * per member); only a manager deletes the group; nobody removes themselves; a group that has managers keeps at
+ * least one; the creator holds no privilege.
+ */
+export interface GroupRules {
+    /** Who may add someone to the group (a manager also needs `changeRoles`) */
+    addMembers: GroupRuleWho;
+    /** Who may remove someone from the group (a manager also needs `changeRoles`) */
+    removeMembers: GroupRuleWho;
+    /** Who may replace a member's key (`groupReseat`) */
+    replaceMemberKeys: GroupRuleWho;
+    /** Who may grant or revoke the manager role */
+    changeRoles: GroupRuleWho;
+    /** Who may change these rules */
+    changeRules: GroupRuleWho;
+    /** Who may change who beside the members sees the group (`groupSetVisibility`) */
+    changeVisibility: GroupRuleWho;
+    /** Who may cut the era, prune the archive, or remove with `abandonHistory` */
+    trimHistory: GroupRuleWho;
+    /** Who may rewrite the public metadata */
+    editPublicMeta: GroupRuleWho;
+    /** Who may rewrite the private metadata */
+    editPrivateMeta: GroupRuleWho;
+}
+
 export type PolicyEntry = "inherit"|"yes"|"no"|"default"|"none"|"all"|"user"|"owner"|"manager"|"itemOwner"|"itemOwner&user"|"itemOwner&user,manager"|"owner&user"|"manager&owner"|"itemOwner,manager"|"itemOwner,owner"|"itemOwner,manager,owner"|"manager,owner"|(string&{__policyEntry: never});
 export type PolicyBooleanEntry = "inherit"|"default"|"yes"|"no";
 
