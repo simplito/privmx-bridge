@@ -233,7 +233,7 @@ export class GroupApiTests extends BaseTestSet {
         const first = await this.policyCommit(groupId, {...CommitStatement.DEFAULT_RULES, addMembers: "members"});
         assert(await this.apis.contextApi.groupUpdatePolicy(first) === "OK", "groupUpdatePolicy did not return OK");
         const after = (await this.apis.contextApi.groupGet({groupId})).group;
-        assert(after.policy.addMembers === "members", `policy did not land, got ${JSON.stringify(after.policy)}`);
+        assert(after.policy?.addMembers === "members", `policy did not land, got ${JSON.stringify(after.policy)}`);
         assert(after.publicMetaVersion === before.publicMetaVersion, "a policy write moved the public counter");
         assert(after.privateMetaVersion === before.privateMetaVersion, "a policy write moved the private counter");
         assert(after.rosterVersion === before.rosterVersion, "a policy write moved the roster version");
@@ -245,7 +245,7 @@ export class GroupApiTests extends BaseTestSet {
         assert(await this.apis.contextApi.groupUpdatePolicy(await this.policyCommit(groupId, {...CommitStatement.DEFAULT_RULES, editPublicMeta: "members"})) === "OK",
             "a second policy commit planned on the new head must land");
         const twice = (await this.apis.contextApi.groupGet({groupId})).group;
-        assert(twice.policy.editPublicMeta === "members" && twice.policy.addMembers === "managers", "the later policy write must win");
+        assert(twice.policy?.editPublicMeta === "members" && twice.policy?.addMembers === "managers", "the later policy write must win");
         assert(twice.publicMetaVersion === before.publicMetaVersion, "still no counter moved");
     }
     

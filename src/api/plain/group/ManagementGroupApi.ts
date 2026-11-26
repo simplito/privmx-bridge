@@ -18,6 +18,7 @@ import { AuthorizationDetector } from "../../../service/auth/AuthorizationDetect
 import { AuthorizationHolder } from "../../../service/auth/AuthorizationHolder";
 import { AppException } from "../../AppException";
 import * as types from "../../../types";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * What an application's backend reads of groups: their state in the clear, and their signed statements. It
@@ -51,7 +52,7 @@ export class ManagementGroupApi extends ManagementBaseApi implements managementG
                 ...group.managers.map(userId => member(userId, "manager")),
                 ...group.users.filter(userId => !group.managers.includes(userId)).map(userId => member(userId, "user")),
             ],
-            rules: group.policy,
+            rules: CommitStatement.isRules(group.policy) ? group.policy : undefined,
             visibleTo: group.visibleTo ?? "members",
             publicMeta: view.publicMeta,
         };

@@ -430,3 +430,10 @@ it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by 
     assert.deepStrictEqual(asked, [{keyIds: [], groupPubKeys: [pub2]}]);
     assert.deepStrictEqual(result.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}]);
 });
+
+it("a group stored before the rules format is served without rules rather than failing", async () => {
+    const legacy = {...group, policy: {update: "manager"} as unknown as types.cloud.GroupRules};
+    assert.strictEqual(new GroupConverter().convertGroup(alice, legacy, state(), "full").policy, undefined);
+    assert.strictEqual(new GroupConverter().convertGroupPublicInfo(legacy, {} as types.cloud.GroupTreeCommitStatement).policy, undefined);
+    assert.deepStrictEqual(new GroupConverter().convertGroup(alice, group, state(), "full").policy, CommitStatement.DEFAULT_RULES);
+});

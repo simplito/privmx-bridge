@@ -188,9 +188,10 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
-     * A pin below the via group's floor is a key a history cut retired. It still signs exactly one thing: the
-     * statement that moves the group to an epoch at or above the floor, which is how the member who cut (or any
-     * other still holding the old key) brings the space along. Nothing else. Checked inside the space's write, with
+     * A pin below the via group's floor is a key a history cut retired. It still signs a statement that moves the
+     * via group to an epoch at or above the floor — a `spaceRotateKey`, or a `spaceRemoveRecipients` that keeps the
+     * group — which is how the member who cut (or any other still holding the old key) brings the space along.
+     * Nothing that leaves the group below the floor. Checked inside the space's write, with
      * the via group's document written too (`write`), so a floor raised concurrently is a write conflict.
      */
     static assertViaPin(via: types.group.GroupId, before: db.space.Space["groups"], after: db.space.Space["groups"], floor: number) {

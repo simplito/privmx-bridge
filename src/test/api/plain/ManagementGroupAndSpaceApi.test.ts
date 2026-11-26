@@ -50,6 +50,9 @@ it("serves a group's members with roles and keys, its signed rules, and no priva
         visibleTo: "members",
         publicMeta: "meta",
     });
+    // A group stored before the rules format: served, without rules.
+    const legacy = ManagementGroupApi.convertGroup({group: {...group, policy: {update: "user"}} as unknown as db.group.Group, pubKeys: new Map(), publicMeta: "meta"});
+    assert.strictEqual(legacy.rules, undefined);
 });
 
 it("serves a space without its keys and private metadata", () => {

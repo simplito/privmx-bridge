@@ -20,6 +20,7 @@ import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import { ECUtils } from "../../../../utils/crypto/ECUtils";
 import { Crypto } from "../../../../utils/crypto/Crypto";
 import { buildTree, creationStatement, planCommit, policyStatement, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
+import { AppException } from "../../../../api/AppException";
 
 /**
  * The bridge's check of a commit statement: every field against what the bridge derived, then the signature.
@@ -369,6 +370,15 @@ describe("CommitStatement.checkStoredState", () => {
 });
 
 describe("CommitStatement.rulesHash", () => {
+    it("refuses anything but a rules object with a typed error: a group stored before the format", () => {
+        for (const policy of [{update: "manager"}, {}, undefined, {...CommitStatement.DEFAULT_RULES, history: "shared"}, {...CommitStatement.DEFAULT_RULES, addMembers: "all"}]) {
+            assert.strictEqual(CommitStatement.isRules(policy), false, JSON.stringify(policy));
+            assert.throws(() => CommitStatement.rulesHash(policy as types.cloud.GroupRules, "u0" as types.cloud.UserId),
+                (e: unknown) => AppException.is(e, "GROUP_RULES_UNSUPPORTED"));
+        }
+        assert.strictEqual(CommitStatement.isRules(CommitStatement.DEFAULT_RULES), true);
+    });
+    
     const creator = "u0" as types.cloud.UserId;
     const hash = (rules: types.cloud.GroupRules) => CommitStatement.rulesHash(rules, creator).toString("hex");
     

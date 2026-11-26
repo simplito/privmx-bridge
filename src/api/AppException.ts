@@ -147,6 +147,7 @@ export const API_ERROR_CODES = {
     "SPACE_KEYS_INVALID"                    : {code: 0x6228, message: "Submitted space keys do not cover the recipients or name an outdated group epoch"},
     "SPACE_LAST_MANAGER"                    : {code: 0x6229, message: "Space would be left without a manager"},
     "SPACE_STATEMENT_INVALID"               : {code: 0x622A, message: "Space statement does not continue the space's history or describe the change"},
+    "GROUP_RULES_UNSUPPORTED"               : {code: 0x622B, message: "Group's stored rules are not a valid rules object (a group from before the rules format)"},
 };
 export const ERROR_CODES: {[name: string]: {code: types.core.ErrorCode, message: types.core.ErrorMessage}} = <any>API_ERROR_CODES;
 

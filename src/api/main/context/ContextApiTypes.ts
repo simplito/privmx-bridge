@@ -475,8 +475,9 @@ export interface GroupGenerateNewKeyModel {
      *
      * Right after, the cutter, still holding the old epoch key, rewrites both metadata planes at the new epoch and
      * re-keys every space naming the group (`spaceList` with `groupId`): a `spaceRotateKey` signed via the group
-     * under the space's pinned key, now below the floor, which the bridge accepts only for a statement moving the
-     * group to an epoch at or above the floor. Those spaces show `keyIsStale` until then. If the cutter stops
+     * under the space's pinned key, now below the floor. The bridge accepts such a retired pin only on a statement
+     * that moves the group to an epoch at or above the floor (a `spaceRotateKey`, or a `spaceRemoveRecipients`
+     * keeping the group). Those spaces show `keyIsStale` until then. If the cutter stops
      * halfway, any member still holding the old epoch key can finish; that is the only window in which a space can
      * be left behind.
      */
@@ -586,8 +587,8 @@ export interface GroupPublicInfo {
     rosterVersion: number;
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
-    /** The group's signed rules (`types.cloud.GroupRules`). */
-    policy: types.cloud.GroupRules;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
     visibleTo: GroupVisibility;
     /** The latest commit statement. Signed; the client checks it. */
     treeCommit: types.cloud.GroupTreeCommitStatement;
@@ -635,8 +636,8 @@ export interface GroupSummary {
     rosterVersion: number;
     keyVersion: number;
     visibleTo: GroupVisibility;
-    /** The group's signed rules (`types.cloud.GroupRules`). */
-    policy: types.cloud.GroupRules;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
 }
 
 export interface GroupDataEntry {
@@ -703,8 +704,8 @@ export interface GroupInfo {
     keyVersion: number;
     visibleTo: GroupVisibility;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
-    /** The group's signed rules (`types.cloud.GroupRules`). */
-    policy: types.cloud.GroupRules;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
     history: GroupHistoryEntryInfo[];
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
     /** Layout of the tree. 2 for every group the current API creates; anything else is a group from before the

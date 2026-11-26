@@ -12,6 +12,7 @@ limitations under the License.
 import * as types from "../../../types";
 import * as contextApi from "./ContextApiTypes";
 import * as db from "../../../db/Model";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
 import { TreeHash } from "../../../service/cloud/keytree/TreeHash";
 
@@ -104,7 +105,7 @@ export class GroupConverter {
             keyVersion: group.keyVersion,
             visibleTo: group.visibleTo ?? "members",
             keyHistory: GroupConverter.keyHistory(group, state.epochKeys),
-            policy: group.policy,
+            policy: CommitStatement.isRules(group.policy) ? group.policy : undefined,
             history: state.history.map(x => this.convertHistoryEntry(x)),
             groupKeys: state.epochKeys.filter(row => row.groupKey).map(row => ({group: group.id, keys: [row.groupKey!]})),
             ...this.treeState(group, state.tree, state.treeCommit, user, scope, forUserIds, forNewMembers),
@@ -132,7 +133,7 @@ export class GroupConverter {
             rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
             visibleTo: group.visibleTo ?? "members",
-            policy: group.policy,
+            policy: CommitStatement.isRules(group.policy) ? group.policy : undefined,
         };
         if (group.clientResourceId) {
             res.resourceId = group.clientResourceId;
@@ -151,7 +152,7 @@ export class GroupConverter {
             rosterVersion: group.rosterVersion,
             keyVersion: group.keyVersion,
             groupPubKey: group.groupPubKey,
-            policy: group.policy,
+            policy: CommitStatement.isRules(group.policy) ? group.policy : undefined,
             visibleTo: group.visibleTo ?? "members",
             treeCommit: treeCommit,
         };

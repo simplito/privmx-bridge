@@ -173,7 +173,7 @@ function createGroupService(group: TreeGroup = treeBackedGroup(), options: {rate
         isGroupHeldBelow: async (_id: types.group.GroupId, keyVersion: number) =>
             options.spaceAtGroupKeyVersion !== undefined && options.spaceAtGroupKeyVersion < keyVersion,
         getByGroup: async (id: types.group.GroupId) => options.spaceAtGroupKeyVersion === undefined ? []
-            : [{groups: [{groupId: id, groupKeyVersion: options.spaceAtGroupKeyVersion}, {groupId: "other", groupKeyVersion: 1}]}],
+            : [{id: "space-1", groups: [{groupId: id, groupKeyVersion: options.spaceAtGroupKeyVersion}, {groupId: "other", groupKeyVersion: 1}]}],
     })) as never);
     mock(repositoryFactory, "withTransaction", f => f({} as mongodb.ClientSession));
     
@@ -999,12 +999,15 @@ it("the management cut never goes above the current epoch", async () => {
 
 it("SECURITY: the management cut clamps down to the epoch each metadata plane and every space needs", async () => {
     const publicLow = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 2, privateMetaKeyVersion: 4});
-    assert.deepStrictEqual(await publicLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 2});
+    assert.deepStrictEqual(await publicLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 2, clampedBy: "metadata"});
     const privateLow = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 4, privateMetaKeyVersion: 3});
-    assert.deepStrictEqual(await privateLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 3});
+    assert.deepStrictEqual(await privateLow.groupService.cutHistory(SERVER, groupId), {eraFloor: 3, clampedBy: "metadata"});
     // Only this group's entry in the space counts.
     const spaced = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 4});
-    assert.deepStrictEqual(await spaced.groupService.cutHistory(SERVER, groupId), {eraFloor: 4});
+    assert.deepStrictEqual(await spaced.groupService.cutHistory(SERVER, groupId), {eraFloor: 4, clampedBy: "space", spaceId: "space-1"});
+    // The lowest holder is the one named.
+    const both = createGroupService(treeBackedGroup(), {publicMetaKeyVersion: 3, spaceAtGroupKeyVersion: 2});
+    assert.deepStrictEqual(await both.groupService.cutHistory(SERVER, groupId), {eraFloor: 2, clampedBy: "space", spaceId: "space-1"});
     // An explicit floor below all of them stands.
     const explicit = createGroupService(treeBackedGroup(), {spaceAtGroupKeyVersion: 4});
     assert.deepStrictEqual(await explicit.groupService.cutHistory(SERVER, groupId, 3), {eraFloor: 3});
@@ -1012,7 +1015,7 @@ it("SECURITY: the management cut clamps down to the epoch each metadata plane an
 
 it("SECURITY: the management cut never lowers a floor; with nothing to change it is a no-op", async () => {
     const {groupService, groupRepository, groupNotificationService} = createGroupService(treeBackedGroup({eraFloor: 4}), {spaceAtGroupKeyVersion: 2});
-    assert.deepStrictEqual(await groupService.cutHistory(SERVER, groupId), {eraFloor: 4});
+    assert.deepStrictEqual(await groupService.cutHistory(SERVER, groupId), {eraFloor: 4, clampedBy: "space", spaceId: "space-1"});
     hasNoCalls(groupRepository.cutHistory);
     hasNoCalls(groupNotificationService.sendUpdatedGroup);
 });
@@ -2189,4 +2192,19 @@ it("SECURITY: the context's update vetoes the roster, history and metadata rules
     await expectFailure("ACCESS_DENIED", () => updatePolicy.groupService.updatePolicy(janekCloudUser, policyModel(updatePolicy.group, OTHER_RULES)));
     await updatePolicy.groupService.removeMembers(janekCloudUser, removalModel(updatePolicy.group, 2));
     hasOneCall(updatePolicy.groupRepository.removeMembersWithTransition);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// a group stored before the rules format
+// ─────────────────────────────────────────────────────────────────────────────
+
+it("a group whose stored policy is not a rules object is refused with a typed error, never an internal one", async () => {
+    const legacy = treeBackedGroup({policy: {update: "manager"} as unknown as types.cloud.GroupRules});
+    const {groupService, groupRepository} = createGroupService(legacy);
+    await expectFailure("GROUP_RULES_UNSUPPORTED", () => groupService.removeMembers(janekCloudUser, removalModel(legacy, 2)));
+    await expectFailure("GROUP_RULES_UNSUPPORTED", () => groupService.setVisibility(janekCloudUser, groupId, "context"));
+    // A rotation takes no rule, but its statement signs the stored rules: refused the same way.
+    await expectFailure("GROUP_RULES_UNSUPPORTED", () => groupService.generateNewGroupKey(janekCloudUser, rotationModel(legacy)));
+    hasNoCalls(groupRepository.removeMembersWithTransition);
+    hasNoCalls(groupRepository.generateNewGroupKey);
 });

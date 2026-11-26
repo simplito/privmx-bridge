@@ -832,10 +832,11 @@ export class GroupService extends BaseContainerService {
      * needed — each metadata plane's and every space's that holds the group — and never lowered. Rungs pointing
      * below it and the epoch rows below it are deleted, not hidden: this is the retention guarantee.
      *
-     * Server authority, like every management call: no group rule gates it. Returns the effective floor.
+     * Server authority, like every management call: no group rule gates it. Returns the effective floor and, when
+     * something held the floor below the requested one, what (`metadata`, or a `space` and its id).
      */
     async cutHistory(executor: Executor, groupId: types.group.GroupId, beforeEpoch?: number) {
-        const {group, cut} = await this.repositoryFactory.withTransaction(async session => {
+        const {group, cut, clamped} = await this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const oldGroup = await groupRepository.get(groupId);
             if (!oldGroup) {
@@ -845,23 +846,34 @@ export class GroupService extends BaseContainerService {
                 throw new AppException("ACCESS_DENIED");
             });
             const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
-            const spaceEpochs = (await this.repositoryFactory.createSpaceRepository(session).getByGroup(groupId))
-                .flatMap(space => space.groups.filter(g => g.groupId === groupId).map(g => g.groupKeyVersion));
-            const floor = Math.min(beforeEpoch ?? oldGroup.keyVersion, oldGroup.keyVersion,
-                ...[heads.publicMeta, heads.privateMeta].filter((epoch): epoch is number => epoch !== null), ...spaceEpochs);
+            const spaces = await this.repositoryFactory.createSpaceRepository(session).getByGroup(groupId);
+            let floor = Math.min(beforeEpoch ?? oldGroup.keyVersion, oldGroup.keyVersion);
+            let clamp: {clampedBy: "metadata"|"space", spaceId?: types.space.SpaceId}|undefined;
+            for (const epoch of [heads.publicMeta, heads.privateMeta]) {
+                if (epoch !== null && epoch < floor) {
+                    floor = epoch;
+                    clamp = {clampedBy: "metadata"};
+                }
+            }
+            for (const space of spaces) {
+                for (const g of space.groups.filter(entry => entry.groupId === groupId && entry.groupKeyVersion < floor)) {
+                    floor = g.groupKeyVersion;
+                    clamp = {clampedBy: "space", spaceId: space.id};
+                }
+            }
             if (floor <= oldGroup.eraFloor) {
-                return {group: oldGroup, cut: false};
+                return {group: oldGroup, cut: false, clamped: clamp};
             }
             const result = await groupRepository.cutHistory(oldGroup, floor);
             if (!result) {
                 throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(groupId))!));
             }
-            return {group: result, cut: true};
+            return {group: result, cut: true, clamped: clamp};
         });
         if (cut) {
             this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
         }
-        return {eraFloor: group.eraFloor};
+        return {eraFloor: group.eraFloor, ...clamped};
     }
     
     /**
@@ -1501,6 +1513,10 @@ class GroupPolicy extends BasePolicy<Omit<db.group.Group, "policy">, never> {
     
     /** Whether the group's own `rule` lets the caller act, and the context does not veto it. */
     allows(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, rule: keyof types.cloud.GroupRules) {
+        if (!CommitStatement.isRules(group.policy)) {
+            // A group stored before the rules format: refused, typed, until it is migrated or recreated.
+            throw new AppException("GROUP_RULES_UNSUPPORTED");
+        }
         const isManager = group.managers.includes(user.userId);
         const who = group.policy?.[rule];
         const ruled = who === "members" ? isManager || group.users.includes(user.userId) : who === "managers" && isManager;

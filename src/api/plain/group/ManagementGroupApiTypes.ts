@@ -41,8 +41,9 @@ export interface Group {
     lastCommitSeq: number;
     /** Members with their roles */
     members: GroupMember[];
-    /** The group's signed rules: who may do what to the group (see `types.cloud.GroupRules`) */
-    rules: types.cloud.GroupRules;
+    /** The group's signed rules: who may do what to the group (see `types.cloud.GroupRules`); absent for a group
+     *  stored before the rules format */
+    rules?: types.cloud.GroupRules;
     /** Who beside the members may read the group's key and roster */
     visibleTo: "members"|"context";
     /** Public metadata, as the members wrote it */
@@ -123,6 +124,10 @@ export interface CutHistoryModel {
 export interface CutHistoryResult {
     /** The group's era floor afterwards: everything below it is deleted */
     eraFloor: number;
+    /** What held the floor below the requested epoch, if anything: a metadata plane, or a Space */
+    clampedBy?: "metadata"|"space";
+    /** With clampedBy "space": the Space that holds the group at the lowest epoch */
+    spaceId?: types.space.SpaceId;
 }
 
 export interface DeleteManyGroupsModel {

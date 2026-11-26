@@ -105,7 +105,9 @@ export const test = testApi("client", "group/", ManagementGroupApi, new Manageme
         groupId: groupId,
         beforeEpoch: 3,
     })).setResult({
-        eraFloor: 3,
+        eraFloor: 2,
+        clampedBy: "space",
+        spaceId: "c5d0e6f0b1a24a7e9f3c1d2b3a4e5f60c5d0e6f0b1a24a7e9f3c1d2b3a4e5f60" as types.space.SpaceId,
     });
     call("deleteGroup", api => api.deleteGroup({
         groupId: groupId,

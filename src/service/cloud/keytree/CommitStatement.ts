@@ -14,6 +14,7 @@ import { Crypto } from "../../../utils/crypto/Crypto";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ByteWriter } from "./ByteWriter";
 import { HashableTree, TreeHash } from "./TreeHash";
+import { AppException } from "../../../api/AppException";
 
 export type StatementProblem =
     | {kind: "BAD_COMMIT_STATEMENT", field: string}
@@ -78,6 +79,18 @@ export class CommitStatement {
     static readonly RULE_FIELDS = ["addMembers", "removeMembers", "replaceMemberKeys", "changeRoles", "changeRules", "changeVisibility",
         "trimHistory", "editPublicMeta", "editPrivateMeta"] as const;
     
+    /**
+     * Whether `value` is a rules object: exactly the nine rules, each a valid value. A group stored before the rules
+     * format holds something else under `policy`; it is refused with `GROUP_RULES_UNSUPPORTED`, never hashed.
+     */
+    static isRules(value: unknown): value is types.cloud.GroupRules {
+        if (typeof value !== "object" || value === null || Object.keys(value).length !== CommitStatement.RULE_FIELDS.length) {
+            return false;
+        }
+        const record = value as Record<string, unknown>;
+        return CommitStatement.RULE_FIELDS.every(field => record[field] === "managers" || record[field] === "members" || record[field] === "nobody");
+    }
+    
     /** What a client fills in for a rule it does not set, before signing. The bridge never fills anything in. */
     static readonly DEFAULT_RULES: types.cloud.GroupRules = Object.freeze({
         addMembers: "managers", removeMembers: "managers", replaceMemberKeys: "managers", changeRoles: "managers", changeRules: "managers",
@@ -90,6 +103,9 @@ export class CommitStatement {
      * lp(changeRules) || lp(changeVisibility) || lp(trimHistory) || lp(editPublicMeta) || lp(editPrivateMeta))`. The creator holds no privilege; it is bound so a genesis cannot be replayed as another's.
      */
     static rulesHash(rules: types.cloud.GroupRules, creator: types.cloud.UserId): Buffer {
+        if (!CommitStatement.isRules(rules)) {
+            throw new AppException("GROUP_RULES_UNSUPPORTED");
+        }
         const writer = new ByteWriter().tag("pmx-group-rules-v1").lp(creator);
         for (const field of CommitStatement.RULE_FIELDS) {
             writer.lp(rules[field]);
