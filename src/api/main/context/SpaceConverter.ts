@@ -42,6 +42,7 @@ export class SpaceConverter {
             seq: space.seq,
             statement: space.statement,
             keyIsStale: view.keyIsStale,
+            keysPrunedBelow: space.keysPrunedBelow,
             keys: view.keys.map(k => SpaceConverter.convertKey(k)),
             publicMeta: space.publicMeta,
             privateMeta: space.privateMeta,

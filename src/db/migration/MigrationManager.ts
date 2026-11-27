@@ -53,6 +53,7 @@ import { Migration079ResourceIdPerContext } from "./Migration079ResourceIdPerCon
 import { Migration080SpaceTombstones } from "./Migration080SpaceTombstones";
 import { Migration081SpaceRungs } from "./Migration081SpaceRungs";
 import { Migration082SpaceStatementDeltas } from "./Migration082SpaceStatementDeltas";
+import { Migration083SpaceKeysPrunedBelow } from "./Migration083SpaceKeysPrunedBelow";
 
 export type MigrationId = string&{__migrationId: never};
 
@@ -111,6 +112,7 @@ export class MigrationManager {
         Migration080SpaceTombstones,
         Migration081SpaceRungs,
         Migration082SpaceStatementDeltas,
+        Migration083SpaceKeysPrunedBelow,
     ];
     static DB_VERSION: string|null = null;
     

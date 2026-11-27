@@ -23,7 +23,7 @@ export class ContextApiValidator extends BaseValidator {
     /** Wrapped keys per space call: one key version's entries, one per recipient. */
     static readonly MAX_SPACE_KEY_ENTRIES = SpaceService.MAX_RECIPIENTS;
     /** Rungs per rotation: `LadderMath.rungSpansFor` owes at most 32 below 2^32 versions. */
-    static readonly MAX_SPACE_RUNGS = 64;
+    static readonly MAX_SPACE_RUNGS = SpaceService.MAX_REQUEST_RUNGS;
     
     constructor(
         private tv: TypesValidator,
@@ -310,6 +310,9 @@ export class ContextApiValidator extends BaseValidator {
             keys: spaceKeys,
             // A group's rung shape: the ladder rules (`LadderMath.validateRungSubmission`) are the same.
             rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, ContextApiValidator.MAX_SPACE_RUNGS),
+            // Counted with `rungs` against the same cap by the service (`SpaceService.assertRepairs`).
+            repairRungs: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupArchiveRung, ContextApiValidator.MAX_SPACE_RUNGS)),
+            prune: this.builder.optional(this.builder.bool),
             expectedKeyVersion: this.builder.min(this.builder.int, 1),
             statement: spaceStatement,
         };

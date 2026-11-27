@@ -56,6 +56,14 @@ export class SpaceService extends BaseContainerService {
     static readonly MAX_RECIPIENTS = 128;
     /** Key versions per `spaceGetKeyArchive` page when the caller names no limit. */
     static readonly RUNG_PAGE = 256;
+    /**
+     * Rows of each kind (rungs, wraps) one archive page carries at most, ~5 KB each at worst. A page ends before the
+     * first version that would go past it. Above what one version can hold — at most `MAX_RUNGS_PER_SPAN` rungs on
+     * each of its ~33 spans, and one wrap per recipient — so a page always takes at least its first version whole.
+     */
+    static readonly ARCHIVE_PAGE_ROWS = 1024;
+    /** Rungs one rotation carries, its own and repairs together. */
+    static readonly MAX_REQUEST_RUNGS = 64;
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -114,18 +122,17 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
-     * The submitted wraps have to be exactly one per recipient and version asked for. A group's wrap names the
-     * group epoch it was made for: an epoch the group has had, and at `currentVersion` the epoch it is at now -
-     * a new key wrapped to a past epoch would be stale from its first moment.
+     * The submitted wraps have to be exactly one per recipient, all of the current key version. A group's wrap names
+     * the group epoch it was made for, which has to be the one the group is at now: a key wrapped to a past epoch
+     * would be stale from its first moment.
      */
     static assertKeysCover(
         keys: types.cloud.SpaceKeyEntry[],
         recipients: ({groupId: types.group.GroupId}|{userId: types.cloud.UserId})[],
-        versions: number[],
-        currentVersion: number,
+        version: number,
         groupEpochs: GroupEpochs,
     ) {
-        const expected = new Set(recipients.flatMap(r => versions.map(v => v + "/" + SpaceService.recipientKey(r))));
+        const expected = new Set(recipients.map(r => version + "/" + SpaceService.recipientKey(r)));
         const given = keys.map(k => k.keyVersion + "/" + SpaceService.recipientKey(k.recipient));
         if (given.length !== expected.size || !given.every(k => expected.has(k)) || new Set(given).size !== given.length) {
             throw new AppException("SPACE_KEYS_INVALID", "there has to be exactly one key entry for every recipient and key version");
@@ -136,7 +143,7 @@ export class SpaceService extends BaseContainerService {
             }
             const epoch = groupEpochs.get(key.recipient.groupId);
             const wrappedTo = key.recipient.groupKeyVersion;
-            if (epoch === undefined || wrappedTo > epoch || (key.keyVersion === currentVersion && wrappedTo !== epoch)) {
+            if (epoch === undefined || wrappedTo !== epoch) {
                 // Without the group's epoch: the caller may not be a member and must not learn it from here.
                 throw new AppException("SPACE_KEYS_INVALID", `the entry for group '${key.recipient.groupId}' names epoch ${wrappedTo}, not the group's current one`);
             }
@@ -153,6 +160,61 @@ export class SpaceService extends BaseContainerService {
         if (!result.ok) {
             const owed = LadderMath.rungSpansFor(keyVersion, 1).map(span => span.target).join(", ");
             throw new AppException("SPACE_KEYS_INVALID", `key version ${keyVersion} takes exactly one rung to each of versions ${owed} (${result.problem.kind})`);
+        }
+    }
+    
+    /**
+     * Ends an archive page before the first key version whose rows were not all read (`ARCHIVE_PAGE_ROWS + 1` asked
+     * of each kind, sorted by version), so every version a page carries is whole and `nextKeyVersion` resumes there.
+     */
+    static capArchivePage<R extends {atKeyVersion: number}, K extends {keyVersion: number}>(
+        page: {upTo: number, next?: number}, rungs: R[], keys: K[],
+    ): {rungs: R[], keys: K[], nextKeyVersion?: number} {
+        const cuts = [
+            ...(rungs.length > SpaceService.ARCHIVE_PAGE_ROWS ? [rungs[SpaceService.ARCHIVE_PAGE_ROWS].atKeyVersion] : []),
+            ...(keys.length > SpaceService.ARCHIVE_PAGE_ROWS ? [keys[SpaceService.ARCHIVE_PAGE_ROWS].keyVersion] : []),
+        ];
+        if (cuts.length === 0) {
+            return {rungs, keys, nextKeyVersion: page.next};
+        }
+        const cut = Math.min(...cuts);
+        return {rungs: rungs.filter(r => r.atKeyVersion < cut), keys: keys.filter(k => k.keyVersion < cut), nextKeyVersion: cut};
+    }
+    
+    /**
+     * What only a manager's standing may add to a rotation: `prune` (deleting the wraps of older versions) and repair
+     * rungs. The bridge cannot open a rung, so a non-manager rotating with garbage rungs must not be able to take
+     * the older wraps with it, nor to fill a span with rungs; a manager could delete the whole space anyway.
+     */
+    static assertManagerExtras(standing: types.cloud.ContainerRole, prune: boolean, repairs: types.cloud.SpaceRung[]) {
+        if (standing !== "manager" && (prune || repairs.length > 0)) {
+            throw new AppException("SPACE_STATEMENT_INVALID", "prune and repairRungs take a statement signed in a manager's standing");
+        }
+    }
+    
+    /**
+     * Repair rungs: each one more rung for a canonical span of a version below the new one (`LadderMath.rungSpansFor(at, 1)`),
+     * at most one per span in a request, with data, and together with the rotation's own rungs at most
+     * `MAX_REQUEST_RUNGS`. How many a span already holds is checked where they are stored.
+     */
+    static assertRepairs(repairs: types.cloud.SpaceRung[], newKeyVersion: number, ownRungs: number) {
+        const bad = (why: string): never => {
+            throw new AppException("SPACE_KEYS_INVALID", why);
+        };
+        if (repairs.length + ownRungs > SpaceService.MAX_REQUEST_RUNGS) {
+            bad(`a rotation carries at most ${SpaceService.MAX_REQUEST_RUNGS} rungs, repairs included`);
+        }
+        const seen = new Set<string>();
+        for (const rung of repairs) {
+            const result = LadderMath.validateRepairSpan({at: rung.atKeyVersion, target: rung.targetKeyVersion}, newKeyVersion - 1, 1);
+            if (!result.ok) {
+                bad(`repair rung ${rung.atKeyVersion}->${rung.targetKeyVersion} is no canonical span below version ${newKeyVersion} (${result.problem.kind})`);
+            }
+            const span = rung.atKeyVersion + "/" + rung.targetKeyVersion;
+            if (seen.has(span) || !rung.data) {
+                bad(`repair rung ${span} is repeated or empty`);
+            }
+            seen.add(span);
         }
     }
     
@@ -200,10 +262,12 @@ export class SpaceService extends BaseContainerService {
         if (typeof(applied) === "string") {
             return bad(applied);
         }
-        if (!SpaceStatement.sameRecipients(applied, x.after)) {
+        // `applyDeltas` leaves no id twice, so the hash alone compares the two rosters.
+        const appliedHash = SpaceStatement.rosterHash(applied);
+        if (!appliedHash.equals(SpaceStatement.rosterHash(x.after))) {
             bad("the deltas do not lead to the recipients after the change, each group at its current epoch and key");
         }
-        if (st.rosterHash !== SpaceStatement.rosterHash(applied).toString("hex")) {
+        if (st.rosterHash !== appliedHash.toString("hex")) {
             bad("rosterHash is not the hash of the recipients after the change");
         }
         if (st.signer !== x.caller.userId || st.signerPubKey !== x.caller.pubKey) {
@@ -240,6 +304,15 @@ export class SpaceService extends BaseContainerService {
         return role!;
     }
     
+    /** At most `LadderMath.MAX_RUNGS_PER_SPAN` rungs per span, the stored ones and the repair together. */
+    static async assertSpanRoom(repository: Pick<ReturnType<RepositoryFactory["createSpaceRepository"]>, "countRungs">, spaceId: types.space.SpaceId, repairs: types.cloud.SpaceRung[]) {
+        const stored = await repository.countRungs(spaceId, repairs);
+        const full = repairs.find(r => (stored.get(r.atKeyVersion + "/" + r.targetKeyVersion) ?? 0) >= LadderMath.MAX_RUNGS_PER_SPAN);
+        if (full) {
+            throw new AppException("SPACE_KEYS_INVALID", `span ${full.atKeyVersion}->${full.targetKeyVersion} holds ${LadderMath.MAX_RUNGS_PER_SPAN} rungs already`);
+        }
+    }
+    
     /**
      * Holds every group the space wraps at or above the group's floors, inside the space's transaction. The group
      * document is written as well (`touchLadder`), so a floor raised concurrently (a removal
@@ -259,19 +332,20 @@ export class SpaceService extends BaseContainerService {
         }
     }
     
-    private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView> {
-        const [view] = await this.views([space], caller, currentKeysOnly);
+    private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined): Promise<SpaceView> {
+        const [view] = await this.views([space], caller);
         return view;
     }
     
-    private async views(spaces: db.space.Space[], caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView[]> {
+    /** Each space with the caller's wraps of its current key version only: older ones are reached down the rungs (`getKeyArchive`). */
+    private async views(spaces: db.space.Space[], caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined): Promise<SpaceView[]> {
         if (spaces.length === 0) {
             return [];
         }
         const groupEpochs = await this.getGroupEpochs(spaces[0].contextId, spaces);
         const keys = caller
             ? await this.repositoryFactory.createSpaceRepository().getKeys(spaces.map(s => s.id), caller.userId, caller.ownGroupIds,
-                currentKeysOnly ? new Map(spaces.map(s => [s.id, s.keyVersion])) : undefined)
+                new Map(spaces.map(s => [s.id, s.keyVersion])))
             : [];
         return spaces.map(space => ({space, keys: keys.filter(k => k.spaceId === space.id), keyIsStale: SpaceService.isStale(space, groupEpochs)}));
     }
@@ -296,8 +370,7 @@ export class SpaceService extends BaseContainerService {
         if (!space) {
             throw new AppException("SPACE_DOES_NOT_EXIST");
         }
-        // The current version only: older ones are reached down the rungs (`getKeyArchive`).
-        return this.view(space, await this.access(executor, space, "context/spaceGet"), true);
+        return this.view(space, await this.access(executor, space, "context/spaceGet"));
     }
     
     /**
@@ -313,11 +386,15 @@ export class SpaceService extends BaseContainerService {
         }
         const caller = await this.access(executor, space, "context/spaceGetKeyArchive");
         const page = LadderArchive.versionPage(model.fromKeyVersion, model.toKeyVersion, space.keyVersion, model.limit ?? SpaceService.RUNG_PAGE);
-        const [rungs, keys] = page.empty ? [[], []] : await Promise.all([
-            repository.getRungs(space.id, page.from, page.upTo),
-            caller ? repository.getKeyRange(space.id, caller.userId, caller.ownGroupIds, page.from, page.upTo) : [],
+        if (page.empty) {
+            return {space, rungs: [], keys: [], nextKeyVersion: page.next};
+        }
+        const rows = SpaceService.ARCHIVE_PAGE_ROWS + 1;
+        const [rungs, keys] = await Promise.all([
+            repository.getRungs(space.id, page.from, page.upTo, rows),
+            caller ? repository.getKeyRange(space.id, caller.userId, caller.ownGroupIds, page.from, page.upTo, rows) : [],
         ]);
-        return {space, rungs, keys, nextKeyVersion: page.next};
+        return {space, ...SpaceService.capArchivePage(page, rungs, keys)};
     }
     
     async getStatements(executor: Executor, model: SpaceGetStatementsModel) {
@@ -342,7 +419,7 @@ export class SpaceService extends BaseContainerService {
         });
         const page = await this.repositoryFactory.createSpaceRepository().getPage(contextId, listParams, sortBy,
             caller && {userId: caller.userId, groupIds: caller.ownGroupIds});
-        return {list: await this.views(page.list, caller, true), count: page.count};
+        return {list: await this.views(page.list, caller), count: page.count};
     }
     
     async createSpace(cloudUser: CloudUser, model: SpaceCreateModel) {
@@ -353,7 +430,7 @@ export class SpaceService extends BaseContainerService {
         if (SpaceService.roleOf({groups, users}, user.userId, ownGroupIds) !== "manager") {
             throw new AppException("ACCESS_DENIED", "the creator has to be a manager of the space");
         }
-        SpaceService.assertKeysCover(model.keys, model.recipients, [1], 1, groupEpochs);
+        SpaceService.assertKeysCover(model.keys, model.recipients, 1, groupEpochs);
         const id = SpaceService.spaceId(model.contextId, model.resourceId);
         SpaceService.assertStatement(model.statement, {
             spaceId: id, contextId: model.contextId, op: "create", keyVersion: 1, after: {groups, users},
@@ -372,6 +449,7 @@ export class SpaceService extends BaseContainerService {
             users: users,
             keyId: model.keyId,
             keyVersion: 1,
+            keysPrunedBelow: 0,
             seq: 1,
             statement: model.statement,
             publicMeta: model.publicMeta,
@@ -406,7 +484,7 @@ export class SpaceService extends BaseContainerService {
             throw new AppException("INVALID_PARAMS", `a space takes at most ${SpaceService.MAX_RECIPIENTS} recipients`);
         }
         // The current version only: a new recipient reaches the older ones down the rungs.
-        SpaceService.assertKeysCover(model.keys, model.recipients, [space.keyVersion], space.keyVersion, groupEpochs);
+        SpaceService.assertKeysCover(model.keys, model.recipients, space.keyVersion, groupEpochs);
         const after = {groups: [...space.groups, ...groups], users: [...space.users, ...users]};
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: "add", keyVersion: space.keyVersion, after, caller: user, managerOnly: true,
@@ -439,7 +517,7 @@ export class SpaceService extends BaseContainerService {
         const heads = await this.repositoryFactory.createGroupRepository().getKeyHeads(space.contextId, staying.map(g => g.groupId));
         const groupEpochs: GroupEpochs = new Map([...heads].map(([id, head]) => [id, head.keyVersion]));
         const keyVersion = space.keyVersion + 1;
-        SpaceService.assertKeysCover(model.keys, [...staying, ...users], [keyVersion], keyVersion, groupEpochs);
+        SpaceService.assertKeysCover(model.keys, [...staying, ...users], keyVersion, groupEpochs);
         SpaceService.assertRungs(model.rungs, keyVersion);
         // The new key is wrapped to each group's current epoch: `assertKeysCover` just held the entries to that.
         const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
@@ -447,23 +525,33 @@ export class SpaceService extends BaseContainerService {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
             caller: user, managerOnly: removing,
         });
+        const prune = model.prune === true;
+        const repairs = model.repairRungs ?? [];
+        SpaceService.assertManagerExtras(standing, prune, repairs);
+        SpaceService.assertRepairs(repairs, keyVersion, model.rungs.length);
         // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited
         // (`rotationBudget` says which budget, if any, this one spends).
         const held = await this.reserveRotation(space.id, user.userId, SpaceService.rotationBudget(removing, staying, groupEpochs));
         let changed: db.space.Space;
         try {
-            changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
+            const changes = {groups, users, keyId: model.keyId, keyVersion, ...(prune ? {keysPrunedBelow: keyVersion} : {})};
+            changed = await this.write(space, user.userId, changes, async repository => {
                 if (removing) {
                     await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
                 }
-                // The bridge cannot open a rung, so a rotation with garbage rungs must not take the older wraps with
-                // it unless its signer could delete the whole space anyway: only a manager's prunes them. Readers then
-                // reach the older versions down the rungs; after anybody else's rotation they keep their wraps too.
-                if (standing === "manager") {
+                // Only on request, from a manager whose Endpoint checked (and repaired) every rung since the last prune:
+                // readers then reach the older versions down the rungs.
+                // ponytail: one deleteMany in the rotation's transaction, up to MAX_RECIPIENTS wraps per version since
+                // the last prune (the Endpoint prunes only with at most 256 such versions, ~32k rows). Upgrade path if
+                // that grows: delete in batches after the transaction, below `keysPrunedBelow`.
+                if (prune) {
                     await repository.deleteKeysBelow(space.id, keyVersion);
                 }
                 await repository.insertKeys(space.id, model.keys);
-                await repository.insertRungs(space.id, model.rungs);
+                if (repairs.length > 0) {
+                    await SpaceService.assertSpanRoom(repository, space.id, repairs);
+                }
+                await repository.insertRungs(space.id, [...model.rungs, ...repairs], model.statement.seq);
             }, model.statement);
         }
         catch (e) {

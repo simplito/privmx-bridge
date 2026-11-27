@@ -150,21 +150,17 @@ it("verifies each signature against its own key and its own bytes", () => {
     assert.ok(!SpaceStatement.verifyViaSignature({...statement, viaSignature: ""}, groupPub));
 });
 
-it("tells the same recipients from changed ones, whatever the order", () => {
-    const reordered = {groups: [...prior.groups].reverse(), users: [...prior.users].reverse()};
-    assert.ok(SpaceStatement.sameRecipients(prior, reordered));
+it("hashes a changed roster differently", () => {
+    const hash = (r: Roster) => SpaceStatement.rosterHash(r).toString("hex");
     for (const groups of [[sales], [{...sales, role: "user" as const}, billing], [{...sales, groupKeyVersion: 6}, billing], [{...sales, groupPubKey: billing.groupPubKey}, billing]]) {
-        assert.ok(!SpaceStatement.sameRecipients({...prior, groups}, prior));
+        assert.notStrictEqual(hash({...prior, groups}), hash(prior));
     }
-    assert.ok(!SpaceStatement.sameRecipients({...prior, users: [zoe, {...al, role: "user"}]}, prior));
-    // The same recipient twice is no list of recipients, even against itself.
-    const twice = {groups: prior.groups, users: [...prior.users, zoe]};
-    assert.ok(!SpaceStatement.sameRecipients(twice, twice));
+    assert.notStrictEqual(hash({...prior, users: [zoe, {...al, role: "user"}]}), hash(prior));
 });
 
 it("applies deltas: removes, refreshes in place, appends the added", () => {
     const applied = SpaceStatement.applyDeltas(prior, unsigned);
-    assert.ok(typeof(applied) !== "string" && SpaceStatement.sameRecipients(applied, after));
+    assert.ok(typeof(applied) !== "string" && SpaceStatement.rosterHash(applied).equals(SpaceStatement.rosterHash(after)));
     const dave = {userId: "dave" as types.cloud.UserId, pubKey: zoe.pubKey, role: "user" as const};
     const changed = SpaceStatement.applyDeltas(prior, {...none, removedGroups: [sales.groupId], removedUsers: [zoe.userId], addedUsers: [dave]});
     assert.deepStrictEqual(changed, {groups: [billing], users: [al, dave]});

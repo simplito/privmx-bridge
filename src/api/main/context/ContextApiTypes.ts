@@ -818,6 +818,10 @@ export interface SpaceInfo {
     statement: types.cloud.SpaceStatement;
     /** True when a recipient group has moved past the epoch the current key was wrapped to. */
     keyIsStale: boolean;
+    /** The key version of the last pruning rotation (`prune: true`), 0 before any: the recipient wraps of the versions
+     *  below it are gone, and those versions are reached down the rungs only. The rungs of the versions above it
+     *  have not been checked by a pruning manager since. */
+    keysPrunedBelow: number;
     keys: types.cloud.SpaceKeyEntry[];
     publicMeta: types.space.SpaceData;
     privateMeta: types.space.SpaceData;
@@ -883,13 +887,14 @@ export interface SpaceGetKeyArchiveModel {
 }
 
 export interface SpaceGetKeyArchiveResult {
-    /** Every rung at the versions of the page, ascending by `atKeyVersion` (then `targetKeyVersion`). */
+    /** Every rung at the versions of the page, all the rungs of a span (a repaired span has several), ascending by
+     *  `atKeyVersion` (then `targetKeyVersion`). A reader tries each and keeps the one its keyCommit confirms. */
     rungs: types.cloud.SpaceRung[];
     /** The caller's own wraps — its user entry and those of the groups it belongs to — of the page's versions that
-     *  still have them, ascending by key version: a manager's rotation deletes the wraps of older versions, anybody
-     *  else's keeps them. */
+     *  still have them (those at or above `keysPrunedBelow`), ascending by key version. */
     keys: types.cloud.SpaceKeyEntry[];
-    /** Set when versions up to `toKeyVersion` remain: ask again with it as `fromKeyVersion`. */
+    /** Set when versions up to `toKeyVersion` remain: ask again with it as `fromKeyVersion`. A page also ends early,
+     *  before `limit` versions, once it carries 1024 rungs or 1024 wraps; every version it carries is whole. */
     nextKeyVersion?: number;
 }
 
@@ -917,10 +922,8 @@ export interface SpaceAddRecipientsModel {
 export interface SpaceRotateKeyModel {
     id: types.space.SpaceId;
     keyId: types.core.KeyId;
-    /** The next key version, one entry per recipient that stays. When the statement's standing is a manager's
-     *  (a user the space names as manager, or a manager group it acts through), the wraps of older versions are
-     *  deleted once the rotation lands, and those versions are reached down the rungs; a rotation by anybody else
-     *  keeps them, since the bridge cannot check a rung. A removed recipient's wraps are always deleted. */
+    /** The next key version, one entry per recipient that stays. A removed recipient's wraps are deleted; the
+     *  wraps of older versions stay unless the rotation asks to `prune`. */
     keys: types.cloud.SpaceKeyEntry[];
     /** The rungs of the next key version v: exactly one to each target of `LadderMath.rungSpansFor(v, 1)` — the unit
      *  rung v -> v-1 and the aligned skips v -> v-2^j (v=2: [1]; v=4: [3,2]; v=8: [7,6,4]), each
@@ -928,6 +931,17 @@ export interface SpaceRotateKeyModel {
      *  refused with `SPACE_KEYS_INVALID`. */
     rungs: types.cloud.SpaceRung[];
     expectedKeyVersion: number;
+    /** Delete every recipient's wraps of the versions below the new one, and set the space's `keysPrunedBelow` to the
+     *  new version. Only with a statement in a manager's standing (a user the space names as manager, or a manager
+     *  group it acts through), else `SPACE_STATEMENT_INVALID`: the bridge cannot open a rung, so it is the manager's
+     *  Endpoint that checks (and repairs) every rung since the last prune before asking. Default false. */
+    prune?: boolean;
+    /** Repair rungs, one more rung each for a span of a version below the new one: `atKeyVersion` < the new version,
+     *  `targetKeyVersion` one of `LadderMath.rungSpansFor(atKeyVersion, 1)`'s targets, at most one per span, sealed as
+     *  a normal rung. Stored beside the span's other rungs (never over them), at most 4 per span; together with
+     *  `rungs` at most 64. Only with a statement in a manager's standing (else `SPACE_STATEMENT_INVALID`); a span
+     *  already full, a span that is no canonical one, or too many rungs is `SPACE_KEYS_INVALID`. */
+    repairRungs?: types.cloud.SpaceRung[];
     /** The next statement, op `rotate` (or `remove`): whoever stays, each group at its current epoch and key, at the new key version. */
     statement: types.cloud.SpaceStatement;
 }

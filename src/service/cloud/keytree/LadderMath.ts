@@ -251,7 +251,7 @@ export class LadderMath {
     /**
      * Validates the rungs submitted with a new key version of any ladder — a group's epoch or a space's key version:
      * `validateRungSet` on their spans, then data in every rung. With `complete`, also every span the version owes
-     * (`rungSpansFor`), skips included: a space has one writer per version and no repair, so a skip left out is gone.
+     * (`rungSpansFor`), skips included: a space's rotation owes every span of its version whole, repairs only add beside them.
      */
     static validateRungSubmission(
         rungs: {atKeyVersion: number, targetKeyVersion: number, data: string}[],

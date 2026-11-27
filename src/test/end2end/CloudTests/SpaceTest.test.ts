@@ -118,7 +118,14 @@ export class SpaceTests extends BaseTestSet {
             id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 1), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", me),
         }), "SPACE_KEYS_INVALID");
-        // Any recipient may rotate: bob is only a user of the space.
+        // Bob is only a user of the space: he may not prune, nor bring repair rungs.
+        const bobRotates = async (extra: {prune?: boolean, repairRungs?: types.cloud.SpaceRung[]}) => (await this.apiOf(bob)).spaceRotateKey({
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
+            statement: await this.next(spaceId, "rotate", bob), ...extra,
+        });
+        await shouldThrowErrorWithCode2(() => bobRotates({prune: true}), "SPACE_STATEMENT_INVALID");
+        await shouldThrowErrorWithCode2(() => bobRotates({repairRungs: [{atKeyVersion: 1, targetKeyVersion: 1, data: b64("x")}]}), "SPACE_STATEMENT_INVALID");
+        // Any recipient may rotate.
         const rotated = await (await this.apiOf(bob)).spaceRotateKey({
             id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", bob),
@@ -128,9 +135,10 @@ export class SpaceTests extends BaseTestSet {
         assert(!fresh.keyIsStale && fresh.keyVersion === 2 && fresh.keyId === "space-key-2", "the rotation clears the stale mark");
         assert(fresh.groups[0].groupKeyVersion === 2, "the new key is wrapped to the group's new epoch");
         assert(fresh.keys.length === 2 && fresh.keys.every(k => k.keyVersion === 2), `only the current version is wrapped, got ${fresh.keys.length} entries`);
+        assert(fresh.keysPrunedBelow === 0, "nothing pruned");
         const archive = await (await this.apiOf(bob)).spaceGetKeyArchive({id: spaceId});
         assert(JSON.stringify(archive.rungs) === JSON.stringify(this.rungsOf(2)) && archive.nextKeyVersion === undefined, `version 1 is reached down the rung: ${JSON.stringify(archive)}`);
-        // Bob is no manager: the bridge cannot check his rungs, so his rotation keeps the older wraps.
+        // Nobody asked to prune: the older wraps stay.
         assert(archive.keys.map(k => `${k.keyVersion}:${"groupId" in k.recipient ? "g" : "u"}`).join() === "1:g,2:g", `bob keeps his group's wraps of both versions: ${JSON.stringify(archive.keys)}`);
         assert((await this.apis.contextApi.spaceGetKeyArchive({id: spaceId})).keys.length === 4, "janek's own and his group's wraps of both versions");
         
@@ -395,14 +403,15 @@ export class SpaceTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.spaceGetStatements({id: hidden, fromSeq: 0, limit: 10}), "SPACE_DOES_NOT_EXIST");
     }
     
-    @Test()
+    // Six rotations by one manager inside a minute: past the default burst of 3.
+    @Test({config: {maxSpaceRotationsPerMinute: 20}})
     async shouldTakeOnlyTheCanonicalRungsAndServeThemAPageOfVersionsAtATime() {
         const groupId = await this.createGroup();
         const recipients: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}];
         const spaceId = await this.createSpace(recipients);
-        const rotate = async (keyVersion: number, rungs: types.cloud.SpaceRung[]) => this.apis.contextApi.spaceRotateKey({
+        const rotate = async (keyVersion: number, rungs: types.cloud.SpaceRung[], extra: {prune?: boolean, repairRungs?: types.cloud.SpaceRung[]} = {}) => this.apis.contextApi.spaceRotateKey({
             id: spaceId, keyId: `space-key-${keyVersion}` as types.core.KeyId, keys: this.keysFor(recipients, keyVersion), rungs, expectedKeyVersion: keyVersion - 1,
-            statement: await this.next(spaceId, "rotate", me),
+            statement: await this.next(spaceId, "rotate", me), ...extra,
         });
         const rung = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: b64(`rung ${at}->${target}`)});
         
@@ -415,25 +424,40 @@ export class SpaceTests extends BaseTestSet {
         // Version 4 owes the rungs to 3 and to 2: one missing, or one more, is refused.
         await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3)]), "SPACE_KEYS_INVALID");
         await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3), rung(4, 2), rung(4, 1)]), "SPACE_KEYS_INVALID");
-        assert((await rotate(4, this.rungsOf(4))).keyVersion === 4, "rotation to 4");
-        
-        // A manager's rotation prunes the older versions' wraps: a reader descends from the current one.
+        // A manager's rotation that does not ask to prune keeps the older wraps.
+        const kept = await this.apis.contextApi.spaceGetKeyArchive({id: spaceId});
+        assert(kept.keys.map(k => k.keyVersion).join() === "1,1,2,2,3,3", `every version keeps its wraps: ${JSON.stringify(kept.keys)}`);
+        // A repair has to be a canonical span below the new version.
+        await shouldThrowErrorWithCode2(() => rotate(4, this.rungsOf(4), {repairRungs: [rung(3, 1)]}), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(4, this.rungsOf(4), {repairRungs: [rung(4, 3)]}), "SPACE_KEYS_INVALID");
+        // A pruning rotation with a repair of span 3->2: the wraps below 4 go, the repair lands beside the original.
+        assert((await rotate(4, this.rungsOf(4), {prune: true, repairRungs: [rung(3, 2)]})).keyVersion === 4, "rotation to 4");
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.keys.length === 2 && space.keys.every(k => k.keyVersion === 4), `only version 4 is wrapped: ${JSON.stringify(space.keys)}`);
+        assert(space.keysPrunedBelow === 4, `the prune is recorded: ${space.keysPrunedBelow}`);
+        assert((await this.apis.contextApi.spaceList({contextId: testData.contextId, skip: 0, limit: 100, sortOrder: "asc"})).spaces.find(x => x.id === spaceId)!.keysPrunedBelow === 4, "spaceList serves it too");
         const mine = await this.apis.contextApi.spaceGetKeyArchive({id: spaceId});
         assert(mine.keys.length === 2 && mine.keys.every(k => k.keyVersion === 4), `the older wraps are gone: ${JSON.stringify(mine.keys)}`);
         const asBob = await this.apiOf(bob);
         const all = await asBob.spaceGetKeyArchive({id: spaceId});
         assert(all.keys.length === 1 && "groupId" in all.keys[0].recipient && all.keys[0].keyVersion === 4, `bob gets his group's wrap only: ${JSON.stringify(all.keys)}`);
         const spans = (rungs: types.cloud.SpaceRung[]) => rungs.map(r => `${r.atKeyVersion}->${r.targetKeyVersion}`).join();
-        assert(spans(all.rungs) === "2->1,3->2,4->2,4->3" && all.nextKeyVersion === undefined, `the whole ladder: ${spans(all.rungs)}`);
+        assert(spans(all.rungs) === "2->1,3->2,3->2,4->2,4->3" && all.nextKeyVersion === undefined, `the whole ladder, both rungs of the repaired span: ${spans(all.rungs)}`);
         assert(all.rungs.every(r => r.data === rung(r.atKeyVersion, r.targetKeyVersion).data), "a rung comes back as it was sent");
         const first = await asBob.spaceGetKeyArchive({id: spaceId, limit: 2});
         assert(spans(first.rungs) === "2->1" && first.nextKeyVersion === 3 && first.keys.length === 0, `first page: ${JSON.stringify(first)}`);
         const rest = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: first.nextKeyVersion, limit: 2});
-        assert(spans(rest.rungs) === "3->2,4->2,4->3" && rest.nextKeyVersion === undefined, `second page: ${JSON.stringify(rest)}`);
+        assert(spans(rest.rungs) === "3->2,3->2,4->2,4->3" && rest.nextKeyVersion === undefined, `second page: ${JSON.stringify(rest)}`);
         const window = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});
-        assert(spans(window.rungs) === "3->2" && window.nextKeyVersion === undefined, `closed window: ${JSON.stringify(window)}`);
+        assert(spans(window.rungs) === "3->2,3->2" && window.nextKeyVersion === undefined, `closed window: ${JSON.stringify(window)}`);
+        
+        // A span holds at most four rungs: two more repairs fill it, the next is refused.
+        assert((await rotate(5, this.rungsOf(5), {repairRungs: [rung(3, 2)]})).keyVersion === 5, "rotation to 5");
+        assert((await rotate(6, this.rungsOf(6), {repairRungs: [rung(3, 2)]})).keyVersion === 6, "rotation to 6");
+        await shouldThrowErrorWithCode2(() => rotate(7, this.rungsOf(7), {repairRungs: [rung(3, 2)]}), "SPACE_KEYS_INVALID");
+        const full = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});
+        assert(spans(full.rungs) === "3->2,3->2,3->2,3->2", `four rungs of the span: ${spans(full.rungs)}`);
+        assert((await this.apis.contextApi.spaceGet({id: spaceId})).space.keysPrunedBelow === 4, "a rotation without prune leaves keysPrunedBelow");
         
         // Only a recipient reads the ladder, and it goes with the space.
         const hidden = await this.createSpace([{userId: me, pubKey: myPub, role: "manager"}]);

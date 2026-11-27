@@ -16,6 +16,7 @@ import * as db from "../../../db/Model";
 import { SpaceService } from "../../../service/cloud/SpaceService";
 import { SpaceRepository } from "../../../service/cloud/SpaceRepository";
 import { AppException } from "../../../api/AppException";
+import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { DbDuplicateError } from "../../../error/DbDuplicateError";
 import { GroupRotationRateLimiter } from "../../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { CacheWithTTL } from "../../../utils/CacheWithTTL";
@@ -52,25 +53,23 @@ it("is stale once a recipient group is past the epoch the key was wrapped to, or
     assert.strictEqual(SpaceService.isStale({groups: []}, new Map()), false);
 });
 
-it("wants exactly one key entry per recipient and version", () => {
+it("wants exactly one key entry per recipient, of the current version", () => {
     const recipients = [{groupId: g1}, {userId: alice}];
     const epochs = new Map([[g1, 3]]);
-    SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: alice})], recipients, [1], 1, epochs);
+    SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: alice})], recipients, 1, epochs);
     // One missing, one for somebody else, one twice.
-    refused(() => SpaceService.assertKeysCover([entry(1, {userId: alice})], recipients, [1], 1, epochs));
-    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: bob})], recipients, [1], 1, epochs));
-    refused(() => SpaceService.assertKeysCover([entry(1, {userId: alice}), entry(1, {userId: alice})], recipients, [1], 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(1, {userId: alice})], recipients, 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: bob})], recipients, 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(1, {userId: alice}), entry(1, {userId: alice})], recipients, 1, epochs));
     // A version nobody asked for.
-    refused(() => SpaceService.assertKeysCover([entry(2, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: alice})], recipients, [1], 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(2, {groupId: g1, groupKeyVersion: 3}), entry(1, {userId: alice})], recipients, 1, epochs));
 });
 
 it("holds a group's entry at the current key version to the group's current epoch", () => {
     const epochs = new Map([[g1, 3]]);
-    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 2})], [{groupId: g1}], [1], 1, epochs));
-    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 4})], [{groupId: g1}], [1], 1, epochs));
-    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3})], [{groupId: g1}], [1], 1, new Map()));
-    // An older version of the key may stay wrapped to an epoch the group has had.
-    SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 2}), entry(2, {groupId: g1, groupKeyVersion: 3})], [{groupId: g1}], [1, 2], 2, epochs);
+    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 2})], [{groupId: g1}], 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 4})], [{groupId: g1}], 1, epochs));
+    refused(() => SpaceService.assertKeysCover([entry(1, {groupId: g1, groupKeyVersion: 3})], [{groupId: g1}], 1, new Map()));
 });
 
 it("derives a space's id from the context and the resource id, apart from a group's", () => {
@@ -299,24 +298,183 @@ describe("the rungs of a space are served a page of key versions at a time", () 
     it("pages by key version, says where to continue, and checks the archive's own ACL entry", async () => {
         const {created, calls, acls} = service();
         const first = await created.getKeyArchive({} as never, {id, limit: 4});
-        assert.deepStrictEqual(calls.getRungs[0], ["s1", 1, 4]);
+        assert.deepStrictEqual(calls.getRungs[0], ["s1", 1, 4, SpaceService.ARCHIVE_PAGE_ROWS + 1]);
         assert.strictEqual(first.nextKeyVersion, 5);
         const last = await created.getKeyArchive({} as never, {id, fromKeyVersion: 5});
-        assert.deepStrictEqual(calls.getRungs[1], ["s1", 5, 10], "default 256 versions, capped at the current one");
+        assert.deepStrictEqual(calls.getRungs[1].slice(0, 3), ["s1", 5, 10], "default 256 versions, capped at the current one");
         assert.strictEqual(last.nextKeyVersion, undefined);
         const bounded = await created.getKeyArchive({} as never, {id, fromKeyVersion: 2, toKeyVersion: 3, limit: 1});
-        assert.deepStrictEqual(calls.getRungs[2], ["s1", 2, 2]);
+        assert.deepStrictEqual(calls.getRungs[2].slice(0, 3), ["s1", 2, 2]);
         assert.strictEqual(bounded.nextKeyVersion, 3);
         const past = await created.getKeyArchive({} as never, {id, fromKeyVersion: 11});
         assert.deepStrictEqual([past.rungs, past.nextKeyVersion, calls.getRungs.length], [[], undefined, 3], "nothing past the current version");
         assert.ok(acls.every(acl => acl === "context/spaceGetKeyArchive"));
-        assert.deepStrictEqual(calls.getKeyRange, [["s1", alice, [g1], 1, 4], ["s1", alice, [g1], 5, 10], ["s1", alice, [g1], 2, 2]], "the caller's own wraps of the same versions");
+        const rows = SpaceService.ARCHIVE_PAGE_ROWS + 1;
+        assert.deepStrictEqual(calls.getKeyRange, [["s1", alice, [g1], 1, 4, rows], ["s1", alice, [g1], 5, 10, rows], ["s1", alice, [g1], 2, 2, rows]], "the caller's own wraps of the same versions");
     });
     
     it("a backend is served the rungs and no wraps", async () => {
         const {created, calls} = service(true);
         const page = await created.getKeyArchive({} as never, {id});
         assert.deepStrictEqual([page.keys, calls.getRungs.length, calls.getKeyRange.length], [[], 1, 0]);
+    });
+});
+
+describe("an archive page is capped by rows, and carries whole versions only", () => {
+    const rung = (at: number, target = at - 1) => ({atKeyVersion: at, targetKeyVersion: target, data: "AA==" as types.core.Base64});
+    const wrap = (keyVersion: number) => ({keyVersion});
+    const N = SpaceService.ARCHIVE_PAGE_ROWS;
+    
+    it("leaves a page under the cap as it is", () => {
+        const page = SpaceService.capArchivePage({upTo: 9, next: 10}, [rung(2), rung(3)], [wrap(2)]);
+        assert.deepStrictEqual([page.rungs.length, page.keys.length, page.nextKeyVersion], [2, 1, 10]);
+    });
+    
+    it("SECURITY: ends the page before the first version past the cap, of either kind, and resumes there", () => {
+        // N + 1 rungs read: versions 2.. with 4 rungs each, so row N falls inside a version that is dropped whole.
+        const rungs = Array.from({length: N + 1}, (_, i) => rung(2 + Math.floor(i / 4), 1));
+        const cut = rungs[N].atKeyVersion;
+        const page = SpaceService.capArchivePage({upTo: 1000, next: undefined}, rungs, [wrap(2), wrap(cut)]);
+        assert.strictEqual(page.nextKeyVersion, cut);
+        assert.ok(page.rungs.every(r => r.atKeyVersion < cut) && page.rungs.length <= N);
+        assert.strictEqual(page.rungs.length, rungs.filter(r => r.atKeyVersion < cut).length, "every rung of the versions kept");
+        assert.deepStrictEqual(page.keys, [wrap(2)], "the wraps end at the same version");
+        // Wraps past the cap cut the page too, at the lower of the two cuts.
+        const keys = Array.from({length: N + 1}, (_, i) => wrap(2 + Math.floor(i / 100)));
+        const byKeys = SpaceService.capArchivePage({upTo: 1000}, [rung(2), rung(50)], keys);
+        assert.strictEqual(byKeys.nextKeyVersion, keys[N].keyVersion);
+        assert.deepStrictEqual(byKeys.rungs, [rung(2)]);
+    });
+    
+    it("serves every rung of a span, a repaired one's several", async () => {
+        const space = {id: "s1", contextId: "c", keyVersion: 4, groups: [], users: []} as unknown as db.space.Space;
+        const stored = [rung(4, 3), {...rung(4, 3), data: "BB==" as types.core.Base64}, rung(4, 2)];
+        const created = new SpaceService({createSpaceRepository: () => ({get: async () => space, getRungs: async () => stored, getKeyRange: async () => []})} as never,
+            null as never, "h" as types.core.Host, null as never, null as never, null as never, null as never, {} as Config);
+        Object.assign(created, {access: async () => undefined});
+        const page = await created.getKeyArchive({} as never, {id: "s1" as types.space.SpaceId});
+        assert.deepStrictEqual(page.rungs, stored);
+    });
+});
+
+describe("pruning and repair rungs ride on a rotation, a manager's only", () => {
+    const user = (userId: types.cloud.UserId, role: "user"|"manager") => ({userId, pubKey: pub, role});
+    // Key version 4 now; the rotation makes 5, whose own rungs are the canonical ones.
+    const space = {id: "s1", contextId: "c", keyVersion: 4, keysPrunedBelow: 0, version: 7, groups: [], users: [user(alice, "manager"), user(bob, "user")]} as unknown as db.space.Space;
+    const rungsOf = (v: number) => LadderMath.rungSpansFor(v, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: "AA==" as types.core.Base64}));
+    const repair = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: "RR==" as types.core.Base64});
+    
+    /** A service whose rotation runs for real down to the write, which records what it would do. */
+    function rotation(standing: "user"|"manager", stored: Map<string, number> = new Map()) {
+        const done: string[] = [];
+        let changes: Partial<db.space.Space> = {};
+        const repository = {
+            deleteKeysOf: async () => done.push("deleteKeysOf"),
+            deleteKeysBelow: async (_id: string, v: number) => done.push(`deleteKeysBelow ${v}`),
+            insertKeys: async () => done.push("insertKeys"),
+            countRungs: async () => stored,
+            insertRungs: async (_id: string, rungs: types.cloud.SpaceRung[], seq: number) => done.push(`insertRungs ${rungs.map(r => `${r.atKeyVersion}->${r.targetKeyVersion}`).join(",")} @${seq}`),
+        };
+        const created = new SpaceService({createGroupRepository: () => ({getKeyHeads: async () => new Map()})} as never, null as never, "h" as types.core.Host,
+            null as never, null as never, {sendUpdatedSpace: () => undefined} as never, null as never, {} as Config);
+        Object.assign(created, {
+            getForChange: async () => ({space, user: {userId: standing === "manager" ? alice : bob, pubKey: pub, ownGroupIds: [], role: standing}}),
+            reserveRotation: async () => {
+                done.push("reserved");
+                return [];
+            },
+            write: async (_space: unknown, _modifier: unknown, c: Partial<db.space.Space>, keys: (repo: typeof repository) => Promise<void>) => {
+                changes = c;
+                await keys(repository);
+                return {...space, ...c};
+            },
+        });
+        const run = async (extra: {prune?: boolean, repairRungs?: types.cloud.SpaceRung[]}) => {
+            const original = SpaceService.assertStatement;
+            SpaceService.assertStatement = () => standing;
+            try {
+                await created.rotateKey({} as never, {
+                    id: space.id, keyId: "k5" as types.core.KeyId, keys: [entry(5, {userId: alice}), entry(5, {userId: bob})], rungs: rungsOf(5), expectedKeyVersion: 4,
+                    statement: {seq: 9} as types.cloud.SpaceStatement, ...extra,
+                }, "context/spaceRotateKey");
+            }
+            finally {
+                SpaceService.assertStatement = original;
+            }
+        };
+        return {run, done, changes: () => changes};
+    }
+    const invalidStatement = (e: unknown) => AppException.is(e, "SPACE_STATEMENT_INVALID");
+    
+    it("SECURITY: prune from a non-manager's standing is refused, before any budget is spent", async () => {
+        const {run, done} = rotation("user");
+        await assert.rejects(() => run({prune: true}), invalidStatement);
+        assert.deepStrictEqual(done, []);
+    });
+    
+    it("SECURITY: repair rungs from a non-manager's standing are refused", async () => {
+        const {run, done} = rotation("user");
+        await assert.rejects(() => run({repairRungs: [repair(4, 3)]}), invalidStatement);
+        assert.deepStrictEqual(done, []);
+    });
+    
+    it("a non-manager rotates without them, and prunes nothing", async () => {
+        const {run, done, changes} = rotation("user");
+        await run({prune: false, repairRungs: []});
+        assert.ok(!done.some(x => x.startsWith("deleteKeysBelow")));
+        assert.strictEqual(changes().keysPrunedBelow, undefined);
+    });
+    
+    it("SECURITY: a manager's rotation without prune prunes nothing", async () => {
+        const {run, done, changes} = rotation("manager");
+        await run({});
+        assert.deepStrictEqual(done, ["reserved", "insertKeys", "insertRungs 5->4 @9"]);
+        assert.strictEqual(changes().keysPrunedBelow, undefined);
+    });
+    
+    it("a manager's prune deletes the wraps below the new version and records it", async () => {
+        const {run, done, changes} = rotation("manager");
+        await run({prune: true});
+        assert.ok(done.includes("deleteKeysBelow 5"), JSON.stringify(done));
+        assert.strictEqual(changes().keysPrunedBelow, 5);
+        assert.strictEqual(changes().keyVersion, 5);
+    });
+    
+    it("a manager's repair rungs are stored beside the rotation's own, stamped with the request's seq", async () => {
+        const {run, done} = rotation("manager", new Map([["4/3", 3]]));
+        await run({repairRungs: [repair(4, 3), repair(3, 2)]});
+        assert.ok(done.includes("insertRungs 5->4,4->3,3->2 @9"), JSON.stringify(done));
+    });
+    
+    it("SECURITY: the 5th rung of a span is refused, and nothing is stored", async () => {
+        const {run, done} = rotation("manager", new Map([["4/3", 4]]));
+        await assert.rejects(() => run({repairRungs: [repair(4, 3)]}), (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
+        assert.ok(!done.some(x => x.startsWith("insertRungs")));
+    });
+    
+    it("SECURITY: a repair has to be one canonical span below the new version, once, with data, within the rung cap", () => {
+        SpaceService.assertRepairs([repair(4, 3), repair(4, 2), repair(2, 1), repair(3, 2)], 5, 1);
+        refused(() => SpaceService.assertRepairs([repair(5, 4)], 5, 1));
+        refused(() => SpaceService.assertRepairs([repair(6, 5)], 5, 1));
+        refused(() => SpaceService.assertRepairs([repair(4, 1)], 5, 1));
+        refused(() => SpaceService.assertRepairs([repair(3, 4)], 5, 1));
+        refused(() => SpaceService.assertRepairs([repair(4, 3), repair(4, 3)], 5, 1));
+        refused(() => SpaceService.assertRepairs([{...repair(4, 3), data: "" as types.core.Base64}], 5, 1));
+        const many = Array.from({length: 60}, (_, i) => repair(i + 2, i + 1));
+        SpaceService.assertRepairs(many.slice(0, 63), 100, 1);
+        refused(() => SpaceService.assertRepairs(many.slice(0, 60), 100, 5));
+    });
+});
+
+describe("a space's rungs are append-only, several per span", () => {
+    it("identifies a rung by its span and the seq of its request, so a repair lands beside the original", async () => {
+        const inserted: {_id?: string, id?: string}[] = [];
+        const rungs = {collection: {insertMany: async (docs: {id: string}[]) => inserted.push(...docs)}, getOptions: () => ({}), convertToDbObj: (x: unknown) => x};
+        const repo = new SpaceRepository(null as never, null as never, null as never, null as never, rungs as never);
+        const span = {atKeyVersion: 4, targetKeyVersion: 3, data: "AA==" as types.core.Base64};
+        await repo.insertRungs("s1" as types.space.SpaceId, [span], 4);
+        await repo.insertRungs("s1" as types.space.SpaceId, [span], 9);
+        assert.deepStrictEqual(inserted.map(d => d.id), ["s1/4/3/4", "s1/4/3/9"]);
     });
 });
 

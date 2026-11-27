@@ -127,12 +127,6 @@ export class SpaceStatement {
         return SpaceStatement.verify(groupPubKey, st.viaSignature, SpaceStatement.viaBytes(st));
     }
     
-    /** The same recipients, each with the same role, key and group epoch, in any order. */
-    static sameRecipients(a: Roster, b: Roster): boolean {
-        const ids = (r: Roster) => new Set([...r.groups.map(g => "g:" + g.groupId), ...r.users.map(u => "u:" + u.userId)]).size;
-        return ids(a) === a.groups.length + a.users.length && SpaceStatement.rosterHash(a).equals(SpaceStatement.rosterHash(b));
-    }
-    
     /**
      * The roster after `st`, from the roster before it (empty at seq 1). Strict, as the Endpoint applies them: an
      * id at most once across the group lists and once across the user lists, nobody added who is there, nobody

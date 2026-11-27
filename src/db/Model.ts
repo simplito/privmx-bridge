@@ -204,7 +204,7 @@ export namespace space {
     /**
      * A space: one key, in versions, wrapped for several groups and users. It holds no data of its own. The
      * wraps live in `spaceKey`, one document per version and recipient, those of older versions only until a
-     * manager's rotation; older versions are reached down the rungs in `spaceRung`. The document stays of a size that follows the recipients, not the rotations.
+     * manager's pruning rotation (`prune: true`); older versions are reached down the rungs in `spaceRung`. The document stays of a size that follows the recipients, not the rotations.
      */
     export interface Space {
         id: types.space.SpaceId;
@@ -220,6 +220,8 @@ export namespace space {
         users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
         keyId: types.core.KeyId;
         keyVersion: number;
+        /** The key version of the last pruning rotation, 0 before any: wraps of versions below it are gone. */
+        keysPrunedBelow: number;
         /** The seq of `statement`. */
         seq: number;
         /** The last signed statement: its `rosterHash` binds `groups` and `users`, its `keyVersion` is this one. Earlier ones live in `spaceStatement`. */
@@ -268,10 +270,11 @@ export namespace space {
         signature: types.core.Base64;
     }
     
-    /** One rung of a space's key ladder (`types.cloud.SpaceRung`). Kept for every version; `SpaceKey` rows of older
-     *  versions go with a manager's rotation. */
+    /** One rung of a space's key ladder (`types.cloud.SpaceRung`). Kept for every version, append-only: a span holds
+     *  the rung of the rotation that made its version and up to three repairs by managers. */
     export interface SpaceRung {
-        /** `<spaceId>/<atKeyVersion>/<targetKeyVersion>`: one rung per span. */
+        /** `<spaceId>/<atKeyVersion>/<targetKeyVersion>/<seq>`, the seq of the statement whose request brought it
+         *  (rows from before repairs: without the seq). */
         id: string;
         spaceId: types.space.SpaceId;
         atKeyVersion: number;
