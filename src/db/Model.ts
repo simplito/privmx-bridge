@@ -222,7 +222,7 @@ export namespace space {
         keyVersion: number;
         /** The seq of `statement`. */
         seq: number;
-        /** The last signed statement: `groups`, `users` and `keyVersion` are what it says. Earlier ones live in `spaceStatement`. */
+        /** The last signed statement: its `rosterHash` binds `groups` and `users`, its `keyVersion` is this one. Earlier ones live in `spaceStatement`. */
         statement: types.cloud.SpaceStatement;
         publicMeta: types.space.SpaceData;
         privateMeta: types.space.SpaceData;

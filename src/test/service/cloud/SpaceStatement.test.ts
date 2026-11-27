@@ -15,15 +15,25 @@ import * as elliptic from "elliptic";
 import * as types from "../../../types";
 import { Crypto } from "../../../utils/crypto/Crypto";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
-import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
+import { Roster, SpaceStatement } from "../../../service/cloud/SpaceStatement";
 import { signSpaceStatement, UnsignedSpaceStatement } from "../../testUtils/SpaceFixtures";
 
-// The vector the Endpoint holds too (`proposals/space-log-format.md`): fixed keys, fixed fields, and elliptic's
-// deterministic signatures, so every byte below is reproducible.
 const key = (hex: string) => new elliptic.ec("secp256k1").keyFromPrivate(hex.repeat(32), "hex");
 const alice = key("11");
 const group = key("22");
+const pub = (k: elliptic.ec.KeyPair) => ECUtils.publicToBase58DER(k);
 
+// The roster before the statement below. Out of order on purpose: the hash sorts.
+const sales = {groupId: "sales" as types.group.GroupId, role: "manager" as const, groupKeyVersion: 5, groupPubKey: pub(group) as unknown as types.cloud.GroupPubKey};
+const billing = {groupId: "billing" as types.group.GroupId, role: "user" as const, groupKeyVersion: 1, groupPubKey: pub(alice) as unknown as types.cloud.GroupPubKey};
+const zoe = {userId: "zoe" as types.cloud.UserId, pubKey: pub(group) as types.cloud.UserPubKey, role: "user" as const};
+const al = {userId: "alice" as types.cloud.UserId, pubKey: pub(alice) as types.cloud.UserPubKey, role: "manager" as const};
+const prior: Roster = {groups: [sales, billing], users: [zoe, al]};
+const refreshed = {groupId: billing.groupId, groupKeyVersion: 2, groupPubKey: pub(key("33")) as unknown as types.cloud.GroupPubKey};
+const after: Roster = {groups: [sales, {...billing, groupKeyVersion: 2, groupPubKey: refreshed.groupPubKey}], users: [zoe, al]};
+
+type Deltas = Pick<UnsignedSpaceStatement, "addedGroups"|"addedUsers"|"removedGroups"|"removedUsers"|"refreshedGroups">;
+const none: Deltas = {addedGroups: [], addedUsers: [], removedGroups: [], removedUsers: [], refreshedGroups: []};
 const unsigned: UnsignedSpaceStatement = {
     spaceId: "ab".repeat(32) as types.space.SpaceId,
     contextId: "ctx-1" as types.context.ContextId,
@@ -33,28 +43,14 @@ const unsigned: UnsignedSpaceStatement = {
     date: 1700000000000,
     keyVersion: 2,
     keyCommit: "ef".repeat(32),
-    // Out of order on purpose: the hash sorts.
-    groups: [
-        {groupId: "sales" as types.group.GroupId, role: "manager", groupKeyVersion: 5, groupPubKey: ECUtils.publicToBase58DER(group) as unknown as types.cloud.GroupPubKey},
-        {groupId: "billing" as types.group.GroupId, role: "user", groupKeyVersion: 1, groupPubKey: ECUtils.publicToBase58DER(alice) as unknown as types.cloud.GroupPubKey},
-    ],
-    users: [
-        {userId: "zoe" as types.cloud.UserId, pubKey: ECUtils.publicToBase58DER(group) as types.cloud.UserPubKey, role: "user"},
-        {userId: "alice" as types.cloud.UserId, pubKey: ECUtils.publicToBase58DER(alice) as types.cloud.UserPubKey, role: "manager"},
-    ],
+    ...none,
+    refreshedGroups: [refreshed],
+    rosterHash: SpaceStatement.rosterHash(after).toString("hex"),
     signer: "alice" as types.cloud.UserId,
-    signerPubKey: ECUtils.publicToBase58DER(alice) as types.cloud.UserPubKey,
+    signerPubKey: pub(alice) as types.cloud.UserPubKey,
     via: "sales" as types.group.GroupId,
 };
 const statement = signSpaceStatement(unsigned, alice, group);
-
-const EXPECTED = {
-    recipientsHash: "4fb2f91ff12ef35fba60b41356dcdad801e2cc0a44c47acf42d066563cce7a7c",
-    signedBytes: "706d782d73706163652d73746174656d656e7400010000004061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162000000056374782d31000000000000000200000020cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd040000018bcfe568000000000000000002efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef4fb2f91ff12ef35fba60b41356dcdad801e2cc0a44c47acf42d066563cce7a7c00000005616c696365000000323753376f59364a726a7a7138747872506d42775568556d4b7a704e36343833354537757261314844444156557671526a4a310000000573616c6573",
-    signature: "G6mLHiR0fTTrDsC3Ke/uZ//1RYR40WbTjqQgaMXi5EWl/Kdmn5VvwLxr53bLfOAO3kAl3byD+sGQEfiEXasM4/4=",
-    viaSignature: "G1TnXQdLHxn6nFvDK6rWIwDIni+O/xF6Vdw7uvenf/Ucnie6YGSnn65ks/MXkPIoQigIX0kTMIyGbbPtvqN/n80=",
-    digest: "81cb2d7e7415da314d438d87d4d2980688f92f7acdeabba2abda5571ad01809b",
-};
 
 const u32 = (n: number) => {
     const b = Buffer.alloc(4);
@@ -69,12 +65,10 @@ const u64 = (n: number) => {
 const lp = (s: string) => Buffer.concat([u32(Buffer.byteLength(s)), Buffer.from(s)]);
 const tag = (s: string) => Buffer.from(s + "\0");
 
-it("hashes the recipients sorted by id, each with its role, key and epoch", () => {
-    const [sales, billing] = unsigned.groups;
-    const [zoe, al] = unsigned.users;
+it("hashes the whole roster sorted by id, with the counts, each recipient with its role, key and epoch", () => {
     // Written out by hand from the format, not through ByteWriter.
     const expected = Crypto.sha256(Buffer.concat([
-        tag("pmx-space-recipients"),
+        tag("pmx-space-roster-v1"),
         u32(2),
         lp("billing"), lp("user"), u64(1), lp(billing.groupPubKey),
         lp("sales"), lp("manager"), u64(5), lp(sales.groupPubKey),
@@ -82,29 +76,37 @@ it("hashes the recipients sorted by id, each with its role, key and epoch", () =
         lp("alice"), lp(al.pubKey), lp("manager"),
         lp("zoe"), lp(zoe.pubKey), lp("user"),
     ]));
-    assert.strictEqual(SpaceStatement.recipientsHash(unsigned).toString("hex"), expected.toString("hex"));
-    assert.strictEqual(expected.toString("hex"), EXPECTED.recipientsHash);
-    const reordered = {groups: [...unsigned.groups].reverse(), users: [...unsigned.users].reverse()};
-    assert.ok(SpaceStatement.recipientsHash(reordered).equals(expected), "the order on the wire does not matter");
+    assert.strictEqual(SpaceStatement.rosterHash(prior).toString("hex"), expected.toString("hex"));
+    const reordered = {groups: [...prior.groups].reverse(), users: [...prior.users].reverse()};
+    assert.ok(SpaceStatement.rosterHash(reordered).equals(expected), "the order on the wire does not matter");
 });
 
-it("lays the signed bytes out as the format says", () => {
+it("lays the signed bytes out as the format says, every delta list sorted", () => {
+    const st: UnsignedSpaceStatement = {
+        ...unsigned, op: "remove", keyVersion: 3,
+        removedGroups: ["zz" as types.group.GroupId, "Aa" as types.group.GroupId], removedUsers: ["bob" as types.cloud.UserId],
+        addedGroups: [sales, billing], addedUsers: [zoe, al],
+    };
     const expected = Buffer.concat([
         tag("pmx-space-statement"),
-        Buffer.from([1]),
+        Buffer.from([2]),
         lp(unsigned.spaceId), lp("ctx-1"),
         u64(2),
         u32(32), Buffer.from("cd".repeat(32), "hex"),
-        Buffer.from([4]),
+        Buffer.from([3]),
         u64(1700000000000),
-        u64(2),
+        u64(3),
         Buffer.from("ef".repeat(32), "hex"),
-        SpaceStatement.recipientsHash(unsigned),
+        Buffer.from(unsigned.rosterHash, "hex"),
+        u32(2), lp("billing"), lp("user"), u64(1), lp(billing.groupPubKey), lp("sales"), lp("manager"), u64(5), lp(sales.groupPubKey),
+        u32(2), lp("alice"), lp(al.pubKey), lp("manager"), lp("zoe"), lp(zoe.pubKey), lp("user"),
+        u32(2), lp("Aa"), lp("zz"),
+        u32(1), lp("bob"),
+        u32(1), lp("billing"), u64(2), lp(refreshed.groupPubKey),
         lp("alice"), lp(unsigned.signerPubKey),
         lp("sales"),
     ]);
-    assert.strictEqual(SpaceStatement.signedBytes(unsigned).toString("hex"), expected.toString("hex"));
-    assert.strictEqual(expected.toString("hex"), EXPECTED.signedBytes);
+    assert.strictEqual(SpaceStatement.signedBytes(st).toString("hex"), expected.toString("hex"));
     // The first statement has no predecessor: a zero length, and no bytes.
     const first = SpaceStatement.signedBytes({...unsigned, seq: 1, prevDigest: "", op: "create", via: ""});
     const at = tag("pmx-space-statement").length + 1 + lp(unsigned.spaceId).length + lp("ctx-1").length + 8;
@@ -113,26 +115,26 @@ it("lays the signed bytes out as the format says", () => {
 });
 
 it("signs as the author and as the group, and names a statement by all of it", () => {
-    assert.strictEqual(statement.signature, EXPECTED.signature);
-    assert.strictEqual(statement.viaSignature, EXPECTED.viaSignature);
     const viaBytes = Buffer.concat([tag("pmx-space-via"), Crypto.sha256(SpaceStatement.signedBytes(unsigned))]);
     assert.ok(SpaceStatement.viaBytes(unsigned).equals(viaBytes));
     const digest = Crypto.sha256(Buffer.concat([
         SpaceStatement.signedBytes(unsigned), Buffer.from(statement.signature, "base64"), Buffer.from(statement.viaSignature, "base64"),
     ])).toString("hex");
     assert.strictEqual(SpaceStatement.digest(statement), digest);
-    assert.strictEqual(digest, EXPECTED.digest);
     // The group's signature is part of the name: swapped for another, the next statement no longer chains.
     assert.notStrictEqual(SpaceStatement.digest({...statement, viaSignature: statement.signature}), digest);
     assert.notStrictEqual(SpaceStatement.digest(signSpaceStatement({...unsigned, via: ""}, alice)), digest);
 });
 
 it("verifies each signature against its own key and its own bytes", () => {
-    const groupPub = unsigned.groups[0].groupPubKey;
+    const groupPub = sales.groupPubKey;
     assert.ok(SpaceStatement.verifySignature(statement));
     assert.ok(SpaceStatement.verifyViaSignature(statement, groupPub));
     // Any field changed, the author's signature no longer covers the statement - and so neither does the group's.
-    for (const changed of [{seq: 3}, {keyVersion: 3}, {keyCommit: "00".repeat(32)}, {via: "billing" as types.group.GroupId}, {date: 1}, {op: "remove" as const}, {users: [unsigned.users[0]]}]) {
+    for (const changed of [
+        {seq: 3}, {keyVersion: 3}, {keyCommit: "00".repeat(32)}, {via: "billing" as types.group.GroupId}, {date: 1}, {op: "remove" as const},
+        {rosterHash: "00".repeat(32)}, {refreshedGroups: []}, {removedUsers: [zoe.userId]}, {addedUsers: [zoe]}, {removedGroups: [sales.groupId]}, {addedGroups: [sales]},
+    ]) {
         assert.ok(!SpaceStatement.verifySignature({...statement, ...changed}), JSON.stringify(changed));
         assert.ok(!SpaceStatement.verifyViaSignature({...statement, ...changed}, groupPub), JSON.stringify(changed));
     }
@@ -149,37 +151,100 @@ it("verifies each signature against its own key and its own bytes", () => {
 });
 
 it("tells the same recipients from changed ones, whatever the order", () => {
-    const reordered = {groups: [...unsigned.groups].reverse(), users: [...unsigned.users].reverse()};
-    assert.ok(SpaceStatement.sameRecipients(unsigned, reordered));
-    const [sales, billing] = unsigned.groups;
+    const reordered = {groups: [...prior.groups].reverse(), users: [...prior.users].reverse()};
+    assert.ok(SpaceStatement.sameRecipients(prior, reordered));
     for (const groups of [[sales], [{...sales, role: "user" as const}, billing], [{...sales, groupKeyVersion: 6}, billing], [{...sales, groupPubKey: billing.groupPubKey}, billing]]) {
-        assert.ok(!SpaceStatement.sameRecipients({...unsigned, groups}, unsigned));
+        assert.ok(!SpaceStatement.sameRecipients({...prior, groups}, prior));
     }
-    assert.ok(!SpaceStatement.sameRecipients({...unsigned, users: [unsigned.users[0], {...unsigned.users[1], role: "user"}]}, unsigned));
+    assert.ok(!SpaceStatement.sameRecipients({...prior, users: [zoe, {...al, role: "user"}]}, prior));
     // The same recipient twice is no list of recipients, even against itself.
-    const twice = {groups: unsigned.groups, users: [...unsigned.users, unsigned.users[0]]};
+    const twice = {groups: prior.groups, users: [...prior.users, zoe]};
     assert.ok(!SpaceStatement.sameRecipients(twice, twice));
 });
 
+it("applies deltas: removes, refreshes in place, appends the added", () => {
+    const applied = SpaceStatement.applyDeltas(prior, unsigned);
+    assert.ok(typeof(applied) !== "string" && SpaceStatement.sameRecipients(applied, after));
+    const dave = {userId: "dave" as types.cloud.UserId, pubKey: zoe.pubKey, role: "user" as const};
+    const changed = SpaceStatement.applyDeltas(prior, {...none, removedGroups: [sales.groupId], removedUsers: [zoe.userId], addedUsers: [dave]});
+    assert.deepStrictEqual(changed, {groups: [billing], users: [al, dave]});
+});
+
+it("refuses deltas that do not apply cleanly", () => {
+    const other = {...billing, groupId: "other" as types.group.GroupId};
+    const cases: [string, Partial<Deltas>][] = [
+        ["adds a present group", {addedGroups: [billing]}],
+        ["adds a present user", {addedUsers: [zoe]}],
+        ["removes an absent group", {removedGroups: [other.groupId]}],
+        ["removes an absent user", {removedUsers: ["dave" as types.cloud.UserId]}],
+        ["refreshes a non-recipient", {refreshedGroups: [{...refreshed, groupId: other.groupId}]}],
+        ["refreshes to the same epoch", {refreshedGroups: [{...refreshed, groupKeyVersion: 1}]}],
+        ["refreshes to an older epoch", {refreshedGroups: [{...refreshed, groupId: sales.groupId, groupKeyVersion: 4}]}],
+        ["refreshes to the key held", {refreshedGroups: [{...refreshed, groupPubKey: billing.groupPubKey}]}],
+        ["adds a group twice", {addedGroups: [other, other]}],
+        ["removes a user twice", {removedUsers: [zoe.userId, zoe.userId]}],
+        ["refreshes a group twice", {refreshedGroups: [refreshed, refreshed]}],
+        ["removes and refreshes one group", {removedGroups: [billing.groupId], refreshedGroups: [refreshed]}],
+        ["removes and re-adds one user", {removedUsers: [zoe.userId], addedUsers: [zoe]}],
+        ["leaves no manager", {removedGroups: [sales.groupId], removedUsers: [al.userId]}],
+    ];
+    for (const [what, deltas] of cases) {
+        assert.strictEqual(typeof(SpaceStatement.applyDeltas(prior, {...none, ...deltas})), "string", what);
+    }
+});
+
+it("holds each op to the deltas it may carry", () => {
+    const add = {addedUsers: [zoe]};
+    const remove = {removedUsers: [zoe.userId]};
+    const refresh = {refreshedGroups: [refreshed]};
+    const ok: [types.cloud.SpaceStatementOp, Partial<Deltas>][] = [
+        ["create", add], ["add", add], ["remove", remove], ["remove", {...remove, ...refresh}], ["rotate", refresh], ["rotate", {}],
+    ];
+    const bad: [types.cloud.SpaceStatementOp, Partial<Deltas>][] = [
+        ["create", {}], ["create", {...add, ...refresh}], ["create", {...add, ...remove}],
+        ["add", {}], ["add", {...add, ...refresh}], ["add", {...add, ...remove}],
+        ["remove", {}], ["remove", {...remove, ...add}], ["remove", refresh],
+        ["rotate", add], ["rotate", remove],
+    ];
+    for (const [op, deltas] of ok) {
+        assert.strictEqual(SpaceStatement.opProblem({...none, ...deltas, op}), undefined, op + JSON.stringify(deltas));
+    }
+    for (const [op, deltas] of bad) {
+        assert.notStrictEqual(SpaceStatement.opProblem({...none, ...deltas, op}), undefined, op + JSON.stringify(deltas));
+    }
+});
+
 // The same vectors the Endpoint reads (`test/fixtures/keytree/keytree-vectors.json` there, generated by its
-// `reference.py`): an implementation of the format that is neither this one nor the Endpoint's.
+// `reference.py`): an implementation of the format that is neither this one nor the Endpoint's. They are a chain:
+// each statement's deltas apply to the roster the ones before it left.
 import * as fs from "fs";
 import * as path from "path";
 
 interface SpaceVector {
     statement: UnsignedSpaceStatement;
-    recipientsHashHex: string;
+    rosterHashHex: string;
     signedBytesHex: string;
+    signedBytesSha256Hex: string;
     viaBytesHex: string;
 }
 
-it("SpaceStatement: the signed bytes are the reference ones", () => {
+it("SpaceStatement: the roster hashes and signed bytes are the reference ones", () => {
     const file = path.resolve(__dirname, "../../../..", "src/test/fixtures/keytree-vectors.json");
     const vectors = (JSON.parse(fs.readFileSync(file, "utf8")) as {spaceStatement: SpaceVector[]}).spaceStatement;
-    assert.strictEqual(vectors.length, 4);
+    assert.deepStrictEqual(vectors.map(v => v.statement.op), ["create", "rotate", "remove", "add"]);
+    let roster: Roster = {groups: [], users: []};
     for (const vector of vectors) {
-        assert.strictEqual(SpaceStatement.recipientsHash(vector.statement).toString("hex"), vector.recipientsHashHex);
-        assert.strictEqual(SpaceStatement.signedBytes(vector.statement).toString("hex"), vector.signedBytesHex);
+        assert.strictEqual(SpaceStatement.opProblem(vector.statement), undefined);
+        const applied = SpaceStatement.applyDeltas(roster, vector.statement);
+        if (typeof(applied) === "string") {
+            assert.fail(applied);
+        }
+        roster = applied;
+        assert.strictEqual(SpaceStatement.rosterHash(roster).toString("hex"), vector.rosterHashHex);
+        assert.strictEqual(vector.statement.rosterHash, vector.rosterHashHex);
+        const signed = SpaceStatement.signedBytes(vector.statement);
+        assert.strictEqual(signed.toString("hex"), vector.signedBytesHex);
+        assert.strictEqual(Crypto.sha256(signed).toString("hex"), vector.signedBytesSha256Hex);
         assert.strictEqual(SpaceStatement.viaBytes(vector.statement).toString("hex"), vector.viaBytesHex);
     }
 });

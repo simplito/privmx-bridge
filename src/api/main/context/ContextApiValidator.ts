@@ -251,12 +251,18 @@ export class ContextApiValidator extends BaseValidator {
             date: this.tv.intNonNegative,
             keyVersion: this.builder.min(this.builder.int, 1),
             keyCommit: hash32,
-            groups: this.builder.createListWithMaxLength(this.builder.createObject({
+            addedGroups: this.builder.createListWithMaxLength(this.builder.createObject({
                 groupId: this.tv.groupId, role: role, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
             }), SpaceService.MAX_RECIPIENTS),
-            users: this.builder.createListWithMaxLength(this.builder.createObject({
+            addedUsers: this.builder.createListWithMaxLength(this.builder.createObject({
                 userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role,
             }), SpaceService.MAX_RECIPIENTS),
+            removedGroups: this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS),
+            removedUsers: this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS),
+            refreshedGroups: this.builder.createListWithMaxLength(this.builder.createObject({
+                groupId: this.tv.groupId, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
+            }), SpaceService.MAX_RECIPIENTS),
+            rosterHash: hash32,
             signer: this.tv.cloudUserId,
             signerPubKey: this.tv.cloudUserPubKey,
             via: this.builder.createOneOf([this.builder.createConst(""), this.tv.groupId]),

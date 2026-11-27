@@ -192,8 +192,19 @@ export class SpaceService extends BaseContainerService {
         if (x.op === "add" && st.keyCommit !== x.prior!.statement.keyCommit) {
             bad("adding recipients does not change the key: keyCommit has to stay");
         }
-        if (!SpaceStatement.sameRecipients(st, x.after)) {
-            bad("groups and users are not the recipients after the change, each group at its current epoch and key");
+        const opProblem = SpaceStatement.opProblem(st);
+        if (opProblem) {
+            bad(opProblem);
+        }
+        const applied = SpaceStatement.applyDeltas(x.prior || {groups: [], users: []}, st);
+        if (typeof(applied) === "string") {
+            return bad(applied);
+        }
+        if (!SpaceStatement.sameRecipients(applied, x.after)) {
+            bad("the deltas do not lead to the recipients after the change, each group at its current epoch and key");
+        }
+        if (st.rosterHash !== SpaceStatement.rosterHash(applied).toString("hex")) {
+            bad("rosterHash is not the hash of the recipients after the change");
         }
         if (st.signer !== x.caller.userId || st.signerPubKey !== x.caller.pubKey) {
             bad("the signer is not the caller under its context key");

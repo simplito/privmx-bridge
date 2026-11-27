@@ -747,11 +747,27 @@ it("ContextApiValidator.spaceGetKeyArchive takes an optional version range and a
 it("ContextApiValidator.spaceRotateKey takes the rungs of the new version in a group rung's shape, at most 64", () => {
     const rung = (data = "AAAA") => ({atKeyVersion: 2, targetKeyVersion: 1, data});
     const model = (rungs: unknown) => ({id: "ab".repeat(32), keyId: "k", keys: [{keyVersion: 2, recipient: {userId: "u"}, data: "AA==", signature: "AA=="}], expectedKeyVersion: 1, rungs,
-        statement: {spaceId: "ab".repeat(32), contextId: contextId, seq: 2, prevDigest: "ab".repeat(32), op: "rotate", date: 1, keyVersion: 2, keyCommit: "ab".repeat(32), groups: [], users: [],
+        statement: {spaceId: "ab".repeat(32), contextId: contextId, seq: 2, prevDigest: "ab".repeat(32), op: "rotate", date: 1, keyVersion: 2, keyCommit: "ab".repeat(32),
+            addedGroups: [], addedUsers: [], removedGroups: [], removedUsers: [], refreshedGroups: [], rosterHash: "cd".repeat(32),
             signer: "u", signerPubKey: userKeys("janek").pub58, via: "", signature: Buffer.alloc(65).toString("base64"), viaSignature: ""}});
     const valid = (rungs: unknown) => Utils.try(() => validator().validate("spaceRotateKey", model(rungs))).success;
     expect(valid([rung()])).toBe(true);
     expect(valid([])).toBe(true);
     expect(valid(Array.from({length: 65}, () => rung()))).toBe(false);
     expect(Utils.try(() => validator().validate("spaceRotateKey", {...model([]), rungs: undefined})).success).toBe(false);
+});
+
+it("ContextApiValidator: a space statement carries deltas and a rosterHash, never the whole roster", () => {
+    const base = {id: "ab".repeat(32), keyId: "k", keys: [{keyVersion: 2, recipient: {userId: "u"}, data: "AA==", signature: "AA=="}], expectedKeyVersion: 1, rungs: []};
+    const statement = {spaceId: "ab".repeat(32), contextId: contextId, seq: 2, prevDigest: "ab".repeat(32), op: "rotate", date: 1, keyVersion: 2, keyCommit: "ab".repeat(32),
+        addedGroups: [], addedUsers: [], removedGroups: [], removedUsers: [], refreshedGroups: [{groupId: "g", groupKeyVersion: 2, groupPubKey: userKeys("janek").pub58}],
+        rosterHash: "cd".repeat(32), signer: "u", signerPubKey: userKeys("janek").pub58, via: "", signature: Buffer.alloc(65).toString("base64"), viaSignature: ""};
+    const valid = (st: object) => Utils.try(() => validator().validate("spaceRotateKey", {...base, statement: st})).success;
+    expect(valid(statement)).toBe(true);
+    expect(valid({...statement, rosterHash: undefined})).toBe(false);
+    expect(valid({...statement, rosterHash: "CD".repeat(32)})).toBe(false);
+    expect(valid({...statement, refreshedGroups: undefined})).toBe(false);
+    expect(valid({...statement, refreshedGroups: [{groupId: "g", groupKeyVersion: 0, groupPubKey: userKeys("janek").pub58}]})).toBe(false);
+    expect(valid({...statement, removedUsers: [""]})).toBe(false);
+    expect(valid({...statement, groups: [], users: []})).toBe(false);
 });

@@ -17,6 +17,7 @@ import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { buildTree, creationStatement, registerUserKey, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 import { signSpaceStatement } from "../../testUtils/SpaceFixtures";
 import { SpaceService } from "../../../service/cloud/SpaceService";
+import { Roster, SpaceStatement } from "../../../service/cloud/SpaceStatement";
 import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
@@ -107,14 +108,18 @@ export class ManagementGroupAndSpaceApiTests extends BaseTestSet {
         const data = Buffer.from("wrap").toString("base64") as types.core.Base64;
         const resourceId = this.helpers.generateResourceId();
         const group = (await this.apis.contextApi.groupGet({groupId, scope: "full"})).group;
+        const roster: Roster = {
+            groups: [{groupId, role: "user", groupKeyVersion: group.keyVersion, groupPubKey: group.groupPubKey}],
+            users: [{userId: me, pubKey: myPub, role: "manager"}],
+        };
         const res = await this.apis.contextApi.spaceCreate({
             contextId: testData.contextId,
             resourceId: resourceId,
             statement: signSpaceStatement({
                 spaceId: SpaceService.spaceId(testData.contextId, resourceId), contextId: testData.contextId, seq: 1, prevDigest: "", op: "create",
                 date: Date.now(), keyVersion: 1, keyCommit: "00".repeat(32),
-                groups: [{groupId, role: "user", groupKeyVersion: group.keyVersion, groupPubKey: group.groupPubKey}],
-                users: [{userId: me, pubKey: myPub, role: "manager"}],
+                addedGroups: roster.groups, addedUsers: roster.users, removedGroups: [], removedUsers: [], refreshedGroups: [],
+                rosterHash: SpaceStatement.rosterHash(roster).toString("hex"),
                 signer: me, signerPubKey: myPub, via: "",
             }, ECUtils.fromWIF(testData.userPrivKey as types.core.EccWif)!),
             recipients: [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}],

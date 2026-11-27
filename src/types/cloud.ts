@@ -310,9 +310,26 @@ export type SpaceRecipient = ({groupId: types.group.GroupId}|{userId: UserId; pu
 
 export type SpaceStatementOp = "create"|"add"|"remove"|"rotate";
 
+/** A recipient group as a space statement names it: its role and the group epoch (and key) the space wraps to. */
+export interface SpaceStatementGroup {
+    groupId: types.group.GroupId;
+    role: ContainerRole;
+    groupKeyVersion: number;
+    groupPubKey: GroupPubKey;
+}
+
+/** A recipient user as a space statement names it. */
+export interface SpaceStatementUser {
+    userId: UserId;
+    pubKey: UserPubKey;
+    role: ContainerRole;
+}
+
 /**
- * One signed entry of a space's history. `groups` and `users` are the recipients after the change, whole.
- * See `SpaceStatement` (the service) for the bytes; the hashes and digests are lowercase hex.
+ * One signed entry of a space's history. It names what the change does to the recipients as deltas, and binds
+ * the whole roster after it by `rosterHash`. Every id appears at most once across a statement's group lists and
+ * once across its user lists. See `SpaceStatement` (the service) for the bytes; the hashes and digests are
+ * lowercase hex.
  */
 export interface SpaceStatement {
     spaceId: types.space.SpaceId;
@@ -328,8 +345,16 @@ export interface SpaceStatement {
     keyVersion: number;
     /** The author's commitment to the key at `keyVersion`: 32 bytes the bridge does not interpret. */
     keyCommit: string;
-    groups: {groupId: types.group.GroupId; role: ContainerRole; groupKeyVersion: number; groupPubKey: GroupPubKey}[];
-    users: {userId: UserId; pubKey: UserPubKey; role: ContainerRole}[];
+    /** Recipients this statement adds: everyone at seq 1, only these on an `add`, none otherwise. */
+    addedGroups: SpaceStatementGroup[];
+    addedUsers: SpaceStatementUser[];
+    /** Recipients this statement removes: only on a `remove`. */
+    removedGroups: types.group.GroupId[];
+    removedUsers: UserId[];
+    /** Recipient groups whose key the space now wraps to a newer epoch, role unchanged: on a `remove` or `rotate`. */
+    refreshedGroups: Omit<SpaceStatementGroup, "role">[];
+    /** SHA-256 of the whole roster after the statement (`SpaceStatement.rosterHash`). */
+    rosterHash: string;
     signer: UserId;
     signerPubKey: UserPubKey;
     /** "" when the author acts as a user the space names, else the recipient group it acts through. */

@@ -19,7 +19,7 @@ import { PromiseUtils } from "../../../utils/PromiseUtils";
 import type * as elliptic from "elliptic";
 import { Crypto } from "../../../utils/crypto/Crypto";
 import { SpaceService } from "../../../service/cloud/SpaceService";
-import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
+import { Roster, SpaceStatement } from "../../../service/cloud/SpaceStatement";
 import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { signSpaceStatement, UnsignedSpaceStatement } from "../../testUtils/SpaceFixtures";
 import { buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rungsFor, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
@@ -50,6 +50,7 @@ const identities: Record<string, {keyPair: elliptic.ec.KeyPair, pub58: string}> 
 
 type Recipient = types.cloud.SpaceRecipient;
 type Statement = types.cloud.SpaceStatement;
+const noDeltas = {addedGroups: [], addedUsers: [], removedGroups: [], removedUsers: [], refreshedGroups: []};
 /** What a test changes about the statement `next` would build: before it is signed, or after. */
 interface Twist {
     via?: types.group.GroupId|"";
@@ -250,21 +251,28 @@ export class SpaceTests extends BaseTestSet {
         await refused({unsigned: st => {
             st.spaceId = "another-space" as types.space.SpaceId;
         }});
-        // Recipients other than the call's: a role, a missing one, a group at a key it does not have.
+        // Recipients other than the call's: a role, a missing one, a group at a key it does not have, one twice.
         await refused({unsigned: st => {
-            st.users[0].role = "user";
+            st.addedUsers[0].role = "user";
         }});
         await refused({unsigned: st => {
-            st.groups = [];
+            st.addedGroups = [];
         }});
         await refused({unsigned: st => {
-            st.groups[0].groupPubKey = myPub as unknown as types.cloud.GroupPubKey;
+            st.addedGroups[0].groupPubKey = myPub as unknown as types.cloud.GroupPubKey;
         }});
         await refused({unsigned: st => {
-            st.groups[0].groupKeyVersion = 2;
+            st.addedGroups[0].groupKeyVersion = 2;
         }});
         await refused({unsigned: st => {
-            st.users.push({...st.users[0]});
+            st.addedUsers.push({...st.addedUsers[0]});
+        }});
+        // A creation only adds; and the hash has to be the roster's.
+        await refused({unsigned: st => {
+            st.removedUsers = [bob];
+        }});
+        await refused({unsigned: st => {
+            st.rosterHash = "00".repeat(32);
         }});
         
         // The standing: a group that is no recipient, the right group under a key that is not its own, a
@@ -284,7 +292,7 @@ export class SpaceTests extends BaseTestSet {
         const spaceId = await this.createSpace([{groupId, role: "manager"}]);
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.seq === 1 && space.statement.via === groupId && space.statement.viaSignature !== "", "the creation is signed through the group");
-        assert(space.groups[0].groupPubKey === space.statement.groups[0].groupPubKey, "the space serves the group key the statement names");
+        assert(space.groups[0].groupPubKey === space.statement.addedGroups[0].groupPubKey, "the space serves the group key the statement names");
     }
     
     @Test()
@@ -315,8 +323,18 @@ export class SpaceTests extends BaseTestSet {
         await refused({unsigned: st => {
             st.op = "remove";
         }});
+        // A rotation only refreshes groups, each to a newer epoch, and binds the roster it leaves.
         await refused({unsigned: st => {
-            st.groups[0].role = "manager";
+            st.refreshedGroups.push({groupId, ...this.head(groupId)});
+        }});
+        await refused({unsigned: st => {
+            st.removedUsers.push(me);
+        }});
+        await refused({unsigned: st => {
+            st.addedUsers.push({...bobDirect, pubKey: bobPub});
+        }});
+        await refused({unsigned: st => {
+            st.rosterHash = "00".repeat(32);
         }});
         // Bob holds the group's key and is named nowhere: his standing is the group's, said and signed.
         await shouldThrowErrorWithCode2(async () => rotate(await this.next(spaceId, "rotate", bob, {}, {via: ""}), asBob), "SPACE_STATEMENT_INVALID");
@@ -341,7 +359,14 @@ export class SpaceTests extends BaseTestSet {
             st.keyCommit = this.commit();
         }})), "SPACE_STATEMENT_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
-            st.users[0].role = "user";
+            st.addedUsers[0].role = "manager";
+        }})), "SPACE_STATEMENT_INVALID");
+        // Adding somebody already there, or nobody.
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
+            st.addedUsers.push({userId: me, pubKey: myPub, role: "manager"});
+        }})), "SPACE_STATEMENT_INVALID");
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
+            st.addedUsers = [];
         }})), "SPACE_STATEMENT_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
             st.keyVersion++;
@@ -353,11 +378,11 @@ export class SpaceTests extends BaseTestSet {
         assert(statements.map(st => `${st.seq}:${st.op}:${st.signer}`).join() === `1:create:${me},2:rotate:${bob},3:add:${me}`, `history mismatch: ${statements.map(st => `${st.seq}:${st.op}:${st.signer}`).join()}`);
         assert(statements[0].prevDigest === "" && statements[1].prevDigest === SpaceStatement.digest(statements[0]) && statements[2].prevDigest === SpaceStatement.digest(statements[1]), "the statements do not chain");
         assert(statements.every(st => SpaceStatement.verifySignature(st)), "a served statement does not verify");
-        assert(statements[1].via === groupId && SpaceStatement.verifyViaSignature(statements[1], statements[0].groups[0].groupPubKey), "bob's statement is signed by the group's key as the statement before held it");
+        assert(statements[1].via === groupId && SpaceStatement.verifyViaSignature(statements[1], statements[0].addedGroups[0].groupPubKey), "bob's statement is signed by the group's key as the statement before held it");
         assert(statements[2].keyCommit === statements[1].keyCommit && statements[1].keyCommit !== statements[0].keyCommit, "a rotation commits to a new key, an addition to the same");
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.seq === 3 && JSON.stringify(space.statement) === JSON.stringify(statements[2]), "the space serves its last statement");
-        assert(SpaceStatement.sameRecipients(space, space.statement), "the recipients served are the ones the last statement names");
+        assert(SpaceStatement.rosterHash(space).toString("hex") === space.statement.rosterHash, "the recipients served are the ones the last statement binds");
         const page = await this.apis.contextApi.spaceGetStatements({id: spaceId, fromSeq: 1, limit: 1});
         assert(page.statements.length === 1 && page.statements[0].seq === 2, "paging starts after fromSeq");
         assert((await this.apis.contextApi.spaceGetStatements({id: spaceId, fromSeq: 3, limit: 10})).statements.length === 0, "nothing after the last");
@@ -435,6 +460,7 @@ export class SpaceTests extends BaseTestSet {
     
     private async createSpace(recipients: Recipient[], resourceId = this.helpers.generateResourceId(), twist: Twist = {}, as = me) {
         const api = as === me ? this.apis.contextApi : await this.apiOf(as);
+        const roster = this.stateOf(recipients);
         const res = await api.spaceCreate({
             contextId: testData.contextId,
             resourceId: resourceId,
@@ -445,8 +471,9 @@ export class SpaceTests extends BaseTestSet {
             privateMeta: "private",
             statement: this.sign({
                 spaceId: SpaceService.spaceId(testData.contextId, resourceId), contextId: testData.contextId, seq: 1, prevDigest: "", op: "create",
-                date: Date.now(), keyVersion: 1, keyCommit: this.commit(), ...this.stateOf(recipients), signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
-            }, twist),
+                date: Date.now(), keyVersion: 1, keyCommit: this.commit(), ...noDeltas, addedGroups: roster.groups, addedUsers: roster.users,
+                rosterHash: SpaceStatement.rosterHash(roster).toString("hex"), signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
+            }, twist, roster),
         });
         return res.spaceId;
     }
@@ -463,7 +490,7 @@ export class SpaceTests extends BaseTestSet {
     }
     
     /** Recipients as a statement names them: each group at the epoch and key it is at now. */
-    private stateOf(recipients: Recipient[]): Pick<Statement, "groups"|"users"> {
+    private stateOf(recipients: Recipient[]): Roster {
         return {
             groups: recipients.flatMap(r => "groupId" in r ? [{groupId: r.groupId, role: r.role, ...this.head(r.groupId)}] : []),
             users: recipients.flatMap(r => "userId" in r ? [{userId: r.userId, pubKey: r.pubKey, role: r.role}] : []),
@@ -474,7 +501,7 @@ export class SpaceTests extends BaseTestSet {
      * Signs as the statement's signer. Without a `via` given: as a user the state names when the signer is one,
      * else through the first group of `standing` - with the key that state holds for the group.
      */
-    private sign(unsigned: UnsignedSpaceStatement, twist: Twist, standing: Pick<Statement, "groups"|"users"> = unsigned) {
+    private sign(unsigned: UnsignedSpaceStatement, twist: Twist, standing: Roster) {
         const named = standing.users.some(u => u.userId === unsigned.signer);
         unsigned.via = twist.via ?? (named ? "" : standing.groups[0]?.groupId ?? "");
         twist.unsigned?.(unsigned);
@@ -497,11 +524,16 @@ export class SpaceTests extends BaseTestSet {
             ? [...prior.groups, ...added.groups]
             : prior.groups.filter(g => !(change.removeGroups || []).includes(g.groupId)).map(g => ({...g, ...this.head(g.groupId)}));
         const users = [...prior.users.filter(u => !(change.removeUsers || []).includes(u.userId)), ...added.users];
+        // The deltas that lead there: a group moved past the epoch the space held it at is refreshed.
+        const refreshedGroups = op === "add" ? [] : groups.filter(g => prior.groups.some(p => p.groupId === g.groupId && p.groupKeyVersion < g.groupKeyVersion))
+            .map(g => ({groupId: g.groupId, groupKeyVersion: g.groupKeyVersion, groupPubKey: g.groupPubKey}));
         return this.sign({
             spaceId, contextId: testData.contextId, seq: prior.seq + 1, prevDigest: SpaceStatement.digest(prior.statement), op,
             date: Date.now(), keyVersion: op === "add" ? prior.keyVersion : prior.keyVersion + 1,
             keyCommit: op === "add" ? prior.statement.keyCommit : this.commit(),
-            groups, users, signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
+            addedGroups: added.groups, addedUsers: added.users, removedGroups: change.removeGroups || [], removedUsers: change.removeUsers || [], refreshedGroups,
+            rosterHash: SpaceStatement.rosterHash({groups, users}).toString("hex"),
+            signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
         }, twist, prior);
     }
     
