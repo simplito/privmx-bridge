@@ -927,8 +927,8 @@ export interface SpaceRotateKeyModel {
     keys: types.cloud.SpaceKeyEntry[];
     /** The rungs of the next key version v: exactly one to each target of `LadderMath.rungSpansFor(v, 1)` — the unit
      *  rung v -> v-1 and the aligned skips v -> v-2^j (v=2: [1]; v=4: [3,2]; v=8: [7,6,4]), each
-     *  `AES-256-GCM(K_v, iv, K_t, aad = "pmx-space-rung\0" || lp(spaceId) || u64be(v) || u64be(t))`. Anything else is
-     *  refused with `SPACE_KEYS_INVALID`. */
+     *  `AES-256-GCM(K_v, iv, K_t, aad = "pmx-space-rung\0" || lp(spaceId) || u64be(v) || u64be(t))`, exactly 60 bytes
+     *  once decoded (`iv || ciphertext || tag`, as are repair rungs). Anything else is refused with `SPACE_KEYS_INVALID`. */
     rungs: types.cloud.SpaceRung[];
     expectedKeyVersion: number;
     /** Delete every recipient's wraps of the versions below the new one, and set the space's `keysPrunedBelow` to the

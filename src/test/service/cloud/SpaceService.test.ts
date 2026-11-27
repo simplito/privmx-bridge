@@ -33,6 +33,10 @@ function entry(keyVersion: number, recipient: types.cloud.SpaceKeyEntry["recipie
     return {keyVersion, recipient, data: "AA==" as types.core.Base64, signature: "AA==" as types.core.Base64};
 }
 
+/** A space rung's data: 60 bytes, as AES-256-GCM of a 32-byte key with its iv and tag. */
+const RUNG = Buffer.alloc(60, 7).toString("base64") as types.core.Base64;
+const bytes = (n: number) => Buffer.alloc(n, 7).toString("base64") as types.core.Base64;
+
 function refused(f: () => void) {
     assert.throws(f, (e: unknown) => AppException.is(e, "SPACE_KEYS_INVALID"));
 }
@@ -232,7 +236,7 @@ describe("which budget a change of a space's key spends", () => {
 });
 
 describe("a rotation publishes exactly the canonical rungs of its key version", () => {
-    const rungs = (at: number, targets: number[], data = "AA==") => targets.map(t => ({atKeyVersion: at, targetKeyVersion: t, data: data as types.core.Base64}));
+    const rungs = (at: number, targets: number[], data: string = RUNG) => targets.map(t => ({atKeyVersion: at, targetKeyVersion: t, data: data as types.core.Base64}));
     
     it("takes the unit rung and the aligned skips, floor 1", () => {
         SpaceService.assertRungs(rungs(2, [1]), 2);
@@ -253,6 +257,15 @@ describe("a rotation publishes exactly the canonical rungs of its key version", 
         no(() => SpaceService.assertRungs(rungs(3, [4]), 3));
         no(() => SpaceService.assertRungs(rungs(3, [2]), 4));
         no(() => SpaceService.assertRungs(rungs(2, [1], ""), 2));
+    });
+    
+    it("SECURITY: takes a rung of exactly 60 bytes, a rotation's own or a repair, and nothing else", () => {
+        SpaceService.assertRungs(rungs(2, [1], bytes(60)), 2);
+        SpaceService.assertRepairs(rungs(2, [1], bytes(60)), 3, 1);
+        for (const n of [59, 61, 4096]) {
+            refused(() => SpaceService.assertRungs(rungs(2, [1], bytes(n)), 2));
+            refused(() => SpaceService.assertRepairs(rungs(2, [1], bytes(n)), 3, 1));
+        }
     });
 });
 
@@ -361,8 +374,8 @@ describe("pruning and repair rungs ride on a rotation, a manager's only", () => 
     const user = (userId: types.cloud.UserId, role: "user"|"manager") => ({userId, pubKey: pub, role});
     // Key version 4 now; the rotation makes 5, whose own rungs are the canonical ones.
     const space = {id: "s1", contextId: "c", keyVersion: 4, keysPrunedBelow: 0, version: 7, groups: [], users: [user(alice, "manager"), user(bob, "user")]} as unknown as db.space.Space;
-    const rungsOf = (v: number) => LadderMath.rungSpansFor(v, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: "AA==" as types.core.Base64}));
-    const repair = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: "RR==" as types.core.Base64});
+    const rungsOf = (v: number) => LadderMath.rungSpansFor(v, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: RUNG}));
+    const repair = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: RUNG});
     
     /** A service whose rotation runs for real down to the write, which records what it would do. */
     function rotation(standing: "user"|"manager", stored: Map<string, number> = new Map()) {

@@ -60,6 +60,8 @@ interface Twist {
     signed?: (st: Statement) => void;
 }
 const b64 = (text: string) => Buffer.from(text).toString("base64") as types.core.Base64;
+/** A rung's data: a label, zero-padded to the 60 bytes of a sealed key (iv, ciphertext, tag); not a sealed key. */
+const rungData = (label: string) => Buffer.concat([Buffer.from(label), Buffer.alloc(60)]).subarray(0, 60).toString("base64") as types.core.Base64;
 
 export class SpaceTests extends BaseTestSet {
     
@@ -413,12 +415,14 @@ export class SpaceTests extends BaseTestSet {
             id: spaceId, keyId: `space-key-${keyVersion}` as types.core.KeyId, keys: this.keysFor(recipients, keyVersion), rungs, expectedKeyVersion: keyVersion - 1,
             statement: await this.next(spaceId, "rotate", me), ...extra,
         });
-        const rung = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: b64(`rung ${at}->${target}`)});
+        const rung = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: rungData(`rung ${at}->${target}`)});
         
         // Version 2 owes the rung to 1, nothing else and nothing at another version.
         await shouldThrowErrorWithCode2(() => rotate(2, []), "SPACE_KEYS_INVALID");
         await shouldThrowErrorWithCode2(() => rotate(2, [rung(3, 2)]), "SPACE_KEYS_INVALID");
         await shouldThrowErrorWithCode2(() => rotate(2, [rung(2, 1), rung(2, 1)]), "SPACE_KEYS_INVALID");
+        // A rung is one sealed key, 60 bytes: anything else is refused.
+        await shouldThrowErrorWithCode2(() => rotate(2, [{...rung(2, 1), data: b64("x".repeat(61))}]), "SPACE_KEYS_INVALID");
         assert((await rotate(2, this.rungsOf(2))).keyVersion === 2, "rotation to 2");
         assert((await rotate(3, this.rungsOf(3))).keyVersion === 3, "rotation to 3");
         // Version 4 owes the rungs to 3 and to 2: one missing, or one more, is refused.
@@ -468,7 +472,7 @@ export class SpaceTests extends BaseTestSet {
     
     /** The canonical rungs of `keyVersion` (`LadderMath.rungSpansFor(keyVersion, 1)`); the data is a label, not a sealed key. */
     private rungsOf(keyVersion: number): types.cloud.SpaceRung[] {
-        return LadderMath.rungSpansFor(keyVersion, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: b64(`rung ${span.at}->${span.target}`)}))
+        return LadderMath.rungSpansFor(keyVersion, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: rungData(`rung ${span.at}->${span.target}`)}))
             .sort((a, b) => a.targetKeyVersion - b.targetKeyVersion);
     }
     

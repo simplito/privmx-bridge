@@ -64,6 +64,8 @@ export class SpaceService extends BaseContainerService {
     static readonly ARCHIVE_PAGE_ROWS = 1024;
     /** Rungs one rotation carries, its own and repairs together. */
     static readonly MAX_REQUEST_RUNGS = 64;
+    /** A space rung's data, decoded: AES-256-GCM of a 32-byte key, `iv(12) || ciphertext(32) || tag(16)`. */
+    static readonly RUNG_BYTES = 60;
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -151,11 +153,23 @@ export class SpaceService extends BaseContainerService {
     }
     
     /**
+     * Every space rung is one sealed 32-byte key, so exactly `RUNG_BYTES` decoded: anything else is no rung any reader
+     * could open, only storage spent (the validator lets a rung's data be up to 4 KB, as a group's may).
+     */
+    static assertRungSizes(rungs: types.cloud.SpaceRung[]) {
+        const odd = rungs.find(rung => Buffer.from(rung.data, "base64").length !== SpaceService.RUNG_BYTES);
+        if (odd) {
+            throw new AppException("SPACE_KEYS_INVALID", `rung ${odd.atKeyVersion}->${odd.targetKeyVersion} is not ${SpaceService.RUNG_BYTES} bytes`);
+        }
+    }
+    
+    /**
      * The rungs a rotation to `keyVersion` publishes have to be exactly the spans of `LadderMath.rungSpansFor(keyVersion, 1)`:
      * the unit rung and the aligned skips, nothing missing, extra, repeated or at another version. A space has no
      * eras, so its floor is 1. A missing rung would leave a version nobody can reach any more.
      */
     static assertRungs(rungs: types.cloud.SpaceRung[], keyVersion: number) {
+        SpaceService.assertRungSizes(rungs);
         const result = LadderMath.validateRungSubmission(rungs, keyVersion, 1, true);
         if (!result.ok) {
             const owed = LadderMath.rungSpansFor(keyVersion, 1).map(span => span.target).join(", ");
@@ -198,6 +212,7 @@ export class SpaceService extends BaseContainerService {
      * `MAX_REQUEST_RUNGS`. How many a span already holds is checked where they are stored.
      */
     static assertRepairs(repairs: types.cloud.SpaceRung[], newKeyVersion: number, ownRungs: number) {
+        SpaceService.assertRungSizes(repairs);
         const bad = (why: string): never => {
             throw new AppException("SPACE_KEYS_INVALID", why);
         };
@@ -542,8 +557,8 @@ export class SpaceService extends BaseContainerService {
                 // Only on request, from a manager whose Endpoint checked (and repaired) every rung since the last prune:
                 // readers then reach the older versions down the rungs.
                 // ponytail: one deleteMany in the rotation's transaction, up to MAX_RECIPIENTS wraps per version since
-                // the last prune (the Endpoint prunes only with at most 256 such versions, ~32k rows). Upgrade path if
-                // that grows: delete in batches after the transaction, below `keysPrunedBelow`.
+                // the last prune, a range the rotation rate limits bound (60 an hour per user and space). Upgrade path
+                // if a long unpruned run makes it slow: delete in batches after the transaction, below `keysPrunedBelow`.
                 if (prune) {
                     await repository.deleteKeysBelow(space.id, keyVersion);
                 }
