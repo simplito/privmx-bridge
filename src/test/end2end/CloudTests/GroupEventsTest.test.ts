@@ -16,6 +16,7 @@ import { buildTree, creationStatement, policyCommitAgainst, registerUserKey, Ser
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { PromiseUtils } from "../../../utils/PromiseUtils";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * Group events, from subscribing to receiving.
@@ -135,7 +136,7 @@ export class GroupEventsTest extends BaseTestSet {
         assert(privateEvent.privateMetaVersion === 2, "the private counter must have advanced");
         
         const {group} = await this.apis.contextApi.groupGet({groupId, scope: "plan"});
-        await this.apis.contextApi.groupUpdatePolicy(policyCommitAgainst(group as unknown as ServedGroup, testData.userId, {get: "all" as types.cloud.PolicyEntry}));
+        await this.apis.contextApi.groupUpdatePolicy(policyCommitAgainst(group as unknown as ServedGroup, testData.userId, {...CommitStatement.DEFAULT_RULES, addMembers: "members"}));
         await this.settle();
         const afterPolicy = this.received.filter(e => e.type === "groupUpdated");
         const policyEvent = afterPolicy[afterPolicy.length - 1].data;

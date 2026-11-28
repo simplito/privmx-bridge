@@ -12,6 +12,7 @@ limitations under the License.
 import "q2-test";
 import * as assert from "assert";
 import { LadderMath, RungSpan } from "../../../../service/cloud/keytree/LadderMath";
+import { LadderArchive } from "../../../../service/cloud/keytree/LadderArchive";
 
 /**
  * Unit tests for the Epoch Ladder rules.
@@ -228,13 +229,6 @@ describe("LadderMath.descentFloor", () => {
         assert.deepStrictEqual(LadderMath.descentFloor(20), {floor: 20, reason: "ERA_BOUNDARY"});
     });
     
-    it("prefers PRUNED when the watermark is the stronger constraint", () => {
-        assert.deepStrictEqual(LadderMath.descentFloor(20, 8000), {floor: 8000, reason: "PRUNED"});
-    });
-    
-    it("keeps the era boundary when it is higher than the watermark", () => {
-        assert.deepStrictEqual(LadderMath.descentFloor(9000, 8000), {floor: 9000, reason: "ERA_BOUNDARY"});
-    });
 });
 
 describe("LadderMath.validateRungSet", () => {
@@ -261,8 +255,8 @@ describe("LadderMath.validateRungSet", () => {
     
     it("refuses a span the epoch does not owe, so a commit's rungs stay within the canonical ~33 spans", () => {
         problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 5}], 8, 1), "NOT_CANONICAL");
-        // A skip below the effective floor is not owed either, whichever of the two floors it is.
-        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5), "BELOW_PRUNE_WATERMARK");
+        // A skip below the floor is not owed either.
+        problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 5), "BELOW_ERA_FLOOR");
         ok(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 6}], 8, 1));
         // Never more than the owed spans: one commit cannot file 256 rungs at targets of its choosing.
         const many = Array.from({length: 200}, (_, i) => ({at: 1024, target: 1023 - i}));
@@ -289,13 +283,6 @@ describe("LadderMath.validateRungSet", () => {
     
     it("rejects a rung targeting below the era floor", () => {
         problem(LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 3}], 8, 5), "BELOW_ERA_FLOOR");
-    });
-    
-    it("rejects a rung targeting below the prune watermark", () => {
-        problem(
-            LadderMath.validateRungSet([{at: 8, target: 7}, {at: 8, target: 4}], 8, 1, 5),
-            "BELOW_PRUNE_WATERMARK",
-        );
     });
     
     it("rejects duplicates in one submission", () => {
@@ -363,17 +350,41 @@ describe("LadderMath.validateRepairSpan", () => {
         problem(LadderMath.validateRepairSpan({at: 5, target: 4}, 8, 5), "BELOW_ERA_FLOOR");
     });
     
-    it("SECURITY: refuses a span below the prune watermark", () => {
-        problem(LadderMath.validateRepairSpan({at: 8, target: 4}, 8, 1, 5), "BELOW_PRUNE_WATERMARK");
-    });
-    
     it("a skip clamped away by the floor is not canonical either", () => {
         // At floor 5, epoch 8 owes (8,7) and (8,6); (8,4) is below the floor, so nothing else.
         ok(LadderMath.validateRepairSpan({at: 8, target: 6}, 8, 5));
-        problem(LadderMath.validateRepairSpan({at: 16, target: 8}, 16, 1, 9), "BELOW_PRUNE_WATERMARK");
+        problem(LadderMath.validateRepairSpan({at: 16, target: 8}, 16, 9), "BELOW_ERA_FLOOR");
     });
     
     it("refuses non-integer epoch numbers", () => {
         problem(LadderMath.validateRepairSpan({at: 8, target: 7.5}, 8, 1), "NON_INTEGER");
+    });
+});
+
+describe("LadderMath.validateRungSubmission", () => {
+    const rungs = (at: number, targets: number[], data = "AA==") => targets.map(t => ({atKeyVersion: at, targetKeyVersion: t, data}));
+    const problem = (r: ReturnType<typeof LadderMath.validateRungSubmission>, kind: string) => {
+        assert.ok(!r.ok && r.problem.kind === kind, `expected ${kind}, got ${JSON.stringify(r)}`);
+    };
+    
+    it("takes a group's unit rung alone, but a complete set only with every skip", () => {
+        assert.deepStrictEqual(LadderMath.validateRungSubmission(rungs(8, [7]), 8, 1), {ok: true});
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 6]), 8, 1, true), "RUNG_MISSING");
+        assert.deepStrictEqual(LadderMath.validateRungSubmission(rungs(8, [4, 7, 6]), 8, 1, true), {ok: true});
+    });
+    
+    it("refuses what validateRungSet refuses, and a rung without data", () => {
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 7]), 8, 1, true), "DUPLICATE");
+        problem(LadderMath.validateRungSubmission(rungs(8, [7, 6, 4, 5]), 8, 1, true), "NOT_CANONICAL");
+        problem(LadderMath.validateRungSubmission(rungs(2, [1], ""), 2, 1, true), "EMPTY_RUNG_DATA");
+    });
+});
+
+describe("LadderArchive.versionPage", () => {
+    it("pages a window of key versions, capped at the current one", () => {
+        assert.deepStrictEqual(LadderArchive.versionPage(undefined, undefined, 10, 4), {from: 1, upTo: 4, empty: false, next: 5});
+        assert.deepStrictEqual(LadderArchive.versionPage(5, 99, 10, 256), {from: 5, upTo: 10, empty: false, next: undefined});
+        assert.deepStrictEqual(LadderArchive.versionPage(2, 3, 10, 1), {from: 2, upTo: 2, empty: false, next: 3});
+        assert.strictEqual(LadderArchive.versionPage(11, undefined, 10, 4).empty, true);
     });
 });

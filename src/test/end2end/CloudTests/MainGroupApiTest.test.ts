@@ -15,6 +15,7 @@ import { testData } from "../../datasets/testData";
 import { buildTree, creationStatement, policyCommitAgainst, registerUserKey, ServedGroup } from "../../testUtils/TreeFixtures";
 import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 // The bridge stores group data opaquely; signing/verification is the endpoint's job (committed inside `data`).
 // These tests exercise CRUD, listing, version-CAS and referential integrity only.
@@ -216,7 +217,7 @@ export class GroupApiTests extends BaseTestSet {
     }
     
     /** The `groupUpdatePolicy` request the test user signs against the group as it stands now. */
-    private async policyCommit(groupId: types.group.GroupId, policy: types.cloud.ContainerPolicy) {
+    private async policyCommit(groupId: types.group.GroupId, policy: types.cloud.GroupRules) {
         const {group} = await this.apis.contextApi.groupGet({groupId, scope: "plan"});
         return policyCommitAgainst(group as unknown as ServedGroup, testData.userId, policy);
     }
@@ -229,10 +230,10 @@ export class GroupApiTests extends BaseTestSet {
         const groupId = this.requireGroupId();
         const before = (await this.apis.contextApi.groupGet({groupId})).group;
         
-        const first = await this.policyCommit(groupId, {get: "all" as types.cloud.PolicyEntry});
+        const first = await this.policyCommit(groupId, {...CommitStatement.DEFAULT_RULES, addMembers: "members"});
         assert(await this.apis.contextApi.groupUpdatePolicy(first) === "OK", "groupUpdatePolicy did not return OK");
         const after = (await this.apis.contextApi.groupGet({groupId})).group;
-        assert(after.policy.get === "all", `policy did not land, got ${String(after.policy.get)}`);
+        assert(after.policy?.addMembers === "members", `policy did not land, got ${JSON.stringify(after.policy)}`);
         assert(after.publicMetaVersion === before.publicMetaVersion, "a policy write moved the public counter");
         assert(after.privateMetaVersion === before.privateMetaVersion, "a policy write moved the private counter");
         assert(after.rosterVersion === before.rosterVersion, "a policy write moved the roster version");
@@ -241,10 +242,10 @@ export class GroupApiTests extends BaseTestSet {
         
         // The same statement again extends a head that is gone: a lost race, not a second write.
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.groupUpdatePolicy(first), "ROTATED_ALREADY");
-        assert(await this.apis.contextApi.groupUpdatePolicy(await this.policyCommit(groupId, {get: "user" as types.cloud.PolicyEntry})) === "OK",
+        assert(await this.apis.contextApi.groupUpdatePolicy(await this.policyCommit(groupId, {...CommitStatement.DEFAULT_RULES, editPublicMeta: "members"})) === "OK",
             "a second policy commit planned on the new head must land");
         const twice = (await this.apis.contextApi.groupGet({groupId})).group;
-        assert(twice.policy.get === "user", "the later policy write must win");
+        assert(twice.policy?.editPublicMeta === "members" && twice.policy?.addMembers === "managers", "the later policy write must win");
         assert(twice.publicMetaVersion === before.publicMetaVersion, "still no counter moved");
     }
     

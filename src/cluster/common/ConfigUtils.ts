@@ -82,6 +82,18 @@ export interface Config {
      *  spending one never blocks another — above all, nothing but `remove` ever blocks a removal. A floor of 1 keeps
      *  a misconfiguration from making revocation impossible. */
     maxGroupRotationsPerHour: number,
+    /** `PMX_MAX_GROUP_ROTATIONS_PER_MINUTE` (default 3): how many times a minute one member may rotate one group's
+     *  key (limiter key `rotateBurst|<groupId>|<userId>`), on top of its hourly `rotate` budget. Any member may
+     *  rotate, and every rotation stales every container granted to the group, so a burst is capped too. Floor 1. */
+    maxGroupRotationsPerMinute: number,
+    /** `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` (default 60) and `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` (default 3): how often
+     *  one user may move one space to a new key: `spaceRotateKey` on `spaceRotate|<spaceId>|<userId>` and
+     *  `spaceRotateBurst|…`, and, in budgets of their own, `spaceRemoveRecipients` on `spaceRemove|…` and
+     *  `spaceRemoveBurst|…`. A rotation that only replaces a stale key spends only a per-minute budget of its
+     *  own, `spaceRotateStaleBurst|…`. Every rotation adds a key
+     *  version every later recipient needs a wrap of. Floor 1. */
+    maxSpaceRotationsPerHour: number,
+    maxSpaceRotationsPerMinute: number,
     streams: {
         enabled: boolean;
         mediaServer: {
@@ -195,6 +207,9 @@ export function loadConfigCore(configFilePath: string, configFromFile: Partial<C
             TypesValidator.MAX_GROUP_MEMBERS,
         ),
         maxGroupRotationsPerHour: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_HOUR || "", 10) || 60, 1),
+        maxGroupRotationsPerMinute: Math.max(parseInt(process.env.PMX_MAX_GROUP_ROTATIONS_PER_MINUTE || "", 10) || 3, 1),
+        maxSpaceRotationsPerHour: Math.max(parseInt(process.env.PMX_MAX_SPACE_ROTATIONS_PER_HOUR || "", 10) || 60, 1),
+        maxSpaceRotationsPerMinute: Math.max(parseInt(process.env.PMX_MAX_SPACE_ROTATIONS_PER_MINUTE || "", 10) || 3, 1),
         streams: {
             enabled: Boolean(process.env.PMX_STREAM_ENABLED === "true"),
             mediaServer: {

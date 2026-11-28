@@ -245,7 +245,7 @@ export interface GroupTreeCommitStatement {
     rosterHash: string;
     /** Hex SHA-256 of the tree after the commit. */
     treeHash: string;
-    /** Hex `CommitStatement.policyHash` of the group's policy after the commit: the four commit rules and the creator. */
+    /** Hex `CommitStatement.rulesHash` of the group's rules after the commit, and the creator. */
     policyHash: string;
     committer: UserId;
     /** The committer's context public key when it signed — what the signature verifies against. */
@@ -256,9 +256,9 @@ export interface GroupTreeCommitStatement {
     addedUsers: UserId[];
     addedManagers: UserId[];
     removed: UserId[];
-    /** The group's whole policy after the commit, present exactly on `create` and `policy`. Not signed itself: bound
-     *  by `policyHash`, which covers the rules that govern commits. */
-    policy?: ContainerPolicy;
+    /** The group's rules after the commit, present exactly on `create` and `policy`. Not signed itself: bound by
+     *  `policyHash`, which covers every one of them. */
+    policy?: GroupRules;
     /** Base64 compact ECDSA (65 bytes) over SHA-256 of the signed bytes. */
     signature: types.core.EccSignature;
 }
@@ -310,9 +310,26 @@ export type SpaceRecipient = ({groupId: types.group.GroupId}|{userId: UserId; pu
 
 export type SpaceStatementOp = "create"|"add"|"remove"|"rotate";
 
+/** A recipient group as a space statement names it: its role and the group epoch (and key) the space wraps to. */
+export interface SpaceStatementGroup {
+    groupId: types.group.GroupId;
+    role: ContainerRole;
+    groupKeyVersion: number;
+    groupPubKey: GroupPubKey;
+}
+
+/** A recipient user as a space statement names it. */
+export interface SpaceStatementUser {
+    userId: UserId;
+    pubKey: UserPubKey;
+    role: ContainerRole;
+}
+
 /**
- * One signed entry of a space's history. `groups` and `users` are the recipients after the change, whole.
- * See `SpaceStatement` (the service) for the bytes; the hashes and digests are lowercase hex.
+ * One signed entry of a space's history. It names what the change does to the recipients as deltas, and binds
+ * the whole roster after it by `rosterHash`. Every id appears at most once across a statement's group lists and
+ * once across its user lists. See `SpaceStatement` (the service) for the bytes; the hashes and digests are
+ * lowercase hex.
  */
 export interface SpaceStatement {
     spaceId: types.space.SpaceId;
@@ -328,8 +345,16 @@ export interface SpaceStatement {
     keyVersion: number;
     /** The author's commitment to the key at `keyVersion`: 32 bytes the bridge does not interpret. */
     keyCommit: string;
-    groups: {groupId: types.group.GroupId; role: ContainerRole; groupKeyVersion: number; groupPubKey: GroupPubKey}[];
-    users: {userId: UserId; pubKey: UserPubKey; role: ContainerRole}[];
+    /** Recipients this statement adds: everyone at seq 1, only these on an `add`, none otherwise. */
+    addedGroups: SpaceStatementGroup[];
+    addedUsers: SpaceStatementUser[];
+    /** Recipients this statement removes: only on a `remove`. */
+    removedGroups: types.group.GroupId[];
+    removedUsers: UserId[];
+    /** Recipient groups whose key the space now wraps to a newer epoch, role unchanged: on a `remove` or `rotate`. */
+    refreshedGroups: Omit<SpaceStatementGroup, "role">[];
+    /** SHA-256 of the whole roster after the statement (`SpaceStatement.rosterHash`). */
+    rosterHash: string;
     signer: UserId;
     signerPubKey: UserPubKey;
     /** "" when the author acts as a user the space names, else the recipient group it acts through. */
@@ -349,6 +374,18 @@ export interface SpaceKeyEntry {
     recipient: {groupId: types.group.GroupId; groupKeyVersion: number}|{userId: UserId};
     data: types.core.Base64;
     signature: types.core.Base64;
+}
+
+/**
+ * One rung of a space's key ladder: key version `targetKeyVersion` sealed under key version `atKeyVersion`, as
+ * base64 `iv || ciphertext || tag` of AES-256-GCM. A rotation to version v publishes exactly the rungs of
+ * `LadderMath.rungSpansFor(v, 1)`: the unit rung v -> v-1 and the aligned skips. Not signed: a reader checks every
+ * key it derives against the `keyCommit` of the space's signed history, so a forged rung only fails that check.
+ */
+export interface SpaceRung {
+    atKeyVersion: number;
+    targetKeyVersion: number;
+    data: types.core.Base64;
 }
 
 /** Group grantees passed to a container repository on create/update (Phase 2 group-as-member). */
@@ -379,10 +416,6 @@ export interface ContainerWithoutItemPolicy extends ItemPolicy {
     delete?: PolicyEntry;
     /** Determines who can rotate container keys */
     rotateKeys?: PolicyEntry;
-    /** Groups only: who can add members. Absent, `inherit` or `default`: whoever `update` allows. */
-    addMembers?: PolicyEntry;
-    /** Groups only: who can remove or reseat members. Absent, `inherit` or `default`: whoever `update` allows. */
-    removeMembers?: PolicyEntry;
     /** Determines who can update policy */
     updatePolicy?: PolicyEntry;
     /** Determines whether the creator has to be added to the list of managers */
@@ -410,6 +443,38 @@ export interface ContextInnerPolicy {
     listUsers?: PolicyEntry;
     /** Determines who can send custom notifications */
     sendCustomNotification?: PolicyEntry;
+}
+
+/** Who of a group's members a rule lets act. */
+export type GroupRuleWho = "managers"|"members"|"nobody";
+
+/**
+ * A group's own rules, signed into every commit statement (`CommitStatement.rulesHash`), one responsibility
+ * each. All eight are always present: a client fills the default (`managers`) for any it does not set before
+ * signing, and anything partial, unknown or outside these values is refused. An operation needs every rule whose
+ * responsibility it touches, checked against the rules as they stand before it.
+ *
+ * Fixed besides them: any member re-keys its own path (`groupSelfUpdate`) and rotates the group key (rate-limited
+ * per member); only a manager deletes the group; nobody removes themselves; a group that has managers keeps at
+ * least one; the creator holds no privilege.
+ */
+export interface GroupRules {
+    /** Who may add someone to the group (a manager also needs `changeRoles`) */
+    addMembers: GroupRuleWho;
+    /** Who may remove someone from the group (a manager also needs `changeRoles`) */
+    removeMembers: GroupRuleWho;
+    /** Who may replace a member's key (`groupReseat`) */
+    replaceMemberKeys: GroupRuleWho;
+    /** Who may grant or revoke the manager role */
+    changeRoles: GroupRuleWho;
+    /** Who may change these rules */
+    changeRules: GroupRuleWho;
+    /** Who may change who beside the members sees the group (`groupSetVisibility`) */
+    changeVisibility: GroupRuleWho;
+    /** Who may rewrite the public metadata */
+    editPublicMeta: GroupRuleWho;
+    /** Who may rewrite the private metadata */
+    editPrivateMeta: GroupRuleWho;
 }
 
 /** @doctype string */

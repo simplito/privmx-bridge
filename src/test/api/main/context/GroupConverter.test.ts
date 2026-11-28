@@ -24,6 +24,7 @@ import { TreeHash } from "../../../../service/cloud/keytree/TreeHash";
 import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import * as types from "../../../../types";
 import * as db from "../../../../db/Model";
+import { CommitStatement } from "../../../../service/cloud/keytree/CommitStatement";
 
 /** What each read path is allowed to serve: `groupGet` the whole group, `groupList` no state at all. */
 
@@ -55,7 +56,7 @@ const group: db.group.Group = {
     privateMetaVersion: 11 as types.group.GroupVersion,
     rosterVersion: 4,
     keyVersion: 3,
-    policy: {},
+    policy: CommitStatement.DEFAULT_RULES,
     numLeaves: tree.numLeaves,
     leafAssignment: tree.leafAssignment,
     eraFloor: 2,
@@ -428,4 +429,41 @@ it("ContextApi.groupGetEpochKeys looks the epochs up by grant key as well as by 
     const result = await api.groupGetEpochKeys({id: groupId, groupPubKeys: [pub2]});
     assert.deepStrictEqual(asked, [{keyIds: [], groupPubKeys: [pub2]}]);
     assert.deepStrictEqual(result.keyHistory, [{keyVersion: 2, groupPubKey: "Pub2"}]);
+});
+
+it("a group stored before the rules format is served without rules rather than failing", async () => {
+    const legacy = {...group, policy: {update: "manager"} as unknown as types.cloud.GroupRules};
+    assert.strictEqual(new GroupConverter().convertGroup(alice, legacy, state(), "full").policy, undefined);
+    assert.strictEqual(new GroupConverter().convertGroupPublicInfo(legacy, {} as types.cloud.GroupTreeCommitStatement).policy, undefined);
+    assert.deepStrictEqual(new GroupConverter().convertGroup(alice, group, state(), "full").policy, CommitStatement.DEFAULT_RULES);
+});
+
+it("SECURITY: groupGetMany stops at a response budget and leaves the rest, unread, for single reads", async () => {
+    const reads: types.group.GroupId[] = [];
+    const big = "x".repeat(12 * 1024 * 1024) as types.group.GroupData;
+    const groupService = {
+        getGroupWithState: (_user: unknown, id: types.group.GroupId) => {
+            reads.push(id);
+            // Each group's state carries ~12 MiB, so three fit under 32 MiB and the fourth does not.
+            return Promise.resolve({group: {...group, id}, state: {...state(), history: state().history.map(h => ({...h, data: big}))}});
+        },
+        getTreeCommitsAt: () => Promise.resolve([]),
+    };
+    const api = new ContextApi(
+        new ContextApiValidator(new TypesValidator()),
+        {} as unknown as ContextService,
+        {validateContextSessionAndGetCloudUser: () => ({getUser: () => janek})} as unknown as SessionService,
+        groupService as unknown as GroupService,
+        new GroupConverter(),
+        {setContextId: () => undefined} as unknown as RequestLogger,
+        {} as never,
+    );
+    const ids = ["g1", "g2", "g3", "g4", "g5"] as types.group.GroupId[];
+    const {results} = await api.groupGetMany({groupIds: ids});
+    const served = results.filter(r => "group" in r).length;
+    assert.ok(served >= 1 && served < ids.length, `some served, not all: ${served}`);
+    assert.ok(results.slice(served).every(r => "error" in r && r.error.code === 0x622D), "the rest are answered GROUP_BATCH_SIZE_EXCEEDED");
+    assert.strictEqual(reads.length, served + 1, "nothing past the first refused one is even read");
+    // A single huge group is still served.
+    assert.ok("group" in (await api.groupGetMany({groupIds: ["g1" as types.group.GroupId]})).results[0]);
 });

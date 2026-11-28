@@ -12,16 +12,6 @@ limitations under the License.
 import * as types from "../../../types";
 import type { GroupChangedEventData, GroupDeletedEventData } from "../../main/context/ContextApiTypes";
 
-/** The three rules of a group a backend decides by, as the group's signed policy resolves them. */
-export interface GroupRules {
-    /** Who may add members */
-    addMembers: types.cloud.PolicyEntry;
-    /** Who may remove and reseat members */
-    removeMembers: types.cloud.PolicyEntry;
-    /** Who may change the group's metadata */
-    updateMeta: types.cloud.PolicyEntry;
-}
-
 export interface GroupMember {
     /** User's ID */
     userId: types.cloud.UserId;
@@ -51,8 +41,9 @@ export interface Group {
     lastCommitSeq: number;
     /** Members with their roles */
     members: GroupMember[];
-    /** Who may add members, remove them and change metadata */
-    rules: GroupRules;
+    /** The group's signed rules: who may do what to the group (see `types.cloud.GroupRules`); absent for a group
+     *  stored before the rules format */
+    rules?: types.cloud.GroupRules;
     /** Who beside the members may read the group's key and roster */
     visibleTo: "members"|"context";
     /** Public metadata, as the members wrote it */

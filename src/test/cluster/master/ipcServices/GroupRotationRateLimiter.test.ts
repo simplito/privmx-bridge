@@ -71,3 +71,15 @@ it("a refusal under a limit of zero still names a time", async () => {
     expect(refused.allowed).toBe(false);
     expect(refused.retryAt! > Date.now()).toBe(true);
 });
+
+it("a short window refuses past its limit and hands the unit back when the window ends", async () => {
+    const limiter = new GroupRotationRateLimiter(new CacheWithTTL());
+    const window = 60000 as Parameters<GroupRotationRateLimiter["reserve"]>[0]["windowMs"];
+    for (let i = 0; i < 3; i++) {
+        expect((await limiter.reserve({key, limit: 3, windowMs: window})).allowed).toBe(true);
+    }
+    const before = Date.now();
+    const refused = await limiter.reserve({key, limit: 3, windowMs: window});
+    expect(refused.allowed).toBe(false);
+    expect(refused.retryAt! <= before + 60000 && refused.retryAt! >= before + 60000 - 5000).toBe(true);
+});

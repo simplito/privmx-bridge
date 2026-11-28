@@ -103,14 +103,6 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
         return this.request("context.groupSetVisibility", model);
     }
     
-    groupCutEra(model: contextApi.GroupCutEraModel): Promise<types.core.OK> {
-        return this.request("context.groupCutEra", model);
-    }
-    
-    groupPruneArchive(model: contextApi.GroupPruneArchiveModel): Promise<types.core.OK> {
-        return this.request("context.groupPruneArchive", model);
-    }
-    
     groupRepairRung(model: contextApi.GroupRepairRungModel): Promise<types.core.OK> {
         return this.request("context.groupRepairRung", model);
     }
@@ -133,6 +125,10 @@ export class ContextApiClient extends BaseApiClient implements contextApi.IConte
     
     spaceGet(model: contextApi.SpaceIdModel): Promise<contextApi.SpaceGetResult> {
         return this.request("context.spaceGet", model);
+    }
+    
+    spaceGetKeyArchive(model: contextApi.SpaceGetKeyArchiveModel): Promise<contextApi.SpaceGetKeyArchiveResult> {
+        return this.request("context.spaceGetKeyArchive", model);
     }
     
     spaceGetStatements(model: contextApi.SpaceGetStatementsModel): Promise<contextApi.SpaceGetStatementsResult> {

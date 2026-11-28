@@ -26,12 +26,16 @@ import { ByteWriter } from "./keytree/ByteWriter";
 import { DateUtils } from "../../utils/DateUtils";
 import { SpaceStatement } from "./SpaceStatement";
 import { CommitStatement } from "./keytree/CommitStatement";
-import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
+import { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
+import { Config } from "../../cluster/common/ConfigUtils";
+import { LadderMath } from "./keytree/LadderMath";
+import { LadderArchive } from "./keytree/LadderArchive";
+import type { SpaceAddRecipientsModel, SpaceCreateModel, SpaceGetKeyArchiveModel, SpaceGetStatementsModel, SpaceRemoveRecipientsModel, SpaceUpdateMetaModel } from "../../api/main/context/ContextApiTypes";
 
 type Caller = {userId: types.cloud.UserId, pubKey: types.cloud.UserPubKey, ownGroupIds: types.group.GroupId[]};
 type Recipients = Pick<db.space.Space, "groups"|"users">;
 
-type SpaceAcl = "context/spaceGetStatements"|"context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
+type SpaceAcl = "context/spaceGetStatements"|"context/spaceGetKeyArchive"|"context/spaceGet"|"context/spaceList"|"context/spaceCreate"|"context/spaceDelete"|"context/spaceAddRecipients"
     |"context/spaceRemoveRecipients"|"context/spaceRotateKey"|"context/spaceUpdatePublicMeta"|"context/spaceUpdatePrivateMeta";
 
 /** A space with what one caller is served of it. `keys` is empty for a caller that is not a user. */
@@ -42,13 +46,26 @@ export interface SpaceView {
 }
 
 /**
- * A space holds versions of one key, each wrapped for several groups and users, and nothing else. Its rules are
- * fixed: a recipient reads it and may move it to a new key, a manager changes its recipients and metadata.
+ * A space holds versions of one key, and nothing else: the current version wrapped for several groups and users,
+ * each older one reached down a ladder of rungs from a newer one. Its rules are fixed: a recipient reads it and may
+ * move it to a new key, a manager changes its recipients and metadata.
  */
 export class SpaceService extends BaseContainerService {
     
     /** Recipients of one space, groups and users together. */
     static readonly MAX_RECIPIENTS = 128;
+    /** Key versions per `spaceGetKeyArchive` page when the caller names no limit. */
+    static readonly RUNG_PAGE = 256;
+    /**
+     * Rows of each kind (rungs, wraps) one archive page carries at most, ~5 KB each at worst. A page ends before the
+     * first version that would go past it. Above what one version can hold — at most `MAX_RUNGS_PER_SPAN` rungs on
+     * each of its ~33 spans, and one wrap per recipient — so a page always takes at least its first version whole.
+     */
+    static readonly ARCHIVE_PAGE_ROWS = 1024;
+    /** Rungs one rotation carries, its own and repairs together. */
+    static readonly MAX_REQUEST_RUNGS = 64;
+    /** A space rung's data, decoded: AES-256-GCM of a 32-byte key, `iv(12) || ciphertext(32) || tag(16)`. */
+    static readonly RUNG_BYTES = 60;
     
     constructor(
         repositoryFactory: RepositoryFactory,
@@ -57,6 +74,8 @@ export class SpaceService extends BaseContainerService {
         private cloudAclChecker: CloudAclChecker,
         private cloudAccessValidator: CloudAccessValidator,
         private spaceNotificationService: SpaceNotificationService,
+        private rotationRateLimiter: GroupRotationRateLimiter,
+        private config: Config,
     ) {
         super(repositoryFactory, activeUsersMap, host);
     }
@@ -83,23 +102,39 @@ export class SpaceService extends BaseContainerService {
         });
     }
     
+    /**
+     * Which rotation budget a change of key spends. A removal spends its own (`spaceRemove`), so nothing anybody
+     * else does — a member rotating a recipient group, which makes the space stale and the next writer re-key it —
+     * can use up the allowance a manager removes somebody with; it stays limited because each removal also adds a
+     * key version. A rotation that only replaces a stale key (a recipient group past the epoch the key was wrapped
+     * to) spends no hourly budget: it is what a group's own, already rate-limited, epoch change forces. It does spend
+     * a per-minute budget of its own (`spaceRotateStaleBurst`), since a user naming many groups of its own could
+     * otherwise rotate them in turn and re-key the space as fast as it likes. Only a gratuitous rotation spends
+     * `spaceRotate`.
+     */
+    static rotationBudget(removing: boolean, staying: {groupId: types.group.GroupId, groupKeyVersion: number}[], groupEpochs: GroupEpochs): "rotate"|"remove"|"stale" {
+        if (removing) {
+            return "remove";
+        }
+        return SpaceService.isStale({groups: staying}, groupEpochs) ? "stale" : "rotate";
+    }
+    
     private static recipientKey(recipient: {groupId: types.group.GroupId}|{userId: types.cloud.UserId}) {
         return "groupId" in recipient ? "g:" + recipient.groupId : "u:" + recipient.userId;
     }
     
     /**
-     * The submitted wraps have to be exactly one per recipient and version asked for. A group's wrap names the
-     * group epoch it was made for: an epoch the group has had, and at `currentVersion` the epoch it is at now -
-     * a new key wrapped to a past epoch would be stale from its first moment.
+     * The submitted wraps have to be exactly one per recipient, all of the current key version. A group's wrap names
+     * the group epoch it was made for, which has to be the one the group is at now: a key wrapped to a past epoch
+     * would be stale from its first moment.
      */
     static assertKeysCover(
         keys: types.cloud.SpaceKeyEntry[],
         recipients: ({groupId: types.group.GroupId}|{userId: types.cloud.UserId})[],
-        versions: number[],
-        currentVersion: number,
+        version: number,
         groupEpochs: GroupEpochs,
     ) {
-        const expected = new Set(recipients.flatMap(r => versions.map(v => v + "/" + SpaceService.recipientKey(r))));
+        const expected = new Set(recipients.map(r => version + "/" + SpaceService.recipientKey(r)));
         const given = keys.map(k => k.keyVersion + "/" + SpaceService.recipientKey(k.recipient));
         if (given.length !== expected.size || !given.every(k => expected.has(k)) || new Set(given).size !== given.length) {
             throw new AppException("SPACE_KEYS_INVALID", "there has to be exactly one key entry for every recipient and key version");
@@ -110,9 +145,91 @@ export class SpaceService extends BaseContainerService {
             }
             const epoch = groupEpochs.get(key.recipient.groupId);
             const wrappedTo = key.recipient.groupKeyVersion;
-            if (epoch === undefined || wrappedTo > epoch || (key.keyVersion === currentVersion && wrappedTo !== epoch)) {
-                throw new AppException("SPACE_KEYS_INVALID", `group '${key.recipient.groupId}' is at epoch ${epoch}, the entry names ${wrappedTo}`);
+            if (epoch === undefined || wrappedTo !== epoch) {
+                // Without the group's epoch: the caller may not be a member and must not learn it from here.
+                throw new AppException("SPACE_KEYS_INVALID", `the entry for group '${key.recipient.groupId}' names epoch ${wrappedTo}, not the group's current one`);
             }
+        }
+    }
+    
+    /**
+     * Every space rung is one sealed 32-byte key, so exactly `RUNG_BYTES` decoded: anything else is no rung any reader
+     * could open, only storage spent (the validator lets a rung's data be up to 4 KB, as a group's may).
+     */
+    static assertRungSizes(rungs: types.cloud.SpaceRung[]) {
+        const odd = rungs.find(rung => Buffer.from(rung.data, "base64").length !== SpaceService.RUNG_BYTES);
+        if (odd) {
+            throw new AppException("SPACE_KEYS_INVALID", `rung ${odd.atKeyVersion}->${odd.targetKeyVersion} is not ${SpaceService.RUNG_BYTES} bytes`);
+        }
+    }
+    
+    /**
+     * The rungs a rotation to `keyVersion` publishes have to be exactly the spans of `LadderMath.rungSpansFor(keyVersion, 1)`:
+     * the unit rung and the aligned skips, nothing missing, extra, repeated or at another version. A space has no
+     * eras, so its floor is 1. A missing rung would leave a version nobody can reach any more.
+     */
+    static assertRungs(rungs: types.cloud.SpaceRung[], keyVersion: number) {
+        SpaceService.assertRungSizes(rungs);
+        const result = LadderMath.validateRungSubmission(rungs, keyVersion, 1, true);
+        if (!result.ok) {
+            const owed = LadderMath.rungSpansFor(keyVersion, 1).map(span => span.target).join(", ");
+            throw new AppException("SPACE_KEYS_INVALID", `key version ${keyVersion} takes exactly one rung to each of versions ${owed} (${result.problem.kind})`);
+        }
+    }
+    
+    /**
+     * Ends an archive page before the first key version whose rows were not all read (`ARCHIVE_PAGE_ROWS + 1` asked
+     * of each kind, sorted by version), so every version a page carries is whole and `nextKeyVersion` resumes there.
+     */
+    static capArchivePage<R extends {atKeyVersion: number}, K extends {keyVersion: number}>(
+        page: {upTo: number, next?: number}, rungs: R[], keys: K[],
+    ): {rungs: R[], keys: K[], nextKeyVersion?: number} {
+        const cuts = [
+            ...(rungs.length > SpaceService.ARCHIVE_PAGE_ROWS ? [rungs[SpaceService.ARCHIVE_PAGE_ROWS].atKeyVersion] : []),
+            ...(keys.length > SpaceService.ARCHIVE_PAGE_ROWS ? [keys[SpaceService.ARCHIVE_PAGE_ROWS].keyVersion] : []),
+        ];
+        if (cuts.length === 0) {
+            return {rungs, keys, nextKeyVersion: page.next};
+        }
+        const cut = Math.min(...cuts);
+        return {rungs: rungs.filter(r => r.atKeyVersion < cut), keys: keys.filter(k => k.keyVersion < cut), nextKeyVersion: cut};
+    }
+    
+    /**
+     * What only a manager's standing may add to a rotation: `prune` (deleting the wraps of older versions) and repair
+     * rungs. The bridge cannot open a rung, so a non-manager rotating with garbage rungs must not be able to take
+     * the older wraps with it, nor to fill a span with rungs; a manager could delete the whole space anyway.
+     */
+    static assertManagerExtras(standing: types.cloud.ContainerRole, prune: boolean, repairs: types.cloud.SpaceRung[]) {
+        if (standing !== "manager" && (prune || repairs.length > 0)) {
+            throw new AppException("SPACE_STATEMENT_INVALID", "prune and repairRungs take a statement signed in a manager's standing");
+        }
+    }
+    
+    /**
+     * Repair rungs: each one more rung for a canonical span of a version below the new one (`LadderMath.rungSpansFor(at, 1)`),
+     * at most one per span in a request, with data, and together with the rotation's own rungs at most
+     * `MAX_REQUEST_RUNGS`. How many a span already holds is checked where they are stored.
+     */
+    static assertRepairs(repairs: types.cloud.SpaceRung[], newKeyVersion: number, ownRungs: number) {
+        SpaceService.assertRungSizes(repairs);
+        const bad = (why: string): never => {
+            throw new AppException("SPACE_KEYS_INVALID", why);
+        };
+        if (repairs.length + ownRungs > SpaceService.MAX_REQUEST_RUNGS) {
+            bad(`a rotation carries at most ${SpaceService.MAX_REQUEST_RUNGS} rungs, repairs included`);
+        }
+        const seen = new Set<string>();
+        for (const rung of repairs) {
+            const result = LadderMath.validateRepairSpan({at: rung.atKeyVersion, target: rung.targetKeyVersion}, newKeyVersion - 1, 1);
+            if (!result.ok) {
+                bad(`repair rung ${rung.atKeyVersion}->${rung.targetKeyVersion} is no canonical span below version ${newKeyVersion} (${result.problem.kind})`);
+            }
+            const span = rung.atKeyVersion + "/" + rung.targetKeyVersion;
+            if (seen.has(span) || !rung.data) {
+                bad(`repair rung ${span} is repeated or empty`);
+            }
+            seen.add(span);
         }
     }
     
@@ -121,11 +238,12 @@ export class SpaceService extends BaseContainerService {
      * Whether its signer was entitled is the readers' question, with one part answered here as well: the
      * standing the signer claims has to be one it has and one that allows the change. A statement the readers
      * would refuse must not get into the history, or every reader would stop at it for good.
+     * @returns the role the statement's standing has in the space before the change
      */
     static assertStatement(st: types.cloud.SpaceStatement, x: {
         spaceId: types.space.SpaceId, contextId: types.context.ContextId, prior?: Pick<db.space.Space, "seq"|"statement"|"groups"|"users">,
         op: types.cloud.SpaceStatementOp, keyVersion: number, after: Recipients, caller: Caller, managerOnly: boolean,
-    }) {
+    }): types.cloud.ContainerRole {
         const bad = (why: string): never => {
             throw new AppException("SPACE_STATEMENT_INVALID", why);
         };
@@ -151,8 +269,21 @@ export class SpaceService extends BaseContainerService {
         if (x.op === "add" && st.keyCommit !== x.prior!.statement.keyCommit) {
             bad("adding recipients does not change the key: keyCommit has to stay");
         }
-        if (!SpaceStatement.sameRecipients(st, x.after)) {
-            bad("groups and users are not the recipients after the change, each group at its current epoch and key");
+        const opProblem = SpaceStatement.opProblem(st);
+        if (opProblem) {
+            bad(opProblem);
+        }
+        const applied = SpaceStatement.applyDeltas(x.prior || {groups: [], users: []}, st);
+        if (typeof(applied) === "string") {
+            return bad(applied);
+        }
+        // `applyDeltas` leaves no id twice, so the hash alone compares the two rosters.
+        const appliedHash = SpaceStatement.rosterHash(applied);
+        if (!appliedHash.equals(SpaceStatement.rosterHash(x.after))) {
+            bad("the deltas do not lead to the recipients after the change, each group at its current epoch and key");
+        }
+        if (st.rosterHash !== appliedHash.toString("hex")) {
+            bad("rosterHash is not the hash of the recipients after the change");
         }
         if (st.signer !== x.caller.userId || st.signerPubKey !== x.caller.pubKey) {
             bad("the signer is not the caller under its context key");
@@ -185,12 +316,22 @@ export class SpaceService extends BaseContainerService {
         if (x.managerOnly && role !== "manager") {
             bad("the change takes a manager, and the standing the statement names is not one");
         }
+        return role!;
+    }
+    
+    /** At most `LadderMath.MAX_RUNGS_PER_SPAN` rungs per span, the stored ones and the repair together. */
+    static async assertSpanRoom(repository: Pick<ReturnType<RepositoryFactory["createSpaceRepository"]>, "countRungs">, spaceId: types.space.SpaceId, repairs: types.cloud.SpaceRung[]) {
+        const stored = await repository.countRungs(spaceId, repairs);
+        const full = repairs.find(r => (stored.get(r.atKeyVersion + "/" + r.targetKeyVersion) ?? 0) >= LadderMath.MAX_RUNGS_PER_SPAN);
+        if (full) {
+            throw new AppException("SPACE_KEYS_INVALID", `span ${full.atKeyVersion}->${full.targetKeyVersion} holds ${LadderMath.MAX_RUNGS_PER_SPAN} rungs already`);
+        }
     }
     
     /**
      * Holds every group the space wraps at or above the group's floors, inside the space's transaction. The group
-     * document is written as well (`touchLadder`), so a floor raised concurrently (`groupCutEra`,
-     * `groupPruneArchive`, a removal abandoning history: each writes that document too) is a write conflict and
+     * document is written as well (`touchLadder`), so a floor raised concurrently (a removal
+     * abandoning history writes that document too) is a write conflict and
      * one transaction re-runs against the other's result. A check alone would be write skew: each side would pass
      * against the other's old state, and the space would hold a key nobody can sign through any more.
      */
@@ -200,25 +341,26 @@ export class SpaceService extends BaseContainerService {
     static async assertGroupFloors(groupRepository: Pick<ReturnType<RepositoryFactory["createGroupRepository"]>, "get"|"touchLadder">, groups: db.space.Space["groups"]) {
         for (const g of groups) {
             const group = await groupRepository.get(g.groupId);
-            if (!group || g.groupKeyVersion < Math.max(group.eraFloor, group.archivePrunedBelow ?? 0) || !await groupRepository.touchLadder(group)) {
+            if (!group || g.groupKeyVersion < group.eraFloor || !await groupRepository.touchLadder(group)) {
                 throw new AppException("SPACE_KEYS_INVALID", `group '${g.groupId}' no longer reaches epoch ${g.groupKeyVersion}`);
             }
         }
     }
     
-    private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView> {
-        const [view] = await this.views([space], caller, currentKeysOnly);
+    private async view(space: db.space.Space, caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined): Promise<SpaceView> {
+        const [view] = await this.views([space], caller);
         return view;
     }
     
-    private async views(spaces: db.space.Space[], caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined, currentKeysOnly: boolean): Promise<SpaceView[]> {
+    /** Each space with the caller's wraps of its current key version only: older ones are reached down the rungs (`getKeyArchive`). */
+    private async views(spaces: db.space.Space[], caller: {userId: types.cloud.UserId, ownGroupIds: types.group.GroupId[]}|undefined): Promise<SpaceView[]> {
         if (spaces.length === 0) {
             return [];
         }
         const groupEpochs = await this.getGroupEpochs(spaces[0].contextId, spaces);
         const keys = caller
             ? await this.repositoryFactory.createSpaceRepository().getKeys(spaces.map(s => s.id), caller.userId, caller.ownGroupIds,
-                currentKeysOnly ? new Map(spaces.map(s => [s.id, s.keyVersion])) : undefined)
+                new Map(spaces.map(s => [s.id, s.keyVersion])))
             : [];
         return spaces.map(space => ({space, keys: keys.filter(k => k.spaceId === space.id), keyIsStale: SpaceService.isStale(space, groupEpochs)}));
     }
@@ -243,7 +385,31 @@ export class SpaceService extends BaseContainerService {
         if (!space) {
             throw new AppException("SPACE_DOES_NOT_EXIST");
         }
-        return this.view(space, await this.access(executor, space, "context/spaceGet"), false);
+        return this.view(space, await this.access(executor, space, "context/spaceGet"));
+    }
+    
+    /**
+     * A page of the space's rungs, by the key version they sit at, every rung of a page's versions whole, with the
+     * caller's own wraps (its user entry and its groups') of those versions that still have them. A backend (no
+     * user) is served the rungs only.
+     */
+    async getKeyArchive(executor: Executor, model: SpaceGetKeyArchiveModel) {
+        const repository = this.repositoryFactory.createSpaceRepository();
+        const space = await repository.get(model.id);
+        if (!space) {
+            throw new AppException("SPACE_DOES_NOT_EXIST");
+        }
+        const caller = await this.access(executor, space, "context/spaceGetKeyArchive");
+        const page = LadderArchive.versionPage(model.fromKeyVersion, model.toKeyVersion, space.keyVersion, model.limit ?? SpaceService.RUNG_PAGE);
+        if (page.empty) {
+            return {space, rungs: [], keys: [], nextKeyVersion: page.next};
+        }
+        const rows = SpaceService.ARCHIVE_PAGE_ROWS + 1;
+        const [rungs, keys] = await Promise.all([
+            repository.getRungs(space.id, page.from, page.upTo, rows),
+            caller ? repository.getKeyRange(space.id, caller.userId, caller.ownGroupIds, page.from, page.upTo, rows) : [],
+        ]);
+        return {space, ...SpaceService.capArchivePage(page, rungs, keys)};
     }
     
     async getStatements(executor: Executor, model: SpaceGetStatementsModel) {
@@ -268,7 +434,7 @@ export class SpaceService extends BaseContainerService {
         });
         const page = await this.repositoryFactory.createSpaceRepository().getPage(contextId, listParams, sortBy,
             caller && {userId: caller.userId, groupIds: caller.ownGroupIds});
-        return {list: await this.views(page.list, caller, true), count: page.count};
+        return {list: await this.views(page.list, caller), count: page.count};
     }
     
     async createSpace(cloudUser: CloudUser, model: SpaceCreateModel) {
@@ -279,7 +445,7 @@ export class SpaceService extends BaseContainerService {
         if (SpaceService.roleOf({groups, users}, user.userId, ownGroupIds) !== "manager") {
             throw new AppException("ACCESS_DENIED", "the creator has to be a manager of the space");
         }
-        SpaceService.assertKeysCover(model.keys, model.recipients, [1], 1, groupEpochs);
+        SpaceService.assertKeysCover(model.keys, model.recipients, 1, groupEpochs);
         const id = SpaceService.spaceId(model.contextId, model.resourceId);
         SpaceService.assertStatement(model.statement, {
             spaceId: id, contextId: model.contextId, op: "create", keyVersion: 1, after: {groups, users},
@@ -298,6 +464,7 @@ export class SpaceService extends BaseContainerService {
             users: users,
             keyId: model.keyId,
             keyVersion: 1,
+            keysPrunedBelow: 0,
             seq: 1,
             statement: model.statement,
             publicMeta: model.publicMeta,
@@ -331,8 +498,8 @@ export class SpaceService extends BaseContainerService {
         if (space.groups.length + space.users.length + model.recipients.length > SpaceService.MAX_RECIPIENTS) {
             throw new AppException("INVALID_PARAMS", `a space takes at most ${SpaceService.MAX_RECIPIENTS} recipients`);
         }
-        const versions = Array.from({length: space.keyVersion}, (_, i) => i + 1);
-        SpaceService.assertKeysCover(model.keys, model.recipients, versions, space.keyVersion, groupEpochs);
+        // The current version only: a new recipient reaches the older ones down the rungs.
+        SpaceService.assertKeysCover(model.keys, model.recipients, space.keyVersion, groupEpochs);
         const after = {groups: [...space.groups, ...groups], users: [...space.users, ...users]};
         SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: "add", keyVersion: space.keyVersion, after, caller: user, managerOnly: true,
@@ -365,19 +532,50 @@ export class SpaceService extends BaseContainerService {
         const heads = await this.repositoryFactory.createGroupRepository().getKeyHeads(space.contextId, staying.map(g => g.groupId));
         const groupEpochs: GroupEpochs = new Map([...heads].map(([id, head]) => [id, head.keyVersion]));
         const keyVersion = space.keyVersion + 1;
-        SpaceService.assertKeysCover(model.keys, [...staying, ...users], [keyVersion], keyVersion, groupEpochs);
+        SpaceService.assertKeysCover(model.keys, [...staying, ...users], keyVersion, groupEpochs);
+        SpaceService.assertRungs(model.rungs, keyVersion);
         // The new key is wrapped to each group's current epoch: `assertKeysCover` just held the entries to that.
         const groups = staying.map(g => ({...g, groupKeyVersion: heads.get(g.groupId)!.keyVersion, groupPubKey: heads.get(g.groupId)!.groupPubKey}));
-        SpaceService.assertStatement(model.statement, {
+        const standing = SpaceService.assertStatement(model.statement, {
             spaceId: space.id, contextId: space.contextId, prior: space, op: removing ? "remove" : "rotate", keyVersion, after: {groups, users},
             caller: user, managerOnly: removing,
         });
-        const changed = await this.write(space, user.userId, {groups, users, keyId: model.keyId, keyVersion}, async repository => {
-            if (removing) {
-                await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
+        const prune = model.prune === true;
+        const repairs = model.repairRungs ?? [];
+        SpaceService.assertManagerExtras(standing, prune, repairs);
+        SpaceService.assertRepairs(repairs, keyVersion, model.rungs.length);
+        // Every rotation adds a key version every later recipient needs a wrap of, so it is rate-limited
+        // (`rotationBudget` says which budget, if any, this one spends).
+        const held = await this.reserveRotation(space.id, user.userId, SpaceService.rotationBudget(removing, staying, groupEpochs));
+        let changed: db.space.Space;
+        try {
+            const changes = {groups, users, keyId: model.keyId, keyVersion, ...(prune ? {keysPrunedBelow: keyVersion} : {})};
+            changed = await this.write(space, user.userId, changes, async repository => {
+                if (removing) {
+                    await repository.deleteKeysOf(space.id, removedGroups, removedUsers);
+                }
+                // Only on request, from a manager whose Endpoint checked (and repaired) every rung since the last prune:
+                // readers then reach the older versions down the rungs.
+                // ponytail: one deleteMany in the rotation's transaction, up to MAX_RECIPIENTS wraps per version since
+                // the last prune, a range the rotation rate limits bound (60 an hour per user and space). Upgrade path
+                // if a long unpruned run makes it slow: delete in batches after the transaction, below `keysPrunedBelow`.
+                if (prune) {
+                    await repository.deleteKeysBelow(space.id, keyVersion);
+                }
+                await repository.insertKeys(space.id, model.keys);
+                if (repairs.length > 0) {
+                    await SpaceService.assertSpanRoom(repository, space.id, repairs);
+                }
+                await repository.insertRungs(space.id, [...model.rungs, ...repairs], model.statement.seq);
+            }, model.statement);
+        }
+        catch (e) {
+            // Only a rotation that landed is charged.
+            for (const key of held) {
+                await this.rotationRateLimiter.release({key});
             }
-            await repository.insertKeys(space.id, model.keys);
-        }, model.statement);
+            throw e;
+        }
         this.spaceNotificationService.sendUpdatedSpace(changed, removing ? "recipientsRemoved" : "keyRotated", removedUsers, removedGroups);
         return changed;
     }
@@ -403,7 +601,7 @@ export class SpaceService extends BaseContainerService {
         if (caller && caller.role !== "manager") {
             throw new AppException("ACCESS_DENIED");
         }
-        await this.repositoryFactory.withTransaction(session => this.repositoryFactory.createSpaceRepository(session).delete(id));
+        await this.repositoryFactory.withTransaction(session => this.repositoryFactory.createSpaceRepository(session).delete(space));
         this.spaceNotificationService.sendDeletedSpace(space);
         return space;
     }
@@ -412,9 +610,11 @@ export class SpaceService extends BaseContainerService {
     async deleteSpacesByContext(contextId: types.context.ContextId, solution: types.cloud.SolutionId) {
         const repository = this.repositoryFactory.createSpaceRepository();
         for (const space of await repository.getByContext(contextId)) {
-            await repository.delete(space.id);
+            await repository.delete(space);
             this.spaceNotificationService.sendDeletedSpace(space, solution);
         }
+        // The tombstones just written and those of spaces deleted earlier one by one.
+        await repository.deleteTombstonesOfContext(contextId);
     }
     
     private async getForChange(cloudUser: CloudUser, id: types.space.SpaceId, acl: SpaceAcl, managerOnly: boolean) {
@@ -449,6 +649,31 @@ export class SpaceService extends BaseContainerService {
             }
         });
         return {...space, ...all, version: space.version + 1};
+    }
+    
+    /**
+     * Reserves one unit of each of the caller's budgets of `kind` for the space — `maxSpaceRotationsPerMinute` a
+     * minute and `maxSpaceRotationsPerHour` an hour, removals and rotations each their own, a stale re-key only the
+     * per-minute one — or hands back what it took and refuses.
+     */
+    private async reserveRotation(spaceId: types.space.SpaceId, userId: types.cloud.UserId, kind: "rotate"|"remove"|"stale"): Promise<string[]> {
+        const prefix = kind === "remove" ? "spaceRemove" : kind === "stale" ? "spaceRotateStale" : "spaceRotate";
+        const budgets = [
+            {key: `${prefix}Burst|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerMinute, windowMs: DateUtils.minutes(1)},
+            ...(kind === "stale" ? [] : [{key: `${prefix}|${spaceId}|${userId}`, limit: this.config.maxSpaceRotationsPerHour}]),
+        ];
+        const held: string[] = [];
+        for (const budget of budgets) {
+            const {allowed, retryAt} = await this.rotationRateLimiter.reserve(budget);
+            if (!allowed) {
+                for (const key of held) {
+                    await this.rotationRateLimiter.release({key});
+                }
+                throw new AppException("SPACE_ROTATION_RATE_LIMIT", {retryAt});
+            }
+            held.push(budget.key);
+        }
+        return held;
     }
     
     /** Splits recipients into groups and users, after checking each exists in the context under the key given. */

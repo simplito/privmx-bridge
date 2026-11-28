@@ -75,6 +75,8 @@ describe("CloudAclChecker.verifyAccess", () => {
         ["ALLOW WRITE", "context/groupUpdatePrivateMeta", [], true],
         ["ALLOW context/WRITE", "context/groupUpdatePolicy", [], true],
         ["ALLOW context/ALL", "context/groupUpdatePublicMeta", [], true],
+        ["ALLOW context/READ", "context/spaceGetKeyArchive", ["spaceId=s"], true],
+        ["ALLOW context/WRITE", "context/spaceGetKeyArchive", ["spaceId=s"], false],
         ["ALLOW context/READ", "context/groupUpdatePublicMeta", [], false],
         ["ALLOW context/READ", "context/groupUpdatePolicy", [], false],
         // One plane's grant carries neither the other plane nor the policy. This is the split, as an ACL fact.
@@ -172,5 +174,15 @@ describe("CloudAclChecker.validateAcl", () => {
         else {
             assert(!valid, "Should not throw exception");
         }
+    });
+});
+
+describe("CloudAclChecker and ACLs stored by 3.1.0", () => {
+    it("still validates lines naming groupCutEra and groupPruneArchive; groupCutEra still gates abandoning history", () => {
+        const checker: CloudAclChecker = new CloudAclChecker();
+        const acl = asAcl(["ALLOW ALL", "DENY context/groupCutEra groupId=g", "DENY context/groupPruneArchive"]);
+        checker.validateAcl(acl, 100);
+        assert.throws(() => checker.verifyAccess(acl, "context/groupCutEra", ["groupId=g"]));
+        checker.verifyAccess(acl, "context/groupRemoveMembers", ["groupId=g"]);
     });
 });

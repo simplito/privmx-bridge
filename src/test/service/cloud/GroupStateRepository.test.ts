@@ -24,6 +24,7 @@ import * as types from "../../../types";
 import * as db from "../../../db/Model";
 import { AppException } from "../../../api/AppException";
 import { DbDuplicateError } from "../../../error/DbDuplicateError";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
  * Moving the state out of the document is only worth anything if a change costs writes proportional to what
@@ -146,6 +147,7 @@ function groupDocument(tree: types.cloud.GroupTreeState): db.group.Group {
         publicMetaVersion: 1 as types.group.GroupVersion,
         privateMetaVersion: 1 as types.group.GroupVersion,
         rosterVersion: 1,
+        policy: CommitStatement.DEFAULT_RULES,
         keyVersion: 1,
         eraFloor: 1,
         numLeaves: tree.numLeaves,
@@ -258,7 +260,8 @@ it("each metadata plane is read from its own collection, by its own derived id",
     // silent wrong answer. This pins that the two reads really are separate, and that each asks for the id
     // belonging to its own plane — swapping the two derivations is the mistake this catches.
     const {repository, captured} = createStateRepository({publicMetaEntries: [], privateMetaEntries: []});
-    await repository.getMetaHeadKeyVersions(groupId);
+    await repository.getPublicMetaHead(groupId);
+    await repository.getPrivateMetaHead(groupId);
     assert.deepStrictEqual(captured.publicMetaEntries.gets, [`${groupId}|publicMeta`]);
     assert.deepStrictEqual(captured.privateMetaEntries.gets, [`${groupId}|privateMeta`]);
 });
@@ -294,7 +297,7 @@ it("epoch rows: one per (group, epoch), read in order, cut as a range below the 
 });
 
 it("SECURITY: a new epoch's key is looked up among every statement of the group, which no era cut removes", async () => {
-    // Epoch rows go below the floor (`cutEra`, `abandonHistory`), so a check against them forgot every key down
+    // Epoch rows go below the floor (`abandonHistory`), so a check against them forgot every key down
     // there — keys every member of those epochs, removed ones included, holds the private half of.
     const key = "EarlierGroupPubKey" as unknown as types.cloud.GroupPubKey;
     const {repository, captured} = createStateRepository({commits: [{id: GroupStateRepository.treeCommitId(groupId, 1)} as db.group.GroupTreeCommit]});

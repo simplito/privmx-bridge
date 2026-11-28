@@ -11,8 +11,7 @@ limitations under the License.
 
 import "q2-test";
 import { BasePolicy } from "../../../service/cloud/BasePolicy";
-import { DefaultContextPolicy, PolicyService } from "../../../service/cloud/PolicyService";
-import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
+import { PolicyService } from "../../../service/cloud/PolicyService";
 import * as db from "../../../db/Model";
 import * as types from "../../../types";
 import { AppException } from "../../../api/AppException";
@@ -118,44 +117,10 @@ it("a context may set a group policy at all", async () => {
     new PolicyService().validateContextPolicy({group: {listAll: "all", get: "manager"}});
 });
 
-it("group: inherit and default resolve to the frozen v3 rules, which are today's context defaults", async () => {
-    // A group's commit rules are signed, so `inherit`/`default` resolve against a table frozen with the v3
-    // format, never against the context. Pinned to the shipped context defaults so a change to either is deliberate.
-    for (const field of ["update", "rotateKeys", "updatePolicy", "ownerCanBeRemovedFromManagers"] as const) {
-        for (const value of [undefined, "inherit", "default"] as const) {
-            expect(CommitStatement.resolve({[field]: value}, field)).toBe(CommitStatement.V3_POLICY_DEFAULTS[field]);
-        }
-        expect(CommitStatement.V3_POLICY_DEFAULTS[field]).toBe(DefaultContextPolicy.group![field]!);
+it("a context's group policy still takes the deprecated manager-seat booleans, as 3.1.0 did", async () => {
+    // Accepted and ignored: a group's own rules decide who keeps a manager seat.
+    for (const field of ["updaterCanBeRemovedFromManagers", "ownerCanBeRemovedFromManagers"] as const) {
+        new PolicyService().validateContextPolicy({group: {[field]: "no"}});
+        new PolicyService().validateContextPolicy({thread: {[field]: "no"}});
     }
-});
-
-describe("the roster rules belong to groups", () => {
-    const service = new PolicyService();
-    const rosterRule = {addMembers: "user"} as types.cloud.ContainerPolicy;
-    const refused = (run: () => void) => {
-        try {
-            run();
-        }
-        catch (e) {
-            return AppException.is(e, "INVALID_PARAMS");
-        }
-        return false;
-    };
-    
-    it("a group's own policy may set them", () => {
-        service.validateContainerPolicyForContainer("policy", rosterRule, true);
-        service.validateContainerPolicyForContainer("policy", {removeMembers: "manager,owner"} as types.cloud.ContainerPolicy, true);
-    });
-    
-    it("SECURITY: any other container's policy may not: nothing would read the rule", () => {
-        if (!refused(() => service.validateContainerPolicyForContainer("policy", rosterRule))) {
-            throw new Error("a roster rule on a non-group container must be refused");
-        }
-    });
-    
-    it("SECURITY: a value outside the group grammar is refused on a group too", () => {
-        if (!refused(() => service.validateContainerPolicyForContainer("policy", {addMembers: "itemOwner"} as types.cloud.ContainerPolicy, true))) {
-            throw new Error("itemOwner is not a roster rule");
-        }
-    });
 });

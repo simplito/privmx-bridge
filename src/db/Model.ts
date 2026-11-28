@@ -203,8 +203,8 @@ export namespace space {
     
     /**
      * A space: one key, in versions, wrapped for several groups and users. It holds no data of its own. The
-     * wrapped keys live in `spaceKey`, one document per version and recipient, so the document stays of a size
-     * that follows the recipients and not the number of rotations.
+     * wraps live in `spaceKey`, one document per version and recipient, those of older versions only until a
+     * manager's pruning rotation (`prune: true`); older versions are reached down the rungs in `spaceRung`. The document stays of a size that follows the recipients, not the rotations.
      */
     export interface Space {
         id: types.space.SpaceId;
@@ -220,9 +220,11 @@ export namespace space {
         users: {userId: types.cloud.UserId; pubKey: types.cloud.UserPubKey; role: types.cloud.ContainerRole}[];
         keyId: types.core.KeyId;
         keyVersion: number;
+        /** The key version of the last pruning rotation, 0 before any: wraps of versions below it are gone. */
+        keysPrunedBelow: number;
         /** The seq of `statement`. */
         seq: number;
-        /** The last signed statement: `groups`, `users` and `keyVersion` are what it says. Earlier ones live in `spaceStatement`. */
+        /** The last signed statement: its `rosterHash` binds `groups` and `users`, its `keyVersion` is this one. Earlier ones live in `spaceStatement`. */
         statement: types.cloud.SpaceStatement;
         publicMeta: types.space.SpaceData;
         privateMeta: types.space.SpaceData;
@@ -231,6 +233,22 @@ export namespace space {
         /** Moves with every write; each write is a compare-and-swap on it. */
         version: number;
     }
+    
+    /**
+     * Left behind by a deleted space. Ids are derived from `(contextId, resourceId)`, so without it anybody could
+     * create a new space under a deleted one's id, with a fresh chain, and be taken for that space. Pruned with its
+     * context, as a group's is.
+     */
+    export interface SpaceTombstone {
+        id: types.space.SpaceId;
+        contextId: types.context.ContextId;
+    }
+    
+    /** What a space's notifications and its deletion read of it: the counters and who its recipients are. */
+    export type SpaceNotice = Pick<Space, "id"|"contextId"|"keyVersion"|"publicMetaVersion"|"privateMetaVersion"> & {
+        groups: Pick<Space["groups"][number], "groupId">[];
+        users: Pick<Space["users"][number], "userId">[];
+    };
     
     /** One entry of a space's history. Written once, never changed. */
     export interface SpaceStatementEntry {
@@ -250,6 +268,18 @@ export namespace space {
         userId?: types.cloud.UserId;
         data: types.core.Base64;
         signature: types.core.Base64;
+    }
+    
+    /** One rung of a space's key ladder (`types.cloud.SpaceRung`). Kept for every version, append-only: a span holds
+     *  the rung of the rotation that made its version and up to three repairs by managers. */
+    export interface SpaceRung {
+        /** `<spaceId>/<atKeyVersion>/<targetKeyVersion>/<seq>`, the seq of the statement whose request brought it
+         *  (rows from before repairs: without the seq). */
+        id: string;
+        spaceId: types.space.SpaceId;
+        atKeyVersion: number;
+        targetKeyVersion: number;
+        data: types.core.Base64;
     }
 }
 
@@ -275,7 +305,8 @@ export namespace group {
         /** Who may read the group's identity key, roster and statements beside its members: nobody (absent or
          *  "members"), or every user of the context ("context"). The bridge's own setting; no statement signs it. */
         visibleTo?: "members"|"context";
-        policy?: types.cloud.ContainerPolicy;
+        /** The group's signed rules, all eight. */
+        policy: types.cloud.GroupRules;
         /** Public metadata plane counter. Moves only on `groupUpdatePublicMeta`, which is CAS-guarded on it —
          *  which is exactly why that plane's entry may commit the version it lands at. Entries live in
          *  `groupPublicMetaEntry`. */
@@ -301,10 +332,8 @@ export namespace group {
          * ~20 B each and every tree operation reads it, so moving it out costs a query and saves ~2%.
          */
         leafAssignment: types.cloud.UserId[];
-        /** Oldest epoch reachable by descending: a cut era makes everything below it unreachable by design. */
+        /** Oldest epoch reachable by descending: a history cut deletes everything below it. */
         eraFloor: number;
-        /** Rungs below this epoch were deleted, so the archive stops here even inside the current era. */
-        archivePrunedBelow?: number;
         /**
          * Bumped by every `groupRepairRung`. The write is what serialises a repair against every floor change and
          * every other repair of the group: they all write this document, so a concurrent one is a write conflict
@@ -417,7 +446,7 @@ export namespace group {
      *
      * `keyVersion` is the epoch its key belongs to and may legitimately lag the group's current epoch — the
      * entry stays where it was written and a later reader descends the Epoch Ladder to open it. That is why
-     * `cutEra`/`pruneArchive` have to check it before dropping rungs, or the metadata becomes unreadable. The
+     * a removal abandoning history leaves it below the floor, unreadable until rewritten. The
      * two planes move independently, so they may sit at different epochs and only one may be stranded.
      *
      * One row per group per plane: `id` is derived from `groupId` and the plane alone, and a write replaces it.
@@ -461,8 +490,8 @@ export namespace group {
      * epoch: the grant public key it was born with (what `keyHistory` serves for the epochs behind the current one)
      * and, when that commit carried one, the group's own metadata key wrapped **once** to that grant key (what
      * `groupKeys` serves). A row per epoch rather than two arrays on the group document, which grew with every
-     * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. `cutEra` drops the rows
-     * below its floor; `pruneArchive` leaves them. The grant-key reuse check does not read these rows (they go with the era);
+     * rotation until the document hit Mongo's 16 MB ceiling and every CAS on it failed. A history cut drops the rows
+     * below its floor. The grant-key reuse check does not read these rows (they go with the era);
      * it reads the statements in `groupTreeCommit`, which no cut removes.
      *
      * `groupPubKey` is optional only for rows migrated from a document whose `groupKeys` named an epoch missing

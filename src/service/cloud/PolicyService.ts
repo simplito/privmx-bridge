@@ -130,18 +130,20 @@ export const DefaultContextPolicy: types.context.ContextPolicy = {
             delete: "itemOwner&user,manager",
         },
     },
+    // Read for groups: get, listMy, listAll, create, creatorHasToBeManager and sendCustomNotification. A group's own
+    // signed rules decide everything else, and the context's update, rotateKeys, updatePolicy and delete only veto
+    // when a context sets them itself, so these defaults of theirs (and canOverwriteContextPolicy) are ignored for
+    // groups. Kept, not removed, so a 3.1.0 context reading `inherit`/`default` sees the table it always did.
     group: {
         get: "user",
         listMy: "all",
         listAll: "none",
         create: "all",
         update: "manager",
-        rotateKeys: "manager",
+        rotateKeys: "user",
         delete: "manager",
         updatePolicy: "manager",
         creatorHasToBeManager: "yes",
-        updaterCanBeRemovedFromManagers: "no",
-        ownerCanBeRemovedFromManagers: "yes",
         canOverwriteContextPolicy: "yes",
         sendCustomNotification: "all",
     },
@@ -166,6 +168,9 @@ export class PolicyService {
             this.validateContainerPolicyForContext("policy.stream", policy.stream);
         }
         if (policy.group) {
+            // Deprecated for groups: `policy.group.updaterCanBeRemovedFromManagers` and `ownerCanBeRemovedFromManagers`
+            // are still accepted (3.1.0 took them, and contexts store them) but nothing reads them any more: a group's
+            // own rules decide who may keep a manager seat (`changeRoles`, and a group with managers keeps one).
             this.validateContainerPolicyForContext("policy.group", policy.group);
         }
     }
@@ -180,7 +185,6 @@ export class PolicyService {
     }
     
     private validateContainerPolicyForContext(path: string, policy: types.cloud.ContainerPolicy) {
-        PolicyService.refuseRosterRules(path, policy);
         if (policy.get !== undefined) {
             this.validatePolicyEntry(path + ".get", policy.get, ["default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -227,21 +231,7 @@ export class PolicyService {
         }
     }
     
-    /** `addMembers` and `removeMembers` are a group's own, signed rules. Anywhere else nothing reads them, and a rule
-     *  that can be set and does nothing is a permission somebody believes they took away. */
-    private static refuseRosterRules(path: string, policy: types.cloud.ContainerPolicy) {
-        for (const field of ["addMembers", "removeMembers"] as const) {
-            if (policy[field] !== undefined) {
-                throw new AppException("INVALID_PARAMS", `${path}.${field} is not allowed here`);
-            }
-        }
-    }
-    
-    /** `rosterRules`: the container is a group, the one place the two roster rules mean something. */
-    validateContainerPolicyForContainer(path: string, policy: types.cloud.ContainerPolicy, rosterRules = false) {
-        if (!rosterRules) {
-            PolicyService.refuseRosterRules(path, policy);
-        }
+    validateContainerPolicyForContainer(path: string, policy: types.cloud.ContainerPolicy) {
         if (policy.get !== undefined) {
             this.validatePolicyEntry(path + ".get", policy.get, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
         }
@@ -262,12 +252,6 @@ export class PolicyService {
         }
         if (policy.updatePolicy !== undefined) {
             this.validatePolicyEntry(path + ".updatePolicy", policy.updatePolicy, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
-        }
-        for (const field of ["addMembers", "removeMembers"] as const) {
-            const entry = policy[field];
-            if (entry !== undefined) {
-                this.validatePolicyEntry(`${path}.${field}`, entry, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);
-            }
         }
         if (policy.delete !== undefined) {
             this.validatePolicyEntry(path + ".delete", policy.delete, ["inherit", "default", "none", "all"], ["user", "manager", "owner"]);

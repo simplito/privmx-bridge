@@ -70,7 +70,7 @@ function group(overrides: Partial<db.group.Group> = {}): db.group.Group {
         publicMetaVersion: 7 as types.group.GroupVersion,
         privateMetaVersion: 11 as types.group.GroupVersion,
         rosterVersion: 5,
-        policy: {},
+        policy: CommitStatement.DEFAULT_RULES,
         keyVersion: EPOCH,
         eraFloor: 1,
         treeCommitSeq: 3,
@@ -216,7 +216,7 @@ it("only the transition is written, never a whole tree", async () => {
 });
 
 it("a removal abandoning history closes the era at the new epoch, in the same write", async () => {
-    // Nobody could recover the old grant key, so nothing points down to it any more: what `cutEra` drops goes
+    // Nobody could recover the old grant key, so nothing points down to it any more: what a history cut drops goes
     // under the removal's own compare-and-swap.
     const {repository, state, updates} = createRepository();
     await repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
@@ -366,8 +366,7 @@ it("a metadata update that loses the CAS reports it instead of writing", async (
 it("a group with a metadata plane missing is an internal invariant, not a client error", async () => {
     // `createGroup` writes the document and both entries in one transaction, so only a leftover from an older
     // build can be missing one. Nothing the caller sends changes the answer — same treatment as the missing
-    // roster counter. Not `GROUP_META_UNREACHABLE`: that one means "a cut would strand the entry, rewrite the
-    // plane first", which is a remedy, and there is none here. Both planes, because either can be the one gone.
+    // roster counter. Both planes, because either can be the one gone.
     for (const missing of ["getPublicMetaHead", "getPrivateMetaHead"] as const) {
         const {repository, state} = createRepository();
         mock(state, "getTree", async () => ({nodes: [], edges: []}) as never);
@@ -448,7 +447,7 @@ it("a policy commit stores the policy and its statement under the commit CAS, an
     // Appending to a plane would move a counter the client's envelope pins, and moving one without writing the
     // entry that commits it would leave the group unreadable. So: neither. The statement chain moves.
     const {repository, state, updates, replacements} = createRepository();
-    const result = await repository.updatePolicyWithStatement(group(), janek, {get: "all"} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    const result = await repository.updatePolicyWithStatement(group(), janek, {...CommitStatement.DEFAULT_RULES, addMembers: "members"}, statement(4, "policy"));
     assert.ok(result);
     assert.strictEqual(replacements.length, 0);
     assert.deepStrictEqual(Object.keys(updates[0].set).sort(), [
@@ -466,63 +465,34 @@ it("a policy commit stores the policy and its statement under the commit CAS, an
 
 it("a policy commit that loses the CAS stores nothing", async () => {
     const {repository, state} = createRepository({casMiss: true});
-    const result = await repository.updatePolicyWithStatement(group(), janek, {} as types.cloud.ContainerPolicy, statement(4, "policy"));
+    const result = await repository.updatePolicyWithStatement(group(), janek, CommitStatement.DEFAULT_RULES, statement(4, "policy"));
     assert.strictEqual(result, null, "the caller turns this into ROTATED_ALREADY");
     hasNoCalls(state.insertTreeCommit);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// pruning and cutting an era
+// abandoning history
 // ─────────────────────────────────────────────────────────────────────────────
 
-it("pruning the archive is a range delete and leaves the document's key material alone", async () => {
-    const {repository, state, updates} = createRepository();
-    const result = await repository.pruneArchive(group({archivePrunedBelow: 2}), 4);
-    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["archivePrunedBelow", "lastModificationDate"]);
-    assert.strictEqual(result?.archivePrunedBelow, 4);
-    hasOneCall(state.deleteRungsTargetingBelow);
-    const call = state.deleteRungsTargetingBelow.mock.calls[0];
-    assert.deepStrictEqual([...call], [groupId, 4]);
-});
-
-it("pruning never lowers the watermark it already recorded", async () => {
-    const {repository, updates} = createRepository();
-    await repository.pruneArchive(group({archivePrunedBelow: 9}), 4);
-    assert.strictEqual(updates[0].set.archivePrunedBelow, 9);
-});
-
-it("cutting an era drops the key material for the epochs it closes", async () => {
-    // Below the floor there is nothing left to do with either: the registry entry has no rung to verify
-    // against, and the ciphertext is addressed to a grant key nobody can climb to.
-    const {repository, state, updates} = createRepository();
-    await repository.cutEra(group(), 4);
-    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["eraFloor", "lastModificationDate"]);
-    const calls = state.deleteEpochKeysBelow.mock.calls;
-    assert.deepStrictEqual(calls.map(call => [...call]), [[groupId, 4]]);
-    hasOneCall(state.deleteRungsTargetingBelow);
-});
-
-it("SECURITY: cutting an era or abandoning history leaves every statement in place", async () => {
-    // The grant-key reuse check reads the statements for every key the group ever had; if either of these took statements
+it("SECURITY: abandoning history leaves every statement in place", async () => {
+    // The grant-key reuse check reads the statements for every key the group ever had; if this took statements
     // with it, the keys below the floor would be forgotten again.
     const deletes = (state: ReturnType<typeof createRepository>["state"]) => (Object.keys(state) as (keyof typeof state)[])
         .filter(name => /^delete|^markDeleted$/.test(name) && state[name].mock.calls.length > 0).sort();
-    const cut = createRepository();
-    await cut.repository.cutEra(group(), 4);
-    assert.deepStrictEqual(deletes(cut.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
     const abandoned = createRepository();
     await abandoned.repository.removeMembersWithTransition({...removal(group()), rungs: [], abandonHistory: true});
     assert.deepStrictEqual(deletes(abandoned.state), ["deleteEpochKeysBelow", "deleteRungsTargetingBelow"]);
-    hasNoCalls(cut.state.deleteState);
     hasNoCalls(abandoned.state.deleteState);
 });
 
-it("pruning the archive touches no key material", async () => {
-    // The other direction, and deliberately so: pruning is housekeeping, and a member holding an old epoch key
-    // locally has to keep being able to verify it and open what it wraps.
+it("a plain rotation moves no floor and deletes nothing", async () => {
     const {repository, state, updates} = createRepository();
-    await repository.pruneArchive(group(), 4);
-    assert.deepStrictEqual(Object.keys(updates[0].set).sort(), ["archivePrunedBelow", "lastModificationDate"]);
+    await repository.generateNewGroupKey({
+        oldGroup: group(), modifier: janek, newGroupPubKey: nextGroupPubKey, data: data, keyId: newKeyId,
+        grantEdge: rotationGrantEdge(buildTree(SEATING, EPOCH), EPOCH + 1), statement: statement(4, "rotate"), rungs: rungsFor(EPOCH + 1, 1),
+    });
+    assert.strictEqual("eraFloor" in updates[0].set, false);
+    hasNoCalls(state.deleteRungsTargetingBelow);
     hasNoCalls(state.deleteEpochKeysBelow);
 });
 
@@ -533,7 +503,7 @@ it("pruning the archive touches no key material", async () => {
 it("a new tree-backed group keeps its seating and writes the rest beside the document", async () => {
     const {repository, state, inserted} = createRepository();
     const tree = buildTree(SEATING, 1);
-    const created = await repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, data, keyId, {}, tree, statement(1, "create"));
+    const created = await repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol], data, data, data, keyId, CommitStatement.DEFAULT_RULES, tree, statement(1, "create"));
     assert.strictEqual(created.publicMetaVersion, 1);
     assert.strictEqual(created.privateMetaVersion, 1);
     assert.strictEqual(created.rosterVersion, 1, "all three planes start at 1 and diverge from there");
@@ -574,7 +544,7 @@ it("SECURITY: a deleted group's id cannot be created again", async () => {
     // Ids derive from (contextId, resourceId): a new group under a deleted one's id would pass for it.
     const {repository, inserted} = createRepository({deleted: true});
     await assert.rejects(() => repository.createGroup(contextId, "res" as types.core.ClientResourceId, undefined, groupPubKey, janek, [janek], [alice, bob, carol],
-        data, data, data, keyId, {}, buildTree(SEATING, 1), statement(1, "create")), DbDuplicateError);
+        data, data, data, keyId, CommitStatement.DEFAULT_RULES, buildTree(SEATING, 1), statement(1, "create")), DbDuplicateError);
     assert.deepStrictEqual(inserted, []);
 });
 
@@ -626,9 +596,7 @@ it("a repair serialises on the group document, conditioned on the floors it was 
     // Every floor change writes this document too, so inside a transaction a racing one is a write conflict.
     const {repository, updates} = createRepository();
     assert.strictEqual(await repository.touchLadder(group({eraFloor: 3})), true);
-    assert.deepStrictEqual(updates[0].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: {$exists: false}});
-    await repository.touchLadder(group({eraFloor: 3, archivePrunedBelow: 4}));
-    assert.deepStrictEqual(updates[1].filter, {_id: groupId, eraFloor: 3, archivePrunedBelow: 4});
+    assert.deepStrictEqual(updates[0].filter, {_id: groupId, eraFloor: 3});
     // A floor that moved: nothing written, reported to the caller.
     assert.strictEqual(await createRepository({casMiss: true}).repository.touchLadder(group()), false);
 });

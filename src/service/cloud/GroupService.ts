@@ -27,7 +27,7 @@ import { CloudAccessValidator } from "./CloudAccessValidator";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
 import { ActiveUsersMap } from "../../cluster/master/ipcServices/ActiveUsers";
 import { BaseContainerService } from "./BaseContainerService";
-import type { GroupAddMembersModel, GroupCutEraModel, GroupGenerateNewKeyModel, GroupPruneArchiveModel, GroupRemoveMembersModel, GroupSetRolesModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
+import type { GroupAddMembersModel, GroupGenerateNewKeyModel, GroupRemoveMembersModel, GroupSetRolesModel, GroupRepairRungModel, GroupSelfUpdateModel, GroupUpdatePolicyModel, GroupUpdatePrivateMetaModel, GroupUpdatePublicMetaModel, RotatedAlreadyData } from "../../api/main/context/ContextApiTypes";
 import type { GroupRotationRateLimiter } from "../../cluster/master/ipcServices/GroupRotationRateLimiter";
 import { TreeValidator } from "./keytree/TreeValidator";
 import { CommitOp, SubmittedCommit, TreeCommit, TreeTransitionValidator } from "./keytree/TreeTransitionValidator";
@@ -130,8 +130,7 @@ export class GroupService extends BaseContainerService {
     
     /**
      * Who beside the members may read the group's identity key, roster and statements. Widening it shows the
-     * roster to the whole context, so it takes a manager whom the group's own signed `update` rule lets change the
-     * group - the same two conditions a change of its members takes.
+     * roster to the whole context, so it takes the group's `changeVisibility` rule.
      */
     async setVisibility(cloudUser: CloudUser, groupId: types.group.GroupId, visibleTo: "members"|"context") {
         const groupRepository = this.repositoryFactory.createGroupRepository();
@@ -141,11 +140,12 @@ export class GroupService extends BaseContainerService {
         }
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, group.contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + group.id]);
-        if (!group.managers.includes(user.userId) || !this.policy.canUpdateContainer(user, context, group)) {
-            throw new AppException("ACCESS_DENIED");
-        }
+        this.policy.require(user, context, group, "changeVisibility");
         if ((group.visibleTo ?? "members") !== visibleTo) {
-            await groupRepository.setVisibility(group.id, visibleTo);
+            // Compare-and-swap on the statement chain the check above was made against.
+            if (!await groupRepository.setVisibility(group.id, visibleTo, group.treeCommitSeq ?? 0)) {
+                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(group.id)) ?? group));
+            }
             group.visibleTo = visibleTo;
             this.groupNotificationService.sendUpdatedGroup(group, [], "visibilityChanged");
         }
@@ -244,21 +244,25 @@ export class GroupService extends BaseContainerService {
     async createGroup(cloudUser: CloudUser, resourceId: types.core.ClientResourceId, contextId: types.context.ContextId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, users: types.cloud.UserId[], managers: types.cloud.UserId[], data: types.group.GroupData,
         publicMeta: types.group.GroupData, privateMeta: types.group.GroupData, keyId: types.core.KeyId,
-        policy: types.cloud.ContainerPolicy, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement,
+        policy: types.cloud.GroupRules, tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement,
         groupKeys?: Omit<types.cloud.GroupKeyEntrySet, "group">, visibleTo?: "members"|"context") {
         const allUsers = Utils.uniqueFromArrays(users, managers);
-        this.policyService.validateContainerPolicyForContainer("policy", policy, true);
         this.assertWithinLimit(allUsers.length);
         this.assertWithinLimit(tree.numLeaves, true);
         const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, contextId);
         this.cloudAclChecker.verifyAccess(user.acl, "context/groupCreate", []);
-        this.policy.makeCreateContainerCheck(user, context, managers, policy);
+        // `{}`: the rules are the group's own and signed, so the context's `canOverwriteContextPolicy` has no say.
+        this.policy.makeCreateContainerCheck(user, context, managers, {});
         if (allUsers.length === 0) {
             throw new AppException("INVALID_PARAMS", "there has to be at least one user or manager");
         }
-        if (visibleTo === "context" && !managers.includes(user.userId)) {
-            // As `setVisibility` would ask of it afterwards: showing a roster to the context is a manager's call.
-            throw new AppException("ACCESS_DENIED", "only a manager may make a group visible to the context");
+        if (visibleTo === "context") {
+            // What `setVisibility` would ask afterwards: its ACL entry (scoped to the id the group will have), and the
+            // `changeVisibility` rule judged against the rules and roster being created, with the context's
+            // `updatePolicy` veto.
+            this.cloudAclChecker.verifyAccess(user.acl, "context/groupSetVisibility", ["groupId=" + CommitStatement.groupId(contextId, resourceId)]);
+            const draft = {creator: user.userId, users, managers, policy} as db.group.Group;
+            this.policy.require(user, context, draft, "changeVisibility");
         }
         await this.cloudKeyService.checkUsersExistance(contextId, allUsers);
         const newGroupKey = GroupService.buildSelfAddressedKey(undefined, groupKeys, keyId, 1);
@@ -277,7 +281,7 @@ export class GroupService extends BaseContainerService {
             managers: managers,
             tree: TreeHash.afterCommit([], commit, 1),
             path: commit.refreshed,
-            // The policy the group stores is the one the statement carries and signs, with the caller as creator.
+            // The rules the group stores are the ones the statement carries and signs, with the caller as creator.
             policy: policy,
             creator: user.userId,
             // No deltas: `rosterHash` binds the genesis roster, served beside the chain to a client replaying it
@@ -328,12 +332,7 @@ export class GroupService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePublicMeta", ["groupId=" + model.id]);
-            // `canUpdateContainer` rather than `makeUpdateContainerCheck`: nothing here changes the managers
-            // list, so that helper's two manager checks reduce to `P && !P` and cannot fire, and its policy
-            // branch is unreachable because this call has no policy parameter.
-            if (!this.policy.canUpdateContainer(user, context, oldGroup)) {
-                throw new AppException("ACCESS_DENIED", "policy is not met");
-            }
+            this.policy.require(user, context, oldGroup, "editPublicMeta");
             // Its own counter and only its own — a concurrent private-metadata write must not make this lose.
             // Unconditional, unlike the other containers: the entry commits the version it lands at, so letting
             // a stale write through would publish a tag no client can verify.
@@ -386,9 +385,7 @@ export class GroupService extends BaseContainerService {
             }
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePrivateMeta", ["groupId=" + model.id]);
-            if (!this.policy.canUpdateContainer(user, context, oldGroup)) {
-                throw new AppException("ACCESS_DENIED", "policy is not met");
-            }
+            this.policy.require(user, context, oldGroup, "editPrivateMeta");
             if (oldGroup.privateMetaVersion !== model.version) {
                 throw new AppException("GROUP_VERSION_MISMATCH", "privateMetaVersion does not match");
             }
@@ -418,22 +415,19 @@ export class GroupService extends BaseContainerService {
         return rGroup;
     }
     
-    /** Sets the group's policy as a signed `policy` commit: CAS'd on the statement chain and rate-limited like every
-     *  other commit, in one transaction. It moves neither metadata counter and appends no metadata entry. */
+    /** Sets the group's rules as a signed `policy` commit, under the `changeRules` rule: CAS'd on the statement chain and
+     *  rate-limited like every other commit, in one transaction. It moves neither metadata counter and appends no
+     *  metadata entry. */
     async updatePolicy(cloudUser: CloudUser, model: GroupUpdatePolicyModel) {
-        // Required by the API validator (`groupTreeCommitStatementWithPolicy`).
+        // Required, complete and closed by the API validator (`groupTreeCommitStatementWithPolicy`).
         const policy = model.commit.policy!;
-        this.policyService.validateContainerPolicyForContainer("policy", policy, true);
         const budget = new Reservations(this.groupRotationRateLimiter);
         const group = await budget.unlessCommitted(() => this.repositoryFactory.withTransaction(async session => {
             const groupRepository = this.repositoryFactory.createGroupRepository(session);
             const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupUpdatePolicy", ["groupId=" + model.id]);
-            // The `updatePolicy` rule the group's statements sign, narrowed by the context's veto, and NOT `update`.
-            if (!this.policy.canOverwriteContextPolicy(context) || !this.policy.canUpdateContainerPolicy(user, context, oldGroup)) {
-                throw new AppException("ACCESS_DENIED", "cannot update policy");
-            }
+            this.policy.require(user, context, oldGroup, "changeRules");
             await budget.reserve(GroupService.rateLimitKey("policy", model.id, user.userId));
             // A policy commit moves no node, no epoch and no roster: its statement vouches for the tree as it stands.
             await this.chargingRefusals(budget, "policy", model.id, user.userId, async () => {
@@ -458,8 +452,7 @@ export class GroupService extends BaseContainerService {
      * version does. A member named a manager ends on `managers` only, one named a user on `users` only; the statement
      * lists the first as `addedManagers` and the second as `addedUsers`, which is all a reader needs to replay it.
      *
-     * Gated by the signed `updatePolicy` rule: whoever may rewrite the rules could give themselves anything a role
-     * gives, so a separate gate would add nothing.
+     * Gated by the `changeRoles` rule.
      */
     async setRoles(cloudUser: CloudUser, model: GroupSetRolesModel) {
         const budget = new Reservations(this.groupRotationRateLimiter);
@@ -490,8 +483,8 @@ export class GroupService extends BaseContainerService {
                 // A statement that changes nothing would still move the roster version and stale every reader.
                 throw new AppException("INVALID_PARAMS", "every member named already has that role");
             }
+            this.policy.require(user, context, oldGroup, "changeRoles");
             GroupService.assertKeepsAManager(oldGroup.managers, managers);
-            this.policy.makeRosterCheck(user, context, oldGroup, managers, "updatePolicy");
             await budget.reserve(GroupService.rateLimitKey("policy", model.id, user.userId));
             await this.chargingRefusals(budget, "policy", model.id, user.userId, async () => {
                 const nodes = await groupRepository.state.getNodes(oldGroup.id);
@@ -526,14 +519,14 @@ export class GroupService extends BaseContainerService {
             const {group: oldGroup, previous} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion, model.expectedRosterVersion, model.commit);
             const {user, context} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, "context/groupRotateKeys", ["groupId=" + model.id]);
-            // Gated by the `rotateKeys` policy, same as every other container's rotate endpoint. It defaults to
-            // "manager" for groups (the siblings default to "user") because rotating a group's grant key stales
-            // every container granted to it, not just this one document.
+            // Any member: there is no rule for it, only the context's `rotateKeys` veto. Rotating stales every
+            // container granted to the group, so besides the hourly budget each member has a short burst one.
             if (!this.policy.canRotateContainerKeys(user, context, oldGroup)) {
                 throw new AppException("ACCESS_DENIED");
             }
-            await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
             const newKeyVersion = oldGroup.keyVersion + 1;
+            await budget.reserve(GroupService.rateLimitKey("rotateBurst", model.id, user.userId), this.config.maxGroupRotationsPerMinute, DateUtils.minutes(1));
+            await budget.reserve(GroupService.rateLimitKey("rotate", model.id, user.userId));
             await this.assertRotationGrantEdgeIsValid(groupRepository, oldGroup, model.grantEdge, newKeyVersion);
             await this.assertGroupPubKeyIsNew(groupRepository, oldGroup, model.groupPubKey);
             this.assertRungsAreValid(model.rungs, newKeyVersion, oldGroup);
@@ -600,11 +593,8 @@ export class GroupService extends BaseContainerService {
             const newUsers = model.members.filter(member => member.role === "user").map(member => member.userId);
             const newManagers = model.members.filter(member => member.role === "manager").map(member => member.userId);
             const managers = [...oldGroup.managers, ...newManagers];
-            this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "addMembers");
-            if (newManagers.length > 0) {
-                // Seating somebody as a manager hands out a role: the gate of `setRoles`, on top of the one for adding.
-                this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "updatePolicy");
-            }
+            // Seating a manager also hands out a role.
+            this.policy.require(user, usedContext, oldGroup, "addMembers", ...(newManagers.length > 0 ? ["changeRoles" as const] : []));
             const listed = new Set<types.cloud.UserId>();
             for (const userId of addedUserIds) {
                 if (oldGroup.users.includes(userId) || oldGroup.managers.includes(userId)) {
@@ -684,7 +674,7 @@ export class GroupService extends BaseContainerService {
             const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
             this.cloudAclChecker.verifyAccess(user.acl, reseat ? "context/groupReseat" : "context/groupRemoveMembers", ["groupId=" + model.id]);
             if (model.abandonHistory) {
-                // It cuts the era as `groupCutEra` would, so it needs that permission too.
+                // It cuts the era, so it needs that ACL entry too, as in 3.1.0.
                 this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
             }
             if (model.userIds.includes(user.userId)) {
@@ -695,15 +685,21 @@ export class GroupService extends BaseContainerService {
             // A reseat names its subjects the same way, and none of them leaves the roster.
             const leaving = new Set(reseat ? [] : model.userIds);
             const managers = oldGroup.managers.filter(u => !leaving.has(u));
-            GroupService.assertKeepsAManager(oldGroup.managers, managers);
-            this.policy.makeRosterCheck(user, usedContext, oldGroup, managers, "removeMembers");
-            if (model.abandonHistory && !this.policy.canUpdateContainer(user, usedContext, oldGroup)) {
-                // It cuts the era as `groupCutEra` would: that call's rule as well as its ACL.
-                throw new AppException("ACCESS_DENIED", "policy is not met");
+            // A removal takes a manager's role away too; a reseat replaces keys and nothing else.
+            this.policy.require(user, usedContext, oldGroup,
+                ...(reseat ? ["replaceMemberKeys" as const] : ["removeMembers" as const]),
+                ...(!reseat && model.userIds.some(u => oldGroup.managers.includes(u)) ? ["changeRoles" as const] : []));
+            if (model.abandonHistory) {
+                // Abandoning history deletes it for everybody, so a removal alone does not entitle it: it takes
+                // `changeRules`, whose holder could grant itself anything the rules gate anyway; a key-less remover
+                // without it leaves the removal to a member who still holds the key. Both metadata planes end up
+                // below the new floor, so the remover also has to be one who may rewrite each.
+                this.policy.require(user, usedContext, oldGroup, "changeRules", "editPublicMeta", "editPrivateMeta");
             }
+            GroupService.assertKeepsAManager(oldGroup.managers, managers);
             if (model.abandonHistory) {
                 // The era closes at the new epoch, so every space holding the group's key is stranded below it.
-                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1, true);
+                await this.assertSpacesSurviveFloor(session, model.id, oldGroup.keyVersion + 1);
             }
             for (const userId of model.userIds) {
                 if (!oldGroup.users.includes(userId) && !oldGroup.managers.includes(userId)) {
@@ -812,66 +808,6 @@ export class GroupService extends BaseContainerService {
         }));
     }
     
-    /** Closes the current era: everything below the new floor becomes unreachable by descending. */
-    async cutEra(cloudUser: CloudUser, model: GroupCutEraModel) {
-        const group = await this.repositoryFactory.withTransaction(async session => {
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
-            const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupCutEra", ["groupId=" + model.id]);
-            this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
-            const keyVersion = oldGroup.keyVersion;
-            const currentFloor = oldGroup.eraFloor;
-            if (!Number.isInteger(model.newFloor) || model.newFloor < 1) {
-                throw new AppException("INVALID_PARAMS", "newFloor must be a positive integer");
-            }
-            if (model.newFloor <= currentFloor) {
-                // Lowering a floor would resurrect epochs a previous cut deliberately abandoned.
-                throw new AppException("INVALID_PARAMS", `newFloor must be above the current floor ${currentFloor}`);
-            }
-            if (model.newFloor > keyVersion) {
-                throw new AppException("INVALID_PARAMS", `newFloor cannot exceed the current epoch ${keyVersion}`);
-            }
-            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.newFloor);
-            await this.assertSpacesSurviveFloor(session, model.id, model.newFloor);
-            const result = await groupRepository.cutEra(oldGroup, model.newFloor);
-            if (!result) {
-                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
-            }
-            return result;
-        });
-        this.groupNotificationService.sendUpdatedGroup(group, [], "eraCut");
-        return group;
-    }
-    
-    /** Deletes rungs below a watermark. Recorded separately from a cut era so a client that cannot descend
-     *  learns why — pruned, not tampered with. */
-    async pruneArchive(cloudUser: CloudUser, model: GroupPruneArchiveModel) {
-        const group = await this.repositoryFactory.withTransaction(async session => {
-            const groupRepository = this.repositoryFactory.createGroupRepository(session);
-            const {group: oldGroup} = await this.getGroupForTreeOperation(groupRepository, cloudUser, model.id, model.expectedKeyVersion);
-            const {user, context: usedContext} = await this.cloudAccessValidator.getUserFromContext(cloudUser, oldGroup.contextId);
-            this.cloudAclChecker.verifyAccess(user.acl, "context/groupPruneArchive", ["groupId=" + model.id]);
-            this.policy.makeUpdateContainerCheck(user, usedContext, oldGroup, oldGroup.managers, undefined);
-            const keyVersion = oldGroup.keyVersion;
-            if (!Number.isInteger(model.belowEpoch) || model.belowEpoch < 1) {
-                throw new AppException("INVALID_PARAMS", "belowEpoch must be a positive integer");
-            }
-            if (model.belowEpoch > keyVersion) {
-                throw new AppException("INVALID_PARAMS", `belowEpoch cannot exceed the current epoch ${keyVersion}`);
-            }
-            await this.assertMetaSurvivesFloor(groupRepository, model.id, model.belowEpoch);
-            await this.assertSpacesSurviveFloor(session, model.id, model.belowEpoch);
-            const result = await groupRepository.pruneArchive(oldGroup, model.belowEpoch);
-            if (!result) {
-                throw new AppException("ROTATED_ALREADY", GroupService.rotatedAlreadyData((await groupRepository.get(model.id))!));
-            }
-            return result;
-        });
-        this.groupNotificationService.sendUpdatedGroup(group, [], "archivePruned");
-        return group;
-    }
-    
     /**
      * Appends a repair rung: one more rung for a span an epoch already published, by a seated member holding both
      * keys. It is what makes a broken rung (a client bug, or a member who may rotate and wrote garbage) repairable
@@ -905,7 +841,7 @@ export class GroupService extends BaseContainerService {
             await budget.reserve(GroupService.rateLimitKey("repair", model.id, user.userId));
             const {rung} = model;
             const span = {at: rung.atKeyVersion, target: rung.targetKeyVersion};
-            const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor, group.archivePrunedBelow);
+            const result = LadderMath.validateRepairSpan(span, group.keyVersion, group.eraFloor);
             if (!result.ok) {
                 throw new AppException("GROUP_ARCHIVE_INVALID", {...result.problem, at: span.at, target: span.target});
             }
@@ -941,7 +877,7 @@ export class GroupService extends BaseContainerService {
         // current one. Rungs pointing below the floor are never served, even if one were stored.
         const groupRepository = this.repositoryFactory.createGroupRepository();
         const lastPast = group.keyVersion - 1;
-        const floor = Math.max(group.eraFloor, group.archivePrunedBelow ?? 0);
+        const floor = group.eraFloor;
         if (spans !== undefined) {
             // A client walking one descent path: the rungs of those spans and the rows of the epochs they join.
             const epochs = [...new Set(spans.flatMap(span => [span.at, span.target]))].filter(epoch => epoch <= lastPast);
@@ -971,50 +907,14 @@ export class GroupService extends BaseContainerService {
     }
     
     /**
-     * Refuses to strand either metadata plane below a floor.
-     *
-     * Each plane's entry stays at the epoch it was written under — that is what stops a membership change from
-     * rewriting it — so cutting or pruning below that epoch would take away the only route to its key and make
-     * that plane unreadable for everyone, permanently. Before the planes were split this could not happen: every
-     * removal republished the metadata at the new epoch.
-     *
-     * One lookup by derived id per plane. The two planes move independently, so they may sit at different
-     * epochs and only one may be stranded. The message therefore names the stranded planes and the endpoint
-     * that lifts each one rather than leaving the caller to guess: it is a per-plane fix, and rewriting the
-     * wrong plane costs the client a signed envelope for nothing. It deliberately does not name
-     * `groupUpdatePolicy` — a policy write moves no counter and appends no entry, so it lifts no epoch, and
-     * advertising it would send the operator into a loop that can never clear the refusal.
+     * Refuses to strand a space below the floor a removal abandoning history creates. Unlike a rotation that cuts,
+     * nobody can re-key such a space through the group afterwards: the remover lost the old key, and the pin the
+     * space holds is that key's. So only dropping the group from the space can clear this. The spaces are not
+     * named — the caller may not be in them.
      */
-    private async assertMetaSurvivesFloor(
-        groupRepository: ReturnType<RepositoryFactory["createGroupRepository"]>,
-        groupId: types.group.GroupId,
-        floor: number,
-    ) {
-        const heads = await groupRepository.state.getMetaHeadKeyVersions(groupId);
-        const stranded = ([
-            {plane: "public", at: heads.publicMeta, fix: "context.groupUpdatePublicMeta"},
-            {plane: "private", at: heads.privateMeta, fix: "context.groupUpdatePrivateMeta"},
-        ] as const).filter(entry => entry.at !== null && entry.at < floor);
-        if (stranded.length > 0) {
-            const where = stranded.map(entry => `${entry.plane} metadata sits at epoch ${entry.at}`).join(" and ");
-            const how = stranded.map(entry => entry.fix).join(" and ");
-            throw new AppException("GROUP_META_UNREACHABLE",
-                `${where}, below the requested floor ${floor}; call ${how} first to rewrite ${stranded.length > 1 ? "them" : "it"} at the current epoch`);
-        }
-    }
-    
-    /**
-     * Refuses to strand a space below a floor. A statement signed through the group has to verify under the group
-     * key the space holds (the epoch it was last wrapped to); with that epoch unreachable nobody could sign one, and
-     * the space would stay stale for good.
-     */
-    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number, abandonsHistory = false) {
+    private async assertSpacesSurviveFloor(session: mongodb.ClientSession, groupId: types.group.GroupId, floor: number) {
         if (await this.repositoryFactory.createSpaceRepository(session).isGroupHeldBelow(groupId, floor)) {
-            // The floor of a removal abandoning history is the epoch it creates, so no rotation can reach it: only
-            // dropping the group from the space can. The spaces are not named — the caller may not be in them.
-            throw new AppException("GROUP_IN_USE", abandonsHistory
-                ? "a space holds the group's key; remove the group from every space that names it first, a removal that abandons history cannot keep them"
-                : `a space holds the group's key at an epoch below ${floor}; rotate that space's key to the group's current epoch, or remove the group from it, first`);
+            throw new AppException("GROUP_IN_USE", "a space holds the group's key; remove the group from every space that names it first, a removal that abandons history cannot keep them");
         }
     }
     
@@ -1250,7 +1150,7 @@ export class GroupService extends BaseContainerService {
             addedUsers: [],
             addedManagers: [],
             removed: [],
-            policy: group.policy ?? {},
+            policy: group.policy,
             creator: group.creator,
         };
     }
@@ -1280,7 +1180,7 @@ export class GroupService extends BaseContainerService {
             groupPubKey: expected.groupPubKey,
             rosterVersion: expected.rosterVersion,
             rosterHash: TreeHash.rosterHash(expected.users, expected.managers),
-            policyHash: CommitStatement.policyHash(expected.policy, expected.creator),
+            policyHash: CommitStatement.rulesHash(expected.policy, expected.creator),
             tree: expected.tree,
             committer: caller.userId,
             committerPubKey: caller.userPubKey,
@@ -1303,15 +1203,9 @@ export class GroupService extends BaseContainerService {
      * would encrypt a later epoch's key under an earlier one, handing anyone with an old key everything after.
      */
     private assertRungsAreValid(rungs: types.cloud.GroupArchiveRungSubmission[], newKeyVersion: number, group: db.group.Group) {
-        const spans = rungs.map(rung => ({at: rung.atKeyVersion, target: rung.targetKeyVersion}));
-        const result = LadderMath.validateRungSet(spans, newKeyVersion, group.eraFloor, group.archivePrunedBelow);
+        const result = LadderMath.validateRungSubmission(rungs, newKeyVersion, group.eraFloor);
         if (!result.ok) {
             throw new AppException("GROUP_ARCHIVE_INVALID", result.problem);
-        }
-        for (const rung of rungs) {
-            if (!rung.data) {
-                throw new AppException("GROUP_ARCHIVE_INVALID", {kind: "EMPTY_RUNG_DATA", at: rung.atKeyVersion, target: rung.targetKeyVersion});
-            }
         }
     }
     
@@ -1321,7 +1215,8 @@ export class GroupService extends BaseContainerService {
      * allowance empty and with it every removal, its own included. Per member, epoch churn is bounded by the
      * number of members allowed to cause it rather than by the group; the policy decides who those are.
      *
-     * `rotate` and `remove` advance the epoch and stale every container granted to the group; `selfUpdate`
+     * `rotate` and `remove` advance the epoch (a rotation, which any member may do, also spends `rotateBurst`,
+     * `maxGroupRotationsPerMinute` a minute) and stale every container granted to the group; `selfUpdate`
      * moves no epoch but writes the tree (and shares the per-group `selfUpdate|<groupId>` too); `policy` counts
      * policy commits; `repair` counts `groupRepairRung` calls, accepted or refused; `refused` counts commits the
      * bridge refused after hashing the tree, `stale` lost races (`chargingRefusals`).
@@ -1337,7 +1232,7 @@ export class GroupService extends BaseContainerService {
         }
     }
     
-    private static rateLimitKey(budget: "rotate"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
+    private static rateLimitKey(budget: "rotate"|"rotateBurst"|"remove"|"selfUpdate"|"repair"|"policy"|"refused"|"stale", groupId: types.group.GroupId, userId: types.cloud.UserId): string {
         return `${budget}|${groupId}|${userId}`;
     }
     
@@ -1495,12 +1390,12 @@ class Reservations {
         }
     }
     
-    async reserve(key: string, limit?: number): Promise<void> {
+    async reserve(key: string, limit?: number, windowMs?: types.core.Timespan): Promise<void> {
         if (this.held.has(key)) {
             // A transient error re-runs the whole transaction; it is still the same request.
             return;
         }
-        const {allowed, retryAt} = await this.limiter.reserve(limit === undefined ? {key} : {key, limit});
+        const {allowed, retryAt} = await this.limiter.reserve({key, ...(limit === undefined ? {} : {limit}), ...(windowMs === undefined ? {} : {windowMs})});
         if (!allowed) {
             // When the oldest unit of the hour is handed back: a client waits until then instead of guessing.
             throw new AppException("GROUP_ROTATION_RATE_LIMIT", {retryAt});
@@ -1525,63 +1420,58 @@ class Reservations {
 
 /** The parts of an expected statement that differ per operation; the rest is derived from them. */
 type StatementExpectation = Omit<ExpectedStatement, "treeVersion"|"rosterHash"|"policyHash"|"committer"|"committerPubKey"|"committerSeat">
-    & {users: types.cloud.UserId[], managers: types.cloud.UserId[], policy: types.cloud.ContainerPolicy, creator: types.cloud.UserId};
+    & {users: types.cloud.UserId[], managers: types.cloud.UserId[], policy: types.cloud.GroupRules, creator: types.cloud.UserId};
 
 /**
- * The commit rules of a v3 group are the ones its statements sign (`CommitStatement.policyHash`): the group's own
- * value, or for an absent, `inherit` or `default` one the frozen v3 default, never the context's. The context policy
- * keeps only a veto: it can deny what the signed rule allows, never allow what it denies. Every caller of
- * these (add, remove, cutEra, prune, metadata writes, rotate, updatePolicy) gets that without a change of its own.
+ * A group's rules are its own, signed ones (`types.cloud.GroupRules`, `CommitStatement.rulesHash`), never the
+ * context's. The context keeps only a veto: it can deny what a rule allows, never allow what it denies. Its
+ * `update` narrows `addMembers`, `removeMembers`, `replaceMemberKeys` and both metadata rules,
+ * `updatePolicy` narrows `changeRoles`, `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete`
+ * deletion. Reading and listing stay the context's (`get`, `listMy`, `listAll`), as for every container.
  */
-class GroupPolicy extends BasePolicy<db.group.Group, never> {
+class GroupPolicy extends BasePolicy<Omit<db.group.Group, "policy">, never> {
     
-    canUpdateContainer(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
-        return this.signed(user, context, group, "update");
-    }
+    private static readonly VETO = {
+        addMembers: "update", removeMembers: "update", replaceMemberKeys: "update",
+        editPublicMeta: "update", editPrivateMeta: "update",
+        changeRoles: "updatePolicy", changeRules: "updatePolicy", changeVisibility: "updatePolicy",
+    } as const satisfies Record<keyof types.cloud.GroupRules, "update"|"updatePolicy">;
     
-    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
-        return this.signed(user, context, group, "rotateKeys");
-    }
-    
-    canUpdateContainerPolicy(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group) {
-        return this.signed(user, context, group, "updatePolicy");
-    }
-    
-    /** The gate of a roster commit: the signed rule for it, and the two "stays a manager" guards every container has. */
-    makeRosterCheck(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, managers: types.cloud.UserId[],
-        rule: "addMembers"|"removeMembers"|"updatePolicy") {
-        if (!this.signed(user, context, group, rule) || !this.passesContextVeto(user, context, group, "update")) {
-            throw new AppException("ACCESS_DENIED", "policy is not met");
+    /** Whether the group's own `rule` lets the caller act, and the context does not veto it. */
+    allows(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, rule: keyof types.cloud.GroupRules) {
+        if (!CommitStatement.isRules(group.policy)) {
+            // A group stored before the rules format: refused, typed, until it is migrated or recreated.
+            throw new AppException("GROUP_RULES_UNSUPPORTED");
         }
-        if (this.updaterIsRemovedFromManagersAndItIsForbidden(context, group, user, managers)) {
-            throw new AppException("ACCESS_DENIED", "modifier has to belong to managers");
-        }
-        if (this.ownerIsRemovedFromManagersAndItIsForbidden(context, group, managers)) {
-            throw new AppException("ACCESS_DENIED", "owner has to belong to managers");
+        const isManager = group.managers.includes(user.userId);
+        const who = group.policy?.[rule];
+        const ruled = who === "members" ? isManager || group.users.includes(user.userId) : who === "managers" && isManager;
+        return ruled && this.contextAllows(user, context, group, GroupPolicy.VETO[rule]);
+    }
+    
+    /** Throws unless `allows` every one of `rules`. */
+    require(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, ...rules: (keyof types.cloud.GroupRules)[]) {
+        for (const rule of rules) {
+            if (!this.allows(user, context, group, rule)) {
+                throw new AppException("ACCESS_DENIED", `the group's ${rule} rule is not met`);
+            }
         }
     }
     
-    ownerCanBeRemovedFromManagers(context: db.context.Context, group: db.group.Group) {
-        return CommitStatement.resolve(group.policy, "ownerCanBeRemovedFromManagers") === "yes"
-            && context.policy?.group?.ownerCanBeRemovedFromManagers !== "no";
+    /** Any member; there is no rule for it. */
+    canRotateContainerKeys(user: db.context.ContextUser, context: db.context.Context, group: Omit<db.group.Group, "policy">) {
+        return (this.isOnManagersList(user, group.managers) || this.isOnUsersList(user, group)) && this.contextAllows(user, context, group, "rotateKeys");
     }
     
-    /** The context's side of a rule alone: every roster commit is an update of the group, whatever rule signs it,
-     *  so a context that denies `update` denies a change of roles too. */
-    private passesContextVeto(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, field: "update") {
+    /** A manager; there is no rule for it. */
+    canDeleteContainer(user: db.context.ContextUser, context: db.context.Context, group: Omit<db.group.Group, "policy">) {
+        return this.isOnManagersList(user, group.managers) && this.contextAllows(user, context, group, "delete");
+    }
+    
+    /** The context's veto alone: only a value it set itself narrows anything. */
+    private contextAllows(user: db.context.ContextUser, context: db.context.Context, group: Omit<db.group.Group, "policy">, field: "update"|"updatePolicy"|"rotateKeys"|"delete") {
         const veto = context.policy?.group?.[field];
         return veto === undefined || veto === "inherit" || veto === "default" || this.policyService.userMeetsPolicy(this.getPolicyUser(user, group), veto);
-    }
-    
-    private signed(user: db.context.ContextUser, context: db.context.Context, group: db.group.Group, field: "update"|"rotateKeys"|"updatePolicy"|"addMembers"|"removeMembers") {
-        const who = this.getPolicyUser(user, group);
-        // The context has no rule of its own for the roster (one set there is refused): its `update` veto covers both
-        // halves of it.
-        const memberRule = field === "addMembers" || field === "removeMembers";
-        const veto = context.policy?.group?.[memberRule ? "update" : field];
-        const rule = memberRule ? CommitStatement.resolveMemberRule(group.policy, field) : CommitStatement.resolve(group.policy, field);
-        return this.policyService.userMeetsPolicy(who, rule)
-            && (veto === undefined || veto === "inherit" || veto === "default" || this.policyService.userMeetsPolicy(who, veto));
     }
     
     protected isItemCreator(_user: db.context.ContextUser, _item: never) {

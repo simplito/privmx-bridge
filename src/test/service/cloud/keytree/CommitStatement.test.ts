@@ -20,6 +20,7 @@ import { TreeMath } from "../../../../service/cloud/keytree/TreeMath";
 import { ECUtils } from "../../../../utils/crypto/ECUtils";
 import { Crypto } from "../../../../utils/crypto/Crypto";
 import { buildTree, creationStatement, planCommit, policyStatement, signStatement, statementFor, userKeys } from "../../../testUtils/TreeFixtures";
+import { AppException } from "../../../../api/AppException";
 
 /**
  * The bridge's check of a commit statement: every field against what the bridge derived, then the signature.
@@ -50,7 +51,7 @@ function honest() {
         groupPubKey: NEXT_GROUP_PUB,
         rosterVersion: 8,
         rosterHash: TreeHash.rosterHash(users, []),
-        policyHash: CommitStatement.policyHash({}, "u0" as types.cloud.UserId),
+        policyHash: CommitStatement.rulesHash(CommitStatement.DEFAULT_RULES, "u0" as types.cloud.UserId),
         tree: TreeHash.of(plan.after),
         committer: "u0" as types.cloud.UserId,
         committerPubKey: userKeys("u0").pub58,
@@ -66,6 +67,9 @@ function honest() {
 function check(statement: types.cloud.GroupTreeCommitStatement, expected: ExpectedStatement, now = NOW) {
     return CommitStatement.validate(statement, expected, now);
 }
+
+/** Any rules other than the defaults. */
+const OTHER_RULES: types.cloud.GroupRules = {...CommitStatement.DEFAULT_RULES, addMembers: "members"};
 
 describe("CommitStatement signature", () => {
     it("round trip: signToCompactSignature over sha256(SB) verifies with verifySignature2", () => {
@@ -122,7 +126,9 @@ describe("CommitStatement signature", () => {
 /** The vectors `test/fixtures/keytree/reference.py` in the endpoint writes from the spec; this is a byte-identical copy. */
 interface Vectors {
     signedBytes: {statement: Omit<types.cloud.GroupTreeCommitStatement, "signature">, expectedHex: string}[];
-    policyHash: {policy: types.cloud.ContainerPolicy, creator: types.cloud.UserId, expectedHex: string}[];
+    policyHash: {policy: types.cloud.GroupRules, creator: types.cloud.UserId, expectedHex: string}[];
+    /** Rules objects every implementation must refuse: missing, unknown or out-of-range. */
+    invalidRules: unknown[];
 }
 
 function vectors(): Vectors {
@@ -140,20 +146,28 @@ describe("CommitStatement shared vectors", () => {
         }
     });
     
-    it("SECURITY: policy hash matches the shared vectors", () => {
+    it("SECURITY: rules hash matches the shared vectors", () => {
         const all = vectors().policyHash;
-        assert.strictEqual(all.length, 11);
+        assert.strictEqual(all.length, 6);
         for (const vector of all) {
-            assert.strictEqual(CommitStatement.policyHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
+            assert.strictEqual(CommitStatement.rulesHash(vector.policy, vector.creator).toString("hex"), vector.expectedHex, JSON.stringify(vector));
         }
     });
     
-    it("inherit, default and absent resolve to the frozen v3 rules, never the context's", () => {
-        for (const value of [undefined, "inherit", "default"] as const) {
-            assert.strictEqual(CommitStatement.resolve({update: value}, "update"), "manager");
-            assert.strictEqual(CommitStatement.resolve({ownerCanBeRemovedFromManagers: value}, "ownerCanBeRemovedFromManagers"), "yes");
+    it("SECURITY: rules hash matches vectors computed apart from this code", () => {
+        // From an independent script over the same preimage: the defaults (all managers) and three others.
+        const D = CommitStatement.DEFAULT_RULES;
+        const cases: [types.cloud.GroupRules, string, string][] = [
+            [D, "alice", "15f6f5a248e6f17664d9895336e7dbe499d9a517bd2e842c352dc66c36071b1e"],
+            [D, "bob", "fd7feccffb49d219d3faf8e1fe04481c4ebe75fbc515c2ea9c68e867cb116516"],
+            [{...D, addMembers: "members", removeMembers: "nobody", replaceMemberKeys: "members", editPublicMeta: "members"}, "alice",
+                "d26b3e99e468c2804c518e460ebf2d0b17cdc516b4c0c2cfd43ec722a5aa2100"],
+            [Object.fromEntries(CommitStatement.RULE_FIELDS.map(f => [f, "members"])) as unknown as types.cloud.GroupRules, "alice",
+                "90885317e1f2e45075826d5d0799c5cf9cbf9d444ee506af8a9f216c0afd2eb2"],
+        ];
+        for (const [rules, creator, hex] of cases) {
+            assert.strictEqual(CommitStatement.rulesHash(rules, creator as types.cloud.UserId).toString("hex"), hex, JSON.stringify(rules));
         }
-        assert.strictEqual(CommitStatement.resolve({rotateKeys: "manager,owner"}, "rotateKeys"), "manager,owner", "verbatim");
     });
 });
 
@@ -207,9 +221,9 @@ describe("CommitStatement.validate", () => {
         ["rosterVersion", cs => ({...cs, rosterVersion: 7})],
         ["rosterHash", cs => ({...cs, rosterHash: TreeHash.rosterHash(SEATS, []).toString("hex")})],
         ["rosterHash", cs => ({...cs, rosterHash: cs.rosterHash.toUpperCase()})],
-        ["policyHash", cs => ({...cs, policyHash: CommitStatement.policyHash({update: "user"}, "u0" as types.cloud.UserId).toString("hex")})],
-        ["policyHash", cs => ({...cs, policyHash: CommitStatement.policyHash({}, "u1" as types.cloud.UserId).toString("hex")})],
-        ["policy", cs => ({...cs, policy: {}})],
+        ["policyHash", cs => ({...cs, policyHash: CommitStatement.rulesHash(OTHER_RULES, "u0" as types.cloud.UserId).toString("hex")})],
+        ["policyHash", cs => ({...cs, policyHash: CommitStatement.rulesHash(CommitStatement.DEFAULT_RULES, "u1" as types.cloud.UserId).toString("hex")})],
+        ["policy", cs => ({...cs, policy: CommitStatement.DEFAULT_RULES})],
         ["treeHash", cs => ({...cs, treeHash: TreeHash.treeHash(TreeHash.of(BASE)).toString("hex")})],
         ["committer", cs => ({...cs, committer: "u1" as types.cloud.UserId})],
         ["committerPubKey", cs => ({...cs, committerPubKey: userKeys("u1").pub58})],
@@ -270,13 +284,13 @@ describe("CommitStatement.validate", () => {
     
     it("validate refuses a policy on an add, and its absence on a policy op", () => {
         const {statement, expected} = honest();
-        assert.deepStrictEqual(check(signStatement({...statement, policy: {update: "all"}}, "u0"), expected), [{kind: "BAD_COMMIT_STATEMENT", field: "policy"}]);
+        assert.deepStrictEqual(check(signStatement({...statement, policy: OTHER_RULES}, "u0"), expected), [{kind: "BAD_COMMIT_STATEMENT", field: "policy"}]);
         const tree = BASE;
         const previous = creationStatement(tree, "u0", {groupId: "res", groupPubKey: GROUP_PUB, users: SEATS, managers: [], date: NOW - 1});
-        const change = policyStatement(tree, 2, 5, "u0", {update: "user"}, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, users: SEATS, managers: [], date: NOW, previous, creator: "u0"});
+        const change = policyStatement(tree, 2, 5, "u0", OTHER_RULES, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, users: SEATS, managers: [], date: NOW, previous, creator: "u0"});
         const policyExpected: ExpectedStatement = {...expected, op: "policy", prevDigest: CommitStatement.digest(previous), notBefore: previous.date, keyVersion: 5, groupPubKey: GROUP_PUB, rosterVersion: 1,
             rosterHash: TreeHash.rosterHash(SEATS, []), tree: TreeHash.of(tree), path: [], removed: [],
-            policyHash: CommitStatement.policyHash({update: "user"}, "u0" as types.cloud.UserId)};
+            policyHash: CommitStatement.rulesHash(OTHER_RULES, "u0" as types.cloud.UserId)};
         assert.deepStrictEqual(check(change, policyExpected), []);
         const bare: Partial<types.cloud.GroupTreeCommitStatement> = {...change};
         delete bare.policy;
@@ -306,7 +320,8 @@ describe("CommitStatement.checkStoredState", () => {
         const update = planCommit(created.after, 1, {kind: "selfUpdate", committer: "u40"}, 2);
         const second = statementFor(update, {kind: "selfUpdate", committer: "u40"}, {groupId: "grp", groupPubKey: GROUP_PUB, rosterVersion: 1, creator, ...roster});
         return {
-            group: {treeCommitSeq: 2, keyVersion: 1, groupPubKey: GROUP_PUB, rosterVersion: 1, creator: "u0" as types.cloud.UserId, ...roster},
+            group: {treeCommitSeq: 2, keyVersion: 1, groupPubKey: GROUP_PUB, rosterVersion: 1, creator: "u0" as types.cloud.UserId,
+                policy: CommitStatement.DEFAULT_RULES, ...roster},
             tree: update.after,
             statements: new Map([[1, create], [2, second]]),
         };
@@ -337,13 +352,12 @@ describe("CommitStatement.checkStoredState", () => {
         assert.ok(CommitStatement.checkStoredState({...group, users: [...SEATS, "outsider"]}, tree, statements).some(p => p.includes("rosterHash")));
     });
     
-    it("checkStoredState reports a stored policy, or creator, the latest statement does not hash", () => {
+    it("checkStoredState reports stored rules, or a creator, the latest statement does not hash", () => {
         const {group, tree, statements} = stored();
-        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, policy: {update: "all"}}, tree, statements),
-            ["the stored policy does not hash to the latest statement's policyHash"]);
-        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, policy: {get: "all"}}, tree, statements), [], "an unsigned field");
+        assert.deepStrictEqual(CommitStatement.checkStoredState({...group, policy: OTHER_RULES}, tree, statements),
+            ["the stored rules do not hash to the latest statement's policyHash"]);
         assert.deepStrictEqual(CommitStatement.checkStoredState({...group, creator: "u1" as types.cloud.UserId}, tree, statements),
-            ["the stored policy does not hash to the latest statement's policyHash"]);
+            ["the stored rules do not hash to the latest statement's policyHash"]);
     });
     
     it("SECURITY: finds a filled node still vouched for by a former member", () => {
@@ -368,28 +382,28 @@ describe("CommitStatement.checkStoredState", () => {
     });
 });
 
-describe("CommitStatement roster rules", () => {
+describe("CommitStatement.rulesHash", () => {
+    it("refuses anything but a rules object with a typed error: a group stored before the format", () => {
+        for (const policy of [{update: "manager"}, {}, undefined, {...CommitStatement.DEFAULT_RULES, trimHistory: "managers"}, {...CommitStatement.DEFAULT_RULES, addMembers: "all"}]) {
+            assert.strictEqual(CommitStatement.isRules(policy), false, JSON.stringify(policy));
+            assert.throws(() => CommitStatement.rulesHash(policy as types.cloud.GroupRules, "u0" as types.cloud.UserId),
+                (e: unknown) => AppException.is(e, "GROUP_RULES_UNSUPPORTED"));
+        }
+        assert.strictEqual(CommitStatement.isRules(CommitStatement.DEFAULT_RULES), true);
+    });
+    
     const creator = "u0" as types.cloud.UserId;
-    const hash = (policy: types.cloud.ContainerPolicy) => CommitStatement.policyHash(policy, creator).toString("hex");
+    const hash = (rules: types.cloud.GroupRules) => CommitStatement.rulesHash(rules, creator).toString("hex");
     
-    it("a policy that does not split `update` hashes as it did before the split existed", () => {
-        assert.strictEqual(hash({update: "user"}), hash({update: "user", addMembers: "inherit", removeMembers: "default"}));
-    });
-    
-    it("SECURITY: each roster rule is signed: changing one changes the hash", () => {
-        const base = hash({addMembers: "user", removeMembers: "manager"});
-        assert.notStrictEqual(base, hash({}));
-        assert.notStrictEqual(base, hash({addMembers: "manager", removeMembers: "manager"}));
-        assert.notStrictEqual(base, hash({addMembers: "user", removeMembers: "user"}));
-        // Not interchangeable: the two are hashed in a fixed order.
-        assert.notStrictEqual(base, hash({addMembers: "manager", removeMembers: "user"}));
-    });
-    
-    it("an unset roster rule follows `update`, a set one does not", () => {
-        assert.strictEqual(CommitStatement.resolveMemberRule({update: "user"}, "addMembers"), "user");
-        assert.strictEqual(CommitStatement.resolveMemberRule({}, "removeMembers"), "manager");
-        assert.strictEqual(CommitStatement.resolveMemberRule({update: "user", removeMembers: "none"}, "removeMembers"), "none");
-        // Setting one leaves the other on `update`, and both are then hashed.
-        assert.strictEqual(hash({update: "user", addMembers: "none"}), hash({update: "user", addMembers: "none", removeMembers: "user"}));
+    it("SECURITY: every rule is signed, in a fixed order: changing or swapping one changes the hash", () => {
+        const base = hash(CommitStatement.DEFAULT_RULES);
+        const seen = new Set([base]);
+        for (const field of CommitStatement.RULE_FIELDS) {
+            const changed = hash({...CommitStatement.DEFAULT_RULES, [field]: "nobody"});
+            assert.ok(!seen.has(changed), field);
+            seen.add(changed);
+        }
+        const swapped = {...CommitStatement.DEFAULT_RULES, addMembers: "members", removeMembers: "nobody"} as const;
+        assert.notStrictEqual(hash(swapped), hash({...swapped, addMembers: "nobody", removeMembers: "members"}));
     });
 });

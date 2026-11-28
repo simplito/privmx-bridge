@@ -181,7 +181,6 @@ export class GroupRepository {
         const filter = {
             _id: oldGroup.id,
             eraFloor: oldGroup.eraFloor,
-            archivePrunedBelow: oldGroup.archivePrunedBelow ?? {$exists: false},
         };
         const result = await this.repository.collection.updateOne(filter, {$inc: {ladderRev: 1}}, this.repository.getOptions());
         return result.matchedCount > 0;
@@ -227,10 +226,8 @@ export class GroupRepository {
         // An invariant, not a client error: `createGroup` writes the document and both entries in one
         // transaction, so only a group left over from an older build of this branch can be missing either.
         // Reported the same way as the missing roster counter below — nothing the caller sends changes the
-        // answer, and the group has to be recreated. Deliberately not `GROUP_META_UNREACHABLE`: that one means
-        // an entry exists but sits below the requested epoch floor, which a metadata rewrite lifts. A missing
-        // entry lifts for nothing. This is also what keeps both `GroupState` planes non-nullable, so the
-        // converter never has to think about it.
+        // answer, and the group has to be recreated. This is also what keeps both `GroupState` planes
+        // non-nullable, so the converter never has to think about it.
         if (!publicMeta) {
             throw new AppException("INTERNAL_ERROR", `group '${group.id}' has no public metadata entry; it predates the metadata planes and must be recreated`);
         }
@@ -249,7 +246,7 @@ export class GroupRepository {
     async createGroup(contextId: types.context.ContextId, resourceId: types.core.ClientResourceId, type: types.group.GroupType|undefined,
         groupPubKey: types.cloud.GroupPubKey, creator: types.cloud.UserId, managers: types.cloud.UserId[], users: types.cloud.UserId[],
         data: types.group.GroupData, publicMeta: types.group.GroupData, privateMeta: types.group.GroupData,
-        keyId: types.core.KeyId, policy: types.cloud.ContainerPolicy,
+        keyId: types.core.KeyId, policy: types.cloud.GroupRules,
         tree: types.cloud.GroupTreeState, statement: types.cloud.GroupTreeCommitStatement, groupKey?: types.cloud.GroupKeyEntry) {
         const now = DateUtils.now();
         const firstVersion = 1 as types.group.GroupVersion;
@@ -346,7 +343,7 @@ export class GroupRepository {
         data: types.group.GroupData,
         rungs: types.cloud.GroupArchiveRungSubmission[],
         groupKey?: types.cloud.GroupKeyEntry,
-        /** Close the era at the new epoch in the same write, as `cutEra` would. */
+        /** Close the era at the new epoch in the same write, deleting what is below it. */
         abandonHistory?: boolean,
     }): Promise<db.group.Group|null> {
         const {oldGroup, modifier, removedUsers, commit} = params;
@@ -466,42 +463,6 @@ export class GroupRepository {
     }
     
     /**
-     * Closes the current era at `newFloor`: the rungs pointing below it go, and so do the epoch rows below it —
-     * nothing can verify or open them once nobody can climb there.
-     *
-     * `pruneArchive` deliberately does **not** drop those: a member still holding an old epoch key locally has
-     * to keep being able to verify it. Cutting an era is what says those epochs are gone for good.
-     */
-    async cutEra(oldGroup: db.group.Group, newFloor: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const changes: Partial<db.group.Group> = {
-            eraFloor: newFloor,
-            lastModificationDate: DateUtils.now(),
-        };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.deleteRungsTargetingBelow(oldGroup.id, newFloor);
-        await this.state.deleteEpochKeysBelow(oldGroup.id, newFloor);
-        return {...oldGroup, ...changes};
-    }
-    
-    /** Deletes rungs below `belowEpoch` and records the watermark, so a client that cannot descend is told the
-     *  archive was pruned rather than left suspecting tampering. */
-    async pruneArchive(oldGroup: db.group.Group, belowEpoch: number): Promise<db.group.Group|null> {
-        const expectedKeyVersion = oldGroup.keyVersion;
-        const changes: Partial<db.group.Group> = {
-            archivePrunedBelow: Math.max(oldGroup.archivePrunedBelow ?? 0, belowEpoch),
-            lastModificationDate: DateUtils.now(),
-        };
-        if (!await this.casRotate(oldGroup, expectedKeyVersion, changes)) {
-            return null;
-        }
-        await this.state.deleteRungsTargetingBelow(oldGroup.id, belowEpoch);
-        return {...oldGroup, ...changes};
-    }
-    
-    /**
      * The public metadata plane only: the private plane, the roster, the tree, the epoch, the group's `keyId`
      * and the policy are all untouched.
      *
@@ -588,7 +549,7 @@ export class GroupRepository {
      * @returns null on a CAS miss, in which case nothing has been written
      */
     async updatePolicyWithStatement(oldGroup: db.group.Group, modifier: types.cloud.UserId,
-        policy: types.cloud.ContainerPolicy, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
+        policy: types.cloud.GroupRules, statement: types.cloud.GroupTreeCommitStatement): Promise<db.group.Group|null> {
         const changes: Partial<db.group.Group> = {
             policy: policy,
             treeCommitSeq: statement.seq,
@@ -647,8 +608,17 @@ export class GroupRepository {
     
     /** Sets who beside the members may read the group's identity key, roster and statements. Touches nothing a
      *  statement signs, so it moves no counter and needs no CAS. */
-    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context") {
-        await this.repository.collection.updateOne({_id: groupId} as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
+    /**
+     * Sets the visibility, only while the statement chain is where the caller's check read it: a rules or roles
+     * commit landing in between (which could take the right away) moves `treeCommitSeq`, and the write then misses.
+     * A group being created passes no seq: it is written in the creation's own transaction.
+     *
+     * @returns false on a miss, nothing written
+     */
+    async setVisibility(groupId: types.group.GroupId, visibleTo: "members"|"context", expectedTreeCommitSeq?: number) {
+        const filter = {_id: groupId, ...(expectedTreeCommitSeq === undefined ? {} : {treeCommitSeq: expectedTreeCommitSeq})};
+        const result = await this.repository.collection.updateOne(filter as mongodb.Filter<any>, {$set: {visibleTo}}, this.repository.getOptions());
+        return result.matchedCount > 0;
     }
     
     private async updateOneWrappingDuplicates(filter: mongodb.Filter<any>, changes: Partial<db.group.Group>) {
@@ -673,12 +643,6 @@ export class GroupRepository {
         await this.state.markDeleted(group.id, group.contextId);
     }
     
-    /**
-     * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
-     *
-     * Projected, because this runs on every container read and every item write into a group-granted container.
-     * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
-     */
     /** Each group's current epoch and the identity key of that epoch. Groups of another context are left out. */
     async getKeyHeads(contextId: types.context.ContextId, groupIds: types.group.GroupId[]) {
         const map = new Map<types.group.GroupId, {keyVersion: number, groupPubKey: types.cloud.GroupPubKey}>();
@@ -695,6 +659,12 @@ export class GroupRepository {
         return map;
     }
     
+    /**
+     * Current epoch of each of the given groups, keyed by id; groups outside `contextId` or missing are absent.
+     *
+     * Projected, because this runs on every container read and every item write into a group-granted container.
+     * Reading whole documents would drag the rosters and `leafAssignment` along to answer one comparison.
+     */
     async getKeyVersions(contextId: types.context.ContextId, groupIds: types.group.GroupId[]): Promise<Map<types.group.GroupId, number>> {
         if (groupIds.length === 0) {
             return new Map();

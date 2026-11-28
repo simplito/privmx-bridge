@@ -118,7 +118,7 @@ interface PolicyCase {
     member: string;
     members: string[];
     /** The policy the commit sets, as its statement carries it. */
-    policy: types.cloud.ContainerPolicy;
+    policy: types.cloud.GroupRules;
     refreshed: RefreshedEntry[];
     before: WireTree;
     after: WireTree;
@@ -127,7 +127,7 @@ interface PolicyCase {
 /** The commit statement every case carries, and what it is checked against. */
 interface StatementFields {
     /** The group's policy and creator after the commit: what the statement's `policyHash` signs. */
-    groupPolicy: types.cloud.ContainerPolicy;
+    groupPolicy: types.cloud.GroupRules;
     groupCreator: string;
     commit: types.cloud.GroupTreeCommitStatement;
     /** Hex digest of `commit` as the endpoint computes it — what the next statement names as `prevDigest`. */
@@ -431,7 +431,7 @@ describe("commit statements produced by the endpoint", () => {
             groupPubKey: commit.groupPubKey,
             rosterVersion: commit.rosterVersion,
             rosterHash: TreeHash.rosterHash(users, managers),
-            policyHash: CommitStatement.policyHash(testCase.groupPolicy, testCase.groupCreator as types.cloud.UserId),
+            policyHash: CommitStatement.rulesHash(testCase.groupPolicy, testCase.groupCreator as types.cloud.UserId),
             tree,
             committer: committerOf(testCase) as types.cloud.UserId,
             committerPubKey: fixture.userPubKeys[commit.committer] as types.cloud.UserPubKey,

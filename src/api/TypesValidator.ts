@@ -24,6 +24,14 @@ export interface CustomValidatorWithLength extends AdvValidator.Types.CustomVali
 
 export class TypesValidator {
     
+    /** What a client may store in a space's metadata plane, counted as the bytes it encoded (base64 decoded). */
+    static readonly SPACE_META_MAX_BYTES = 64 * 1024;
+    /**
+     * What the private plane's envelope may add on top: the Endpoint seals it in a space envelope (version, key
+     * ids, IV, tag and binding), well under 1 KiB; 4 KiB leaves room for its format to grow.
+     */
+    static readonly SPACE_META_ENVELOPE_BYTES = 4 * 1024;
+    
     /** The largest group the protocol accepts. Every group-shaped limit derives from this one number. */
     static readonly MAX_GROUP_MEMBERS = 16384;
     
@@ -77,6 +85,11 @@ export class TypesValidator {
     cloudKeyEntrySet: Validator;
     groupId: Validator;
     groupData: Validator;
+    /** A space's public metadata: at most `SPACE_META_MAX_BYTES` decoded, so a page of spaces stays a few megabytes. */
+    spacePublicMeta: Validator;
+    /** A space's private metadata: `SPACE_META_MAX_BYTES` plus `SPACE_META_ENVELOPE_BYTES` for the envelope it is
+     *  sealed in, decoded. */
+    spacePrivateMeta: Validator;
     groupPubKey: Validator;
     groupTreeNode: Validator;
     groupTreeEdge: Validator;
@@ -290,6 +303,8 @@ export class TypesValidator {
         // Unlike a thread's or a store's, a group's data carries the endpoint's DIO, which names every member —
         // ~19 B each, measured. At 16 KB a group could not pass ~870 members; 1 MB covers all 16 384 seats.
         this.groupData = this.unknown1Mb;
+        this.spacePublicMeta = this.spaceMetaOf(TypesValidator.SPACE_META_MAX_BYTES);
+        this.spacePrivateMeta = this.spaceMetaOf(TypesValidator.SPACE_META_MAX_BYTES + TypesValidator.SPACE_META_ENVELOPE_BYTES);
         this.groupPubKey = this.eccPubCompressed;
         this.groupTreeNode = this.builder.createObject({
             nodeIndex: this.intNonNegative,
@@ -523,8 +538,6 @@ export class TypesValidator {
         this.containerWithoutItemPolicy = this.builder.addFields(this.itemPolicy, {
             updatePolicy: policyEntry,
             rotateKeys: policyEntry,
-            addMembers: policyEntry,
-            removeMembers: policyEntry,
             creatorHasToBeManager: policyEntry,
             updaterCanBeRemovedFromManagers: policyEntry,
             ownerCanBeRemovedFromManagers: policyEntry,
@@ -534,14 +547,26 @@ export class TypesValidator {
         this.containerPolicy = this.builder.addFields(this.containerWithoutItemPolicy, {
             item: this.builder.optional(this.itemPolicy),
         });
-        // A creation's and a policy commit's statement carries the policy it signs (`policyHash`); defined here
-        // because the policy validators are.
-        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
-            policy: this.builder.optional(this.containerPolicy),
+        // A creation's and a policy commit's statement carries the rules it signs (`policyHash`): closed enums, all
+        // eight required, nothing else. A rule that could be left out or misspelt would hash as something no client
+        // meant to sign.
+        const who = this.builder.createEnum(["managers", "members", "nobody"]);
+        const groupRules = this.builder.createObject({
+            addMembers: who,
+            removeMembers: who,
+            replaceMemberKeys: who,
+            changeRoles: who,
+            changeRules: who,
+            changeVisibility: who,
+            editPublicMeta: who,
+            editPrivateMeta: who,
         });
-        // Required where the op is `create` or `policy`, so the service never hashes a policy nobody sent.
+        this.groupTreeCommitStatement = this.builder.addFields(this.groupTreeCommitStatement, {
+            policy: this.builder.optional(groupRules),
+        });
+        // Required where the op is `create` or `policy`, so the service never hashes rules nobody sent.
         this.groupTreeCommitStatementWithPolicy = this.builder.addFields(this.groupTreeCommitStatement, {
-            policy: this.containerPolicy,
+            policy: groupRules,
         });
         this.contextPolicy = this.builder.addFields(this.itemPolicy, {
             thread: this.builder.optional(this.containerPolicy),
@@ -635,6 +660,21 @@ export class TypesValidator {
                     acls: acls,
                 }),
             ]), maxEntryLength),
+        });
+    }
+    
+    /**
+     * A space metadata validator measuring what was encoded: a base64 string counts its decoded bytes, so the cap is
+     * the client's own size and not three quarters of it. Anything else is counted as is.
+     */
+    private spaceMetaOf(maxBytes: number) {
+        return this.builder.createCustom(value => {
+            const size = typeof value === "string" && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+                ? Buffer.byteLength(value, "base64")
+                : this.getValueSize(value, "<root>");
+            if (size > maxBytes) {
+                throw new Error("Invalid length! Expected max " + maxBytes + " bytes, get " + size);
+            }
         });
     }
     

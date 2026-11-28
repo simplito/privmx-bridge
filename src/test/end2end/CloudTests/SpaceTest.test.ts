@@ -19,7 +19,8 @@ import { PromiseUtils } from "../../../utils/PromiseUtils";
 import type * as elliptic from "elliptic";
 import { Crypto } from "../../../utils/crypto/Crypto";
 import { SpaceService } from "../../../service/cloud/SpaceService";
-import { SpaceStatement } from "../../../service/cloud/SpaceStatement";
+import { Roster, SpaceStatement } from "../../../service/cloud/SpaceStatement";
+import { LadderMath } from "../../../service/cloud/keytree/LadderMath";
 import { signSpaceStatement, UnsignedSpaceStatement } from "../../testUtils/SpaceFixtures";
 import { buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rungsFor, ServedGroup, useRealNodeKeys } from "../../testUtils/TreeFixtures";
 
@@ -49,6 +50,7 @@ const identities: Record<string, {keyPair: elliptic.ec.KeyPair, pub58: string}> 
 
 type Recipient = types.cloud.SpaceRecipient;
 type Statement = types.cloud.SpaceStatement;
+const noDeltas = {addedGroups: [], addedUsers: [], removedGroups: [], removedUsers: [], refreshedGroups: []};
 /** What a test changes about the statement `next` would build: before it is signed, or after. */
 interface Twist {
     via?: types.group.GroupId|"";
@@ -58,6 +60,8 @@ interface Twist {
     signed?: (st: Statement) => void;
 }
 const b64 = (text: string) => Buffer.from(text).toString("base64") as types.core.Base64;
+/** A rung's data: a label, zero-padded to the 60 bytes of a sealed key (iv, ciphertext, tag); not a sealed key. */
+const rungData = (label: string) => Buffer.concat([Buffer.from(label), Buffer.alloc(60)]).subarray(0, 60).toString("base64") as types.core.Base64;
 
 export class SpaceTests extends BaseTestSet {
     
@@ -113,23 +117,36 @@ export class SpaceTests extends BaseTestSet {
         
         // A new key wrapped to the epoch the group has left is refused.
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 1), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 1), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", me),
         }), "SPACE_KEYS_INVALID");
-        // Any recipient may rotate: bob is only a user of the space.
+        // Bob is only a user of the space: he may not prune, nor bring repair rungs.
+        const bobRotates = async (extra: {prune?: boolean, repairRungs?: types.cloud.SpaceRung[]}) => (await this.apiOf(bob)).spaceRotateKey({
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
+            statement: await this.next(spaceId, "rotate", bob), ...extra,
+        });
+        await shouldThrowErrorWithCode2(() => bobRotates({prune: true}), "SPACE_STATEMENT_INVALID");
+        await shouldThrowErrorWithCode2(() => bobRotates({repairRungs: [{atKeyVersion: 1, targetKeyVersion: 1, data: b64("x")}]}), "SPACE_STATEMENT_INVALID");
+        // Any recipient may rotate.
         const rotated = await (await this.apiOf(bob)).spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", bob),
         });
         assert(rotated.keyVersion === 2, `rotation should give key version 2, got ${rotated.keyVersion}`);
         const fresh = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(!fresh.keyIsStale && fresh.keyVersion === 2 && fresh.keyId === "space-key-2", "the rotation clears the stale mark");
         assert(fresh.groups[0].groupKeyVersion === 2, "the new key is wrapped to the group's new epoch");
-        assert(fresh.keys.length === 4, `both versions stay readable, got ${fresh.keys.length} entries`);
+        assert(fresh.keys.length === 2 && fresh.keys.every(k => k.keyVersion === 2), `only the current version is wrapped, got ${fresh.keys.length} entries`);
+        assert(fresh.keysPrunedBelow === 0, "nothing pruned");
+        const archive = await (await this.apiOf(bob)).spaceGetKeyArchive({id: spaceId});
+        assert(JSON.stringify(archive.rungs) === JSON.stringify(this.rungsOf(2)) && archive.nextKeyVersion === undefined, `version 1 is reached down the rung: ${JSON.stringify(archive)}`);
+        // Nobody asked to prune: the older wraps stay.
+        assert(archive.keys.map(k => `${k.keyVersion}:${"groupId" in k.recipient ? "g" : "u"}`).join() === "1:g,2:g", `bob keeps his group's wraps of both versions: ${JSON.stringify(archive.keys)}`);
+        assert((await this.apis.contextApi.spaceGetKeyArchive({id: spaceId})).keys.length === 4, "janek's own and his group's wraps of both versions");
         
         // A rotation planned against the old version loses.
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3, 2), expectedKeyVersion: 1,
+            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3, 2), rungs: this.rungsOf(3), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "rotate", me),
         }), "SPACE_VERSION_MISMATCH");
         // A listing serves the current version's entries only.
@@ -176,17 +193,17 @@ export class SpaceTests extends BaseTestSet {
         // Removing the group moves the key on; whoever stays gets the new version, the group nothing.
         const staying: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, bobDirect];
         await shouldThrowErrorWithCode2(async () => this.apis.contextApi.spaceRemoveRecipients({
-            id: spaceId, users: [me, bob], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor([{groupId, role: "user"}], 2, 1), expectedKeyVersion: 1,
+            id: spaceId, users: [me, bob], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor([{groupId, role: "user"}], 2, 1), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "remove", me, {removeUsers: [me, bob]}),
         }), "SPACE_LAST_MANAGER");
         const removed = await this.apis.contextApi.spaceRemoveRecipients({
-            id: spaceId, groups: [groupId], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(staying, 2), expectedKeyVersion: 1,
+            id: spaceId, groups: [groupId], keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(staying, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1,
             statement: await this.next(spaceId, "remove", me, {removeGroups: [groupId]}),
         });
         assert(removed.keyVersion === 2, "removing a recipient opens a new key version");
         const after = (await asBob.spaceGet({id: spaceId})).space;
         assert(after.groups.length === 0 && after.users.length === 2, "the group is gone from the recipients");
-        assert(after.keys.every(k => "userId" in k.recipient) && after.keys.length === 2, "the removed group's entries are gone, bob keeps both versions of his");
+        assert(after.keys.length === 1 && "userId" in after.keys[0].recipient && after.keys[0].keyVersion === 2, "the removed group's entries are gone, bob keeps the current version of his");
         // Carol reached the space through the group only.
         await shouldThrowErrorWithCode2(async () => (await this.apiOf(carol)).spaceGet({id: spaceId}), "ACCESS_DENIED");
         
@@ -244,21 +261,28 @@ export class SpaceTests extends BaseTestSet {
         await refused({unsigned: st => {
             st.spaceId = "another-space" as types.space.SpaceId;
         }});
-        // Recipients other than the call's: a role, a missing one, a group at a key it does not have.
+        // Recipients other than the call's: a role, a missing one, a group at a key it does not have, one twice.
         await refused({unsigned: st => {
-            st.users[0].role = "user";
+            st.addedUsers[0].role = "user";
         }});
         await refused({unsigned: st => {
-            st.groups = [];
+            st.addedGroups = [];
         }});
         await refused({unsigned: st => {
-            st.groups[0].groupPubKey = myPub as unknown as types.cloud.GroupPubKey;
+            st.addedGroups[0].groupPubKey = myPub as unknown as types.cloud.GroupPubKey;
         }});
         await refused({unsigned: st => {
-            st.groups[0].groupKeyVersion = 2;
+            st.addedGroups[0].groupKeyVersion = 2;
         }});
         await refused({unsigned: st => {
-            st.users.push({...st.users[0]});
+            st.addedUsers.push({...st.addedUsers[0]});
+        }});
+        // A creation only adds; and the hash has to be the roster's.
+        await refused({unsigned: st => {
+            st.removedUsers = [bob];
+        }});
+        await refused({unsigned: st => {
+            st.rosterHash = "00".repeat(32);
         }});
         
         // The standing: a group that is no recipient, the right group under a key that is not its own, a
@@ -278,7 +302,7 @@ export class SpaceTests extends BaseTestSet {
         const spaceId = await this.createSpace([{groupId, role: "manager"}]);
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.seq === 1 && space.statement.via === groupId && space.statement.viaSignature !== "", "the creation is signed through the group");
-        assert(space.groups[0].groupPubKey === space.statement.groups[0].groupPubKey, "the space serves the group key the statement names");
+        assert(space.groups[0].groupPubKey === space.statement.addedGroups[0].groupPubKey, "the space serves the group key the statement names");
     }
     
     @Test()
@@ -289,7 +313,7 @@ export class SpaceTests extends BaseTestSet {
         const asBob = await this.apiOf(bob);
         const bobDirect: Recipient = {userId: bob, pubKey: bobPub, role: "user"};
         const rotate = (statement: Statement, api = this.apis.contextApi) => api.spaceRotateKey({
-            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2), expectedKeyVersion: 1, statement,
+            id: spaceId, keyId: "space-key-2" as types.core.KeyId, keys: this.keysFor(recipients, 2), rungs: this.rungsOf(2), expectedKeyVersion: 1, statement,
         });
         const refused = async (twist: Twist, code = "SPACE_STATEMENT_INVALID") =>
             shouldThrowErrorWithCode2(async () => rotate(await this.next(spaceId, "rotate", me, {}, twist)), code as never);
@@ -309,8 +333,18 @@ export class SpaceTests extends BaseTestSet {
         await refused({unsigned: st => {
             st.op = "remove";
         }});
+        // A rotation only refreshes groups, each to a newer epoch, and binds the roster it leaves.
         await refused({unsigned: st => {
-            st.groups[0].role = "manager";
+            st.refreshedGroups.push({groupId, ...this.head(groupId)});
+        }});
+        await refused({unsigned: st => {
+            st.removedUsers.push(me);
+        }});
+        await refused({unsigned: st => {
+            st.addedUsers.push({...bobDirect, pubKey: bobPub});
+        }});
+        await refused({unsigned: st => {
+            st.rosterHash = "00".repeat(32);
         }});
         // Bob holds the group's key and is named nowhere: his standing is the group's, said and signed.
         await shouldThrowErrorWithCode2(async () => rotate(await this.next(spaceId, "rotate", bob, {}, {via: ""}), asBob), "SPACE_STATEMENT_INVALID");
@@ -321,18 +355,28 @@ export class SpaceTests extends BaseTestSet {
         // The same statement a second time is a statement for a seq that is taken.
         const stale = (await this.apis.contextApi.spaceGet({id: spaceId})).space.statement;
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.spaceRotateKey({
-            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3), expectedKeyVersion: 2, statement: stale,
+            id: spaceId, keyId: "space-key-3" as types.core.KeyId, keys: this.keysFor(recipients, 3), rungs: this.rungsOf(3), expectedKeyVersion: 2, statement: stale,
         }), "SPACE_VERSION_MISMATCH");
         
         // An addition keeps the key, and every recipient before it as it was.
-        const add = (statement: Statement) => this.apis.contextApi.spaceAddRecipients({
-            id: spaceId, recipients: [bobDirect], keys: [...this.keysFor([bobDirect], 1), ...this.keysFor([bobDirect], 2)], statement,
+        const add = (statement: Statement, keys = this.keysFor([bobDirect], 2)) => this.apis.contextApi.spaceAddRecipients({
+            id: spaceId, recipients: [bobDirect], keys, statement,
         });
+        // A newcomer gets the current version only; older ones it reaches down the rungs.
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}), [...this.keysFor([bobDirect], 1), ...this.keysFor([bobDirect], 2)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}), this.keysFor([bobDirect], 1)), "SPACE_KEYS_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
             st.keyCommit = this.commit();
         }})), "SPACE_STATEMENT_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
-            st.users[0].role = "user";
+            st.addedUsers[0].role = "manager";
+        }})), "SPACE_STATEMENT_INVALID");
+        // Adding somebody already there, or nobody.
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
+            st.addedUsers.push({userId: me, pubKey: myPub, role: "manager"});
+        }})), "SPACE_STATEMENT_INVALID");
+        await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
+            st.addedUsers = [];
         }})), "SPACE_STATEMENT_INVALID");
         await shouldThrowErrorWithCode2(async () => add(await this.next(spaceId, "add", me, {add: [bobDirect]}, {unsigned: st => {
             st.keyVersion++;
@@ -344,11 +388,11 @@ export class SpaceTests extends BaseTestSet {
         assert(statements.map(st => `${st.seq}:${st.op}:${st.signer}`).join() === `1:create:${me},2:rotate:${bob},3:add:${me}`, `history mismatch: ${statements.map(st => `${st.seq}:${st.op}:${st.signer}`).join()}`);
         assert(statements[0].prevDigest === "" && statements[1].prevDigest === SpaceStatement.digest(statements[0]) && statements[2].prevDigest === SpaceStatement.digest(statements[1]), "the statements do not chain");
         assert(statements.every(st => SpaceStatement.verifySignature(st)), "a served statement does not verify");
-        assert(statements[1].via === groupId && SpaceStatement.verifyViaSignature(statements[1], statements[0].groups[0].groupPubKey), "bob's statement is signed by the group's key as the statement before held it");
+        assert(statements[1].via === groupId && SpaceStatement.verifyViaSignature(statements[1], statements[0].addedGroups[0].groupPubKey), "bob's statement is signed by the group's key as the statement before held it");
         assert(statements[2].keyCommit === statements[1].keyCommit && statements[1].keyCommit !== statements[0].keyCommit, "a rotation commits to a new key, an addition to the same");
         const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
         assert(space.seq === 3 && JSON.stringify(space.statement) === JSON.stringify(statements[2]), "the space serves its last statement");
-        assert(SpaceStatement.sameRecipients(space, space.statement), "the recipients served are the ones the last statement names");
+        assert(SpaceStatement.rosterHash(space).toString("hex") === space.statement.rosterHash, "the recipients served are the ones the last statement binds");
         const page = await this.apis.contextApi.spaceGetStatements({id: spaceId, fromSeq: 1, limit: 1});
         assert(page.statements.length === 1 && page.statements[0].seq === 2, "paging starts after fromSeq");
         assert((await this.apis.contextApi.spaceGetStatements({id: spaceId, fromSeq: 3, limit: 10})).statements.length === 0, "nothing after the last");
@@ -359,6 +403,77 @@ export class SpaceTests extends BaseTestSet {
         await shouldThrowErrorWithCode2(() => asBob.spaceGetStatements({id: hidden, fromSeq: 0, limit: 10}), "ACCESS_DENIED");
         assert(await this.apis.contextApi.spaceDelete({id: hidden}) === "OK", "spaceDelete did not return OK");
         await shouldThrowErrorWithCode2(() => this.apis.contextApi.spaceGetStatements({id: hidden, fromSeq: 0, limit: 10}), "SPACE_DOES_NOT_EXIST");
+    }
+    
+    // Six rotations by one manager inside a minute: past the default burst of 3.
+    @Test({config: {maxSpaceRotationsPerMinute: 20}})
+    async shouldTakeOnlyTheCanonicalRungsAndServeThemAPageOfVersionsAtATime() {
+        const groupId = await this.createGroup();
+        const recipients: Recipient[] = [{userId: me, pubKey: myPub, role: "manager"}, {groupId, role: "user"}];
+        const spaceId = await this.createSpace(recipients);
+        const rotate = async (keyVersion: number, rungs: types.cloud.SpaceRung[], extra: {prune?: boolean, repairRungs?: types.cloud.SpaceRung[]} = {}) => this.apis.contextApi.spaceRotateKey({
+            id: spaceId, keyId: `space-key-${keyVersion}` as types.core.KeyId, keys: this.keysFor(recipients, keyVersion), rungs, expectedKeyVersion: keyVersion - 1,
+            statement: await this.next(spaceId, "rotate", me), ...extra,
+        });
+        const rung = (at: number, target: number) => ({atKeyVersion: at, targetKeyVersion: target, data: rungData(`rung ${at}->${target}`)});
+        
+        // Version 2 owes the rung to 1, nothing else and nothing at another version.
+        await shouldThrowErrorWithCode2(() => rotate(2, []), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(2, [rung(3, 2)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(2, [rung(2, 1), rung(2, 1)]), "SPACE_KEYS_INVALID");
+        // A rung is one sealed key, 60 bytes: anything else is refused.
+        await shouldThrowErrorWithCode2(() => rotate(2, [{...rung(2, 1), data: b64("x".repeat(61))}]), "SPACE_KEYS_INVALID");
+        assert((await rotate(2, this.rungsOf(2))).keyVersion === 2, "rotation to 2");
+        assert((await rotate(3, this.rungsOf(3))).keyVersion === 3, "rotation to 3");
+        // Version 4 owes the rungs to 3 and to 2: one missing, or one more, is refused.
+        await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3)]), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(4, [rung(4, 3), rung(4, 2), rung(4, 1)]), "SPACE_KEYS_INVALID");
+        // A manager's rotation that does not ask to prune keeps the older wraps.
+        const kept = await this.apis.contextApi.spaceGetKeyArchive({id: spaceId});
+        assert(kept.keys.map(k => k.keyVersion).join() === "1,1,2,2,3,3", `every version keeps its wraps: ${JSON.stringify(kept.keys)}`);
+        // A repair has to be a canonical span below the new version.
+        await shouldThrowErrorWithCode2(() => rotate(4, this.rungsOf(4), {repairRungs: [rung(3, 1)]}), "SPACE_KEYS_INVALID");
+        await shouldThrowErrorWithCode2(() => rotate(4, this.rungsOf(4), {repairRungs: [rung(4, 3)]}), "SPACE_KEYS_INVALID");
+        // A pruning rotation with a repair of span 3->2: the wraps below 4 go, the repair lands beside the original.
+        assert((await rotate(4, this.rungsOf(4), {prune: true, repairRungs: [rung(3, 2)]})).keyVersion === 4, "rotation to 4");
+        const space = (await this.apis.contextApi.spaceGet({id: spaceId})).space;
+        assert(space.keys.length === 2 && space.keys.every(k => k.keyVersion === 4), `only version 4 is wrapped: ${JSON.stringify(space.keys)}`);
+        assert(space.keysPrunedBelow === 4, `the prune is recorded: ${space.keysPrunedBelow}`);
+        assert((await this.apis.contextApi.spaceList({contextId: testData.contextId, skip: 0, limit: 100, sortOrder: "asc"})).spaces.find(x => x.id === spaceId)!.keysPrunedBelow === 4, "spaceList serves it too");
+        const mine = await this.apis.contextApi.spaceGetKeyArchive({id: spaceId});
+        assert(mine.keys.length === 2 && mine.keys.every(k => k.keyVersion === 4), `the older wraps are gone: ${JSON.stringify(mine.keys)}`);
+        const asBob = await this.apiOf(bob);
+        const all = await asBob.spaceGetKeyArchive({id: spaceId});
+        assert(all.keys.length === 1 && "groupId" in all.keys[0].recipient && all.keys[0].keyVersion === 4, `bob gets his group's wrap only: ${JSON.stringify(all.keys)}`);
+        const spans = (rungs: types.cloud.SpaceRung[]) => rungs.map(r => `${r.atKeyVersion}->${r.targetKeyVersion}`).join();
+        assert(spans(all.rungs) === "2->1,3->2,3->2,4->2,4->3" && all.nextKeyVersion === undefined, `the whole ladder, both rungs of the repaired span: ${spans(all.rungs)}`);
+        assert(all.rungs.every(r => r.data === rung(r.atKeyVersion, r.targetKeyVersion).data), "a rung comes back as it was sent");
+        const first = await asBob.spaceGetKeyArchive({id: spaceId, limit: 2});
+        assert(spans(first.rungs) === "2->1" && first.nextKeyVersion === 3 && first.keys.length === 0, `first page: ${JSON.stringify(first)}`);
+        const rest = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: first.nextKeyVersion, limit: 2});
+        assert(spans(rest.rungs) === "3->2,3->2,4->2,4->3" && rest.nextKeyVersion === undefined, `second page: ${JSON.stringify(rest)}`);
+        const window = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});
+        assert(spans(window.rungs) === "3->2,3->2" && window.nextKeyVersion === undefined, `closed window: ${JSON.stringify(window)}`);
+        
+        // A span holds at most four rungs: two more repairs fill it, the next is refused.
+        assert((await rotate(5, this.rungsOf(5), {repairRungs: [rung(3, 2)]})).keyVersion === 5, "rotation to 5");
+        assert((await rotate(6, this.rungsOf(6), {repairRungs: [rung(3, 2)]})).keyVersion === 6, "rotation to 6");
+        await shouldThrowErrorWithCode2(() => rotate(7, this.rungsOf(7), {repairRungs: [rung(3, 2)]}), "SPACE_KEYS_INVALID");
+        const full = await asBob.spaceGetKeyArchive({id: spaceId, fromKeyVersion: 3, toKeyVersion: 3});
+        assert(spans(full.rungs) === "3->2,3->2,3->2,3->2", `four rungs of the span: ${spans(full.rungs)}`);
+        assert((await this.apis.contextApi.spaceGet({id: spaceId})).space.keysPrunedBelow === 4, "a rotation without prune leaves keysPrunedBelow");
+        
+        // Only a recipient reads the ladder, and it goes with the space.
+        const hidden = await this.createSpace([{userId: me, pubKey: myPub, role: "manager"}]);
+        await shouldThrowErrorWithCode2(() => asBob.spaceGetKeyArchive({id: hidden}), "ACCESS_DENIED");
+        assert(await this.apis.contextApi.spaceDelete({id: spaceId}) === "OK", "spaceDelete did not return OK");
+        await shouldThrowErrorWithCode2(() => asBob.spaceGetKeyArchive({id: spaceId}), "SPACE_DOES_NOT_EXIST");
+    }
+    
+    /** The canonical rungs of `keyVersion` (`LadderMath.rungSpansFor(keyVersion, 1)`); the data is a label, not a sealed key. */
+    private rungsOf(keyVersion: number): types.cloud.SpaceRung[] {
+        return LadderMath.rungSpansFor(keyVersion, 1).map(span => ({atKeyVersion: span.at, targetKeyVersion: span.target, data: rungData(`rung ${span.at}->${span.target}`)}))
+            .sort((a, b) => a.targetKeyVersion - b.targetKeyVersion);
     }
     
     /** One entry per recipient at `keyVersion`; a group's names `groupEpoch`, or the epoch the group is at. The data is a label, not a wrap. */
@@ -373,6 +488,7 @@ export class SpaceTests extends BaseTestSet {
     
     private async createSpace(recipients: Recipient[], resourceId = this.helpers.generateResourceId(), twist: Twist = {}, as = me) {
         const api = as === me ? this.apis.contextApi : await this.apiOf(as);
+        const roster = this.stateOf(recipients);
         const res = await api.spaceCreate({
             contextId: testData.contextId,
             resourceId: resourceId,
@@ -383,8 +499,9 @@ export class SpaceTests extends BaseTestSet {
             privateMeta: "private",
             statement: this.sign({
                 spaceId: SpaceService.spaceId(testData.contextId, resourceId), contextId: testData.contextId, seq: 1, prevDigest: "", op: "create",
-                date: Date.now(), keyVersion: 1, keyCommit: this.commit(), ...this.stateOf(recipients), signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
-            }, twist),
+                date: Date.now(), keyVersion: 1, keyCommit: this.commit(), ...noDeltas, addedGroups: roster.groups, addedUsers: roster.users,
+                rosterHash: SpaceStatement.rosterHash(roster).toString("hex"), signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
+            }, twist, roster),
         });
         return res.spaceId;
     }
@@ -401,7 +518,7 @@ export class SpaceTests extends BaseTestSet {
     }
     
     /** Recipients as a statement names them: each group at the epoch and key it is at now. */
-    private stateOf(recipients: Recipient[]): Pick<Statement, "groups"|"users"> {
+    private stateOf(recipients: Recipient[]): Roster {
         return {
             groups: recipients.flatMap(r => "groupId" in r ? [{groupId: r.groupId, role: r.role, ...this.head(r.groupId)}] : []),
             users: recipients.flatMap(r => "userId" in r ? [{userId: r.userId, pubKey: r.pubKey, role: r.role}] : []),
@@ -412,7 +529,7 @@ export class SpaceTests extends BaseTestSet {
      * Signs as the statement's signer. Without a `via` given: as a user the state names when the signer is one,
      * else through the first group of `standing` - with the key that state holds for the group.
      */
-    private sign(unsigned: UnsignedSpaceStatement, twist: Twist, standing: Pick<Statement, "groups"|"users"> = unsigned) {
+    private sign(unsigned: UnsignedSpaceStatement, twist: Twist, standing: Roster) {
         const named = standing.users.some(u => u.userId === unsigned.signer);
         unsigned.via = twist.via ?? (named ? "" : standing.groups[0]?.groupId ?? "");
         twist.unsigned?.(unsigned);
@@ -435,11 +552,16 @@ export class SpaceTests extends BaseTestSet {
             ? [...prior.groups, ...added.groups]
             : prior.groups.filter(g => !(change.removeGroups || []).includes(g.groupId)).map(g => ({...g, ...this.head(g.groupId)}));
         const users = [...prior.users.filter(u => !(change.removeUsers || []).includes(u.userId)), ...added.users];
+        // The deltas that lead there: a group moved past the epoch the space held it at is refreshed.
+        const refreshedGroups = op === "add" ? [] : groups.filter(g => prior.groups.some(p => p.groupId === g.groupId && p.groupKeyVersion < g.groupKeyVersion))
+            .map(g => ({groupId: g.groupId, groupKeyVersion: g.groupKeyVersion, groupPubKey: g.groupPubKey}));
         return this.sign({
             spaceId, contextId: testData.contextId, seq: prior.seq + 1, prevDigest: SpaceStatement.digest(prior.statement), op,
             date: Date.now(), keyVersion: op === "add" ? prior.keyVersion : prior.keyVersion + 1,
             keyCommit: op === "add" ? prior.statement.keyCommit : this.commit(),
-            groups, users, signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
+            addedGroups: added.groups, addedUsers: added.users, removedGroups: change.removeGroups || [], removedUsers: change.removeUsers || [], refreshedGroups,
+            rosterHash: SpaceStatement.rosterHash({groups, users}).toString("hex"),
+            signer: as, signerPubKey: identities[as].pub58 as types.cloud.UserPubKey, via: "",
         }, twist, prior);
     }
     

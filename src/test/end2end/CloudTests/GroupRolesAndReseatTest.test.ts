@@ -16,13 +16,15 @@ import * as types from "../../../types";
 import { ECUtils } from "../../../utils/crypto/ECUtils";
 import { ContextApiClient } from "../../../api/main/context/ContextApiClient";
 import {
-    additionOf, buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rolesCommitAgainst, rungsFor, ServedGroup, useRealNodeKeys,
+    additionOf, buildTree, commitAgainst, creationStatement, PlanOp, registerUserKey, removalOf, rolesCommitAgainst, rotationGrantEdge, rotationStatement,
+    rungsFor, ServedGroup, useRealNodeKeys,
 } from "../../testUtils/TreeFixtures";
 import { TreeMath } from "../../../service/cloud/keytree/TreeMath";
+import { CommitStatement } from "../../../service/cloud/keytree/CommitStatement";
 
 /**
- * The roster commits that are not an addition or a removal: a change of role, and a reseat. And the two rules that
- * split `update` for the roster, each tried by a member the rule allows and by one it does not.
+ * The roster commits that are not an addition or a removal: a change of role, and a reseat. And the group's roster
+ * rules, each tried by a member the rule allows and by one it does not.
  */
 
 const SEATING = ["janek", "bob", "carol"];
@@ -69,10 +71,9 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         const groupId = await this.createGroup();
         await shouldThrowErrorWithCode2(() => this.setRoles(groupId, me, [], [me]), "GROUP_LAST_MANAGER");
         assert((await this.read(groupId)).managers.includes(me), "a refused change must change nothing");
-        // With a second manager the first can go: by the other's hand, since nobody demotes themselves by default.
+        // With a second manager the first can go, by its own hand too: changeRoles decides, nothing else.
         await this.setRoles(groupId, me, [bob], []);
-        await shouldThrowErrorWithCode2(() => this.setRoles(groupId, me, [], [me]), "ACCESS_DENIED");
-        await this.setRoles(groupId, bob, [], [me]);
+        await this.setRoles(groupId, me, [], [me]);
         await shouldThrowErrorWithCode2(() => this.setRoles(groupId, bob, [], [bob]), "GROUP_LAST_MANAGER");
         const group = await this.read(groupId);
         assert(JSON.stringify(group.managers) === JSON.stringify([bob]), `bob should be the only manager, got ${JSON.stringify(group.managers)}`);
@@ -124,8 +125,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
     @Test()
     async shouldLetTheRulesSplitAddingFromRemoving() {
         // Anybody in the group may add; removing (and reseating) stays with managers.
-        const groupId = await this.createGroup({addMembers: "user" as types.cloud.PolicyEntry, removeMembers: "manager" as types.cloud.PolicyEntry});
-        // Adding is one thing, handing out the manager role another: that stays with whoever may set roles.
+        const groupId = await this.createGroup({addMembers: "members"});
+        // Adding is one thing, handing out the manager role another: that also takes changeRoles.
         await shouldThrowErrorWithCode2(() => this.add(groupId, bob, dave, "manager"), "ACCESS_DENIED");
         await this.add(groupId, bob, dave);
         assert((await this.read(groupId)).users.includes(dave), "a user should have added dave");
@@ -136,14 +137,52 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
     }
     
     @Test()
-    async shouldFollowUpdateWhenTheRosterRulesAreNotSet() {
+    async shouldGateEachRosterOperationByItsOwnRule() {
         const groupId = await this.createGroup();
         await shouldThrowErrorWithCode2(() => this.add(groupId, bob, dave), "ACCESS_DENIED");
-        // The other way round: adding closed to everybody, removing open to users.
-        const closed = await this.createGroup({addMembers: "none" as types.cloud.PolicyEntry, removeMembers: "user" as types.cloud.PolicyEntry});
+        // The other way round: adding closed to everybody, managers included, removing open to members.
+        const closed = await this.createGroup({addMembers: "nobody", removeMembers: "members"});
         await shouldThrowErrorWithCode2(() => this.add(closed, me, dave), "ACCESS_DENIED");
+        // A member may remove a member, but not a manager: that also takes changeRoles. Nor reseat anybody.
+        await shouldThrowErrorWithCode2(() => this.removeOrReseat(closed, bob, "remove", [me]), "ACCESS_DENIED");
+        await shouldThrowErrorWithCode2(() => this.removeOrReseat(closed, bob, "reseat", [carol]), "ACCESS_DENIED");
         await this.removeOrReseat(closed, bob, "remove", [carol]);
-        assert(!(await this.read(closed)).users.includes(carol), "a user should have removed carol");
+        assert(!(await this.read(closed)).users.includes(carol), "a member should have removed carol");
+        // Claiming the key is lost does not let a plain remover wipe everybody's history: that takes changeRules
+        // too.
+        const editable = await this.createGroup({removeMembers: "members", editPublicMeta: "members", editPrivateMeta: "members"});
+        await shouldThrowErrorWithCode2(() => this.removeOrReseat(editable, bob, "remove", [carol], true), "ACCESS_DENIED");
+        // replaceMemberKeys alone opens reseating.
+        const reseatable = await this.createGroup({replaceMemberKeys: "members"});
+        await this.removeOrReseat(reseatable, bob, "reseat", [carol]);
+        assert((await this.read(reseatable)).treeCommit!.op === "reseat", "a member should have reseated carol");
+    }
+    
+    @Test()
+    async shouldLetAnyMemberRotateTheKey() {
+        const groupId = await this.createGroup();
+        // bob is a plain member under the default rules: rotation is membership, there is no rule for it.
+        const read = await this.read(groupId, bob, "full");
+        const served = read as unknown as ServedGroup;
+        const tree = {numLeaves: served.numLeaves, leafAssignment: served.leafAssignment, nodes: served.treeNodes, edges: served.treeEdges};
+        const groupPubKey = newGroupKey();
+        const newEpoch = served.keyVersion + 1;
+        const res = await (await this.apiOf(bob)).groupGenerateNewKey({
+            id: groupId,
+            groupPubKey,
+            data: "roster" as types.group.GroupData,
+            keyId: `group-key-${newEpoch}` as types.core.KeyId,
+            grantEdge: rotationGrantEdge(tree, newEpoch),
+            rungs: rungsFor(newEpoch, read.eraFloor),
+            commit: rotationStatement(tree, (served.treeCommit?.seq ?? 0) + 1, newEpoch, bob, {
+                groupId, groupPubKey, rosterVersion: served.rosterVersion + 1, users: served.users, managers: served.managers,
+                ...(served.treeCommit ? {previous: served.treeCommit} : {}),
+            }),
+            expectedKeyVersion: served.keyVersion,
+            expectedRosterVersion: served.rosterVersion,
+        });
+        assert(res === "OK", "a plain member should have rotated the key");
+        assert((await this.read(groupId)).keyVersion === newEpoch, "the epoch moved");
     }
     
     private async setRoles(groupId: types.group.GroupId, as: types.cloud.UserId, toManagers: types.cloud.UserId[], toUsers: types.cloud.UserId[]) {
@@ -160,7 +199,7 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         assert(res === "OK", "groupSetRoles did not return OK");
     }
     
-    private async removeOrReseat(groupId: types.group.GroupId, as: types.cloud.UserId, kind: "remove"|"reseat", userIds: types.cloud.UserId[]) {
+    private async removeOrReseat(groupId: types.group.GroupId, as: types.cloud.UserId, kind: "remove"|"reseat", userIds: types.cloud.UserId[], abandonHistory = false) {
         const served = await this.read(groupId, as, "full");
         const newEpoch = served.keyVersion + 1;
         const groupPubKey = newGroupKey();
@@ -175,7 +214,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
             data: "roster" as types.group.GroupData,
             transition: removalOf(plan, served.keyVersion),
             commit: commit,
-            rungs: rungsFor(newEpoch, served.eraFloor),
+            rungs: abandonHistory ? [] : rungsFor(newEpoch, served.eraFloor),
+            ...(abandonHistory ? {abandonHistory: true} : {}),
             groupKeys: {group: groupId, groupEpoch: newEpoch, keyId: keyId, data: `metadata-key@${newEpoch}` as types.core.UserKeyData},
             expectedKeyVersion: served.keyVersion,
             expectedRosterVersion: served.rosterVersion,
@@ -218,7 +258,8 @@ export class GroupRolesAndReseatTests extends BaseTestSet {
         return this.bobApi;
     }
     
-    private async createGroup(policy: types.cloud.ContainerPolicy = {}): Promise<types.group.GroupId> {
+    private async createGroup(changes: Partial<types.cloud.GroupRules> = {}): Promise<types.group.GroupId> {
+        const policy = {...CommitStatement.DEFAULT_RULES, ...changes};
         if (!this.usersAdded) {
             this.helpers.authorizePlainApi();
             for (const [userId, userPubKey] of [[bob, bobIdentity.pub58], [carol, ECUtils.generateKeyPair().pub58], [dave, ECUtils.generateKeyPair().pub58]] as const) {

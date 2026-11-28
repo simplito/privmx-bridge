@@ -18,6 +18,7 @@ import { TreeMath } from "./keytree/TreeMath";
 import type { TreeCommit } from "./keytree/TreeTransitionValidator";
 import { AppException } from "../../api/AppException";
 import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { LadderArchive } from "./keytree/LadderArchive";
 
 /**
  * Group state that would otherwise grow the group document without a ceiling: tree nodes, tree edges, history
@@ -185,11 +186,12 @@ export class GroupStateRepository {
         return this.history.query(q => q.eq("groupId", groupId)).sort("version", false).limit(1).array();
     }
     
-    /** The group's public-metadata entry — a lookup by derived id. */
+    /** The public-metadata entries of several groups — one lookup by derived ids. */
     async getPublicMetaHeads(groupIds: types.group.GroupId[]): Promise<db.group.GroupPublicMetaEntry[]> {
         return this.publicMetaEntries.getMulti(groupIds.map(id => GroupStateRepository.publicMetaEntryId(id)));
     }
     
+    /** The group's public-metadata entry — a lookup by derived id. */
     async getPublicMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPublicMetaEntry|null> {
         return this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId));
     }
@@ -197,24 +199,6 @@ export class GroupStateRepository {
     /** The group's private-metadata entry — a lookup by derived id. */
     async getPrivateMetaHead(groupId: types.group.GroupId): Promise<db.group.GroupPrivateMetaEntry|null> {
         return this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId));
-    }
-    
-    /**
-     * The epoch each plane's head entry is keyed at, projected.
-     *
-     * `cutEra` and `pruneArchive` ask this before dropping rungs: an entry stays at the epoch it was written
-     * under, so cutting below it would make that plane unreadable for everyone, permanently. Both planes,
-     * because they move independently and only one of them may be stranded.
-     */
-    async getMetaHeadKeyVersions(groupId: types.group.GroupId): Promise<{publicMeta: number|null, privateMeta: number|null}> {
-        const [publicHead, privateHead] = await Promise.all([
-            this.publicMetaEntries.get(GroupStateRepository.publicMetaEntryId(groupId)),
-            this.privateMetaEntries.get(GroupStateRepository.privateMetaEntryId(groupId)),
-        ]);
-        return {
-            publicMeta: publicHead ? publicHead.keyVersion : null,
-            privateMeta: privateHead ? privateHead.keyVersion : null,
-        };
     }
     
     /** Replaces the group's public-metadata entry: one row per group, so a later version supersedes rather
@@ -246,14 +230,8 @@ export class GroupStateRepository {
      * history is as large as an open one.
      */
     async getArchiveRungs(groupId: types.group.GroupId, fromKeyVersion?: number, toKeyVersion?: number, minTarget?: number): Promise<types.cloud.GroupArchiveRung[]> {
-        const query = this.rungs.query(q => {
-            const conditions = [q.eq("groupId", groupId), ...GroupStateRepository.range(q, "atKeyVersion", fromKeyVersion, toKeyVersion)];
-            if (minTarget !== undefined) {
-                conditions.push(q.gte("targetKeyVersion", minTarget));
-            }
-            return q.andList(conditions);
-        }).sort("atKeyVersion", true);
-        const rungs = await query.limit(GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE).array();
+        const rungs = await LadderArchive.readRungs(this.rungs, q => q.eq("groupId", groupId),
+            {from: fromKeyVersion, to: toKeyVersion, minTarget, limit: GroupStateRepository.MAX_ARCHIVE_RUNGS_PER_PAGE});
         return rungs.map(rung => this.toArchiveRung(rung));
     }
     

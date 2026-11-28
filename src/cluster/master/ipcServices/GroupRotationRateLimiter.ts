@@ -13,6 +13,7 @@ import { IpcService } from "../Decorators";
 import { ApiMethod } from "../../../api/Decorators";
 import { CacheWithTTL } from "../../../utils/CacheWithTTL";
 import { DateUtils } from "../../../utils/DateUtils";
+import * as types from "../../../types";
 
 /**
  * Cross-worker (IPC) sliding-window rate limiter for group key rotations.
@@ -33,14 +34,14 @@ export class GroupRotationRateLimiter {
     }
     
     /**
-     * Reserves one unit of `key`'s budget — `limit` an hour, or the configured per-member budget when the caller
-     * passes none — and says whether it could. Check and charge are one call in the master, so requests racing
+     * Reserves one unit of `key`'s budget — `limit` per `windowMs` (default an hour), or the configured per-member
+     * hourly budget when the caller passes no limit — and says whether it could. Check and charge are one call in the master, so requests racing
      * each other cannot all pass on the last unit, as they could when this only peeked. A caller that does not
      * end up spending the unit hands it back with `release`.
      */
     @ApiMethod({})
-    async reserve(model: {key: string, limit?: number}): Promise<{allowed: boolean, retryAt?: number}> {
-        const window = DateUtils.hours(1);
+    async reserve(model: {key: string, limit?: number, windowMs?: types.core.Timespan}): Promise<{allowed: boolean, retryAt?: number}> {
+        const window = model.windowMs ?? DateUtils.hours(1);
         const cutoff = DateUtils.now() - window;
         const timestamps = (this.cache.get(model.key) ?? []).filter(t => t > cutoff);
         if (timestamps.length >= (model.limit ?? this.maxRotationsPerHour)) {

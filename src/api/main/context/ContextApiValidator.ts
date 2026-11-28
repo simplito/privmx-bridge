@@ -20,13 +20,10 @@ export class ContextApiValidator extends BaseValidator {
     static readonly MAX_ARCHIVE_SPANS = 128;
     /** keyIds, and grant keys, per `groupGetEpochKeys` call. */
     static readonly MAX_EPOCH_KEY_LOOKUPS = 32;
-    /** Wrapped keys per space call. Adding recipients sends every key version for each of them, so this is what
-     *  bounds recipients times versions in one `spaceAddRecipients`. An entry is at most ~5.2 KB of JSON (4 KB of
-     *  data, 1 KB of signature), so a call stays near 21 MB: well under the WebSocket's 100 MiB message limit,
-     *  which is the only bound a request body has (HTTP reads it whole). 16384 came to ~85 MB, at that limit.
-     *  ponytail: a space rotated more often than this divided by the recipients added cannot take them in one
-     *  call; serve the old versions from a ladder, as groups do, when a space gets that old. */
-    static readonly MAX_SPACE_KEY_ENTRIES = 4096;
+    /** Wrapped keys per space call: one key version's entries, one per recipient. */
+    static readonly MAX_SPACE_KEY_ENTRIES = SpaceService.MAX_RECIPIENTS;
+    /** Rungs per rotation: `LadderMath.rungSpansFor` owes at most 32 below 2^32 versions. */
+    static readonly MAX_SPACE_RUNGS = SpaceService.MAX_REQUEST_RUNGS;
     
     constructor(
         private tv: TypesValidator,
@@ -201,24 +198,13 @@ export class ContextApiValidator extends BaseValidator {
             fromSeq: this.tv.intNonNegative,
             toSeq: this.builder.optional(this.builder.min(this.builder.int, 1)),
         }));
-        this.registerMethod("groupCutEra", this.builder.createObject({
-            id: this.tv.groupId,
-            newFloor: this.builder.min(this.builder.int, 1),
-            expectedKeyVersion: this.builder.int,
-        }));
-        this.registerMethod("groupPruneArchive", this.builder.createObject({
-            id: this.tv.groupId,
-            belowEpoch: this.builder.min(this.builder.int, 1),
-            expectedKeyVersion: this.builder.int,
-        }));
         this.registerMethod("groupRepairRung", this.builder.createObject({
             id: this.tv.groupId,
             rung: this.tv.groupArchiveRung,
         }));
         this.registerMethod("groupGetKeyArchive", this.builder.createObject({
             id: this.tv.groupId,
-            fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
-            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            ...this.archiveWindow(),
             spans: this.builder.optional(this.builder.createListWithMaxLength(this.builder.createObject({
                 at: this.builder.min(this.builder.int, 1),
                 target: this.builder.min(this.builder.int, 1),
@@ -265,12 +251,18 @@ export class ContextApiValidator extends BaseValidator {
             date: this.tv.intNonNegative,
             keyVersion: this.builder.min(this.builder.int, 1),
             keyCommit: hash32,
-            groups: this.builder.createListWithMaxLength(this.builder.createObject({
+            addedGroups: this.builder.createListWithMaxLength(this.builder.createObject({
                 groupId: this.tv.groupId, role: role, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
             }), SpaceService.MAX_RECIPIENTS),
-            users: this.builder.createListWithMaxLength(this.builder.createObject({
+            addedUsers: this.builder.createListWithMaxLength(this.builder.createObject({
                 userId: this.tv.cloudUserId, pubKey: this.tv.cloudUserPubKey, role: role,
             }), SpaceService.MAX_RECIPIENTS),
+            removedGroups: this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS),
+            removedUsers: this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS),
+            refreshedGroups: this.builder.createListWithMaxLength(this.builder.createObject({
+                groupId: this.tv.groupId, groupKeyVersion: this.builder.min(this.builder.int, 1), groupPubKey: this.tv.groupPubKey,
+            }), SpaceService.MAX_RECIPIENTS),
+            rosterHash: hash32,
             signer: this.tv.cloudUserId,
             signerPubKey: this.tv.cloudUserPubKey,
             via: this.builder.createOneOf([this.builder.createConst(""), this.tv.groupId]),
@@ -286,11 +278,16 @@ export class ContextApiValidator extends BaseValidator {
             recipients: spaceRecipients,
             keyId: this.tv.keyId,
             keys: spaceKeys,
-            publicMeta: this.tv.groupData,
-            privateMeta: this.tv.groupData,
+            publicMeta: this.tv.spacePublicMeta,
+            privateMeta: this.tv.spacePrivateMeta,
             statement: spaceStatement,
         }));
         this.registerMethod("spaceGet", spaceId);
+        this.registerMethod("spaceGetKeyArchive", this.builder.createObject({
+            id: this.tv.spaceId,
+            ...this.archiveWindow(),
+            limit: this.builder.optional(this.builder.range(this.builder.int, 1, 256)),
+        }));
         this.registerMethod("spaceGetStatements", this.builder.createObject({
             id: this.tv.spaceId,
             fromSeq: this.tv.intNonNegative,
@@ -311,6 +308,11 @@ export class ContextApiValidator extends BaseValidator {
             id: this.tv.spaceId,
             keyId: this.tv.keyId,
             keys: spaceKeys,
+            // A group's rung shape: the ladder rules (`LadderMath.validateRungSubmission`) are the same.
+            rungs: this.builder.createListWithMaxLength(this.tv.groupArchiveRung, ContextApiValidator.MAX_SPACE_RUNGS),
+            // Counted with `rungs` against the same cap by the service (`SpaceService.assertRepairs`).
+            repairRungs: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupArchiveRung, ContextApiValidator.MAX_SPACE_RUNGS)),
+            prune: this.builder.optional(this.builder.bool),
             expectedKeyVersion: this.builder.min(this.builder.int, 1),
             statement: spaceStatement,
         };
@@ -320,12 +322,20 @@ export class ContextApiValidator extends BaseValidator {
             groups: this.builder.optional(this.builder.createListWithMaxLength(this.tv.groupId, SpaceService.MAX_RECIPIENTS)),
             users: this.builder.optional(this.builder.createListWithMaxLength(this.tv.cloudUserId, SpaceService.MAX_RECIPIENTS)),
         }));
-        const metaUpdate = this.builder.createObject({
+        const metaUpdate = (meta: typeof this.tv.spacePublicMeta) => this.builder.createObject({
             id: this.tv.spaceId,
-            meta: this.tv.groupData,
+            meta: meta,
             version: this.builder.min(this.builder.int, 1),
         });
-        this.registerMethod("spaceUpdatePublicMeta", metaUpdate);
-        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate);
+        this.registerMethod("spaceUpdatePublicMeta", metaUpdate(this.tv.spacePublicMeta));
+        this.registerMethod("spaceUpdatePrivateMeta", metaUpdate(this.tv.spacePrivateMeta));
+    }
+    
+    /** The key-version window of a ladder archive read, a group's or a space's. */
+    private archiveWindow() {
+        return {
+            fromKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+            toKeyVersion: this.builder.optional(this.builder.min(this.builder.int, 1)),
+        };
     }
 }

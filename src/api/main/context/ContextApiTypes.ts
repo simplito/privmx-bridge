@@ -124,7 +124,9 @@ export interface GroupCreateModel {
     groupPubKey: types.cloud.GroupPubKey;
     users: types.cloud.UserId[];
     managers: types.cloud.UserId[];
-    /** Defaults to "members". */
+    /** Defaults to "members". "context" takes the `context/groupSetVisibility` ACL entry and the `changeVisibility`
+     *  rule of the rules being created, for the creator in the roster being created, narrowed by the context's
+     *  `updatePolicy`. */
     visibleTo?: GroupVisibility;
     /** The roster/tree plane's first entry: carries the roster tag and no metadata. */
     data: types.group.GroupData;
@@ -144,8 +146,36 @@ export interface GroupCreateModel {
      * `edges` what those nodes owe plus the grant edge. The creator must be among the members.
      */
     tree: types.cloud.GroupTreeState;
-    /** The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
-     *  the bridge assigns the group's id only once the statement is already signed. */
+    /**
+     * The group's first commit statement (seq 1), signed by the creator. Its `groupId` is this `resourceId` —
+     * the bridge assigns the group's id only once the statement is already signed.
+     *
+     * `commit.policy` carries the group's rules (`types.cloud.GroupRules`), all eight, each `managers`, `members`
+     * or `nobody` (clients default every rule to `managers`), signed by `policyHash` =
+     * `SHA-256("pmx-group-rules-v1\0" || lp(creator) || lp(addMembers) || lp(removeMembers) ||
+     * lp(replaceMemberKeys) || lp(changeRoles) || lp(changeRules) || lp(changeVisibility) || lp(editPublicMeta) ||
+     * lp(editPrivateMeta))`, `lp` a u32 big-endian length prefix. An
+     * operation needs every rule whose responsibility it touches, as the rules stand before it:
+     *
+     * - add a plain member: `addMembers`; add a manager: `addMembers` + `changeRoles`
+     * - remove a plain member: `removeMembers`; a manager: `removeMembers` + `changeRoles`; yourself: refused,
+     *   another member removes you
+     * - reseat (`groupReseat`): `replaceMemberKeys`
+     * - set roles: `changeRoles`; change the rules (`groupUpdatePolicy`): `changeRules`; set visibility:
+     *   `changeVisibility`
+     * - a removal with `abandonHistory`: `changeRules`, `editPublicMeta` and `editPrivateMeta` on top of the
+     *   removal's
+     * - write the public / private metadata: `editPublicMeta` / `editPrivateMeta`
+     * - rotate the key, self-update: any member (rotation rate-limited per member)
+     * - delete: any manager
+     *
+     * A group that has managers keeps at least one (`GROUP_LAST_MANAGER`). The creator holds no privilege, but
+     * the context's `policy.group.creatorHasToBeManager` (default "yes") still requires the creator to be among
+     * `managers` at creation (`ACCESS_DENIED` otherwise); creation itself is gated by `policy.group.create`. The
+     * context's `policy.group` can only narrow: `update` narrows `addMembers`, `removeMembers`,
+     * `replaceMemberKeys` and both metadata rules, `updatePolicy` narrows `changeRoles`,
+     * `changeRules` and `changeVisibility`, `rotateKeys` rotation and `delete` deletion.
+     */
     commit: types.cloud.GroupTreeCommitStatement;
 }
 
@@ -223,10 +253,16 @@ export interface GroupRemoveMembersModel {
     expectedRosterVersion: number;
     /**
      * Removal when the current grant key cannot be recovered: history before the new epoch becomes unreachable.
-     * `rungs` must be empty, and the era is cut at the new epoch in the same write, as `groupCutEra` would — so
-     * the caller needs `context/groupCutEra` as well, and members get an `eraCut` notification besides
-     * `memberRemoved`. Both metadata planes stay at the epoch they were written under, so they become unreadable
-     * until a manager rewrites them (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`).
+     * `rungs` must be empty, and the era is cut at the new epoch in the same write, deleting the rungs and epoch
+     * keys below it — so the caller needs the `context/groupCutEra` ACL entry as well, and members get an
+     * `eraCut` notification besides `memberRemoved`. Refused with `GROUP_IN_USE` while a space names the group:
+     * nobody holding the old key is left to re-key it through the group.
+     *
+     * Besides the removal's rules it needs `changeRules`: deleting everybody's history is not a removal's to do,
+     * and whoever may change the rules could grant itself anything they gate anyway. A key-less remover without
+     * it leaves the removal to a member who still holds the key. Both metadata planes end up below the new floor,
+     * unreadable until rewritten (`groupUpdatePublicMeta`, `groupUpdatePrivateMeta`), so it needs
+     * `editPublicMeta` and `editPrivateMeta` as well.
      */
     abandonHistory?: boolean;
 }
@@ -235,7 +271,7 @@ export interface GroupRemoveMembersModel {
  * Changes the role of members already in the group, as a signed `roles` commit. No key moves: a role decides what
  * the bridge and the other members accept from somebody, not what they can read.
  *
- * Needs the signed `updatePolicy` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
+ * Needs the `changeRoles` rule. Refused with `GROUP_LAST_MANAGER` when it would leave a group that has
  * managers with none.
  */
 export interface GroupSetRolesModel {
@@ -289,20 +325,6 @@ export interface GroupGetTreeCommitsResult {
     genesisUsers?: types.cloud.UserId[];
     /** With seq 1: see `genesisUsers`. */
     genesisManagers?: types.cloud.UserId[];
-}
-
-/** Closes the current era: nothing below `newFloor` may be reached by descending the ladder again. */
-export interface GroupCutEraModel {
-    id: types.group.GroupId;
-    newFloor: number;
-    expectedKeyVersion: number;
-}
-
-/** Deletes rungs below `belowEpoch`, recording a watermark so clients can tell pruning from tampering. */
-export interface GroupPruneArchiveModel {
-    id: types.group.GroupId;
-    belowEpoch: number;
-    expectedKeyVersion: number;
 }
 
 /**
@@ -369,7 +391,6 @@ export interface GroupGetEpochKeysResult {
 export interface GroupGetKeyArchiveResult {
     keyVersion: number;
     eraFloor: number;
-    archivePrunedBelow?: number;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
     rungs: types.cloud.GroupArchiveRung[];
 }
@@ -406,15 +427,15 @@ export interface GroupUpdatePrivateMetaModel {
 }
 
 /**
- * Sets the group's container policy, as a signed commit (op `policy`): the rules that govern commits are part of the
- * signed group state, so a policy change is chained, CAS-ed and checked like any other commit.
+ * Sets the group's rules (`types.cloud.GroupRules`), as a signed commit (op `policy`) under the `changeRules` rule: the
+ * rules are part of the signed group state, so a change is chained, CAS-ed and checked like any other commit.
  *
  * Neither metadata plane moves and no epoch advances; the tree and roster stay as they are.
  */
 export interface GroupUpdatePolicyModel {
     id: types.group.GroupId;
-    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new policy in
-     *  `commit.policy` (`{}` resets every rule to the v3 defaults the statements sign). */
+    /** The policy commit statement: `op: "policy"`, everything but `policyHash` unchanged, and the new rules in
+     *  `commit.policy`, all nine. */
     commit: types.cloud.GroupTreeCommitStatement;
     /** Current epoch (CAS). */
     expectedKeyVersion: number;
@@ -526,7 +547,11 @@ export interface GroupGetManyModel {
     groupIds: types.group.GroupId[];
 }
 
-/** One result per requested id, in order. A group that cannot be served has its error here and fails nothing else. */
+/**
+ * One result per requested id, in order. A group that cannot be served has its error here and fails nothing else.
+ * Past a 32 MiB response the remaining ids are not read and are answered `GROUP_BATCH_SIZE_EXCEEDED`: read those
+ * one by one (`groupGet`). The first group is always served.
+ */
 export type GroupGetManyEntry = {group: GroupInfo}|{error: {code: types.core.ErrorCode, message: types.core.ErrorMessage}};
 
 export interface GroupGetManyResult {
@@ -551,7 +576,8 @@ export interface GroupPublicInfo {
     rosterVersion: number;
     keyVersion: number;
     groupPubKey: types.cloud.GroupPubKey;
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
     visibleTo: GroupVisibility;
     /** The latest commit statement. Signed; the client checks it. */
     treeCommit: types.cloud.GroupTreeCommitStatement;
@@ -599,7 +625,8 @@ export interface GroupSummary {
     rosterVersion: number;
     keyVersion: number;
     visibleTo: GroupVisibility;
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
 }
 
 export interface GroupDataEntry {
@@ -666,7 +693,8 @@ export interface GroupInfo {
     keyVersion: number;
     visibleTo: GroupVisibility;
     keyHistory: types.cloud.GroupPubKeyAtEpoch[];
-    policy: types.cloud.ContainerPolicy;
+    /** The group's signed rules (`types.cloud.GroupRules`); absent for a group stored before the rules format. */
+    policy?: types.cloud.GroupRules;
     history: GroupHistoryEntryInfo[];
     // ── Tree state ───────────────────────────────────────────────────────────────────────────────────────────
     /** Layout of the tree. 2 for every group the current API creates; anything else is a group from before the
@@ -706,12 +734,11 @@ export interface GroupInfo {
     /** Metadata keys addressed to the group itself, one per epoch that rotated it. */
     groupKeys: types.cloud.GroupKeysEntry[];
     eraFloor: number;
-    archivePrunedBelow?: number;
 }
 
 /** Which operation changed the group, so a client can decide whether the change is worth a `groupGet`. */
 export type GroupChangeKind = "created"|"publicMetaUpdated"|"privateMetaUpdated"|"policyUpdated"|"keyRotated"
-    |"memberAdded"|"memberRemoved"|"eraCut"|"archivePruned"|"visibilityChanged"|"rolesChanged"|"membersReseated";
+    |"memberAdded"|"memberRemoved"|"eraCut"|"visibilityChanged"|"rolesChanged"|"membersReseated";
 
 /**
  * What a group event carries: enough to tell *which* group changed and *how far* it has moved, and nothing that
@@ -791,6 +818,10 @@ export interface SpaceInfo {
     statement: types.cloud.SpaceStatement;
     /** True when a recipient group has moved past the epoch the current key was wrapped to. */
     keyIsStale: boolean;
+    /** The key version of the last pruning rotation (`prune: true`), 0 before any: the recipient wraps of the versions
+     *  below it are gone, and those versions are reached down the rungs only. The rungs of the versions above it
+     *  have not been checked by a pruning manager since. */
+    keysPrunedBelow: number;
     keys: types.cloud.SpaceKeyEntry[];
     publicMeta: types.space.SpaceData;
     privateMeta: types.space.SpaceData;
@@ -806,7 +837,9 @@ export interface SpaceCreateModel {
     keyId: types.core.KeyId;
     /** Key version 1, one entry per recipient. */
     keys: types.cloud.SpaceKeyEntry[];
+    /** At most 64 KiB once base64-decoded: a space is a key holder, and a page of `spaceList` carries both planes. */
     publicMeta: types.space.SpaceData;
+    /** At most 64 KiB plus 4 KiB for the envelope it is sealed in, once base64-decoded. */
     privateMeta: types.space.SpaceData;
     /** Statement 1, op `create`: signed by the caller, naming the recipients, each group at its current epoch and key. */
     statement: types.cloud.SpaceStatement;
@@ -834,7 +867,35 @@ export interface SpaceIdModel {
 }
 
 export interface SpaceGetResult {
+    /** `keys` are those of the current key version only; older versions are reached down the rungs of `spaceGetKeyArchive`. */
     space: SpaceInfo;
+}
+
+/**
+ * Fetches the rungs of a space's key ladder, a page of key versions at a time. A reader unwraps the current key
+ * version and descends: from version a it takes a rung (a -> t) to the lowest t still at or above the version it
+ * wants, and repeats. Every key so derived is checked against the `keyCommit` of the signed history.
+ */
+export interface SpaceGetKeyArchiveModel {
+    id: types.space.SpaceId;
+    /** The lowest `atKeyVersion` wanted, at least 1; default 1. Version 1 has no rungs. */
+    fromKeyVersion?: number;
+    /** The highest `atKeyVersion` wanted; defaults to, and is capped at, the space's current key version. */
+    toKeyVersion?: number;
+    /** Key versions per page, 1 to 256; default 256. */
+    limit?: number;
+}
+
+export interface SpaceGetKeyArchiveResult {
+    /** Every rung at the versions of the page, all the rungs of a span (a repaired span has several), ascending by
+     *  `atKeyVersion` (then `targetKeyVersion`). A reader tries each and keeps the one its keyCommit confirms. */
+    rungs: types.cloud.SpaceRung[];
+    /** The caller's own wraps — its user entry and those of the groups it belongs to — of the page's versions that
+     *  still have them (those at or above `keysPrunedBelow`), ascending by key version. */
+    keys: types.cloud.SpaceKeyEntry[];
+    /** Set when versions up to `toKeyVersion` remain: ask again with it as `fromKeyVersion`. A page also ends early,
+     *  before `limit` versions, once it carries 1024 rungs or 1024 wraps; every version it carries is whole. */
+    nextKeyVersion?: number;
 }
 
 export interface SpaceListModel extends types.core.ListModel {
@@ -843,7 +904,8 @@ export interface SpaceListModel extends types.core.ListModel {
 }
 
 export interface SpaceListResult {
-    /** `keys` of a listed space are those of its current key version only; `spaceGet` serves every version. */
+    /** `keys` of a listed space are those of its current key version only, as in `spaceGet`; older versions are
+     *  reached down the rungs of `spaceGetKeyArchive`. */
     spaces: SpaceInfo[];
     count: number;
 }
@@ -851,7 +913,7 @@ export interface SpaceListResult {
 export interface SpaceAddRecipientsModel {
     id: types.space.SpaceId;
     recipients: types.cloud.SpaceRecipient[];
-    /** Every key version of the space, for every new recipient. */
+    /** The current key version only, one entry per new recipient: older versions are reached down the rungs. */
     keys: types.cloud.SpaceKeyEntry[];
     /** The next statement, op `add`: the recipients before, unchanged, and the new ones; the key version and `keyCommit` stay. */
     statement: types.cloud.SpaceStatement;
@@ -860,9 +922,26 @@ export interface SpaceAddRecipientsModel {
 export interface SpaceRotateKeyModel {
     id: types.space.SpaceId;
     keyId: types.core.KeyId;
-    /** The next key version, one entry per recipient that stays. */
+    /** The next key version, one entry per recipient that stays. A removed recipient's wraps are deleted; the
+     *  wraps of older versions stay unless the rotation asks to `prune`. */
     keys: types.cloud.SpaceKeyEntry[];
+    /** The rungs of the next key version v: exactly one to each target of `LadderMath.rungSpansFor(v, 1)` — the unit
+     *  rung v -> v-1 and the aligned skips v -> v-2^j (v=2: [1]; v=4: [3,2]; v=8: [7,6,4]), each
+     *  `AES-256-GCM(K_v, iv, K_t, aad = "pmx-space-rung\0" || lp(spaceId) || u64be(v) || u64be(t))`, exactly 60 bytes
+     *  once decoded (`iv || ciphertext || tag`, as are repair rungs). Anything else is refused with `SPACE_KEYS_INVALID`. */
+    rungs: types.cloud.SpaceRung[];
     expectedKeyVersion: number;
+    /** Delete every recipient's wraps of the versions below the new one, and set the space's `keysPrunedBelow` to the
+     *  new version. Only with a statement in a manager's standing (a user the space names as manager, or a manager
+     *  group it acts through), else `SPACE_STATEMENT_INVALID`: the bridge cannot open a rung, so it is the manager's
+     *  Endpoint that checks (and repairs) every rung since the last prune before asking. Default false. */
+    prune?: boolean;
+    /** Repair rungs, one more rung each for a span of a version below the new one: `atKeyVersion` < the new version,
+     *  `targetKeyVersion` one of `LadderMath.rungSpansFor(atKeyVersion, 1)`'s targets, at most one per span, sealed as
+     *  a normal rung. Stored beside the span's other rungs (never over them), at most 4 per span; together with
+     *  `rungs` at most 64. Only with a statement in a manager's standing (else `SPACE_STATEMENT_INVALID`); a span
+     *  already full, a span that is no canonical one, or too many rungs is `SPACE_KEYS_INVALID`. */
+    repairRungs?: types.cloud.SpaceRung[];
     /** The next statement, op `rotate` (or `remove`): whoever stays, each group at its current epoch and key, at the new key version. */
     statement: types.cloud.SpaceStatement;
 }
@@ -878,6 +957,8 @@ export interface SpaceRotateKeyResult {
 
 export interface SpaceUpdateMetaModel {
     id: types.space.SpaceId;
+    /** Base64-decoded, at most 64 KiB for the public plane and 64 KiB plus a 4 KiB envelope allowance for the
+     *  private one. */
     meta: types.space.SpaceData;
     /** The version of that metadata the caller read. */
     version: number;
@@ -923,7 +1004,7 @@ export interface IContextApi {
      * Re-admits members whose long-term key was replaced: a removal in every respect but one, its subjects keep
      * their seats and their place on the roster. The epoch advances, so whoever still holds a subject's old key
      * reads nothing written afterwards. Takes what `groupRemoveMembers` takes; the statement's op is `reseat` and
-     * its `removed` names the subjects. Needs the signed `removeMembers` rule.
+     * its `removed` names the subjects. Needs the `replaceMemberKeys` rule.
      * @param model group's id, the members to reseat, the new grant key, the transition, the statement and the rungs
      * @returns "OK"
      */
@@ -950,15 +1031,16 @@ export interface IContextApi {
      */
     groupGetPublicKey(model: GroupGetPublicKeyModel): Promise<GroupGetPublicKeyResult>;
     /**
-     * Sets who may read the group's identity key, roster and statements beside its members. Managers only.
+     * Sets who may read the group's identity key, roster and statements beside its members. Needs the group's
+     * `changeVisibility` rule (default: managers), narrowed by the context's `policy.group.updatePolicy`, and the
+     * `context/groupSetVisibility` ACL entry. Refused with `ROTATED_ALREADY` when a commit landed since the rules were
+     * read.
      * Making a group visible to the context exposes its whole signed membership history (past members, removals,
      * their dates) through `groupGetTreeCommits`; narrowing it later does not retract what was already read.
      * @param model id of the group and the new visibility
      * @returns "OK"
      */
     groupSetVisibility(model: GroupSetVisibilityModel): Promise<types.core.OK>;
-    groupCutEra(model: GroupCutEraModel): Promise<types.core.OK>;
-    groupPruneArchive(model: GroupPruneArchiveModel): Promise<types.core.OK>;
     groupRepairRung(model: GroupRepairRungModel): Promise<types.core.OK>;
     groupGetKeyArchive(model: GroupGetKeyArchiveModel): Promise<GroupGetKeyArchiveResult>;
     groupGetEpochKeys(model: GroupGetEpochKeysModel): Promise<GroupGetEpochKeysResult>;
@@ -972,9 +1054,17 @@ export interface IContextApi {
     /**
      * Reads a space. For a recipient: a user it names, or a member of a group it names.
      * @param model id of the space
-     * @returns the space with the wrapped keys the caller can open
+     * @returns the space with the wrapped keys of its current version the caller can open
      */
     spaceGet(model: SpaceIdModel): Promise<SpaceGetResult>;
+    /**
+     * Reads a page of the rungs of a space's key ladder, by the key version they sit at, with the caller's own wraps
+     * of those versions that still have them. For a recipient, as `spaceGet`; needs the `context/spaceGetKeyArchive`
+     * ACL entry (in `context/READ`).
+     * @param model id of the space, the key versions wanted and how many per page
+     * @returns the rungs and the caller's wraps, ascending by key version, and where to continue
+     */
+    spaceGetKeyArchive(model: SpaceGetKeyArchiveModel): Promise<SpaceGetKeyArchiveResult>;
     /**
      * Reads the signed statements of a space's history, oldest first. For a recipient, as `spaceGet`.
      * @param model id of the space, the seq to read after, and how many
@@ -994,19 +1084,25 @@ export interface IContextApi {
      */
     spaceDelete(model: SpaceIdModel): Promise<types.core.OK>;
     /**
-     * Adds recipients, with every version of the key wrapped for each. Managers only.
+     * Adds recipients, with the current version of the key wrapped for each. Managers only.
      * @param model id of the space, the new recipients and their wraps
      * @returns "OK"
      */
     spaceAddRecipients(model: SpaceAddRecipientsModel): Promise<types.core.OK>;
     /**
-     * Removes recipients and moves the space to a new key they do not get. Managers only.
+     * Removes recipients and moves the space to a new key they do not get. Managers only. Rate-limited with the
+     * limits of `spaceRotateKey` but in a budget of its own, so rotations (a writer re-keying a stale space) never use
+     * up a manager's allowance to remove.
      * @param model id of the space, who leaves, the new key's id and its wraps for those who stay
      * @returns the new key version
      */
     spaceRemoveRecipients(model: SpaceRemoveRecipientsModel): Promise<SpaceRotateKeyResult>;
     /**
-     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`.
+     * Moves the space to a new key. Any recipient may; it is what clears `keyIsStale`. Each user may rotate one space
+     * `PMX_MAX_SPACE_ROTATIONS_PER_MINUTE` times a minute (default 3) and `PMX_MAX_SPACE_ROTATIONS_PER_HOUR` times an
+     * hour (default 60); past either it is refused with `SPACE_ROTATION_RATE_LIMIT`, data `{retryAt}`. A rotation that
+     * only replaces a stale key (`keyIsStale`: a recipient group past the epoch the key was wrapped to) is not counted
+     * against the hourly limit, only against a per-minute limit of its own (same value).
      * @param model id of the space, the new key's id and its wraps
      * @returns the new key version
      */

@@ -14,6 +14,8 @@ import { MongoObjectRepository } from "../../db/mongo/MongoObjectRepository";
 import { MongoQueryConverter } from "../../db/mongo/MongoQueryConverter";
 import * as types from "../../types";
 import * as db from "../../db/Model";
+import { DbDuplicateError } from "../../error/DbDuplicateError";
+import { LadderArchive } from "./keytree/LadderArchive";
 
 export class SpaceRepository {
     
@@ -21,11 +23,15 @@ export class SpaceRepository {
     static readonly COLLECTION_ID_PROP = "id";
     static readonly KEY_COLLECTION_NAME = "spaceKey";
     static readonly STATEMENT_COLLECTION_NAME = "spaceStatement";
+    static readonly TOMBSTONE_COLLECTION_NAME = "spaceTombstone";
+    static readonly RUNG_COLLECTION_NAME = "spaceRung";
     
     constructor(
         private repository: MongoObjectRepository<types.space.SpaceId, db.space.Space>,
         private keys: MongoObjectRepository<string, db.space.SpaceKey>,
         private statements: MongoObjectRepository<string, db.space.SpaceStatementEntry>,
+        private tombstones: MongoObjectRepository<types.space.SpaceId, db.space.SpaceTombstone>,
+        private rungs: MongoObjectRepository<string, db.space.SpaceRung>,
     ) {
     }
     
@@ -58,6 +64,10 @@ export class SpaceRepository {
     }
     
     async insert(space: db.space.Space, keys: types.cloud.SpaceKeyEntry[]) {
+        // A deleted space's id stays taken: a new space under it would pass for the old one.
+        if (await this.tombstones.get(space.id)) {
+            throw new DbDuplicateError();
+        }
         await this.repository.insert(space);
         await this.insertStatement(space.statement);
         await this.insertKeys(space.id, keys);
@@ -83,22 +93,61 @@ export class SpaceRepository {
     
     /**
      * The wrapped keys of the given spaces that the caller can open: its own and those of its groups.
-     * @param atVersions a space's id to the one key version wanted of it; absent means every version.
+     * @param atVersions a space's id to the one key version wanted of it.
      */
-    async getKeys(spaceIds: types.space.SpaceId[], userId: types.cloud.UserId, groupIds: types.group.GroupId[], atVersions?: Map<types.space.SpaceId, number>) {
+    async getKeys(spaceIds: types.space.SpaceId[], userId: types.cloud.UserId, groupIds: types.group.GroupId[], atVersions: Map<types.space.SpaceId, number>) {
         if (spaceIds.length === 0) {
             return [];
         }
         const mine = [{userId: userId}, {groupId: {$in: groupIds}}];
-        const filter = atVersions
-            ? {$or: spaceIds.map(id => ({spaceId: id, keyVersion: atVersions.get(id), $or: mine}))}
-            : {spaceId: {$in: spaceIds}, $or: mine};
+        const filter = {$or: spaceIds.map(id => ({spaceId: id, keyVersion: atVersions.get(id), $or: mine}))};
         const list = await this.keys.collection.find(filter as mongodb.Filter<any>, this.keys.getOptions()).sort({keyVersion: 1}).toArray();
+        return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
+    }
+    
+    /** The caller's wraps — its own and its groups' — of key versions `from`..`to`, ascending, at most `limit`. */
+    async getKeyRange(spaceId: types.space.SpaceId, userId: types.cloud.UserId, groupIds: types.group.GroupId[], from: number, to: number, limit: number) {
+        const filter = {spaceId: spaceId, keyVersion: {$gte: from, $lte: to}, $or: [{userId: userId}, {groupId: {$in: groupIds}}]};
+        const list = await this.keys.collection.find(filter as mongodb.Filter<any>, this.keys.getOptions()).sort({keyVersion: 1}).limit(limit).toArray();
         return list.map(x => this.keys.convertFromDbObj(x as unknown as db.space.SpaceKey));
     }
     
     async deleteKeysOf(spaceId: types.space.SpaceId, groupIds: types.group.GroupId[], userIds: types.cloud.UserId[]) {
         await this.keys.collection.deleteMany({spaceId: spaceId, $or: [{groupId: {$in: groupIds}}, {userId: {$in: userIds}}]} as mongodb.Filter<any>, this.keys.getOptions());
+    }
+    
+    /** The wraps of versions below `keyVersion`, on a manager's pruning rotation: readers reach those versions down the rungs. */
+    async deleteKeysBelow(spaceId: types.space.SpaceId, keyVersion: number) {
+        await this.keys.collection.deleteMany({spaceId: spaceId, keyVersion: {$lt: keyVersion}} as mongodb.Filter<any>, this.keys.getOptions());
+    }
+    
+    /**
+     * Append-only, several per span: identified by the span and the seq of the statement whose request brought it,
+     * and a request brings at most one per span. Nothing submitted replaces or deletes a stored rung.
+     */
+    async insertRungs(spaceId: types.space.SpaceId, rungs: types.cloud.SpaceRung[], seq: number) {
+        if (rungs.length > 0) {
+            const docs = rungs.map(r => ({id: `${spaceId}/${r.atKeyVersion}/${r.targetKeyVersion}/${seq}`, spaceId, atKeyVersion: r.atKeyVersion, targetKeyVersion: r.targetKeyVersion, data: r.data}));
+            await this.rungs.collection.insertMany(docs.map(d => this.rungs.convertToDbObj(d)), this.rungs.getOptions());
+        }
+    }
+    
+    /** How many rungs each of the given spans holds, by `"at/target"`; a span holding none is absent. */
+    async countRungs(spaceId: types.space.SpaceId, spans: types.cloud.SpaceRung[]): Promise<Map<string, number>> {
+        const filter = {spaceId: spaceId, $or: spans.map(s => ({atKeyVersion: s.atKeyVersion, targetKeyVersion: s.targetKeyVersion}))};
+        const list = await this.rungs.collection.find(filter as mongodb.Filter<any>, this.rungs.getOptions<mongodb.FindOptions>({projection: {atKeyVersion: 1, targetKeyVersion: 1}})).toArray();
+        const counts = new Map<string, number>();
+        for (const rung of list as unknown as types.cloud.SpaceRung[]) {
+            const span = rung.atKeyVersion + "/" + rung.targetKeyVersion;
+            counts.set(span, (counts.get(span) ?? 0) + 1);
+        }
+        return counts;
+    }
+    
+    /** The rungs at key versions `from`..`to`, every one of each span, ascending by `atKeyVersion`, at most `limit`. */
+    async getRungs(spaceId: types.space.SpaceId, from: number, to: number, limit: number): Promise<types.cloud.SpaceRung[]> {
+        const rungs = await LadderArchive.readRungs(this.rungs, q => q.eq("spaceId", spaceId), {from, to, limit});
+        return rungs.map(rung => ({atKeyVersion: rung.atKeyVersion, targetKeyVersion: rung.targetKeyVersion, data: rung.data}));
     }
     
     /** Compare-and-swap on the document's `version`. False when somebody else wrote first. */
@@ -111,10 +160,17 @@ export class SpaceRepository {
         return result.matchedCount === 1;
     }
     
-    async delete(id: types.space.SpaceId) {
-        await this.repository.delete(id);
-        await this.keys.deleteMany(q => q.eq("spaceId", id));
-        await this.statements.deleteMany(q => q.eq("spaceId", id));
+    async delete(space: Pick<db.space.Space, "id"|"contextId">) {
+        await this.repository.delete(space.id);
+        await this.keys.deleteMany(q => q.eq("spaceId", space.id));
+        await this.statements.deleteMany(q => q.eq("spaceId", space.id));
+        await this.rungs.deleteMany(q => q.eq("spaceId", space.id));
+        await this.tombstones.insert({id: space.id, contextId: space.contextId});
+    }
+    
+    /** The tombstones of a deleted context's spaces: nobody can create a space there any more, so they guard nothing. */
+    async deleteTombstonesOfContext(contextId: types.context.ContextId) {
+        await this.tombstones.deleteMany(q => q.eq("contextId", contextId));
     }
     
     async isGroupReferenced(groupId: types.group.GroupId) {
@@ -127,11 +183,23 @@ export class SpaceRepository {
         return !!await this.repository.collection.findOne(filter as mongodb.Filter<any>, {...this.repository.getOptions(), projection: {_id: 1}});
     }
     
-    async getByGroup(groupId: types.group.GroupId) {
-        return this.repository.query(q => q.arrayProp("groups").eq("groupId", groupId)).array();
+    private static readonly NOTICE_PROJECTION = {
+        contextId: 1, keyVersion: 1, publicMetaVersion: 1, privateMetaVersion: 1, "groups.groupId": 1, "users.userId": 1,
+    };
+    
+    /** Calls `each` with every space naming the group, projected to what a notice needs, a cursor batch at a time. */
+    async forEachByGroup(groupId: types.group.GroupId, each: (space: db.space.SpaceNotice) => void|Promise<void>) {
+        const cursor = this.repository.collection.find({"groups.groupId": groupId} as mongodb.Filter<any>,
+            this.repository.getOptions<mongodb.FindOptions>({projection: SpaceRepository.NOTICE_PROJECTION, batchSize: 100}));
+        for await (const doc of cursor) {
+            await each(this.repository.convertFromDbObjEx(doc as unknown as db.space.SpaceNotice));
+        }
     }
     
-    async getByContext(contextId: types.context.ContextId) {
-        return this.repository.findAll(q => q.eq("contextId", contextId));
+    /** The spaces of a context, projected to what their deletion and its notice need. */
+    async getByContext(contextId: types.context.ContextId): Promise<db.space.SpaceNotice[]> {
+        const list = await this.repository.collection.find({contextId: contextId} as mongodb.Filter<any>,
+            this.repository.getOptions<mongodb.FindOptions>({projection: SpaceRepository.NOTICE_PROJECTION})).toArray();
+        return list.map(doc => this.repository.convertFromDbObjEx(doc as unknown as db.space.SpaceNotice));
     }
 }
